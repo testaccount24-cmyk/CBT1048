@@ -1,0 +1,624 @@
+//AUXCMM03 JOB (1586,5),'** FOR J. NOLS **',CLASS=N
+//STEP01       EXEC GENASMOD
+***********************************************************************
+*                    A U X C M M 0 3                                  *
+*                                                                     *
+*        THIS ROUTINE HANDLES THE OPERATOR COMMAND #D WAIT            *
+*        IT IS INVOKED DIRECTLY BY THE COMMAND PROCESSOR AUXCMM01     *
+*        TO WHICH IT RETURNS CONTROL WITH A CODE IN REG15 TO          *
+*        INDICATE WHETHER PROCESSING PROCEEDED NORMALLY OR NOT.       *
+*            THE MODULE SCANS THE ASCB CHAIN LOOKING FOR ADDRESS      *
+*        SPACES WHICH ARE EITHER:                                     *
+*        1) SWAPPED OUT OR IN THE PROCESS OF BEING SWAPPED OUT.       *
+*        2) SHOWING NO READY TCBS IN THE ADDRESS SPACE CONTROL BLK.   *
+*        IF A SWAPPED OUT ADDRESS SPACE IS FOUND, FURTHER FLAGS       *
+*        ARE TESTED TO TRY AND FIND OUT WHY.                          *
+*        IF THERE ARE NO READY TCBS, THE STATUS OF THE JOB IS         *
+*        DETERMINED BY EXAMINING THE SYSTEM COMPONENTS WHICH MAY BE   *
+*        STOPPING THE JOB FROM EXECUTING.                             *
+*                                                                     *
+*          THIS MODULE, IN EXAMINING THE STATUS OF THE I/O CONTROL    *
+*        BLOCKS ASSUMES THAT THERE ARE FOUR LOGICAL CHANNELS IN THE   *
+*        SYSTEM. TO ALTER THIS, ADJUST THE ASSEMBLER VARIABLE CALLED  *
+*        &&CHANNUM IN THE EQUATES SECTION.                            *
+*                                                                     *
+*        ATTRIBUTES. REENTRANT, REUSABLE, SUPERVISOR MODE.            *
+*                                                                     *
+*        REGISTER USAGE                                               *
+*        REG0  PARAMETER REGISTER, WORK REGISTER                      *
+*        REG1  PARAMETER REGISTER, WORK REGISTER                      *
+*        REG2  WORK REGISTER                                          *
+*        REG3  ADDRESS INTERNAL WORK AREA                             *
+*        REG4  ADDRESS OF ASVT ENTRY LIST                             *
+*        REG5  NUMBER REMAINING POSSIBLE ADDRESS SPACES TO LOOK AT    *
+*        REG6  ADDRESS CURRENT ASCB                                   *
+*        REG7  ADDRESS CURRENT OUCB                                   *
+*        REG8  ADDRESS CURRENT OUXB                                   *
+*        REG9  ADDRESS OF CURRENT OUTPUT ELEMENT
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        DSECTS USED IN THIS MODULE                                   *
+***********************************************************************
+         SPACE 2
+WKAREA   DSECT ,                   INTERNAL WORK AREA
+GETMNLEN DS    F                   SAVED DETAILS FOR FREEMAIN
+CHAINHDR DS    F                   START OF OUTPUT CHAIN
+NEXTID   DS    F                   ADDRESS OF NEXT SLOT IN 'WTORIDS'
+LOADR11  DS    F                   SAVE AREA FOR LINK REGISTER
+LINER11  DS    F                   SAVE AREA FOR LINK REGISTER
+DBLWORD  DS    D                   WORK AREA FOR UNPACK
+ENQFLAG  DS    X                   FLAG FOR ENQ LOGIC
+FLAG     DS    X                   FLAG FOR INTERNAL LOGIC
+CID      DS    X                   CONSOLE ID FOR RESPONSE
+MSGAREA  DS    0CL60               OUTPUT AREA FOR MESSAGES
+CLRLINE DS     0CL60               REFERENCE FOR BUFFER CLEARING
+         DS    CL2                 PADDING
+ASID     DS    CL4                 ADDRESS SPACE ID
+         DS    CL1                 PADDING
+JOBNAME  DS    CL8                 NAME OF JOB
+         DS    CL1                 PADDING
+INFO     DS    0CL30               INFORMATION ABOUT ADDRESS SPACE
+OUTENQ   DS    0CL12               ENQED ON MESSAGE LITERAL
+COREMSG  DS    0CL20               WAITING FOR CORE MESSAGE
+         DS    CL14                PADDING
+RESNTEXT DS    0CL32               SWAP OUT REASON
+OUTQNAME DS    CL8                 ENQ MAJ NQME OUTPUT AREA
+         DS    CL1                 PADDING
+OUTRNAME DS    0CL16               OUTPUT AREA FOR ENQ MINOR NAME
+         DS    CL1                 PADDING
+VRSIZE   DS    0CL8                SIZE OF REAL CORE NEEDED
+DEVICE   DS    0CL3                DEVICE ADDRESS FOR IO WAIT
+WTORIDS  DS    0CL22               SPACE FOR OUTSTANDING REPLY IDS
+         DS    CL22                PADDING
+WKARELEN EQU   *-WKAREA            LENGTH FOR GETMAIN
+         SPACE 2
+XSA      DSECT ,                   FORMAT OF EXTENDED SAVE AREA
+XSAP     DS    F                   PTR TO XCTL NAME
+XSAD     DS    F                   DCB POINTER
+XSAX     DS    D                   XCTL NAME
+XSAE     DS    0C                  ERROR CODE FOR IEE0503D
+XSAR     DS    F                   ADDRESS OF PARM LIST
+XSAN     DS    0C                  VERB INDEX
+XSAL     DS    F                   PTR TO LIST POSITION
+XSAVERB  DS    D                   VERB ENTERED BY OPERATOR
+XSAS     DS    D                   TEMPORARY SAVE AREA
+XSAU     DS    C                   UCM ENTRYINDICATOR
+         DS    C                   RESERVED
+XSAJ     DS    H                   TJID ENTRY INDICATOR
+         SPACE 2
+         PRINT NOGEN
+         IHAASCB
+         SPACE 2
+         IHAASXB
+         SPACE 2
+         IRAOUCB
+         SPACE 2
+         IHAOUXB
+         SPACE 2
+         IHAOUSB
+         SPACE 2
+         IHARSMHD
+         PRINT GEN
+         EJECT
+***********************************************************************
+*        EQUATES USED IN THE MODULE                                   *
+***********************************************************************
+         SPACE 2
+         LCLA  &CHANNUM
+&CHANNUM SETA  4                   SET TO GIVE 4 LOGICAL CHANNELS
+CVTASVT  EQU   X'22C'              OFFSET TO ASVT ADDRESS IN CVT
+ASVTENTY EQU   X'210'              OFFSET TO ASID ENTRIES IN ASVT
+ASVTMAXU EQU   X'204'              OFFSET TO MAX USERS FIELD IN ASVT
+CVTGDA   EQU   X'230'              OFFSET TO GLOBAL DATA AREA IN CVT
+GDAFEL   EQU   X'28'               ADDRESS OF FIRST WAIT ELEMENT
+VRWASCB  EQU   X'10'               OFFSET TO ASCB ADDRESS IN VRWPQEL
+CVTUCM   EQU   X'64'               ADDRESS OF UNIT CTL MOD BASE
+UCMRPYQ  EQU   X'1C'               ADDRESS OF REPLY QUEUE
+OREID    EQU   X'4'                ADDRESS OF RPLY ID IN ORE
+OREASID  EQU   X'18'               ADDRESSOF ASID IN ORE
+CVTMQCB  EQU   X'280'              ADDRESS OF FIRST MAJ QCB
+QCBQNAME EQU   X'10'               ADDRESS OF MAJOR NAME IN QCB
+QCBFMIN  EQU   X'8'                ADDRESS OF FIRST MIN QCB
+QCBFQEL  EQU   X'8'                ADDRESS OF FIRST QEL
+QELASID  EQU   X'E'                ADDRESS OF ASID IN QEL
+QCBRLEN  EQU   X'10'               ADDRESS OF LENGTH OF RNAME
+QCBRNAME EQU   X'14'               ADDRESS OF MIN NAME IN QCB
+QELQFLGS EQU   X'C'                ADDRESS OF ENQ FLAGS IN QEL
+SHR      EQU   X'80'               QELQFLGS- REQUEST IS A SHARE REQ
+EXCL     EQU   X'40'               ENQFLAG -REQUEST WAS EXCLUSIVE
+SHARED   EQU   X'80'               ENQFLAG - REQUEST WAS SHARED
+MYEXCL   EQU   X'02'               ENQFLAG - THIS REQUEST IS EXCLUSIVE
+MYSHR    EQU   X'01'               ENQFLAG - THIS REQUEST IS SHARED
+UCBDNAME EQU   X'D'                ADDRESS OF DEVICE ADDRESS IN UCB
+SRBIOSB  EQU   X'1C'               ADDRESS OF IOSB IN SRB
+IOSBSRB  EQU   X'1C'               ADDRESS OF SRB IN IOSB
+IOQIOSB  EQU   X'8'                ADDRESS OF IOSB IN IOQ
+IOSBASID EQU   X'6'                ADDRESSOF ASID IN IOSB
+CVTLCH   EQU   X'8C'               ADDRESS OF LCH TABLE IN CVT
+LCHLEN   EQU   X'20'               LENGTH OF AN ENTRY IN LCH TABLE
+IOSBUCB  EQU   X'10'               ADDRESS OF UCB IN IOSB
+VRPREQ   EQU   X'14'               SIZE OF V=R REQUEST
+IECILK   EQU   X'28'               ADDRESS OF UCB LOOKUP TABLE
+UCBSFLS  EQU   X'6'                UCB DEVICE STATUS FLAGS
+BUSY     EQU   X'02'               CHANNEL PROGRAM ACTIVE. (UCBSFLS)
+MSGLEN   EQU   L'MSGAREA           LENGTH FOR LOADMSG MACROS
+HEADDONE EQU   X'80'               RELATES TO 'FLAG'. HEADING IS DONE
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING                                   *
+***********************************************************************
+         SPACE 2
+AUXCMM03 ZCSECT GETMAIN=1
+         LR    REG4,REG1           LOAD ADDRESS SCAN DESCR BLK CHAIN
+         EJECT
+***********************************************************************
+*        GETMAIN CORE FOR WORK AREA                                   *
+***********************************************************************
+         SPACE 2
+         USING WKAREA,REG3
+         LA    REG0,WKARELEN       LOAD LENGTH FOR GETMAIN
+         O     REG0,SUBPOOL        LOAD SUBPOOL ID
+         GETMAIN R,LV=(0)          GETMAIN THE CORE
+         LR    REG3,REG1           LOAD BASE ADDRESS
+         ST    REG0,GETMNLEN       SAVE DETAILS FOR FREEMAIN
+         USING XSA,REG2            ADDRESSABILITY FOR EXTENDED S/A
+         MVC   CID,XSAU            SAVE ID OF CONSOLE ISSUING COMMAND
+         MVI   FLAG,0              INITIALISE LOGIC FLAG TO ZERO
+         EJECT
+***********************************************************************
+*        ANALYSE INPUT PARMS & TEST VALIDITY                          *
+***********************************************************************
+         SPACE 2
+         LTR   REG4,REG4           TEST FOR PRESCENCE OF OPERANDS
+         BZ    HEADER              NO OPERANDS. START PROCESSING
+         CLI   4(REG4),X'01'       IS OPERAND 1 BYTE LONG ?
+         BNE   ERROR               NO. CANNOT BE VALID
+         L     REG4,4(REG4)        LOAD ITS ADDRESS
+         CLI   0(REG4),C'?'        REQUEST FOR INFORMATION ?
+         BNE   ERROR               NO. OPERAND NOT KNOWN
+         B     AUXCMMZZ            BRANCH TO QUERY ROUTINE
+         EJECT
+***********************************************************************
+*        PREPARE & INITIALISE THE HEADING LINE FOR OUTPUT             *
+***********************************************************************
+         SPACE 2
+HEADER   DS    0H
+         LOADMSG DATA=TITLE,LENGTH=TITLLEN,TYPE=C
+         ST    REG1,CHAINHDR       INITIALISE START OF OUTPUT CHAIN
+         LR    REG9,REG1           LOAD NEXT ELEMENT ADDRESS
+         B     ASVTSRCH            BRANCH TO NEXT ROUTINE
+         SPACE 2
+TITLE    DC    C'ANALYSIS OF WAITING WORK'                    00014800
+TITLLEN  EQU   L'TITLE
+         EJECT
+***********************************************************************
+*        LOOK AT EACH ADDRESS SPACE & FIND OUT THE STATUS OF IT       *
+***********************************************************************
+         SPACE 2
+ASVTSRCH DS    0H
+         USING ASCB,REG6
+         USING OUCB,REG7
+         USING OUXB,REG8
+         L     REG1,16             LOAD ADDRESS OF CVT
+         L     REG1,CVTASVT(REG1)  LOAD ADDRESS ADDR.SPACE VECTOR TABLE
+         LA    REG4,ASVTENTY(REG1) LOAD ADDRESS ADDRESS SPACE ENTRIES
+         L     REG5,ASVTMAXU(REG1) LOAD MAXIMUM NUMBER USERS
+ASCBSTRT L     REG6,0(REG4)        LOAD ADDRESS NEXT ADDRESS SPACE C.B
+         LTR   REG6,REG6           TEST FOR ACTIVE ENTRY
+         BNP   ASCBLOOP            ENTRY NOT ACTIVE. FIND NEXT
+         CLC   ASCBTCBS,NONE       TEST NUMBER OF READY TCB'S IN A.S.
+         BE    PROCIN              NONE. GO FIND OUT WHY
+         TM    ASCBDSP1,ASCBNOQ    IS ADDRESS ON DISPATCHER Q ?
+         BO    PROCIN              NO. GO FIND OUT WHY
+ASCBXX   TM    ASCBRCTF,ASCBOUT    IS ADDRESS SPACE IN OR OUT ?
+         BO    PROCOUT             GO PROCESS OUT ADDRESS SPACE
+ASCBLOOP LA    REG4,4(REG4)        ADDRESS NEXT ADDRESS SPACE ENTRY
+         BCT   REG5,ASCBSTRT       LOOP FOR ALL POSSIBLE ENTRIES
+         C     REG9,CHAINHDR       ANY MORE LINES BEEN ADDED
+         BNE   HEADLINE            YES. GO & ADD IN THE HEADINGS
+         LOADMSG DATA=NOWAIT,LENGTH=NWAITLEN,TYPE=D
+         ST    REG1,0(REG9)        CHAIN THIS ELEMENT TO LAST ONE
+         LR    REG9,REG1           MAKKE THIS THE LAST ELEMENT
+         B     MSGOUT              GO OUTPUT MESSAGES
+         SPACE 2
+NONE     DC    4X'00'              USED TO TEST NUMBER READY TCBS
+NOWAIT   DC    C'NO ADDRESS SPACES SWAPPED OR WAITING'
+NWAITLEN EQU   L'NOWAIT
+         EJECT
+***********************************************************************
+*        PREPARE INFORMATION FOR SWAPPED ADDRESS SPACE                *
+***********************************************************************
+         SPACE 2
+PROCOUT  DS    0H
+         BAL   REG11,LINEUP        PREPARE START OF MESSAGE BUFFER
+         CLC   JOBNAME,INITNAME    IS THIS AN INITIATOR ?
+         BE    ASCBLOOP            YES. NOT INTERESTING
+         L     REG7,ASCBOUCB       LOAD ADDRESS OF OUCB
+         MVC   INFO(L'OUTTXT2),OUTTXT2 MOVE 'SWAPPED OUT' TEXT
+         XR    REG1,REG1           CLEAR WORK REGISTER
+         IC    REG1,OUCBSRC        LOAD UP SWAP REASON CODE
+         SLL   REG1,5              MULTIPLY BY THIRTY TWO
+         LA    REG1,RESNTABL(REG1) LOAD ADDRESS OF SWAP REASON TEXT
+         MVC   RESNTEXT,0(REG1)    MOVE SWAP REASON TO OUTPUT
+         LOADMSG DATA=MSGAREA,LENGTH=MSGLEN,TYPE=D
+         ST    REG1,0(REG9)        PLACE OUTPUT BLOCK ON CHAIN
+         LR    REG9,REG1           MAKE THIS THE LAST ENTRY
+         B     ASCBLOOP            RETURN TO MAINLINE LOGIC
+         SPACE 2
+OUTTXT2  DC    C'SWAPPED OUT - '
+INITNAME DC    CL8'INIT'
+         DS    0F                  TABLE OF SWAPOUT REASONS
+         ORG   *-32                SET ORIGIN OF TABLE
+RESNTABL EQU   *
+         DS    CL32                NULL ENTRY
+         DC    CL32'WAITING FOR OUTPUT TO TERMINAL'
+         DC    CL32'WAITING FOR INPUT FROM TERMINAL'
+         DC    CL32'ADDRESS SPACE IS IN LONG WAIT'
+         DC    CL32'SHORTAGE OF PAGING SPACE'
+         DC    CL32'SHORTAGE OF REAL STORAGE'
+         DC    CL32'ADDRESS SPACE IS WAITING'
+         DC    CL32'ADDRESS SPACE REQUESTED SWAPOUT'
+         DC    CL32'ENQ EXCHANGE SWAPOUT'
+         DC    CL32'EXCHANGE SWAP BY SRM'
+         DC    CL32'UNILATERAL SWAP-OUT'
+         EJECT
+***********************************************************************
+*        AN ADDRESS SPACE IS IN BUT HAS NO WORK. WHY ?                *
+***********************************************************************
+         SPACE 2
+PROCIN   DS    0H
+         BAL   REG11,LINEUP        PREPARE START OF MESSAGE
+         CLC   JOBNAME,INITNAME    TEST FOR AN INITIATOR
+         BE    ASCBLOOP            YES. NOT INTERESTING
+         BAL   REG11,TESTCORE      TEST IF ADDRESS WAITING REAL CORE
+         BAL   REG11,LOADIT
+         BAL   REG11,TESTLOCK      IS ADDRESS WAITING ON A LOCK
+         BAL   REG11,LOADIT
+         BAL   REG11,TESTWTOR      IS ADDRESS WAITING ON OPERATOR
+         BAL   REG11,LOADIT
+         BAL   REG11,TESTALOC      IS ADDRESS IN ALLOCATION
+         BAL   REG11,LOADIT
+         BAL   REG11,TESTIOWT      IS ADDRESS WAITING FOR I/O
+         BAL   REG11,LOADIT
+         BAL   REG11,TESTENQS      IS ADDRESS WAITING ON ENQ'D ITEM
+         BAL   REG11,LOADIT
+         B     ASCBXX              LOOP FOR ALL ADDRESS SPACES
+         EJECT
+***********************************************************************
+*        THIS IS THE COMMON I/O LOAD ROUTINE                          *
+***********************************************************************
+         SPACE 2
+LOADIT   DS    0H
+         ST    REG11,LOADR11       SAVE LINK REGISTER
+         LOADMSG DATA=MSGAREA,LENGTH=MSGLEN,TYPE=D
+         ST    REG1,0(REG9)        CHAIN THIS ELEMENT ONTO OUTPUT CHAIN
+         LR    REG9,REG1           MAKE THIS THE LAST ENTRY
+         BAL   REG11,LINEUP        RESET THE OUTPUT AREA
+         L     REG11,LOADR11       RELOAD THE LINK REGISTER
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        THIS ROUTINE WILL, FOR V=R JOBS, LOOK SEE IF CORE NEEDED.    *
+*        FOR NON V=R JOBS, PAGING ACTIVITY IS CHECKED.                *
+***********************************************************************
+         SPACE 2
+TESTCORE DS    0H
+         L     REG10,16            LOAD ADDRESS OF CVT
+         L     REG10,CVTGDA(REG10) LOAD ADDRESS GLOBAL DATA AREA
+         L     REG1,GDAFEL(REG10)  LOAD ADDRESS FIRST WAIT ELEMENT
+CORELOOP LTR   REG1,REG1           TEST FOR END OF Q
+         BZ    CORE0001            NO MORE ELEMENTS. EXIT LOOP
+         C     REG6,VRWASCB(REG1)  TEST FOR OUR ADDRESS SPACE
+         BE    COREWAIT            YES. THIS A.S. IS WAITING REAL CORE
+         L     REG1,0(REG1)        LOAD FORWARD LINK IN CHAIN
+         B     CORELOOP            LOOP FOR ALL ELEMENTS
+         SPACE 2
+CORE0001 L     REG10,ASCBRSM       LOAD ADDRESS RSM HEADER BLOCK
+         USING RSMHD,REG10         TEMPORARY ADDRESSABILITY
+         L     REG1,RSMLIOQF       LOAD ADDRESS FIRST I/O PCB
+         LTR   REG1,REG1           TEST FOR OUTSTANDING I/O
+         BZ    COREEXIT            NONE. RETURN TO CALLER
+         MVC   COREMSG(L'PAGIO),PAGIO  LOAD SUITABLE MESSAGE
+         BR    REG11               PREPARE TO RETURN
+         SPACE 2
+COREEXIT B     4(REG11)            RETURN FOR NEXT TEST
+         SPACE 2
+COREWAIT MVC   COREMSG(L'VRWAIT),VRWAIT MOVE MESSAGE TO OUTPUT
+         L     REG1,VRPREQ(REG1)   LOAD SIZE OF REQUEST
+         SRL   REG1,10             CONVERT AMOUNT TO 'K'
+         CVD   REG1,DBLWORD        CONVERT TO DECIMAL
+         MVC   VRSIZE(L'VRMASK),VRMASK MOVE EDIT MASK TO OUTPUT
+         ED    VRSIZE(L'VRMASK),DBLWORD+4 EDIT CORE SIZE TO OUTPUT
+         MVI   VRSIZE+L'VRSIZE,C'K' MOVE IN UNITS
+         BR    REG11               RETURN TO HAVE OUTPUT DONE
+         SPACE 2
+VRWAIT   DC    C'WAITING FOR REAL CORE'
+PAGIO    DC    C'WAITING FOR PAGING I/O'
+VRMASK   DC    X'4020202020212020' EDIT MASK FOR CORE SIZE
+         EJECT
+***********************************************************************
+*        THIS ROUTINE WILL CHECK THE LOCK SITUATION FOR THE A.S       *
+***********************************************************************
+         SPACE 2
+TESTLOCK DS    0H
+         TM    ASCBLOCK,X'80'      TEST STATUS BYTE OF LOCAL LOCK
+         BZ    LOCKEXIT            NOTHING WRONG HERE
+         MVC   INFO(L'LOCKED),LOCKED MOVE SUITABLE DATA TO OUTPUT
+         BR    REG11               RETURN TO CALLER
+         SPACE 2
+LOCKEXIT B     4(REG11)            RETURN TO CALLER
+         SPACE 2
+LOCKED   DC    C'WAITING FOR CMS LOCK'
+         EJECT
+***********************************************************************
+*        THIS ROUTINE WILL TEST FOR OUTSTANDING REPLIES               *
+***********************************************************************
+         SPACE 2
+TESTWTOR DS    0H
+         LA    REG11,0(REG11)      MAKE SURE ADDRESS IS POSITIVE
+         LA    REG10,WTORIDS       LOAD ADDRESS OF SPACE FOR REPLY IDS
+         ST    REG10,NEXTID        SAVE READY FOR IT BEING NEEDED
+         L     REG1,16             LOAD ADDRESS OF CVT
+         L     REG1,CVTUCM(REG1)   LOAD ADDRESS UCM BASE
+         L     REG1,UCMRPYQ(REG1)  LOAD ADDRESS 1ST ORE ON REPLY Q
+WTORLOOP LTR   REG1,REG1           TEST FOR ANY MORE REPLIES
+         BZ    WTOREXIT            NO MORE ORE'S PRESENT. EXIT
+         CLC   ASCBASID,OREASID(REG1) IS REPLY FOR THIS ADDRESS SPACE
+         BE    WTORWAIT            YES. ADDRESS HAS WTOR OUTSTANDING
+WTORNXT  L     REG1,0(REG1)        LOAD ADDRESS NEXT ORE
+         B     WTORLOOP            TEST FOR NEXT ORE ON CHAIN
+         SPACE 2
+WTORWAIT L     REG10,NEXTID        LOAD ADDRESS NEXT SLOT FOR RPLY ID
+         MVC   0(2,REG10),OREID(REG1) MOVE REPLY ID TO OUTPUT
+         MVC   INFO(L'WTORL),WTORL MOVE SUITABLE TEXT IN
+         LA    REG10,3(REG10)      STEP TO NEXT SLOT
+         ST    REG10,NEXTID        SAVE THIS ADDRESS
+         LNR   REG11,REG11         SIGNAL WTOR WAIT DETECTED
+         B     WTORNXT             LOOK AT NEXT ELEMENT
+         SPACE 2
+WTOREXIT LTR   REG11,REG11         TEST FOR WTORWAIT FOUND
+         BP    4(REG11)            NO. CARRY ON WITH NEXT TEST
+         LCR   REG11,REG11         RESET REG11 TO NORMAL
+         BR    REG11               RETURN TO HAVE OUTPUT DONE
+         SPACE 2
+WTORL    DC    C'WAITING FOR REPLIES -'
+         EJECT
+***********************************************************************
+*        THIS ROUTINE DETERMINES IF THE ADDRESS IS IN ALLOCATION      *
+***********************************************************************
+         SPACE 2
+TESTALOC DS    0H
+         L     REG10,16            LOAD ADDRESS OF CVT
+         L     REG10,CVTMQCB(REG10) LOAD ADDRESS OF FIRST MAJ QCB
+MAJLOOP  LTR   REG10,REG10         TEST FOR PRESCENCE OF NEXT MAJOR
+         BZ    ALOCEXIT            NONE LEFT. EXIT
+         CLC   SYSIEFSD,QCBQNAME(REG10) TEST FOR PRESCENCE ALOC
+         BE    MINORS              SOMEONE HERE. GO LOOK AT MINORS
+         L     REG10,0(REG10)      LOAD ADDRESS NEXT MAJOR
+         B     MAJLOOP             LOOP FOR ALL MAJ QCBS
+         SPACE 2
+MINORS   L     REG10,QCBFMIN(REG10) LOAD ADDRESS OF FIRST MINOR
+QCBLOOP  LTR   REG10,REG10         TEST FOR ANY MORE MINORS
+         BZ    ALOCEXIT            NO MORE. EXIT
+         L     REG1,QCBFQEL(REG10) LOAD ADDRESS FIRST QEL
+QELLOOP  LTR   REG1,REG1           TEST FOR ANY MORE QELS
+         BZ    NEWMINOR            NONE LEFT. GET NEW MINOR
+         CLC   ASCBASID,QELASID(REG1) DOES THIS QEL BELONG TO ME ?
+         BE    ALOCHELD            YES. GO REPORT THE FACT
+         L     REG1,0(REG1)        LOAD ADDRESS NEXT QEL
+         B     QELLOOP             LOOP FOR ALL QELS
+NEWMINOR L     REG10,0(REG10)      LOAD ADDRESS NEXT MINOR QCB
+         B     QCBLOOP             LOOP ROUND ALL MINOR QCBS
+         SPACE 2
+ALOCHELD MVC   INFO(L'ALOCMSG),ALOCMSG MOVE TEXT TO OUTPUT
+         BR    REG11               RETURN TO HAVE MSG OUTPUT
+         SPACE 2
+ALOCEXIT B     4(REG11)            RETURN TO NEXT TEST
+         SPACE 2
+SYSIEFSD DC    CL8'SYSIEFSD'       ENQ NQME FOR ALLOCATION
+ALOCMSG  DC    C'ENQ''D IN ALLOCATION'
+         EJECT
+***********************************************************************
+*        THIS ROUTINE WILL DETERMINE IF THE JOB IS WAITING I/O        *
+***********************************************************************
+         SPACE 2
+TESTIOWT DS    0H
+         L     REG10,16            LOAD ADDRES OF CVT
+         L     REG10,CVTLCH(REG10) LOAD ADDRESS LCH TABLE
+         LA    REG1,&CHANNUM       LOAD NUMBER OF LOGICAL CHANNELS
+LCHLOOP  L     REG15,0(REG10)      LOAD ADDRES OF FIRST IOQ
+IOQLOOP  LTR   REG15,REG15         TEST FOR END OF IOQ CHAIN
+         BNP   NXTLCH              NO MORE IOQ'S TRY NEXT CHANNEL
+         L     REG14,IOQIOSB(REG15) LOAD ADDRESS OF IOSB
+         CLC   ASCBASID,IOSBASID(REG14) DOES I/O BELONG TO ME ?
+         BE    IOWAIT              YES. GO REPORT ON IT
+         L     REG15,0(REG15)      LOAD ADDRESS NEXT IOQ
+         B     IOQLOOP             LOOP FOR ALL IOQ'S
+NXTLCH   LA    REG10,LCHLEN(REG10) STEP TO NEXT ENTRY IN TABLE
+         BCT   REG1,LCHLOOP        LOOP FOR ALL TABLE ENTRIES
+         B     ILKTEST             NO IO Q'D. TRY ACTIVE DEVICES.
+         SPACE 2
+ILKTEST  L     REG10,16            LOAD ADDRESS OF CVT
+         L     REG10,IECILK(REG10) LOAD ADDRESS UCB LOOKUP TABLE
+UCBLOOP  LH    REG14,0(REG10)      LOAD ADDRESS NEXT UCB
+         LA    REG10,2(REG10)      STEP TO NEXT TABLE ENTRY
+         CH    REG14,HIGHVALU      IS THIS THE END OF THE UCB TABLE
+         BE    IOEXIT              YES. EXIT FROM UCB LOOP
+         CH    REG14,ZEROS         IS THIS ENTRY ACTIVE ?
+         BE    UCBLOOP             NO. GET NEXT UCB ADDRESS
+         TM    UCBSFLS(REG14),BUSY TEST STATUS OF THE DEVICE
+         BNO   UCBLOOP             NOT BUSY. GET NEXT ENTRY
+         LR    REG15,REG14         LOAD START ADDRESS OF UCB
+         SH    REG15,=H'4'         ADDRESS FIELD IN FRONT OF UCB
+         L     REG15,0(REG15)      LOAD ADDRESS OF CURRENT IOQ
+         L     REG15,IOQIOSB(REG15) LOAD ADDRESS OF IOSB
+         CLC   ASCBASID,IOSBASID(REG15) DOES THIS IO BELONG TO ME ?
+         BE    IOWAITX             YES. GO REPORT ON IT
+         B     UCBLOOP             NO. GO GET NEXT DEVICE
+         SPACE 2
+IOWAIT   L     REG14,IOSBUCB(REG14) LOAD ADDRESS OF UCB
+IOWAITX  MVC   DEVICE,UCBDNAME(REG14) MOVE DEVICE NAME TO OUTPUT
+         MVC   INFO(L'IOINFO),IOINFO MOVE TEXT TO OUTPUT
+         BR    REG11               RETURN TO HAVE OUTPUT DONE
+         SPACE 2
+IOEXIT   B     4(REG11)            RETURN FOR NEXT TEST
+         SPACE 2
+IOINFO   DC    C'WAITING FOR I/O ON'
+         SPACE 2
+HIGHVALU DC    H'-1'               HIGH VALUES FOR END OF TABLE TEST
+ZEROS    DC    H'0'                LOW VALUES FOR INACTIVE ENTRY TEST
+         EJECT
+***********************************************************************
+*        THIS ROUTINE WILL FIND OUT IF ADDRESS IS WAITING ON AN ENQ   *
+***********************************************************************
+         SPACE 2
+TESTENQS DS    0H
+         L     REG10,16            LOAD ADDRESS OF CVT
+         L     REG10,CVTMQCB(REG10) LOAD ADDRESS FIRST MAJ QCB
+MAJLOOP2 LTR   REG10,REG10         TEST FOR ANY MORE MAJ QCBS
+         BZ    ENQEXIT             NONE LEFT. EXIT
+         L     REG14,QCBFMIN(REG10) LOAD ADDRESS FIRST MIN QCB
+MINLOOP2 LTR   REG14,REG14         TEST FOR ANY MORE MIN QCBS
+         BZ    NXTMAJ2             NONE. GET NEXT MAJ
+         L     REG15,QCBFQEL(REG14) LOAD ADDRESS OF FIRST QEL
+         XC    ENQFLAG,ENQFLAG     CLEAR STATUS FLAG
+QELLOOP2 LTR   REG15,REG15         TEST FOR END OF QELS
+         BZ    NXTMIN2             YES. GO GET NEXT MIN
+         CLC   ASCBASID,QELASID(REG15) DOES THIS QEL BELONG TO ME
+         BE    ENQFOUND            YES. GO EXAMINE STATUS
+         TM    QELQFLGS(REG15),SHR TEST STATUS OF THIS REQUEST
+         BO    ENQSHRD             REQUEST IS SHARED
+         OI    ENQFLAG,EXCL        SIGNAL EXCL REQUEST DETECTED
+         B     NXTQEL2             LOOP FOR NEXT QEL
+ENQSHRD  OI    ENQFLAG,SHARED      SIGNAL SHARED REQUEST FOUND
+         B     NXTQEL2             LOOP FOR NEXT QEL
+NXTQEL2  L     REG15,0(REG15)      LOAD ADDRESS NEXT QEL
+         B     QELLOOP2            BRANCH TO LOOP
+NXTMIN2  L     REG14,0(REG14)      LOAD ADDRESS NEXT QEL
+         B     MINLOOP2            BRANCH TO LOOP
+NXTMAJ2  L     REG10,0(REG10)      LOAD ADDRESS OF NEXT MAJ QCB
+         B     MAJLOOP2            BRANCH TO LOOP
+ENQEXIT  B     4(REG11)            RETURN TO NEXT TEST
+         SPACE 2
+ENQFOUND TM    QELQFLGS(REG15),SHR TEST STATUS MY REQ
+         BO    SETMYSHR            MY REQUEST IS SHARED
+         OI    ENQFLAG,MYEXCL      SIGNAL MY REQ IS EXCL
+         B     ENQ002              JUMP OVER SHARED SETTING
+SETMYSHR OI    ENQFLAG,MYSHR       SIGNAL MY REQUEST IS SHARED
+ENQ002   TM    ENQFLAG,EXCL        PREVIOUS REQUEST EXCLUSIVE ?
+         BO    ENQWAIT             TOUGH. THIS REQUEST MUST BE WAITING
+         TM    ENQFLAG,SHARED+MYEXCL AM I FIRST WITH AN EXCL REQ ?
+         BO    ENQWAIT             NO. A SHARED REQUEST PRECEDES.
+         B     NXTQEL2             ALL OK. NO CONFLICT HERE
+         SPACE 2
+ENQWAIT  MVC   OUTENQ,ENQINFO      MOVE TEXT TO OUTPUT
+         MVC   OUTQNAME,QCBQNAME(REG10) MOVE MAJ NAME TO OUTPUT
+         MVI   OUTQNAME+L'OUTQNAME,C':' MOVE DELIMITER IN
+         IC    REG1,QCBRLEN(REG14) LOAD LENGTH MINOR NAME
+         BCTR  REG1,0              SUBTRACT 1 FOR EXECUTE
+         N     REG1,=F'15'         LIMIT LENGTH TO 16
+         EX    REG1,MVCRNAME       MOVE RNAME TO OUTPUT
+         BR    REG11               RETURN TO HAVE OUTPUT DONE
+         SPACE 2
+ENQINFO  DC    CL(L'OUTENQ)'ENQ''D ON -'
+MVCRNAME MVC   OUTRNAME(0),QCBRNAME(REG14) MOVE MINOR NAME TO OUTPUT
+         EJECT
+***********************************************************************
+*        COMMON OUTPUT LINE SETUP                                     *
+***********************************************************************
+         SPACE 2
+LINEUP   DS    0H
+         ST    REG11,LINER11       SAVE LINK REGISTER
+         XC    CLRLINE,CLRLINE     PREPARE BUFFER FOR DATA
+         LH    REG15,ASCBASID      LOAD ADDRESS SPACE ID
+         CVD   REG15,DBLWORD       CONVERT IT TO DECIMAL
+         UNPK  ASID,DBLWORD+6(2)   MOVE ADDRESS SPACE ID TO OUTPUT
+         OI    ASID+L'ASID-1,X'F0' MAKE FINAL BYTE PRINTABLE
+         L     REG1,ASCBJBNI       LOAD ADDRESS JOBNAME FIELD
+         LTR   REG1,REG1           TEST FOR PRESCENCE JOB NAME
+         BNZ   *+8                 STEP OVER NEXT LOAD IF FOUND
+         L     REG1,ASCBJBNS       LOAD NAME OF SYSTEM COMPONENT
+         MVC   JOBNAME,0(REG1)     MOVE JOBNAME TO OUTPUT
+         L     REG11,LINER11       RELOAD LINK REGISTER
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        REPORTS ARE PRESENT ADD HEADING LINE TO OUTPUT.              *
+***********************************************************************
+         SPACE 2
+HEADLINE DS    0H
+         XC    CLRLINE,CLRLINE     CLEAR THE OUTPUT AREA
+         MVC   ASID,OUTTXT1        IDENTIFY ADDRESS SPACE ID FIELD
+         MVC   JOBNAME,OUTTXT4     IDENTIFY JOBNAME FIELD
+         MVC   INFO,OUTTXT5        IDENTIFY INFORMATION FIELD
+         LOADMSG DATA=MSGAREA,LENGTH=MSGLEN,TYPE=L
+         L     REG15,CHAINHDR      LOAD ADDRESS OF TITLE LINE
+         L     REG14,0(REG15)      LOAD ADDRESS OF NEXT LINE
+         ST    REG1,0(REG15)       CHAIN IN THE HEADING LINE
+         ST    REG14,0(REG1)       CHAIN NEXT LINE ONTO THIS ONE
+         B     MSGOUT              OUTPUT THE PREPARED CHAIN
+         SPACE 2
+OUTTXT1  DC    CL(L'ASID)'ASID'
+OUTTXT4  DC    CL(L'JOBNAME)'JOBNAME'
+OUTTXT5  DC    CL(L'INFO)'        STATUS REPORT'
+         EJECT
+***********************************************************************
+*        MESSAGES ARE PREPARED. INVOKE OUTPUT PROCESSOR               *
+***********************************************************************
+         SPACE 2
+MSGOUT   DS    0H
+         LOADMSG DATA=LASTLINE,LENGTH=LASTLEN,TYPE=E
+         ST    REG1,0(REG9)        CHAIN THIS ONTO OTHER ENTRIES
+         OUTPUT CHAINHDR,UCMID=CID HAVE ALL READY MESSAGES OUTPUT
+         B     EXITPGM             RETURN TO CALLER
+         SPACE 2
+LASTLINE DC    C'END OF ANALYSIS'
+LASTLEN  EQU   L'LASTLINE
+         EJECT
+***********************************************************************
+*        COMMON PROGRAM EXIT ROUTINES                                 *
+***********************************************************************
+         SPACE 2
+ERROR    DS    0H
+         LA    REG15,4             SIGNAL INVALID OPERAND
+         B     ZRETURN
+         SPACE 2
+EXITPGM  DS    0H
+         LA    REG15,0             SIGNAL GOOD RETURN
+         SPACE 2
+ZRETURN  LR    REG11,REG15         SAVE RETURN CODE
+         L     REG0,GETMNLEN       LOAD FREEMAIN DETAILS
+         LR    REG1,REG3           LOAD ADDRESS OF WORK AREA
+         FREEMAIN R,LV=(0),A=(1)   FREE UP THE WORK AREA
+         LR    REG15,REG11         RESTORE RETURN CODE
+         ZRETURN RC=(15)
+         EJECT
+***********************************************************************
+*        COMMAND QUERY RESPONSE ROUTINE                               *
+***********************************************************************
+         SPACE 2
+AUXCMMZZ DS    0H
+         LOADMSG DATA=LINE1,LENGTH=LINE1LEN,TYPE=E
+         ST    REG1,CHAINHDR       IDENTIFY START CHAIN
+         B     MSGOUT              BRANCH TO OUTPUT ROUTINE
+         SPACE 2
+LINE1    DC    C'DD WAIT - NO FURTHER OPERANDS ARE REQUIRED'
+LINE1LEN EQU   L'LINE1             LENGTH FOR GETMAIN
+         EJECT
+SUBPOOL  DS    0F                  USED TO LOAD SUBPOOL ID
+         DC    AL1(0)
+         DC    AL3(0)              PADDING
+         END
+//LKED.SYSIN   DD   *
+ SETCODE AC(1)
+ NAME AUXCMM03(R)
+ INCLUDE MLPALIB(AUXCOMM)
+ INCLUDE MLPALIB(AUXCMM03)
+ ENTRY AUXCOMM
+ ALIAS AUXCMM06
+ ALIAS AUXCMM10
+ SETCODE AC(1)
+ NAME AUXCOMM(R)

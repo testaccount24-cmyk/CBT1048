@@ -1,0 +1,410 @@
+         TITLE 'UT512 - PDS MEMBER SECURITY ROUTINE'
+***********************************************************************
+*                     U T 5 1 2
+*
+*            THIS ROUTINE IS DESIGNED TO ALLOW THE MEMBERS OF A SOURCE
+*        LIBRARY TO BE COPIED OUT TO A SECURITY FILE IN A FORMAT WHICH
+*        WILL ALLOW THEM TO BE MAINTAINED AND RETRIEVED EASILY.
+*            BASICALLY, EACH RECORD OF EACH MEMBER IS 'TAGGED' WITH
+*        THE NAME OF THE FILE IT CAME FROM AND ITS MEMBER NAME PLUS A
+*        FEW OTHER BITS AND PIECES.
+*
+*            THE PROCESSING OF THE PROGRAM IS CONTROLLED BY INPUT
+*        PARAMETER CARDS CONTAINING THE NAMES OF THE PDS FILES TO
+*        BE PROCESSED. EACH DATA SET IS DYNAMICALLY ALLOCATED AND THE
+*        DIRECTORY IS READ TO FIND ALL THE MEMBER NAMES. EACH
+*        MEMBER IS READ SEQUENTIALLY AND THE COMPOSITE 'TAGGED'
+*        RECORD BUILT AND WRITTEN TO SYSUT2.
+*
+*
+***********************************************************************
+         EJECT
+***********************************************************************
+*
+*        EXECUTION DETAILS;
+*
+*        THE PROGRAM IS INVOKED BY JCL IN THE NORMAL WAY AND REQUIRES
+*        ONLY THE DEFAULT REGION PARAMETER.
+*
+*        THE JCL REQUIRED IS AS FOLLOWS:
+*
+*        //SECURE EXEC PGM=UT512
+*        //STEPLIB DD DSN=SYS2.TESTLIB,DISP=SHR
+*        //SYSIN DD *
+*              *
+*              CONTROL CARDS   (DSN IN COLS 1-44 ONLY)
+*              *
+*        //SYSUT2 DD DSN=OUTPUT.TAGGED.RECORD.FILE,DISP=XXX
+*
+*        NOTE:
+*        -----
+*
+*        THE ROUTINE USES SYSUT1 AS A DDNAME FOR ALLOCATING DYNAMICALLY
+*        THE DATA SETS WHOSE MEMBERS ARE TO BE PROCESSED. IF A SYSUT1
+*        DDCARD IS INCLUDED IN THE JCL, THIS ALLOCATION WILL FAIL AND
+*        THE ROUTINE WILL NOT FUNCTION.
+*
+*
+*
+***********************************************************************
+         EJECT
+***********************************************************************
+*
+*        IN CASE OF DYNAMIC ALLOCATION FAIL A MESSAGE INDICATE THE
+*               DATA SET NAME IS ISSUED.
+*
+*        RETURN INDICATIONS ARE AS FOLLOWS:
+*
+*        RETURN CODE = 0   ----- NORMAL EXECUTION
+*        RETURN CODE = X'14' --- SYSIN WAS EMPTY OR COULD NOT BE OPENED
+*        RETURN CODE = X'18' --- SYSUT2 COULD NOT BE OPENED
+*
+*        FOR SERIOUS ERRORS DURING EXECUTION AN ABEND USER 00001 IS
+*        ISSUED AND REGISTER 15 CONTAINS A CODE WHICH INDICATES THE
+*        CAUSE OF THE ERROR AS FOLLOWS:
+*
+*        REG15 CODE = X'26' --- PHYSICAL END OF FILE WAS REACHED ON A
+*                               PDS DIRECTORY BEFORE LOGICAL END OF
+*                               FILE WAS DETECTED. THE FILE MAY BE
+*                               CORRUPT.
+*        REG15 CODE = X'2A' --- THE DIRECTORY OF A PDS TO BE PROCESSED
+*                               COULD NOT BE OPENED SUCCESSFULLY.
+*        REG15 CODE = X'2E' --- OPEN FAILED FOR A SPECIFIC MEMBER OF A
+*                               PDS WHOSE DIRECTORY SAYS THE MEMBER
+*                               EXISTS. THE FILE IS PROBABLY CORRUPT
+*
+***********************************************************************
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING
+***********************************************************************
+         SPACE 2
+UT512    ZCSECT
+         XC    RETCODE,RETCODE     CLEAR THE RETURN CODE
+         EJECT
+***********************************************************************
+*        INITIALISE TO PROCESS THE SYSIN FILE
+***********************************************************************
+         SPACE 2
+         OPEN  (SYSIN,INPUT)       OPEN THE SYSIN FILE
+         LA    REG1,SYSIN          ADDRESS OF THE DCB
+         USING IHADCB,REG1         ADDRESSABILITY FOR THE DCB
+         TM    DCBOFLGS,DCBOFOPN   SYSIN WAS OPENED OK ?
+         BZ    NOSYSIN             NO. FORGET SYSIN AND GO TO TERMINATI
+         XC    DSNTADDR,DSNTADDR   MAKE SURE TABLE ANCHOR IS CLEAR
+         LA    REG3,DSNTADDR       AND PRETEND THAT ITS AN ENTRY
+         EJECT
+***********************************************************************
+*        READ ALL THE PARAMETER CARDS AND BUILD DSN TABLE
+***********************************************************************
+         SPACE 2
+SYSNLOOP EQU   *
+         GET   SYSIN               READ FIRST/NEXT SYSIN RECORD
+         LR    REG2,REG1           SAVE ADDRESS OF THE RECORD
+         GETMAIN R,LV=DSNLENTH,SP=1 GETMAIN SOMEWHERE TO PUT IT
+         USING DSNTABLE,REG3       ADDRESSABILITY FOR DSN TABLE ENTRY
+         ST    REG1,DSNCHAIN       CHAIN THIS ENTRY ONTO LAST ONE
+         LR    REG3,REG1           AND SAVE ADDRESS OF THE ENTRY
+         MVC   DSNDSNAM,0(REG2)    MOVE IN THE DATA SET NAME
+         XC    DSNFLAG,DSNFLAG     CLEAR THE TABLE ENTRY FLAGS
+         XC    DSNCHAIN,DSNCHAIN   CLEAR THE CHAINING FIELDS
+         B     SYSNLOOP            AND PROCESS ALL SYSIN CARDS
+EOSYSIN  EQU   *
+         CLOSE (SYSIN)             CLOSE THE SYSIN FILE
+         NC    DSNTADDR,DSNTADDR   ANY DATA SET NAMES FOUND
+         BZ    NOSYSIN             NO. TRAET IT AS AN ERROR
+         EJECT
+***********************************************************************
+*        INITIALISE FOR MAIN FILE PASS PROCESSING
+***********************************************************************
+         SPACE 2
+         UT458 ,                   GET TIME AND DATE
+         OPEN  (SYSUT2,OUTPUT)     OPEN THE OUTPUT FILE
+         LA    REG1,SYSUT2         ADDRESS OF THE DCB
+         TM    DCBOFLGS,DCBOFOPN   OUTPUT FILE IS OPEN OK
+         BZ    NOSYSUT2            NO. GO PUNISH HIS OMISSION
+         EJECT
+***********************************************************************
+*        LOCATE AND PROCESS EACH ENTRY IN THE DSNTABLE
+***********************************************************************
+         SPACE 2
+FILELOOP EQU   *
+         L     REG3,DSNTADDR       LOAD ADDRESS OF FIRST/NEXT ENRTY
+         LTR   REG3,REG3           ANY MORE TABLE ENTRIES ?
+         BZ    TERMINAT            NO. TERMINATE THE ROUTINE
+         MVC   DSNTADDR,DSNCHAIN   UPDATE THE CHAIN POINTER
+         OI    DSNFLAG,DSNDONE     SHOW PROCESSING STARTED HERE
+         BAL   REG11,ALLOCATE      GO ALLOCATE THE FILE
+         CLI   RETCODE,0           ALLOCATION WAS SUCCESSFUL ?
+         BNE   ALLCFAIL            NO. TERMINATE PROCESSING
+         BAL   REG11,INITDRTY      GO INITIALISE THE DIRECTORY
+MAINLOOP EQU   *
+         BAL   REG11,NEWMEMB       GO FETCH NEXT MEMBER NAME
+         CLC   MEMBER,LASTMEMB     IS THIS END OF DIRECTORY ?
+         BE    NEWFILE             YES: NO MORE. START NEW FILE
+         BAL   REG11,INITMEMB      INITIALISE THE MEMBER FOR PROCESS.
+         BAL   REG11,COPYMEMB      COPY OUT THIS MEMBER
+         BAL   REG11,CLOSMEMB      TERMINATE THIS MEMBER
+         B     MAINLOOP            PROCESS THE WHOLE FILE
+NEWFILE  EQU   *
+         BAL   REG11,CLOSDRTY      TERMINATE THE FILE ITSELF
+         BAL   REG11,DEALLOC       GO FREE THE FILE
+         B     FILELOOP            AND GO FETCH THE NEXT FILE
+         EJECT
+***********************************************************************
+*        TERMINATE PROCESSING IN THIS MODULE
+***********************************************************************
+         SPACE 2
+TERMINAT DS    0H
+         CLOSE (SYSUT2)            CLOSE THE OUTPUT FILE
+         FREEPOOL SYSUT2           FREE UP ITS BUFFER POOL
+         B     NORMALXT            AND EXIT NORMALLY
+         EJECT
+***********************************************************************
+*        INITIALISE THE DIRECTORY FOR PROCESSING
+***********************************************************************
+         SPACE 2
+INITDRTY DS    0H
+         OPEN  (DIRECTRY,INPUT)    OPEN THE DIRECTORY FILE
+         LA    REG1,DIRECTRY       LOAD ADDRESS OF THE DCB
+         TM    DCBOFLGS,DCBOFOPN   WAS DCB OPENED O.K. ?
+         BZ    DIRERROR            NO. TERMINATE
+         MVC   CURREOB,NEXTENTY    FORCE NEW BLOCK READ IN NEWMEMB
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        LOCATE THE NEXT MEMBER FROM THE DIRECTORY
+***********************************************************************
+         SPACE 2
+NEWMEMB  DS    0H
+         LM    REG4,REG6,CURRBLOK  LOAD PARAMETER REGISTERS
+         CR    REG5,REG6           ANY DATA LEFT IN CURRENT BLOCK
+         BL    FETCHIT             YES. GO PROCESS IT
+READBLOK EQU   *
+         GET   DIRECTRY            OTHERWISE READ THE NEXT ONE
+         LR    REG4,REG1           SAVE ITS ADDRESS
+         LA    REG5,2(REG4)        ADDRESS OF FIRST ENTRY
+         LH    REG6,0(REG4)        AND LENGTH OF DATA IN BLOCK
+         AR    REG6,REG4           ADDRESS OF END OF DATA IN BLOCK
+         CR    REG4,REG6           IS THIS A NULL BLOCK ?
+         BNL   READBLOK            YES. IGNORE IT
+FETCHIT  EQU   *
+         MVC   MEMBER,0(REG5)      SAVE NAME OF THIS MEMBER
+         XR    REG15,REG15         CLEAR WORK REGISTER
+         IC    REG15,11(REG5)      PICK UP 'C' OF 'TTRC'
+         N     REG15,=F'31'        STRIP OF ALIAS AND NOTE LIST BITS
+         AR    REG15,REG15         DOUBLE THE RESULT (USER DATA LENGTH)
+         LA    REG15,12(REG15)     AND GET TOTAL LENGTH OF THIS ENTRY
+         AR    REG5,REG15          BUMP UP CONTROL REGISTER TO NEXT ENT
+         STM   REG4,REG6,CURRBLOK  AND SAVE UPDATED PARM REGISTERS
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        INITIALISE THE MEMBER FOR PROCESSING
+***********************************************************************
+         SPACE 2
+INITMEMB DS    0H
+         RDJFCB (MEMBFILE)         READ IN JOB FILE CONTROL BLOCK
+         LA    REG15,JFCB          ADDRESS OF THE JFCB
+         USING INFMJFCB,REG15      ADDRESSABILITY FOR IT
+         OI    JFCBTSDM,JFCNWRIT   DO NOT WRITE BACK THIS JFCB
+         OI    JFCBIND1,JFCPDS     THIS IS A MEMBER OF A PDS
+         MVC   JFCBELNM,MEMBER     INSERT MEMBER NAME INTO JCL
+         OPEN  (MEMBFILE,INPUT),TYPE=J AND OPEN THE MEMBER FOR PROCESSI
+         LA    REG1,MEMBFILE       LOAD ADDRESS OF THE DCB
+         TM    DCBOFLGS,DCBOFOPN   DCB WAS OPENED OK
+         BZ    MEMERROR            NO. TERMINATE PROCESSING
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        OUTPUT THE MEMBER TO THE SECURITY FILE
+***********************************************************************
+         SPACE 2
+COPYMEMB DS    0H
+COPYLOOP EQU   *
+         GET   MEMBFILE            READ MEMBER RECORD
+         LR    REG2,REG1           SAVE ITS ADDRESS
+         PUT   SYSUT2              OBTAIN AN OUTPUT BUFFER
+         LR    REG7,REG1           SAVE ITS ADDRESS
+         USING OUTREC,REG7         ADDRESSABILITY FOR IT
+         LR    REG0,REG7           START ADDRESS OF RECORD
+         LH    REG1,OUTRECLN       LOAD LENGTH OF OUTPUT RECORD
+         XR    REG14,REG14         CLEAR SOURCE ADDRESS
+         XR    REG15,REG15         CLEAR LENGTH
+         ICM   REG15,8,=C' '       LOAD A PADDING CHARACTER
+         MVCL  REG0,REG14          CLEAR THE OUTPUT RECORD TO BLANKS
+         MVC   ORDATA,0(REG2)      COPY THE DATA
+         MVC   ORMEMNAM,MEMBER     INSERT THE MEMBER NAME
+         MVC   ORDSN,DSNDSNAM      AND THE DATA SET NAME
+         MVC   ORDATE,UTDDMMYY     SET UP THE DATE
+         MVC   ORTIME,UTHHMMSS     AND SET UP THE TIME
+         B     COPYLOOP            AND PROCESS THE WHOLE MEMBER
+         SPACE 2
+EOMEMB   EQU   *
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        TERMINATE PROCESSING FOR THE MEMBER
+***********************************************************************
+         SPACE 2
+CLOSMEMB DS    0H
+         CLOSE (MEMBFILE)          CLOSE THE DCB
+         FREEPOOL MEMBFILE         FREE UP THE BUFFER POOL
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        TERMINATE PROCESSING FOR THIS FILE
+***********************************************************************
+         SPACE 2
+CLOSDRTY DS    0H
+         CLOSE (DIRECTRY)          CLOSE THE FILE
+         FREEPOOL DIRECTRY         FREE UP THE BUFFER POOL
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        ALLOCATE THE REQUESTED FILE TO 'SYSUT1'
+***********************************************************************
+         SPACE 2
+ALLOCATE DS    0H
+         MVI   FUNCTION,C'A'       SET ALLOCATE FUNCTION CODE
+         B     ALLOCGO             GO.
+DEALLOC  DS    0H
+         MVI   FUNCTION,C'D'       SET DEALLOCATE FUNCTION CODE
+         B     ALLOCGO             GO.
+         SPACE 2
+ALLOCGO  DS    0H
+         MVC   JCLDSN,DSNDSNAM     BUILD THE APPROPRIATE JCL CARD
+         LINK  EP=UT501,PARAM=(JCLCARD,FUNCTION,RETCODE,A,B),VL=1
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        ERROR ROUTINES
+***********************************************************************
+         SPACE 2
+NOSYSIN  DS    0H                  OPEN FAILED FOR SYSIN DATA SET
+         LA    REG15,20            GIVE 'NO SYSIN' RETURN CODE
+         STH   REG15,RETCODE       AND SAVE IN WORK AREA
+         B     ZRETURN             AND RETURN TO CALLER
+NOSYSUT2 DS    0H                  NO SYSUT2 DD STATEMENT OPENED
+         LA    REG15,24            LOAD UP A RETURN CODE
+         STH   REG15,RETCODE       SAVE IN WORK AREA
+         B     NORMALXT            RETURN TO CALLER
+         SPACE 2
+ALLCFAIL DS    0H                  A FILE CANNOT BE ALLOCATED
+         MVC   ALLCDSN(44),JCLDSN  MOVE DSNAME IN WTO MESSAGE
+ALLCWTO  WTO   'ALLOCATION FAILED FOR DSN=                             X
+                               '
+ALLCDSN  EQU   ALLCWTO+8+26
+         WTO   'PROCESSING BYPASSED FOR THIS FILE'
+         B     FILELOOP            GO PROCESS NEXT FILE
+EOFDIRTY DS    0H                  END OF FILE ON DIRECTORY
+         LA    REG15,38            LOAD A RETURN CODE
+         ABEND 1,DUMP              ABEND
+DIRERROR DS    0H                  DIRECTORY COULD NOT BE OPENED
+         LA    REG15,42            LOAD A RETURN CODE
+         ABEND 1,DUMP              AND ABEND
+MEMERROR DS    0H                  DIRECTORY COULD NOT BE OPENED
+         LA    REG15,46            LOAD A RETURN CODE
+         ABEND 1,DUMP              AND ABEND
+         EJECT
+***********************************************************************
+*        PROGRAM EXIT ROUTINE
+***********************************************************************
+         SPACE 2
+NORMALXT DS    0H                  NORMAL EXIT
+         FREEMAIN R,SP=1           FREE UP ALL GETMAINED CORE
+ZRETURN  DS    0H                  ENTER HERE FROM NOSYSIN
+         LH    REG15,RETCODE       LOAD THE RETURN CODE
+         ZRETURN RC=(15)           RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        DATA CONTROL BLOCK DEFINTIONS
+***********************************************************************
+         SPACE 2
+         PRINT NOGEN
+SYSPRINT DCB   DDNAME=SYSPRINT,DSORG=PS,MACRF=PL,LRECL=133,RECFM=FA,   X
+               BLKSIZE=133
+SYSIN    DCB   DDNAME=SYSIN,DSORG=PS,MACRF=GL,EODAD=EOSYSIN
+SYSUT2   DCB   DDNAME=SYSUT2,DSORG=PS,MACRF=PL,RECFM=FB,LRECL=ORLENTH, X
+               EXLST=EXLST2
+MEMBFILE DCB   DDNAME=SYSUT1,DSORG=PS,MACRF=GL,LRECL=80,RECFM=FB,      X
+               EODAD=EOMEMB,EXLST=EXLST
+DIRECTRY DCB   DDNAME=SYSUT1,DSORG=PS,MACRF=GL,LRECL=256,RECFM=F,      X
+               BLKSIZE=256,EODAD=EOFDIRTY
+         PRINT GEN
+         EJECT
+***********************************************************************
+*        DCB OPEN EXIT FOR THE OUTPUT FILE
+***********************************************************************
+         SPACE 2
+OPENEXIT DS    0H
+         PUSH  USING               SAVE NORMAL ADDRESSABILITY
+         USING *,REG15             TEMPORARY ADDRESSABILITY
+         USING IHADCB,REG1         ADDRESSABILITY FOR DCB
+         NC    DCBBLKSI,DCBBLKSI   DOES HE HAVE A BLOCKSIZE ?
+         BNZ   DCBRETRN            YES. LEAVE IT ALONE
+         LH    REG2,DCBLRECL       OTHERWISE TAKE LREC
+         SLL   REG2,4              MULTIPLY BY 16
+         STH   REG2,DCBBLKSI       AND GIVE HIM THAT AS A BLOCKSIZE
+DCBRETRN EQU   *
+         BR    REG14               RETURN TO OPEN ROUTINE
+         DROP  REG15               RELEASE THAT 'ORRIBLE ADDRESSABILITY
+         POP   USING               AND WELCOME BACK MY OLD FREIND 12
+         EJECT
+*******************************************************************
+*        CONSTANTS AND WORK AREAS USED BY THIS ROUTINE            *
+*******************************************************************
+         SPACE 2
+DSNTADDR DS    A(0)                ADDRESS OF THE DATA SET NAME TABLE
+CURRBLOK DS    F                   ADDRESS OF CURRENT DIRECTORY BLOCK
+NEXTENTY DS    F                   ADDRESS OF NEXT DIRECTRY ENTRY
+CURREOB  DS    F                   ADDRESS OF END OF DATA IN CURR BLK
+A        DS    F                   WORK AREA FOR UT501
+B        DS    F                   WORK AREA FOR UT501
+EXLST2   DS    0F                  EXIT LIST ADDRESS
+         DC    X'85'               DCB OPEN EXIT
+         DC    AL3(OPENEXIT)       ADDRESS OF THE OPEN EXIT ROUTINE
+EXLST    DS    0F                  EXIT LIST ADDRESS
+         DC    X'87'               JFCB ENTRY
+         DC    AL3(JFCB)           ADDRESS OF JFCB FIELD
+JFCB     DS    CL176               WORK AREA FOR JFCB
+RETCODE  DC    H'0'                RETURN CODE TO CALLER
+OUTRECLN DC    AL2(ORLENTH)        LENGTH OF THE OUTPUT RECORD
+MEMBER   DS    CL8                 NAME OF CURRENT MEMBER
+LASTMEMB DC    8X'FF'              NAME OF LAST ENTRY IN DIRECTORY
+JCLCARD  DS    0H                  JCL CARD PASSED TO UT501
+         DC    AL2(JCLEND-*)       LENGTH OD THE CARD
+         DC    C'//SYSUT1 DD DISP=SHR,DSN='
+JCLDSN   DC    CL44' '             NAME OF THE FILE
+         DC    C' '                PADDING
+JCLEND   EQU   *                   END OF THE JCL CARD
+FUNCTION DC    C'A'                FUNCTION CODE FOR UT501
+         LTORG
+         EJECT
+***********************************************************************
+*        DSECTS USED BY THIS MODULE
+***********************************************************************
+         SPACE 2
+DSNTABLE DSECT                     TABLE OF DATA SET NAMES TO PROCESS
+DSNCHAIN DS    A                   ADDRESS OF NEXT ENTRY ON CHAIN
+DSNDSNAM DS    CL44                NAME OF THE FILE
+DSNFLAG  DS    X                   FLAG FIELD FOR THIS FILE
+DSNDONE  EQU   X'80'               THIS FILE HAS BEEN PROCESSED
+DSNLENTH EQU   *-DSNTABLE          LENGTH OF ONE ENTRY
+         SPACE 2
+OUTREC   DSECT ,                   OUTPUT RECORD AREA
+ORDATA   DC    CL80' '             RECORD IMAGE
+ORDSN    DC    CL44' '             DATASET NAME
+ORMEMNAM DC    CL8' '              MEMBER NAME
+ORMOPENM DS    CL8                 REST OF MEMBER NAME FOR MOPE
+ORDATE   DC    CL6' '              DATE YYMMDD
+ORTIME   DC    CL6' '              TIME HHMMSS
+ORSPARE  DS    CL28                RESERVED FOR FUTURE USE
+ORLENTH  EQU   *-OUTREC            LENGTH OF OUTPUT RECORDS
+         SPACE 2
+         PRINT NOGEN
+         DCBD  DSORG=QS,DEVD=DA    DSECT FOR DCB'S
+         SPACE 2
+         PRINT GEN
+         IEFJFCBN
+         END

@@ -1,0 +1,535 @@
+AA       START
+         PRINT ON,NODATA,NOGEN
+         SAVE  (14,12)
+         USING AA,R2,R3
+         LR    R2,R15
+         LA    R3,4095(R2)
+         LA    R3,1(R3)
+         ST    R13,SAVE+4
+         LR    R12,R13
+         LA    R13,SAVE
+         ST    R13,8(R12)
+* REGISTERNAMES
+R0       EQU   0
+R1       EQU   1
+R2       EQU   2
+R3       EQU   3
+R4       EQU   4
+R5       EQU   5
+R6       EQU   6
+R7       EQU   7
+R8       EQU   8
+R9       EQU   9
+R10      EQU   10
+R11      EQU   11
+R12      EQU   12
+R13      EQU   13
+R14      EQU   14
+R15      EQU   15
+         L     R1,0(R0,R1)
+         MVC   NAME(5),2(R1)
+* OPEN FILES
+         OPEN  (DCBP,(OUTPUT))
+         OPEN  (SNAPDUMP,(OUTPUT))
+         OPEN  (DCBC,(INPUT))
+         OPEN  (DCBF,(INPUT))
+         OPEN  (DCBT,(OUTPUT))
+* READ MASTERCARD
+         GET   DCBC,MAREA
+         CLC   MCCODE,TOO
+         BNE   ERROR31
+         CLC   NRFIELDS(1),=C'0'
+         BL    ERROR38
+         CLC   NRFIELDS+1(1),=C'0'
+         BL    ERROR38
+         CLC   NRFIELDS(1),=C'3'
+         BH    ERROR38
+         CLC   NRFIELDS+1(1),=C'9'
+         BH    ERROR38
+         PACK  PNRFIELD,NRFIELDS
+* BUILD A LIST FOR THE F-TABLE AND RETRIEVE THE TABLE
+         BLDL  DCBF,LIST
+         LTR   R15,R15
+         BNZ   TESTCC
+         FIND  DCBF,TTR,C
+         READ  DECBF,SF,DCBF,FBUF,84
+         CHECK DECBF
+* INITIALIZE POINTERS
+         LA    R4,FBUF
+         L     R5,0(R4)
+         LA    R7,TBUF
+         B     HEADER
+* TEST CONDITION CODE
+TESTCC   MVC   ZONE,ZONE-1
+         CLI   TTR+2,X'00'
+         BNE   NEXT
+         MVC   ZONE(7),=C'MEMBER '
+         MVC   ZONE+8(8),NAME
+         MVC   ZONE+17(9),=C'NOT FOUND'
+         B     PUTT
+NEXT     MVC   ZONE(24),=C' SOME ERROR IN BUILDLIST '
+PUTT     DS    0H
+         PUT   DCBP,ZONE-1
+         B     STOP
+HEADER   EQU   *
+         AP    PBIND,PONE
+* CHECK ON THE ENDMARK OF THE F-TABLE
+         CLC   SW,ON
+         BE    ERROR45
+* CHECK IF DUMMY FIELD
+         CLC   FOOO,0(R4)
+         BE    ADJP
+* READ HEADERCARD INTO AREA
+         GET   DCBC,AREA
+         CLC   CCODE,TT
+         BNE   ERROR32
+         CLC   OO,COO
+         BNE   ERROR42
+         CLC   FIELDNR(1),=C'0'
+         BL    ERROR39
+         CLC   FIELDNR+1(1),=C'0'
+         BL    ERROR39
+         CLC   FIELDNR(1),=C'3'
+         BH    ERROR39
+         CLC   FIELDNR+1(1),=C'9'
+         BH    ERROR39
+         CLC   NRCONSTR(1),=C'0'
+         BL    ERROR40
+         CLC   NRCONSTR+1(1),=C'0'
+         BL    ERROR40
+         CLC   NRCONSTR+2(1),=C'0'
+         BL    ERROR40
+         CLC   NRCONSTR(1),=C'9'
+         BH    ERROR40
+         CLC   NRCONSTR+1(1),=C'9'
+         BH    ERROR40
+         CLC   NRCONSTR+2(1),=C'9'
+         BH    ERROR40
+         PACK  PFIELDNR,FIELDNR
+         PACK  PNRCT,NRCONSTR
+         CP    PNRCT,PONE
+         BL    ERROR44
+         AP    PCNT,PONE
+         CP    PCNT,PFIELDNR
+         BNE   ERROR33
+NEXTC    EQU   *
+         LA    R9,4(R0)
+* READ LIMITCARD INTO TAREA
+         GET   DCBC,TAREA
+         CLC   TCCODE,TT
+         BNE   ERROR43
+         CLC   TFIELDNR,FIELDNR
+         BNE   ERROR34
+         CLC   CTNR(1),=C'0'
+         BL    ERROR41
+         CLC   CTNR+1(1),=C'0'
+         BL    ERROR41
+         CLC   CTNR+2(1),=C'0'
+         BL    ERROR41
+         CLC   CTNR(1),=C'9'
+         BH    ERROR41
+         CLC   CTNR+1(1),=C'9'
+         BH    ERROR41
+         CLC   CTNR+2(1),=C'9'
+         BH    ERROR41
+         PACK  PCTNR,CTNR
+         ZAP   PP,PONE
+         CP    PP,PCTNR
+         BNE   ERROR35
+* DOES CHECKING APPLIE TO THIS FIELD
+         ST    R7,POINTER
+         LA    R7,4(R0,R7)
+         LR    R10,R7
+         CLC   F,LIMITS
+         BE    NOLIMITS
+* CALCULATE LENGTH OF LIMITSTRING
+         CVD   R5,LENGTH
+         AP    LENGTH,PONE
+         DP    LENGTH,PTWO
+         CP    PZERO,LENGTH+7(1)
+         BE    POINT
+         AP    LENGTH(7),PONE
+POINT    EQU   *
+* CALCULATE POINTERS IN T-TABLE
+         AP    LENGTH(7),PONE
+         MP    LENGTH(7),PFOUR
+         MVC   BUF+1(7),LENGTH
+         CVB   R6,BUF
+         LA    R6,4(R6)
+         ST    R6,0(R7)
+         L     R8,0(R4)
+         A     R8,0(R4)
+         LA    R8,1(R8)
+EXEC     EQU   *
+* EXECUTE THE MOVE INSTRUCTION
+         EX    R8,MVC
+         AR    R9,R6
+         AR    R7,R8
+         LA    R7,5(R7)
+* PLACE THE ENDMARK AT THE END OF THE STRING
+         MVC   0(4,R7),FFFF
+         AR    R10,R6
+         LR    R7,R10
+         CP    PNRCT,PCTNR
+         BE    SEQTEST
+* READ LIMITCARD INTO TAREA
+         GET   DCBC,TAREA
+         CLC   TCCODE,TT
+         BNE   ERROR43
+         CLC   TFIELDNR,FIELDNR
+         BNE   ERROR34
+         CLC   CTNR(1),=C'0'
+         BL    ERROR41
+         CLC   CTNR+1(1),=C'0'
+         BL    ERROR41
+         CLC   CTNR+2(1),=C'0'
+         BL    ERROR41
+         CLC   CTNR(1),=C'9'
+         BH    ERROR41
+         CLC   CTNR+1(1),=C'9'
+         BH    ERROR41
+         CLC   CTNR+2(1),=C'9'
+         BH    ERROR41
+         PACK  PCTNR,CTNR
+         AP    PP,PONE
+         CP    PP,PCTNR
+         BNE   ERROR35
+         ST    R6,0(R7)
+         B     EXEC
+SEQTEST  EQU   *
+         L     R6,POINTER
+         ST    R9,0(R6)
+LA       LA    R4,4(R4)
+         L     R5,0(R4)
+         CP    PEIGHT,PBIND
+         BNE   ENDTEST
+         MVC   0(4,R7),HTWO
+         LA    R7,4(R7)
+         LA    R4,4(R4)
+         L     R5,0(R4)
+ENDTEST  EQU   *
+* CHECK ENDMARK OF F-TABLE (SWITCH)
+         CLC   0(4,R4),FFOO
+         BE    SWITCH
+* TEST ON LAST FIELD
+CP       CP    PNRFIELD,PFIELDNR
+         BNE   HEADER
+         MVC   0(4,R7),HZERO
+         GET   DCBC,TAREA
+         B     ERROR36
+* TEST ON THE TOTAL NUMBER OF CARDS
+TEST     CP    PNRFIELD,PFIELDNR
+         BNE   ERROR37
+         BE    PUT
+* PUT THE SWITCH ON
+SWITCH   MVC   SW,ON
+         B     CP
+SWITCHO  MVC   SW,ON
+         B     HEADER
+* ADJUST THE POINTERS
+ADJP     LA    R4,4(R4)
+         L     R5,0(R4)
+         CP    PEIGHT,PBIND
+         BNE   CLC
+         MVC   0(4,R7),HTWO
+         LA    R7,4(R7)
+         LA    R4,4(R4)
+         L     R5,0(R4)
+CLC      CLC   0(4,R4),FFOO
+         BE    SWITCHO
+         B     HEADER
+PUT      DS    0H
+         CLC   SW,ON
+         BNE   ERROR45
+* PUT THE T-TABLE ON DISK
+         PUT   DCBT,TBUF
+* GIVE A SHORTDUMP OF THE T-TABLE
+         SNAP  DCB=SNAPDUMP,ID=51,                                     X
+               STORAGE=(TBUF,TBUF+4000,FBUF,FBUF+84)
+         B     STOP
+NOLIMITS MVC   4(4,R7),FFFF
+         L     R6,POINTER
+         LA    R9,12(R0)
+         ST    R9,0(R6)
+         LA    R9,8(R0)
+         ST    R9,0(R7)
+         LA    R7,8(R7)
+         B     LA
+STOP     EQU   *
+         L     13,4(13)
+         LM    14,12,12(13)
+         BR    14
+* ERRORROUTINES
+ERROR31  DS    0H
+         PUT   DCBP,MERR31
+         PUT   DCBP,PRINT
+         MVC   PRINTA+5(4),=C'CARD'
+         MVC   PRINTB,MAREA
+         PUT   DCBP,PRINT
+         B     STOP
+ERROR32  DS    0H
+         PUT   DCBP,MERR32
+         PUT   DCBP,PRINT
+         MVC   PRINTA+5(4),=C'CARD'
+         MVC   PRINTB,AREA
+         PUT   DCBP,PRINT
+         B     STOP
+ERROR33  DS    0H
+         PUT   DCBP,MERR33
+         PUT   DCBP,PRINT
+         MVC   PRINTA+5(4),=C'CARD'
+         MVC   PRINTB,AREA
+         PUT   DCBP,PRINT
+         B     STOP
+ERROR34  DS    0H
+         PUT   DCBP,MERR34
+         PUT   DCBP,PRINT
+         MVC   PRINTA+5(4),=C'CARD'
+         MVC   PRINTB,TAREA
+         PUT   DCBP,PRINT
+         B     STOP
+ERROR35  DS    0H
+         PUT   DCBP,MERR35
+         PUT   DCBP,PRINT
+         MVC   PRINTA+5(4),=C'CARD'
+         MVC   PRINTB,TAREA
+         PUT   DCBP,PRINT
+         B     STOP
+ERROR36  DS    0H
+         PUT   DCBP,MERR36
+         PUT   DCBP,PRINT
+         MVC   PRINTA+5(4),=C'CARD'
+         MVC   PRINTB,TAREA
+         PUT   DCBP,PRINT
+         B     STOP
+ERROR37  DS    0H
+         PUT   DCBP,MERR37
+         B     STOP
+ERROR38  DS    0H
+         PUT   DCBP,MERR38
+         PUT   DCBP,PRINT
+         MVC   PRINTA+5(4),=C'CARD'
+         MVC   PRINTB,MAREA
+         PUT   DCBP,PRINT
+         B     STOP
+ERROR39  DS    0H
+         PUT   DCBP,MERR39
+         PUT   DCBP,PRINT
+         MVC   PRINTA+5(4),=C'CARD'
+         MVC   PRINTB,AREA
+         PUT   DCBP,PRINT
+         B     STOP
+ERROR40  DS    0H
+         PUT   DCBP,MERR40
+         PUT   DCBP,PRINT
+         MVC   PRINTA+5(4),=C'CARD'
+         MVC   PRINTB,AREA
+         PUT   DCBP,PRINT
+         B     STOP
+ERROR41  DS    0H
+         PUT   DCBP,MERR41
+         PUT   DCBP,PRINT
+         MVC   PRINTA+5(4),=C'CARD'
+         MVC   PRINTB,TAREA
+         PUT   DCBP,PRINT
+         B     STOP
+ERROR42  DS    0H
+         PUT   DCBP,MERR42
+         PUT   DCBP,PRINT
+         MVC   PRINTA+5(4),=C'CARD'
+         MVC   PRINTB,AREA
+         PUT   DCBP,PRINT
+         B     STOP
+ERROR43  DS    0H
+         PUT   DCBP,MERR43
+         PUT   DCBP,PRINT
+         MVC   PRINTA+5(4),=C'CARD'
+         MVC   PRINTB,TAREA
+         PUT   DCBP,PRINT
+         B     STOP
+ERROR44  DS    0H
+         PUT   DCBP,MERR44
+         PUT   DCBP,PRINT
+         MVC   PRINTA+5(4),=C'CARD'
+         MVC   PRINTB,AREA
+         PUT   DCBP,PRINT
+         B     STOP
+ERROR45  DS    0H
+         PUT   DCBP,MERR45
+         B     STOP
+ERROR46  DS    0H
+         PUT   DCBP,MERR46
+         B     STOP
+* SYNADROUTINES
+RSYNADC  DS    0H
+         PUT   DCBP,MERRC
+         B     STOP
+RSYNADF  DS    0H
+         PUT   DCBP,MERRF
+         B     STOP
+RSYNADT  DS    0H
+         PUT   DCBP,MERRT
+         B     STOP
+RSYNADP  DS    0H
+         SNAP  DCB=SNAPDUMP,ID=55,PDATA=(PSW,REGS)                     X
+               STORAGE=(MERRP,MERRP+54)
+         B     STOP
+* CONSTANTS AND STORAGE
+SAVE     DS    18F
+MVC      MVC   4(0,R7),LIMITS
+MAREA    DS    0CL80
+MCCODE   DS    CL3
+NRFIELDS DS    CL2
+UPDDATE  DS    CL6
+         DS    CL69
+AREA     DS    0CL80
+CCODE    DS    CL1
+FIELDNR  DS    CL2
+COO      DS    CL3
+NRCONSTR DS    CL3
+         DS    CL71
+TAREA    DS    0CL80
+TCCODE   DS    CL1
+TFIELDNR DS    CL2
+CTNR     DS    CL3
+LIMITS   DS    CL74
+TOO      DC    C'T00'
+LIST     DS    0H
+ENTRIES  DC    H'1'
+LENG     DC    H'12'
+NAME     DC    8C' '
+TTR      DS    CL3
+K        DS    CL1
+         DS    0F
+FBUF     DS    CL84
+TT       DC    C'T'
+         DC    C' '
+SW       DC    XL1'0'
+ON       DC    XL1'F'
+PBIND    DC    PL2'0'
+OO       DC    C'000'
+         DC    C' '
+ZONE     DS    CL144
+FFOO     DC    XL4'FF000000'
+PFIELDNR DS    PL2
+PNRCT    DS    PL3
+PCNT     DC    PL2'0'
+PONE     DC    PL2'1'
+PCTNR    DS    PL3
+PP       DC    PL3'0'
+F        DC    C'F',73C' '
+BZEROS   DC    XL4'F0000000'
+FFFF     DC    XL4'FFFF0000'
+PNRFIELD DS    PL2
+FOOO     DC    XL4'F0000000'
+LENGTH   DS    D
+PTWO     DC    PL1'2'
+PZERO    DC    PL1'0'
+PFOUR    DC    PL1'4'
+POINTER  DS    F
+PEIGHT   DC    PL2'7'
+HTWO     DC    XL4'2'
+HZERO    DC    XL4'0'
+* ERROR MESSAGES
+MERR31   DS    0CL144
+         DC    CL5' ',C'ID=31',CL23' ',C'*****  '
+         DC    C'CARD CODE OF MASTERCARD NOT EQUAL TO T00'
+         DC    C'  *****',CL57' '
+MERR32   DS    0CL144
+         DC    CL5' ',C'ID=32',CL23' ',C'*****  '
+         DC    C'CARD CODE OF HEADER CARD NOT EQUAL TO T'
+         DC    C'  *****',CL58' '
+MERR33   DS    0CL144
+         DC    CL5' ',C'ID=33',CL23' ',C'*****  '
+         DC    C'FIELD NUMBER OF HEADER CARD NOT IN SEQUENCE'
+         DC    C'  *****',CL54' '
+MERR34   DS    0CL144
+         DC    CL5' ',C'ID=34',CL23' ',C'*****  '
+         DC    C'FIELDNUMBER OF LIMITCARD NOT EQUAL TO FIELDNUMBER OF HX
+               EADER CARD'
+         DC    C'  *****',CL43' '
+MERR35   DS    0CL144
+         DC    CL5' ',C'ID=35',CL23' ',C'*****  '
+         DC    C'CONSTRAINT NUMBER ON LIMITCARD NOT IN SEQUENCE'
+         DC    C'  *****',CL58' '
+MERR36   DS    0CL144
+         DC    CL23' ',C'*****  '
+         DC    C'MORE CARDS CODED THAN ALLOWED BY THE NUMBER OF FIELDS X
+               AND THE NUMBER OF CONSTRAINTS'
+         DC    C'  *****',CL24' '
+MERR37   DS    0CL144
+         DC    CL23' ',C'*****  '
+         DC    C'NOT ENOUGH CARDS CODED AS REQUIRED BY THE NUMBER OF FIX
+               ELDS AND THE NUMBER OF CONSTRAINTS'
+         DC    C'  *****',CL50' '
+MERR38   DS    0CL144
+         DC    CL5' ',C'ID=38',CL23' ',C'*****  '
+         DC    C'NUMBER OF FIELDS INCORRECT CODED'
+         DC    C'  *****',CL72' '
+MERR39   DS    0CL144
+         DC    CL5' ',C'ID=39',CL23' ',C'*****  '
+         DC    C'FIELD NUMBER ON HEADER CARD INCORRECT CODED'
+         DC    C'  *****',CL61' '
+MERR40   DS    0CL144
+         DC    CL5' ',C'ID=40',CL23' ',C'*****  '
+         DC    C'NUMBER OF CONSTRAINTS ON HEADER CARD INCORRECT CODED'
+         DC    C'  *****',CL52' '
+MERR41   DS    0CL144
+         DC    CL5' ',C'ID=41',CL23' ',C'*****  '
+         DC    C'CONSTRAINT NUMBER ON LIMITCARD INCORRECT CODED'
+         DC    C'  *****',CL58' '
+MERR42   DS    0CL144
+         DC    CL5' ',C'ID=42',CL23' ',C'*****  '
+         DC    C'CONSTRAINT NUMBER OF HEADERCARD NOT EQUAL TO 000'
+         DC    C'  *****',CL49' '
+MERR43   DS    0CL144
+         DC    CL5' ',C'ID=43',CL23' ',C'*****  '
+         DC    C'CARD CODE OF LIMITCARD NOT EQUAL TO T'
+         DC    C'  *****',CL67' '
+MERR44   DS    0CL144
+         DC    CL5' ',C'ID=44',CL23' ',C'*****  '
+         DC    C'NUMBER OF CONSTRAINTS MUST BE AT LEAST 001'
+         DC    C'  *****',CL56' '
+MERR45   DS    0CL144
+         DC    CL5' ',C'ID=45',CL8' ',C'*****  '
+         DC    C'THE NUMBER OF SELECTED FIELDS IN THE F-TABLE DOESN''T X
+               CORRESPOND TO THE NUMBER OF FIELDS IN THE T-TABLE'
+         DC    C'  *****',CL10' '
+MERR46   DS    0CL144
+         DC    CL5' ',C'ID=46',CL23' ',C'*****  '
+         DC    C'THE F-TABLE ISN''T YET CREATED'
+         DC    C'  *****',CL71' '
+MERRC    DS    0CL144
+         DC    CL40' '
+         DC    C'SOME ERROR WHILE READING A CARD'
+         DC    CL73' '
+MERRF    DS    0CL144
+         DC    CL40' '
+         DC    C'SOME ERROR OCCURED WHILE READING THE F-TABLE'
+         DC    CL60' '
+MERRT    DS    0CL144
+         DC    CL40' '
+         DC    C'SOME ERROR OCCURED WHILE WRITING THE T-TABLE ON DISK'
+         DC    CL52' '
+MERRP    DC    C'SOME ERROR OCCURED WHILE PRINTING ON THE SYSOUT DEVICEX
+               '
+* DATA CONTROL BLOCKS
+SNAPDUMP DCB   DDNAME=SYSNDUMP,DSORG=PS,RECFM=VBA,MACRF=(W),LRECL=125, X
+               BLKSIZE=882
+DCBC     DCB   DDNAME=DDCARD,DSORG=PS,MACRF=GM,LRECL=80,               X
+               BLKSIZE=80,RECFM=F,EODAD=TEST,SYNAD=RSYNADC
+DCBF     DCB   DDNAME=DISKF,DSORG=PO,MACRF=R,LRECL=84,                 X
+               BLKSIZE=84,RECFM=F,SYNAD=RSYNADF,EODAD=ERROR46
+DCBT     DCB   DDNAME=DISKT,DSORG=PS,MACRF=PM,LRECL=4000,              X
+               BLKSIZE=4000,RECFM=F,SYNAD=RSYNADT
+DCBP     DCB   DDNAME=SYSPRINT,DSORG=PS,MACRF=PM,LRECL=144,RECFM=F,    X
+               BLKSIZE=144,SYNAD=RSYNADP
+PRINT    DS    0CL144
+PRINTA   DC    CL30' '
+PRINTB   DC    CL80' '
+PRINTC   DC    CL34' '
+         LTORG
+BUF      DS    0D
+         DC    PL8'0'
+TBUF     DS    CL4000
+         END

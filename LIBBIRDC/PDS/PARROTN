@@ -1,0 +1,453 @@
+         TITLE 'PARROTN - INTERNAL MACROS'                              N 000100
+         MACRO                                                          N 000200
+         $CB   &PRINT=OFF          MACRO TO GENERATE DSECTS             N 000300
+         PUSH  PRINT               PRESERVE PRINT OPTIONS               N 000400
+         PRINT &PRINT              SET PRINT OPTIONS FOR DSECTS         N 000500
+               EJECT                                                    N 000600
+         CBPREFIX ,                CONTROL BLOCK PREFIX                 N 000700
+               EJECT                                                    N 000800
+         CCB   ,                   CENTRAL CONTROL BLOCK                N 000900
+               EJECT                                                    N 001000
+         CSECTID ,                 CSECT IDENTIFICATION PREFIX          N 001100
+               EJECT                                                    N 001200
+         EQUATES ,                 GENERATE STANDARD EQUATES            N 001300
+               EJECT                                                    N 001400
+         OCB   ,                   OUTPUT CONTROL BLOCK                 N 001500
+               EJECT                                                    N 001600
+         RST   ,                   RECORD SELECTION TEST CONTROL BLOCK  N 001700
+         POP   PRINT               RESTORE ORIGINAL PRINT OPTIONS       N 001800
+         MEND                                                           N 001900
+         SPACE 5                                                        N 002000
+         MACRO                                                          N 002100
+&NAME    MSGDEF &FLD                                                    N 002200
+         LCLC  &L                                                       N 002300
+.*                                                                      N 002400
+.*       CREATE A TABLE ENTRY THAT IS A DESCRIPTOR OF THE SPECIFIED     N 002500
+.*        FIELD.  THE FORMAT OF THE DESCRIPTOR IS :-                    N 002600
+.*             AL1(EXECUTABLE LENGTH)                                   N 002700
+.*             AL3(ADDRESS)                                             N 002800
+.*                                                                      N 002900
+&L       SETC  'L'''                                                    N 003000
+&NAME    DC    AL1(&L&FLD.-1),AL3(&FLD)                                 N 003100
+         MEND                                                           N 003200
+         SPACE 5                                                        N 003300
+PARROTN  CSECT                                                          N 003400
+         $CB   ,                   GENERATE DSECTS AND EQUATES          N 003500
+         TITLE 'PARROTN - TERMINATION ROUTINES'                         N 003600
+        SCSECT N                                                        N 003700
+         ENTRY PARENDN             END OF CSECT                         N 003800
+         ENTRY MSG60               MSG DESCRIPTOR FOR ABEND 60          N 003900
+         ENTRY MSG61               MSG DESCRIPTOR FOR ABENDS 61-63      N 004000
+         ENTRY DUMP                TERMINATE ABNORMALLY                 N 004100
+         ENTRY TERMPH1             1ST PHASE OF TERMINATION             N 004200
+         TITLE 'PARROTN - 1ST PHASE OF TERMINATION PROCESSING'          N 004300
+*********************************************************************** N 004400
+*        1ST PHASE OF TERMINATION PROCESSING - MAIN-LINE              * N 004500
+*********************************************************************** N 004600
+         SPACE 1                                                        N 004700
+TERMPH1  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              N 004800
+         CBAL  R4,CBDUMP           FORMAT C/B IF REQD ( U044 'DUMP' )   N 004900
+         L     R5,SYSPRINT+IOPSRECA GET SYSPRINT BUFFER ADDRESS         N 005000
+         CBAL  R4,TERMEXIT         TERMINATE USER EXIT ( IF ANY )       N 005100
+         ZAP   SYSPRINT+IOPSRCNT(4),$ZERO ZEROISE SYSPRINT LINE COUNTER N 005200
+         MVI   0(R5),PAGESKIP      ESTABLISH SKIP TO NEW PAGE           N 005300
+         CBAL  R4,PRINT             AND SKIP TO NEW PAGENES             N 005400
+         CBAL  R4,PRNTERR          PRINT ANY ERROR MESSAGES             N 005500
+         CBAL  R4,IOSUMM           PRINT SUMMARY OF I/O ACTIVITY        N 005600
+         CBAL  R4,OCBSUMM          PRINT SUMMARY OF OCB I/O ACTVIITY    N 005700
+         CBAL  R4,SUMMREC          TELL OF RECORDS SELECTED             N 005800
+         CBAL  R4,COREUSE          TELL OF CORE USAGE                   N 005900
+         CBAL  R4,PRNTCDE          PRINT COMPLETION CODE                N 006000
+         CBAL  R4,FDUMP            TERMINATE WITH U004 IF REQUESTED     N 006100
+         CBAL  R4,DDCLOSE          CLOSE ANY OPEN DD STATEMNTS          N 006200
+        SUBOUT RESTORE=R4          RETURN TO CALLER                     N 006300
+         EJECT                                                          N 006400
+*********************************************************************** N 006500
+*        TERMINATION: TERMINATE USER EXIT ( IF ANY )                  * N 006600
+*********************************************************************** N 006700
+         SPACE 1                                                        N 006800
+TERMEXIT SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              N 006900
+         TM    $STATUS,STATEXIT    IS THERE A USER EXIT                 N 007000
+         BZ    TERMEXX             EXIT IF NO USER ROUTINE              N 007100
+         MVI   $PROCTYP,C'Z'       SET CALL TYPE TO TERMINATE           N 007200
+         CBAL  R4,UXITCAL          INVOKE & TERMINATE THE USER EXIT     N 007300
+TERMEXX SUBOUT RESTORE=R4          RESTORE AND RETURN TO CALLER         N 007400
+         EJECT                                                          N 007500
+*********************************************************************** N 007600
+*        PRINT ANY ERROR MESSAGES                                     * N 007700
+*********************************************************************** N 007800
+         SPACE 1                                                        N 007900
+PRNTERR  SUBIN SAVE=R4             PRESERVE RETURN ADDRSS               N 008000
+         TM    SWERROR,MERRCBAL    WAS NON-EXISTENT RTN CBAL'D          N 008100
+         BZ    PRNTERR1            BR IF NOT                            N 008200
+         LINE  LINE03              PRINT ERROR MESSAGE                  N 008300
+PRNTERR1 TM    SWERROR,MERRGETM    WERE OS GETMAINS REQUIRED            N 008400
+         BZ    PRNTERR2            BR IF NOT                            N 008500
+         L     R1,$GETMXES         GET AMOUNT ACQUIRED BY OS            N 008600
+         CVD   R1,$WRKDUBL         CONVERT AMOUNT TO DECIMAL            N 008700
+         ED    LINE05M,$WRKDUBL+5  EDIT AMOUNT INTO LINE                N 008800
+         LINE  LINE05              TELL OF ERROR                        N 008900
+PRNTERR2 TM    SWERROR,MERRNNUM    WAS ANY INPUT DATA NON-NUMERIC       N 009000
+         BZ    PRNTERR3            BR IF NOT                            N 009100
+         LINE  LINE10              PRINT ERROR MESSAGE                  N 009200
+PRNTERR3 TM    SWERROR,MERRCVB     WAS MAX/MIN BINARY VALUE EXCEEDED    N 009300
+         BZ    PRNTERR4            BR IF NOT                            N 009400
+         LINE  LINE11              TELL OF SUSPECT BINARY OUTPUT FIELDS N 009500
+PRNTERR4 TM    SWERROR,MERR0DIV    WERE ATTEMPTS MADE TO DIVIDE BY 0    N 009600
+         BZ    PRNTERR5            BR IF NOT                            N 009700
+         ED    LINE12N,$CNT0DIV    EDIT COUNT OF NO. OF ATTEMPTS        N 009800
+         LINE  LINE12              ISSUE ERROR MESSAGE                  N 009900
+         EJECT                                                          N 010000
+*********************************************************************** N 010100
+*        PRINT ANY ERROR MESSAGES ( CONT'D )                          * N 010200
+*********************************************************************** N 010300
+         SPACE 1                                                        N 010400
+PRNTERR5 TM    SWERROR2,MERREOFL   DID EXPONENT OVERFLOW OCCUR          N 010500
+         BZ    PRNTERR6            BR IF NOT                            N 010600
+         ED    LINE13N,$CNTEOFL    EDIT ERROR COUNT INTO MESSAGE        N 010700
+         LINE  LINE13              WARN OF EXPONENT OVERFLOW CONDITION  N 010800
+PRNTERR6 EQU   *                   CONTINUE PROCESSING                  N 010900
+        SUBOUT RESTORE=R4          RESTORE AND RETURN TO MAIN-LINE      N 011000
+         EJECT                                                          N 011100
+*********************************************************************** N 011200
+*        PRINT SUMMARY OF I/O ACTIVITY                                * N 011300
+*********************************************************************** N 011400
+         SPACE 1                                                        N 011500
+IOSUMM   SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              N 011600
+         CBAL  R4,PRINT            PRINT A BLANK LINE                   N 011700
+         NI    SYSLIN+IOPSSW,FF-IOSWPRES SUPPRESS SYSLIN STATISTICS     N 011800
+         IOM   SUMMARY,SYSPRINT,(R5),PRESENT,RTN=PRINT,LOOP=IOMMAXDD,  *N 011900
+               MSGID='PRTN-004-I'  PRINT I/O SUMMARY                    N 012000
+        SUBOUT RESTORE=R4          RESTORE AND RETURN TO MAIN-LINE      N 012100
+         EJECT                                                          N 012200
+*********************************************************************** N 012300
+*        PRINT SUMMARY OF I/O ACTIVITY ON ADDITIONAL OUTPUT D/S       * N 012400
+*********************************************************************** N 012500
+         SPACE 1                                                        N 012600
+         USING OCBNTRY,R8          ESTABLISH OCB ADDRESSABILITY         N 012700
+OCBSUMM  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              N 012800
+         LTA   R8,$OCBOCB          GET ADDRESS OF 1ST OCB ( 'PRINT' )   N 012900
+OCBSUMM1 LTA   R8,OCBOCB,OCBSUMMX  GET ADDRESS OF NEXT OCB              N 013000
+         TM    OCBSW,MOCBREPT      IS THIS A REPORT DATA SET            N 013100
+         BO    OCBSUMM1            IF YES THEN DO NOT PRINT STATISTICS  N 013200
+         L     R2,OCBIOSW          GET ADDRESS OF ASSOC IOSW C/B        N 013300
+         MVC   70(2,R5),OCBLABL    SET OCB LABEL IN PRINT LINE          N 013400
+         MVI   69(R5),C'('         SET PARENTHESES ...                  N 013500
+         MVI   72(R5),C')'          ... AROUND THE LABEL                N 013600
+         IOM   SUMMARY,0(,R2),(R5),PRESENT,RTN=PRINT,MSGID='PRTN-004-I' N 013700
+         B     OCBSUMM1            LOOP BACK TO PROCESS NEXT OCB        N 013800
+OCBSUMMX CBAL  R4,PRINT            PRINT A BLANK LINE FOR NEATNESS      N 013900
+         SUBOUT RESTORE=R4         RESTORE AND RETURN TO CALLER         N 014000
+         DROP  R8                  DROP OCB ADDRESSABILITY              N 014100
+         EJECT                                                          N 014200
+**********************************************************************  N 014300
+*        PRINT SUMMARY OF RECORDS SELECTED ( BY TEST )                * N 014400
+**********************************************************************  N 014500
+         SPACE 1                                                        N 014600
+         USING RSTNTRY,R8          ESTABLISH RST ADDRESSABILITY         N 014700
+SUMMREC  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              N 014800
+         MVC   5(L'LINE14,R5),LINE14 SET UP MESSAGE IN BUFFER           N 014900
+         ED    LINE14M1-LINE14+5(L'LINE14M1,R5),$ARECCNT EDIT REC COUNT N 015000
+         CBAL  R4,PRINT            TELL OF NUMBER OF RECORDS PROCESSED  N 015100
+         OC    $RSTRST,$RSTRST     WERE ANY GR02 CARDS SPECIFIED        N 015200
+         BZ    SUMMRECX            EXIT IF NO                           N 015300
+         CBAL  R4,PRINT            PRINT A BLANK LINE                   N 015400
+         ZAP   $PVALUE,$ZERO       ZEROISE ACCUMULATOR                  N 015500
+         L     R8,$RSTRST          GET ADDRESS OF 1ST RST               N 015600
+         B     *+8                 BYPASS FORWARD CHAINING              N 015700
+SUMMREC1 L     R8,RSTRST           GET ADDRESS OF NEXT ST               N 015800
+         LTRR  R8,R8               TEST FOR END OF CHAIN                N 015900
+         BZ    SUMMREC2            EXIT IF END OF CHAIN                 N 016000
+         AP    $PVALUE,RSTRCNT     ADD NO OF RECS SELECTED TO ZCCUMULAT N 016100
+         MVC   5(L'LINE09,R5),LINE09 MOVE MESSAGE TO BUFFER             N 016200
+         TM    RSTSW,MRSTDEL       IS THIS A 'DELETE' RST               N 016300
+         BZ    *+10                BR IF NOT                            N 016400
+         MVC   5+30(8,R5),=C'REJECTED' ALTER 'SELECTED' TO 'REJECTED'   N 016500
+         LR    R1,R8               POINT AT RST                         N 016600
+         SH    R1,=AL2(CBPRLGTH)   POINT AT RST PREFIX                  N 016700
+         USING CBPREFIX,R1         ESTABLISH PREFIX ADDRESSABILTIY      N 016800
+         ED    LINE09N1-LINE09+5(L'LINE09N1,R5),CBPRCCNO+1 ED C/C SEQ N N 016900
+         DROP  R1                  DROP PREFIX ADDRESSAZBILITY          N 017000
+         ED    LINE09M1-LINE09+5(L'LINE09M1,R5),RSTRCNT EDIT REC CNT    N 017100
+         CBAL  R4,PRINT            PRINT MESSAGE                        N 017200
+         B     SUMMREC1            LOOP BACK FOR NEXT                   N 017300
+         SPACE 1                                                        N 017400
+SUMMREC2 CP    $PVALUE,$ZERO       TEST IF ANY RECORDS SELECTED         N 017500
+         BNE   *+8                 BR IF RECORDS SELECTED               N 017600
+         MVI   $COMPCDE+1,COND16   SET COND CODE TO 16 TO SHOW NO RECS  N 017700
+         SPACE 1                                                        N 017800
+SUMMRECX SUBOUT RESTORE=R4         RESTORE AND RETURN                   N 017900
+         DROP  R8                  DROP RST ADDRESSABILITY              N 018000
+         EJECT                                                          N 018100
+*********************************************************************** N 018200
+*        TELL OF CORE USAGE                                           * N 018300
+*********************************************************************** N 018400
+         SPACE 1                                                        N 018500
+COREUSE  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              N 018600
+         CBAL  R4,PRINT            PRINT BLNK LINE                      N 018700
+         L     R1,$GETMUSD         GET AMOUNT OF CORE USED              N 018800
+         CVD   R1,$WRKDUBL         CONVERT AMONT TO DECIMAL             N 018900
+         ED    LINE06M,$WRKDUBL+5  EDIT AMOUNT INTO MESSAGE             N 019000
+         LINE  LINE06              TELL OF CORE USED                    N 019100
+         OC    $SIZEISX,$SIZEISX   WERE IS INDICES ACQUIRED             N 019200
+         BZ    COREUSE1            BR IF NOT                            N 019300
+         L     R1,$SIZEISX         GET SIZE OF MASTER INDIDES           N 019400
+         CVD   R1,$WRKDUBL         CONBERT SIZE TO DECIMAL              N 019500
+         ED    LINE07M,$WRKDUBL+5  EDIT SIZE INTO MESSAGE               N 019600
+         LINE  LINE07              TELL OF SIZE OF INDICEZS             N 019700
+         TM    SWINIT,MINTNOIX     WERE INDICES SUPPRESSED              N 019800
+         BZ    COREUSE1            BR IF NOT SUPPRESSED                 N 019900
+         LINE  LINE08              TELL THAT INDICES WRE SUPPREDSED     N 020000
+COREUSE1 EQU   *                   CONTINU PROCESSING                   N 020100
+        SUBOUT RESTORE=R4          RESTORE AND RETURN TO MAIN-LINE      N 020200
+         EJECT                                                          N 020300
+*********************************************************************** N 020400
+*        PRINT COMPLETION CODE                                        * N 020500
+*********************************************************************** N 020600
+         SPACE 1                                                        N 020700
+PRNTCDE  SUBIN SAVE=R4             PRESERRVE RETURN ADDRESS             N 020800
+         CBAL  R4,PRINT            ORINT BLANK LINE                     N 020900
+         MVC   5(L'LINE02,R5),LINE02 MOVE MESSAGE TO LINE               N 021000
+         CP    $ARECCNT,$ZERO      WERE ANY RECORDS PROCESSED           N 021100
+         BNE   *+8                 BR IF RECORDS WERE PROCESSED         N 021200
+         MVI   $COMPCDE+1,COND16   SET COND CODE TO 16                  N 021300
+         LH    R2,$COMPCDE         GET COMPLETION CDE                   N 021400
+         CVD   R2,$WRKDUBL         CONVERT IT TO DECIMAL                N 021500
+         MVC   5+L'LINE02(4,R5),=X'40202120' MOVE EDIT MASK TO INE      N 021600
+         ED    5+L'LINE02(4,R5),$WRKDUBL+6 EDIT COMPLETION CODE         N 021700
+         CBAL  R4,PRINT            PRINT COMPLETION CODE                N 021800
+        SUBOUT RESTORE=R4          RESTORE AND RETURN TO MAIN-LINE      N 021900
+         EJECT                                                          N 022000
+*********************************************************************** N 022100
+*        TERMINATE WITH U004 ABEND IF PARM=FDUMP SPECIFIED            * N 022200
+*********************************************************************** N 022300
+         SPACE 1                                                        N 022400
+FDUMP    SUBIN ,                   ENTER ROUTINE                        N 022500
+         TM    SWPARM,MPRMFDMP     WAS PARM=FDUMP SECIFIED              N 022600
+         BZ    FDUMPX              EXIT IF NOT                          N 022700
+         ABEND 4,FULL              TERMIAET ABNORMALLY                  N 022800
+         SPACE 1                                                        N 022900
+FDUMPX  SUBOUT ,                   RETURN TO MAIN-LINE                  N 023000
+         SPACE 5                                                        N 023100
+*********************************************************************** N 023200
+*        TERMINATE WITH U044 ABEND IF PARM=CBDUMP SPECIFIED           * N 023300
+*********************************************************************** N 023400
+         SPACE 1                                                        N 023500
+*        THIS ROUTINE INVOKES AN USER ABEND WITH A COMPLETION CODE      N 023600
+*         OF U044.  HOWEVER, FOR THIS PARTICULAR USER ABEND, THE ESTAE  N 023700
+*         ERROR ANALYSIS ROUTINE ISSUES A RETRY REQUEST TO RETURN TO    N 023800
+*         PROGRAM TERMINATION.  THUS WE GET THE CONTROL BLOCK FORMATING N 023900
+*         FACILITIES OF THE ESTAE EXIT WITHOUT ACTUALLY ABENDING.       N 024000
+         SPACE 1                                                        N 024100
+CBDUMP   SUBIN ,                   ENTER ROUTINE                        N 024200
+         TM    SWPARM,MPRMCBD      WAS PARM=CBDUMP SPECIFIED            N 024300
+         BZ    CBDUMPX             EXIT IF NOT                          N 024400
+         OI    $PROCESS,PROCFDMP   SET FLAG FOR PSEUDO DUMP             N 024500
+         NI    SWPARM,FF-MPRMCBD   SET OFF REQUEST TO PREVENT ITERATION N 024600
+         ABEND 44                  TERMINATE ABNORMALLY, WITHOUT A DUMP N 024700
+         SPACE 1                                                        N 024800
+CBDUMPX SUBOUT ,                   RETURN TO MAIN-LINE                  N 024900
+         EJECT                                                          N 025000
+*********************************************************************** N 025100
+*        CLOSE ANY OPEN DCB'S                                         * N 025200
+*********************************************************************** N 025300
+         SPACE 1                                                        N 025400
+         USING OCBNTRY,R7          ESTABLISH OCB ADDRESSABILITY         N 025500
+DDCLOSE  SUBIN SAVE=R4             PRESERVE RETUUN ADDRESS              N 025600
+         IOM   CLOSE,SYSPRINT,LOOP=IOMMAXDD CLOSE ANY OPEN FILES        N 025700
+         L     R7,$OCBOCB          GET ADDRESS OF 1ST OCB ('PRINT')     N 025800
+DDCLOSE1 LTA   R7,OCBOCB,DDCLOSE2  GET ADDRESS OF NEXT OCB              N 025900
+         NULCB OCB,DDCLOSE1        GET NEXT OCB IF THIS NULLIFIED       N 026000
+         L     R2,OCBIOSW          GET ADDRESS OF ASSOCIATED DCBSW      N 026100
+         IOM   CLOSE,0(,R2)        CLOSE DATA SET ( IF OPEN )           N 026200
+         B     DDCLOSE1            LOOP BACK FOR NEXT OCB               N 026300
+DDCLOSE2 EQU   *                   CONTINUE PROCESSING                  N 026400
+        SUBOUT RESTORE=R4          RESTORE AND RETURN TO MINALINE       N 026500
+         DROP  R7                  DROP OCB ADDRESSABILITY              N 026600
+         TITLE 'ABNORMAL TERMINATION ROUTINE'                           N 026700
+*********************************************************************** N 026800
+*        ABNORMAL TERMINATION ROUTINE                                 * N 026900
+*********************************************************************** N 027000
+         SPACE 1                                                        N 027100
+*        THIS ROUTINE PERFORMS THE FOLLOWING FUNCTIONS :-               N 027200
+*              . PRESERVES ALL REGISTERS                                N 027300
+*              . WRITES A MESSAGE TO THE OPERATOR                       N 027400
+*              . ABNORMALLY TERMINATES                                  N 027500
+         SPACE 1                                                        N 027600
+*        ON ENTRY, $ABNDCDE CONTAINS THE ABEND CODE, WHICH IS A         N 027700
+*         MULTIPLE OF 4.                                                N 027800
+         SPACE 1                                                        N 027900
+         DS    0F                  ENSURE ALIGNMENT                     N 028000
+         DC    C' REGISTER CONTENTS AT ENTRY TO DUMP ROUTINE '          N 028100
+DUMP     SUBIN SAVE=ALL            PRESERVE ALL REGISTERS               N 028200
+         L     R9,$ABNDCDE         RETRIEVE ABEND CODE                  N 028300
+         LA    R9,0(,R9)           PURIFY HIGH ORDER BYTE               N 028400
+         CH    R9,=H'44'           IS THIS A 'DUMP' OF THE CONTROL BLOC N 028500
+         BE    DUMP02              BYPASS MESSAGES IF YES: NOT A TRUE A N 028600
+         CVD   R9,$WRKDUBL         CONVERT BINARY ABEND CODE TO DECIMAL N 028700
+         MVC   $WRKAREA,ABCDEDIT   SET UP EDIT MASK                     N 028800
+         ED    $WRKAREA(4),$WRKDUBL+6 EDIT USER CODEINTO EBCDIC         N 028900
+         MVC   ABNDCODE,$WRKAREA+1 MOVE USER CODE TO MESSAGE            N 029000
+         A     R9,=A(AMSGTABL-4)   POINT R9 AT APPROPRIATE MSG DESCRIPT N 029100
+         SR    R1,R1               ZEROISE WORK REGISTER                N 029200
+         IC    R1,0(R9)            GET EXECUTABLE LENTH OF MESSAGE      N 029300
+         L     R9,0(R9)            SET R9 TO ADDRESS OF MESSAGE         N 029400
+         EX    R1,DUMPMVC          MOVE MESSAGE TO WTO AREA             N 029500
+         LA    R1,WTOLGTH+1(,R1)   DETERMINE LENGTH OF WTO AREA         N 029600
+         STH   R1,ABNDMSG          SET LENGTH IN WTO CONTROL INFORMATIO N 029700
+         WTO   MF=(E,ABNDMSG)      TELL OPERATOR CAUSE OF ABEND         N 029800
+         L     R5,SYSPRINT+IOPSRECA GET SYSPRINT BUFFER ADDRESS         N 029900
+         ZAP   SYSPRINT+IOPSRCNT(4),$ZERO ZEROISE LINE COUNT            N 030000
+         MVI   0(R5),PAGESKIP      ESTABLISH PAGE SKIP                  N 030100
+         CBAL  R4,PRINT            LEAP TO NEX PAGE                     N 030200
+         LA    R10,10              SET LOOP VALUE                       N 030300
+DUMP01   MVC   5(98,R5),ABNDMSG+4  MOVE ERROR MESSAGE TO BUFFER         N 030400
+         CBAL  R4,PRINT            PRINT ERROR MESSAGE ...              N 030500
+         BCT   R10,DUMP01           ... 10 TIMES                        N 030600
+DUMP02   L     R1,$ABNDCDE         SET ABEND CODE IN R1                 N 030700
+         SVC   13                  ISSUE DUMP SVC                       N 030800
+        SUBOUT RESTORE=ALL         RETURN TO CALLER (IF ESTAE RETRIES)  N 030900
+         TITLE 'PARROTN - EXECUTED INSTRUCTIONS'                        N 031000
+*********************************************************************** N 031100
+*        PARROTN - EXECUTED INSTRUCTIONS                              * N 031200
+*********************************************************************** N 031300
+         SPACE 1                                                        N 031400
+DUMPMVC  MVC   ABNDMSG0(0),0(R9)   MOVE ABEND MESSAGE TO WTO AREA       N 031500
+         TITLE 'PARROTN - MISCELLANEOUS CONSTANTS AND FIELDS'           N 031600
+ABCDEDIT DC    X'F0212020'         EDIT MASK FOR USER ABEND CODE        N 031700
+         SPACE 5                                                        N 031800
+         LTORG                                                          N 031900
+         TITLE 'PARROTN - ERROR AND INFORMATORY MESSGAES'               N 032000
+*LINE01  IS    ABNDMSG                                                  N 032100
+LINE02   DC    C'PRTN-002-I  COMPLETION CODE ='                         N 032200
+LINE03   DC    C'PRTN-003-C  CRITICAL INTERNAL LOGIC ERROR:  NON-EXISTE*N 032300
+               NT ROUTINE INVOKED: CONTACT TSG(BRUSSELS)'               N 032400
+*LINE04  IS    I/O SUMMARY MESSAGE IDENTIFIER                           N 032500
+LINE05   DS    0CL112                                                   N 032600
+         DC    C'PRTN-005-E  STORAGE POOL TOO SMALL FOR PARROT CONTROL *N 032700
+               BLOCKS - GETMAINS WERE REQUIRED - INCREASE BY'           N 032800
+LINE05M  DC    X'4020206B202120'                                        N 032900
+         DC    C' BYTES'                                                N 033000
+LINE06   DS    0CL64                                                    N 033100
+         DC    C'PRTN-006-I  '                                          N 033200
+         DC    C'AMOUNT OF CORE USED BY CONTROL BLOCKS ='               N 033300
+LINE06M  DC    X'4020206B202120'                                        N 033400
+         DC    C' BYTES'                                                N 033500
+LINE07   DS    0CL75                                                    N 033600
+         DC    C'PRTN-007-I  '                                          N 033700
+         DC    C'AMOUNT OF CORE REQUIRED BY ISAM MASTER INDICES WAS'    N 033800
+LINE07M  DC    X'4020206B202120'                                        N 033900
+         DC    C' BYTES'                                                N 034000
+LINE08   DC    C'PRTN-008-I   BUT THE INDICES WERE SUPPRESSED ( BY PARM*N 034100
+               =NOISINDEX )'                                            N 034200
+LINE09   DS    0CL93                                                    N 034300
+         DC    C'PRTN-009-I  '                                          N 034400
+         DC    C'NUMBER OF RECORDS SELECTED BY TESTS DEFINED IN CONTROL*N 034500
+                CARD NO.'                                               N 034600
+LINE09N1 DC    X'402020202120'                                          N 034700
+         DC    C'= '                                                    N 034800
+LINE09M1 DC    X'40206B2020206B202120'                                  N 034900
+LINE10   DC    C'PRTN-010-W  INPUT RECORDS CONTAINED NON-NUMERIC DATA'  N 035000
+LINE11   DC    C'PRTN-011-W  ONE OR MORE ACCUMULATORS EXCEEDED THE MAXI*N 035100
+               MUM BINARY NUMBER (+/- 2,147,483,647): ANY BINARY OUTPUT*N 035200
+                FIELD IS SUSPECT'                                       N 035300
+LINE12   DS    0CL82                                                    N 035400
+         DC    C'PRTN-012-W  NO. OF ATTEMPTS TO DIVIDE BY ZERO:'        N 035500
+LINE12N  DC    X'4020202020202120'                                      N 035600
+         DC    C' - RESULT FIELDS SET TO ZERO'                          N 035700
+LINE13   DS    0CL100                                                   N 035800
+         DC    C'PRTN-013-W  NO. OF TIMES EXPONENT OVERFLOW CONDITION WAN 035900
+               AS RAISED :'                                             N 036000
+LINE13N  DC    X'4020202020202120'                                      N 036100
+         DC    C' - RESULTS ARE UNPREDICTABLE'                          N 036200
+LINE14   DS    0CL69                                                    N 036300
+         DC    C'PRTN-014-I  TOTAL NUMBER OF RECORDS SELECTED FOR PROCE*N 036400
+               SSING ='                                                 N 036500
+LINE14M1 DC    X'4020202020202120'                                      N 036600
+         TITLE 'PARROTN - ABNORMAL TERMINATION ERROR MESSAGES'          N 036700
+*********************************************************************** N 036800
+*        ABNORMAL TERMINATION ERROR MESSAGES                          * N 036900
+*********************************************************************** N 037000
+         SPACE 1                                                        N 037100
+         DS    0F                  ENSURE ALIGNMENT                     N 037200
+ABNDMSG  DC    AL2(132),AL2(0)     WTO CONTROL INFORMATION              N 037300
+         DC    C'PRTN-001-C  '     MESSAGE ID                           N 037400
+         DC    C'PARROT ERROR - U' **                                   N 037500
+ABNDCODE DC    CL3' ',C' - '        ** WTO AREA                         N 037600
+WTOLGTH  EQU   *-ABNDMSG           LENGTH OF WTO LESS MESSAGE TEXT      N 037700
+ABNDMSG0 DC    CL94' '             **                                   N 037800
+         SPACE 1                                                        N 037900
+*        NOTE THAT THE SEQUENCE OF THESE DESCRIPTORS IS CRITICAL, AND   N 038000
+*         THEY MUST BE CONTIGUOUS.  IF A MESSAGE DOES NOT EXIST, THEN A N 038100
+*         DUMMY ENTRY ( A FULLWORD ) MUST BE SUPPLIED.                  N 038200
+         SPACE 1                                                        N 038300
+AMSGTABL DS    0F                  TABLE OF MESSAGE DESCRIPTORS         N 038400
+        MSGDEF AMSG04                                                   N 038500
+        MSGDEF AMSG08                                                   N 038600
+        MSGDEF AMSG12                                                   N 038700
+        MSGDEF AMSG16                                                   N 038800
+        MSGDEF AMSG20                                                   N 038900
+        MSGDEF AMSG24                                                   N 039000
+        MSGDEF AMSG28                                                   N 039100
+        MSGDEF AMSG32                                                   N 039200
+        MSGDEF AMSG36                                                   N 039300
+        MSGDEF AMSG40                                                   N 039400
+        MSGDEF AMSG44                                                   N 039500
+        MSGDEF AMSG48                                                   N 039600
+        MSGDEF AMSG52                                                   N 039700
+        MSGDEF AMSG56                                                   N 039800
+MSG60   MSGDEF AMSG60                                                   N 039900
+        MSGDEF AMSG64                                                   N 040000
+        MSGDEF AMSG68                                                   N 040100
+        MSGDEF AMSG72                                                   N 040200
+        MSGDEF AMSG76                                                   N 040300
+        MSGDEF AMSG80                                                   N 040400
+        MSGDEF AMSG84                                                   N 040500
+        MSGDEF AMSG88                                                   N 040600
+        MSGDEF AMSG92                                                   N 040700
+        MSGDEF AMSG96                                                   N 040800
+        MSGDEF AMSG100                                                  N 040900
+         SPACE 3                                                        N 041000
+*        NOTE THAT THE NEXT MESSAGE DESCRIPTOR IS DELIBERATELY OUT OF   N 041100
+*         SEQUENCE: IT IS USED TO MODIFY THE TABLE IN THE EVENT OF      N 041200
+*         AN ABEND INDUCED BY A HALT INDICATOR                          N 041300
+         SPACE 1                                                        N 041400
+MSG61   MSGDEF AMSG61                                                   N 041500
+         SPACE 1                                                        N 041600
+*        NOTE THAT THERE IS NO NEED FOR THESE MESSAGES TO BE            N 041700
+*         ADDRESSABLE ( I.E. WITHIN THE FIRST X'1000' OF THE CSECT )    N 041800
+*         BECAUSE THEY ARE NEVER REFERENCED DIRECTLY.                   N 041900
+         SPACE 1                                                        N 042000
+AMSG04   DC    C'USER DUMP REQUESTED ( BY PARM=FDUMP )'                 N 042100
+AMSG08   DC    C'CRITICAL CONTROL CARD ERRORS FOUND'                    N 042200
+AMSG12   DC    C'KEYBREAK SEQUENCE ERROR ( AND NOT PARM=NOSEQ )'        N 042300
+AMSG16   DC    C'ERROR IN INTERNAL SORT'                                N 042400
+AMSG20   DC    C'I/O ERROR'                                             N 042500
+AMSG24   DC    C'ISAM ERROR OTHER THAN RECORD NOT FOUND'                N 042600
+AMSG28   DC    C'PROBABLE USER LOOP: NO READS FOR 5 SECONDS'            N 042700
+AMSG32   DC    C'GR20 KEY SPECIFICATION IS THE WRONG LENGTH'            N 042800
+AMSG36   DC    C'MANDATORY DD STATEMENT IS MISSING'                     N 042900
+AMSG40   DC    C'UNSUPPORTED OPERATION/FUNCTION REQUESTED'              N 043000
+AMSG44   DC    C'FORMATTED DUMP OF CONTROL BLOCKS REQUESTED ( BY PARM=C*N 043100
+               BDUMP )'                                                 N 043200
+AMSG48   EQU   *                                                        N 043300
+AMSG52   EQU   *                                                        N 043400
+AMSG56   EQU   *                                                        N 043500
+         DC    C'UNASSIGNED'                                            N 043600
+AMSG60   DC    C'USER REQUESTED DUMP ( BY OPERATION CODE ''AB'' )'      N 043700
+AMSG61   DC    C'USER REQUESTED DUMP ( BY SETTING ON HALT INDICATOR )'  N 043800
+AMSG64   DC    C'MORE THAN 256 NON-NUMERIC FIELDS ENCOUNTERED, AND PARM*N 043900
+               =VALIDATE NOT SPECIFIED'                                 N 044000
+AMSG68   EQU   *                                                        N 044100
+AMSG72   EQU   *                                                        N 044200
+AMSG76   EQU   *                                                        N 044300
+AMSG80   EQU   *                                                        N 044400
+AMSG84   EQU   *                                                        N 044500
+AMSG88   EQU   *                                                        N 044600
+AMSG92   EQU   *                                                        N 044700
+AMSG96   EQU   *                                                        N 044800
+         DC    C'UNASSIGNED'                                            N 044900
+AMSG100  DC    C'INTERNAL LOGIC ERROR: IMPOSSIBLE CONDITION FOUND'      N 045000
+         SPACE 1                                                        N 045100
+        SCSEND N                   TERMINATE CSECT                      N 045200
+         END                                                            N 045300

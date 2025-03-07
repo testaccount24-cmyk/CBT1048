@@ -1,0 +1,639 @@
+ PELICAN:  /* BLANKET UPDATE AND SELECT UTILITY MARK 2. */                 00010
+       PROC OPTIONS(MAIN);                                                 00020
+       DCL                                                                 00030
+       SYSIN  FILE RECORD SEQUENTIAL,  /* CONTROL CARD SET INPUT   */      00040
+       PRINT  FILE RECORD SEQUENTIAL,                                      00050
+       DATA   FILE RECORD SEQUENTIAL,  /* UPDATE CARDS     INPUT   */      00060
+       WORK   FILE RECORD SEQUENTIAL,                                      00070
+       SYSUT1 FILE RECORD SEQUENTIAL,  /* MASTER FILE      INPUT   */      00080
+       SYSUT2 FILE RECORD SEQUENTIAL,  /* MASTER FILE      OUTPUT  */      00090
+       SYSUT3 FILE RECORD SEQUENTIAL,  /* SELECTED RECORDS OUTPUT  */      00100
+       SYSUT4 FILE RECORD SEQUENTIAL;  /* REFORMATTED FILE OUTPUT  */      00110
+ /*                                                                   */   00120
+       DCL                     /* INPUT BUFFER FOR THE CONTROL CARDS  */   00130
+       SYSIN_RECORD    CHAR(80),                                           00140
+       1 BK1_RECORD    DEF SYSIN_RECORD,                                   00150
+         3 BK1_TYPE    CHAR(4),        /* CARD TYPE = 'BK1'        */      00160
+         3 BK1_KEYS(5),                /* FIVE KEY SEGMENTS        */      00170
+           5 BK1_KPOS  PIC'9999',      /* POSITION                 */      00180
+           5 BK1_KLEN  PIC'99',        /* LENGTH IN BYTES          */      00190
+           5 BK1_FILA  CHAR(2),        /*                          */      00200
+         3 BK1_BLANK   CHAR(1),        /* SINGLE CHARACTER TO SAY  */      00210
+         3 BK1_FILB    CHAR(1),        /* 'MUST BE BLANK'          */      00220
+         3 BK1_OREC    PIC'9999',      /* OUTPUT (SYSUT4) RECORD   */      00230
+         3 BK1_FILC    CHAR(30),       /* LENGTH.                  */      00240
+ /*                                                                   */   00250
+       1 BK2_RECORD    DEF SYSIN_RECORD,                                   00260
+         3 BK2_TYPE    CHAR(4),        /* CARD TYPE = 'BK2'           */   00270
+         3 BK2_RPOS    PIC'9999',      /* POSITION OF RECORD TYPE     */   00280
+         3 BK2_RLEN    PIC'99',        /* LENGTH OF RECORD TYPE       */   00290
+         3 BK2_FILA    CHAR(1),        /*                             */   00300
+         3 BK2_RTYP    CHAR(11),       /* LITERAL RECORD TYPE         */   00310
+         3 BK2_MNEM    CHAR(7),        /* FIELD MNEMONIC              */   00320
+         3 BK2_FIELDS(6),              /* SIX ASSOCIATED FIELDS:      */   00330
+           5 BK2_FPOS  PIC'9999',      /* POSITION                    */   00340
+           5 BK2_FLEN  PIC'99',        /* LENGTH IN BYTES             */   00350
+           5 BK2_FPAK  CHAR(1),        /* TYPE ('P' = PACKED DECIMAL) */   00360
+           5 BK2_FILB  CHAR(1),                                            00370
+          3 BK2_FILC    CHAR(2),                                           00380
+          3 BK2_RETCOD  CHAR(1),                                           00390
+ /*                                                                   */   00400
+       1 BK3_RECORD    DEF SYSIN_RECORD,                                   00410
+         3 BK3_TYPE    CHAR(4),        /* CARD TYPE = 'BK3'           */   00420
+         3 BK3_KEYS(5),                /* FIVE KEY SEGMENTS           */   00430
+           5 BK3_KPOS  PIC'9999',      /* POSITION ON CARD            */   00440
+           5 BK3_KLEN  PIC'99',        /* LENGTH IN BYTES             */   00450
+           5 BK3_FILA  CHAR(2),                                            00460
+         3 BK3_FILB    CHAR(36),                                           00470
+ /*                                                                   */   00480
+       1 BK4_RECORD    DEF SYSIN_RECORD,                                   00490
+         3 BK4_TYPE    CHAR(4),        /* CARD TYPE = 'BK4'           */   00500
+         3 BK4_INPOS   PIC'9999',      /* POSITION OF FIELD ON INPUT  */   00510
+         3 BK4_LEN     PIC'999',       /* LENGTH IN BYTES             */   00520
+         3 BK4_FILA    CHAR(1),        /*                             */   00530
+         3 BK4_OUTPOS  PIC'9999',      /* POSITION OF FIELD ON OUTPUT */   00540
+         3 BK4_FILB    CHAR(64),                                           00550
+ /*                                                                   */   00560
+       1 BK5_RECORD    DEF SYSIN_RECORD,                                   00570
+         3 BK5_TYPE    CHAR(4),                                            00580
+         3 BK5_KPOS    PIC'9999',                                          00590
+         3 BK5_KLEN    PIC'99',                                            00600
+         3 BK5_FILA    CHAR(2),                                            00610
+         3 BK5_FPOS    PIC'9999',                                          00620
+         3 BK5_FLEN    PIC'99',                                            00630
+         3 BK5_FILB    CHAR(2),                                            00640
+         3 BK5_PPOS    PIC'9999',                                          00650
+         3 BK5_PLEN    PIC'99',                                            00660
+         3 BK5_FILC    CHAR(1),                                            00670
+         3 BK5_PDEC    PIC'9',                                             00680
+         3 BK5_FILD    CHAR(1),                                            00690
+         3 BK5_NPOS    PIC'9999',                                          00700
+         3 BK5_NLEN    PIC'99',                                            00710
+         3 BK5_FILF    CHAR(2),                                            00720
+         3 BK5_UPOS    PIC'9999',                                          00730
+         3 BK5_ULEN    PIC'99',                                            00740
+         3 BK5_FILG    CHAR(37);                                           00750
+ /*                                                                   */   00760
+       DCL     /* CONTROL BLOCKS TO HOLD THE DATA FROM SYSIN          */   00770
+       1 CTL_BK1,                                                          00780
+         3 CTL_BK1_KEYS(5),                                                00790
+           5 CTL_BK1_KPOS  FIXED BIN(15),                                  00800
+           5 CTL_BK1_KLEN  FIXED BIN(15),                                  00810
+         3 CTL_BK1_OREC    FIXED BIN(15),                                  00820
+         3 CTL_BK1_BLANK   CHAR(1),                                        00830
+ /*                                                                   */   00840
+       1 CTL_BK2   BASED(PTR_BK2),                                         00850
+         3 NCTL_BK2,                                                       00860
+         3 CTL_BK2_ARRAY(MAX_BK2 REFER(NCTL_BK2)),                         00870
+           5 CTL_BK2_RPOS  FIXED BIN(15),                                  00880
+           5 CTL_BK2_RLEN  FIXED BIN(15),                                  00890
+           5 CTL_BK2_RTYP  CHAR(10),                                       00900
+           5 CTL_BK2_MNEM  CHAR(6),                                        00910
+           5 CTL_BK2_FIELDS(6),                                            00920
+             7 CTL_BK2_FPOS    FIXED BIN(15),                              00930
+             7 CTL_BK2_FLEN    FIXED BIN(15),                              00940
+             7 CTL_BK2_FPAK    FIXED BIN(15),                              00950
+            5 CTL_BK2_RETCOD CHAR(1),                                      00960
+ /*                                                                   */   00970
+       1 CTL_BK3,                                                          00980
+         3 CTL_BK3_KEYS(5),                                                00990
+           5 CTL_BK3_KPOS  FIXED BIN(15),                                  01000
+           5 CTL_BK3_KLEN  FIXED BIN(15),                                  01010
+ /*                                                                   */   01020
+       1 CTL_BK4   BASED(PTR_BK4),                                         01030
+         3 NCTL_BK4,                                                       01040
+         3 CTL_BK4_ARRAY(MAX_BK4 REFER(NCTL_BK4)),                         01050
+           5 CTL_BK4_IPOS  FIXED BIN(15),                                  01060
+           5 CTL_BK4_LEN   FIXED BIN(15),                                  01070
+            5 CTL_BK4_OPOS  FIXED BIN(15),                                 01080
+ /*                                                                   */   01090
+       1 CTL_BK5,                                                          01100
+         3 CTL_BK5_KPOS  FIXED BIN(15) INIT(4),                            01110
+         3 CTL_BK5_KLEN  FIXED BIN(15) INIT(40),                           01120
+         3 CTL_BK5_FPOS  FIXED BIN(15) INIT(44),                           01130
+         3 CTL_BK5_FLEN  FIXED BIN(15) INIT(6),                            01140
+         3 CTL_BK5_PPOS  FIXED BIN(15) INIT(50),                           01150
+         3 CTL_BK5_PLEN  FIXED BIN(15) INIT(10),                           01160
+         3 CTL_BK5_PDEC  FIXED BIN(15) INIT(4),                            01170
+         3 CTL_BK5_NPOS  FIXED BIN(15) INIT(60),                           01180
+         3 CTL_BK5_NLEN  FIXED BIN(15) INIT(20),                           01190
+         3 CTL_BK5_UPOS  FIXED BIN(15) INIT(80),                           01200
+         3 CTL_BK5_ULEN  FIXED BIN(15) INIT(1);                            01210
+ /*                                                                   */   01220
+       DCL                     /* INPUT BUFFER FOR THE UPDATE CARDS   */   01230
+       DATA_RECORD CHAR(80);                                               01240
+ /*                                                                   */   01250
+       DCL                     /* MASTER FILE BUFFERS                 */   01260
+       MASTER_RECORD   CHAR(2000) VARYING STATIC,                          01270
+       FORMAT_RECORD   CHAR(2000) VARYING STATIC,                          01280
+       SW_SYSUT2 BIT(1) INIT('0'B),  /* BIT-SWITCHES TO SIGNIFY WHICH */   01290
+       SW_SYSUT3 BIT(1) INIT('0'B),  /* OF THE THREE OUTPUT FILES ARE */   01300
+       SW_SYSUT4 BIT(1) INIT('0'B);  /* REQUIRED.                     */   01310
+ /*                                                                   */   01320
+       DCL         /* PRINT HEADINGS AND DETAIL LINE FORMATS.         */   01330
+       1 HEADA,                                                            01340
+         3 HA_FILA     CHAR(76)    INIT('1PELICAN            BLANKET UPD   01350
+ ATE REPORT.                            DATE  '),                          01360
+         3 HA_DATE     CHAR(9)     INIT('COBOLDATE'),                      01370
+         3 HA_FILB     CHAR(11)    INIT('      PAGE '),                    01380
+         3 HA_PAGE     PIC'Z9',                                            01390
+         3 HA_FILC CHAR(35) INIT(' '),                                     01400
+       1 HEADC,                                                            01410
+         3 HC_FILA     CHAR(50)     INIT                                   01420
+         ('00        1         2         3         4'),                    01430
+         3 HC_FILB     CHAR(50)     INIT                                   01440
+         ('5         6         7         8'),                              01450
+         3 HC_FILC     CHAR(33)     INIT                                   01460
+         ('        NUMBER OF RCDS CHANGED'),                               01470
+       1 HEADD,                                                            01480
+         3 HD_FILA     CHAR(50)     INIT                                   01490
+         (' 1234567890123456789012345678901234567890123456789'),           01500
+         3 HD_FILB     CHAR(50)     INIT                                   01510
+         ('0123456789012345678901234567890'),                              01520
+         3 HD_FILC CHAR(33) INIT(' '),                                     01530
+ /*                                                                   */   01540
+       LINEA       CHAR(133),                                              01550
+       LA_CARD     CHAR(80)             DEF LINEA POS(2),                  01560
+       LA_NARR     CHAR(26)            DEF LINEA POS(108),                 01570
+       LA_CNT      PIC'Z,ZZZ,ZZ9'      DEF LINEA POS(117);                 01580
+ /*                                                                   */   01590
+       DCL         /* ARRAY (VARIABLE) OF USER-ENTERED UPDATES        */   01600
+       1 UPD_ARRAY BASED(PTR_UPD),                                         01610
+         3 NARR_UPD,                                                       01620
+         3 UPDATES(MAX_UPD REFER(NARR_UPD)),                               01630
+           5 UPD_CARD  CHAR(80),                                           01640
+              5 UPD_MULT FIXED(15,6),                                      01650
+           5 UPD_TYPE  CHAR(1),                                            01660
+           5 UPD_MNEM  CHAR(6),                                            01670
+           5 UPD_COUNT FIXED(9);                                           01680
+ /*                                                                   */   01690
+       DCL                                                                 01700
+       UT435_NAME  CHAR(8) INIT('UT435   '),                               01710
+       1 UT435_AREA,                                                       01720
+         3 UT435_INVAL FIXED(15,6) INIT(1),                                01730
+         3 UT435_INCOD CHAR(2),                                            01740
+         3 UT435_OTCOD CHAR(2),                                            01750
+         3 UT435_RTCOD CHAR(1),                                            01760
+         3 UT435_OTVAL FIXED(15,6);                                        01770
+       DCL                                                                 01780
+       UT493_MASTKEY FIXED(1) BASED(UT493_PTR1),                           01790
+       UT493_TESTKEY FIXED(1) BASED(UT493_PTR2),                           01800
+       UT493_RETCODE FIXED(1) BASED(UT493_PTR3),                           01810
+       UT493_BLKCHAR FIXED(1) BASED(UT493_PTR4),                           01820
+       UT493_LENGTH  FIXED(1) BASED(UT493_PTR5),                           01830
+       RETCOD493 CHAR(1),                                                  01840
+       LENGTH493 FIXED(3);                                                 01850
+       UT493_PTR1 = ADDR(TESTREC);                                         01860
+       UT493_PTR2 = ADDR(TESTCRD);                                         01870
+       UT493_PTR3 = ADDR(RETCOD493);                                       01880
+       UT493_PTR4 = ADDR(CTL_BK1_BLANK);                                   01890
+       UT493_PTR5 = ADDR(LENGTH493);                                       01900
+ /*                                                                   */   01910
+       DCL         /* MISCELLANEOUS POINTERS, TEST-AREAS, ETC         */   01920
+        IHESARC ENTRY(FIXED BIN(31)),                                      01930
+        RETCODSW BIT(1) INIT('0'B),                                        01940
+         COREVAL PIC'99999999',                                            01950
+          NULLREC CHAR(80) VARYING STATIC,                                 01951
+       TESTREC CHAR(80),                                                   01960
+       TESTCRD CHAR(80),                                                   01970
+       AREC CHAR(15),                                                      01980
+       NREC PIC'(14)9R' DEF AREC,                                          01990
+        NREC0 PIC'9999999999999V9R' DEF AREC,                              02000
+        NREC1 PIC'999999999999V99R' DEF AREC,                              02010
+        NREC2 PIC'99999999999V999R' DEF AREC,                              02020
+        NREC3 PIC'9999999999V9999R' DEF AREC,                              02030
+        NREC4 PIC'999999999V99999R' DEF AREC,                              02040
+        NREC5 PIC'99999999V999999R' DEF AREC,                              02050
+        NREC6 PIC'9999999V9999999R' DEF AREC,                              02060
+       DREC FIXED(15) DEF AREC POS(8),                                     02070
+       DECR FIXED(15),                                                     02080
+       CORE_PTR   FIXED(1) BASED(PTR_CORE),                                02090
+       DATE_PTR   FIXED(1) BASED(PTR_DATE),                                02100
+       UT435_PTR1 FIXED(1) BASED(PTR1_UT435),                              02110
+       UT435_PTR2 FIXED(1) BASED(PTR2_UT435),                              02120
+       SETREC CHAR(2000)   BASED(PTR_RECD);                                02130
+ /*                                                                   */   02140
+       PTR_CORE   = ADDR(COREVAL);                                         02150
+       PTR_DATE   = ADDR(HA_DATE);                                         02160
+       PTR1_UT435 = ADDR(UT435_NAME);                                      02170
+       PTR2_UT435 = ADDR(UT435_AREA);                                      02180
+       PTR_RECD   = ADDR(MASTER_RECORD);                                   02190
+       CALL DTERTN(DATE_PTR);                                              02200
+ /*                                                                   */   02210
+       DCL         /* LINE COUNT AND PAGE NUMBER FOR THE REPORT.      */   02220
+       LINECT  INIT(60),                                                   02230
+       PAGENO  FIXED(3) INIT(0);                                           02240
+       DCL         /* SET FIXED RECORD FOR THE REFORMATTED FILE.      */   02250
+       NEWREC  CHAR(2000) BASED(PTR_NEWR);                                 02260
+       PTR_NEWR = ADDR(FORMAT_RECORD);                                     02270
+ /*                                                                   */   02280
+       ON UNDEFINEDFILE(SYSUT2) N = 0;                                     02290
+       ON UNDEFINEDFILE(SYSUT3) N = 0;                                     02300
+       ON UNDEFINEDFILE(SYSUT4) N = 0;                                     02310
+ /*                                                                   */   02320
+ /*    IN THIS FIRST SECTION OF THE PROGRAM, THE CONTROL CARDS ARE    */   02330
+ /*    COUNTED BY TYPE, THE CONTROL BLOCKS ALLOCATED, AND THE CARDS   */   02340
+ /*    READ IN AGAIN TO ENTER THOSE BLOCKS.                           */   02350
+ /*                                                                   */   02360
+       NO_BK1 = 0;                                                         02370
+       NO_BK2 = 0;                                                         02380
+       NO_BK3 = 0;                                                         02390
+       NO_BK4 = 0;                                                         02400
+       OPEN FILE(SYSIN) INPUT;                                             02410
+       OPEN FILE(PRINT) OUTPUT;                                            02420
+       OPEN FILE(WORK) OUTPUT;                                             02430
+       ON ENDFILE(SYSIN) GO TO A9;                                         02440
+ /*                                                                   */   02450
+       LINEA = '1CONTROL CARD LISTING';                                    02460
+       WRITE FILE(PRINT) FROM(LINEA);                                      02470
+ /*                                                                   */   02480
+ A1:   READ FILE(SYSIN) INTO(SYSIN_RECORD);                                02490
+       WRITE FILE(WORK) FROM(SYSIN_RECORD);                                02500
+ /*                                                                   */   02510
+       LINEA = '0' || SYSIN_RECORD;                                        02520
+       WRITE FILE(PRINT) FROM(LINEA);                                      02530
+ /*                                                                   */   02540
+       IF BK1_TYPE = 'BK1' THEN NO_BK1 = NO_BK1 + 1;                       02550
+       IF BK1_TYPE = 'BK2' THEN NO_BK2 = NO_BK2 + 1;                       02560
+       IF BK1_TYPE = 'BK3' THEN NO_BK3 = NO_BK3 + 1;                       02570
+       IF BK1_TYPE = 'BK4' THEN NO_BK4 = NO_BK4 + 1;                       02580
+       GO TO A1;                                                           02590
+ /*                                                                   */   02600
+ A9:   CLOSE FILE(SYSIN);                                                  02610
+       MAX_BK2 = NO_BK2;                                                   02620
+       MAX_BK4 = NO_BK4;                                                   02630
+       ALLOCATE CTL_BK2;                                                   02640
+       ALLOCATE CTL_BK4;                                                   02650
+       CLOSE FILE(WORK);                                                   02660
+       OPEN FILE(WORK) INPUT;                                              02670
+       ON ENDFILE(WORK) GO TO B9;                                          02680
+       NO_BK2 = 0;                                                         02690
+       NO_BK4 = 0;                                                         02700
+ /*                                                                   */   02710
+ B1:   READ FILE(WORK) INTO(SYSIN_RECORD);                                 02720
+ /*                                                                   */   02730
+       IF BK1_TYPE = 'BK2' THEN GO TO B2;                                  02740
+       IF BK1_TYPE = 'BK3' THEN GO TO B3;                                  02750
+       IF BK1_TYPE = 'BK4' THEN GO TO B4;                                  02760
+       IF BK1_TYPE = 'BK5' THEN GO TO B5;                                  02770
+       KEYLEN = 0;                                                         02780
+ /*                                                                   */   02790
+       DO I = 1 TO 5;                                                      02800
+          CTL_BK1_KPOS(I) = BK1_KPOS(I);                                   02810
+          CTL_BK1_KLEN(I) = BK1_KLEN(I); KEYLEN = KEYLEN + BK1_KLEN(I);    02820
+       END;                                                                02830
+       CTL_BK1_OREC = BK1_OREC;                                            02840
+       CTL_BK1_BLANK = BK1_BLANK;                                          02850
+       GO TO B1;                                                           02860
+ /*                                                                   */   02870
+ B2:   NO_BK2 = NO_BK2 + 1;                                                02880
+       CTL_BK2_RPOS(NO_BK2) = BK2_RPOS;                                    02890
+       CTL_BK2_RLEN(NO_BK2) = BK2_RLEN;                                    02900
+       CTL_BK2_RTYP(NO_BK2) = BK2_RTYP;                                    02910
+       CTL_BK2_MNEM(NO_BK2) = BK2_MNEM;                                    02920
+       DO I = 1 TO 6;                                                      02930
+          CTL_BK2_FPOS(NO_BK2,I) = BK2_FPOS(I);                            02940
+          CTL_BK2_FLEN(NO_BK2,I) = BK2_FLEN(I);                            02950
+          IF BK2_FPAK(I) = 'P'                                             02960
+          THEN CTL_BK2_FPAK(NO_BK2,I) = 1;                                 02970
+          ELSE CTL_BK2_FPAK(NO_BK2,I) = 0;                                 02980
+       END;                                                                02990
+        CTL_BK2_RETCOD(NO_BK2) = BK2_RETCOD;                               03000
+       GO TO B1;                                                           03010
+ /*                                                                   */   03020
+ B3:   DO I = 1 TO 5;                                                      03030
+          CTL_BK3_KPOS(I) = BK3_KPOS(I);                                   03040
+          CTL_BK3_KLEN(I) = BK3_KLEN(I);                                   03050
+       END;                                                                03060
+       GO TO B1;                                                           03070
+ /*                                                                   */   03080
+ B4:   NO_BK4 = NO_BK4 + 1;                                                03090
+       CTL_BK4_IPOS(NO_BK4) = BK4_INPOS;                                   03100
+       CTL_BK4_LEN (NO_BK4) = BK4_LEN;                                     03110
+       CTL_BK4_OPOS(NO_BK4) = BK4_OUTPOS;                                  03120
+       GO TO B1;                                                           03130
+ /*                                                                   */   03140
+ B5:   CTL_BK5_KPOS = BK5_KPOS;                                            03150
+       CTL_BK5_KLEN = BK5_KLEN;                                            03160
+       CTL_BK5_FPOS = BK5_FPOS;                                            03170
+       CTL_BK5_FLEN = BK5_FLEN;                                            03180
+       CTL_BK5_PPOS = BK5_PPOS;                                            03190
+       CTL_BK5_PLEN = BK5_PLEN;                                            03200
+       CTL_BK5_PDEC = BK5_PDEC;                                            03210
+       CTL_BK5_NPOS = BK5_NPOS;                                            03220
+       CTL_BK5_NLEN = BK5_NLEN;                                            03230
+       CTL_BK5_UPOS = BK5_UPOS;                                            03240
+       CTL_BK5_ULEN = BK5_ULEN;                                            03250
+ /*                                                                   */   03260
+ B9:   CLOSE FILE(WORK);                                                   03270
+       LENGTH493 = KEYLEN;                                                 03280
+ /*                                                                   */   03290
+ /*    THE NEXT STAGE OF PROCESSING IS TO ALLOCATE THE USER-INPUT     */   03300
+ /*    ARRAY. FIRST OPEN MASTER FILES TO SET THE BUFFER AREAS(PRINT   */   03310
+ /*    WHICH OUTPUTS ARE USED) THEN CALCULATE THE MAXIMUM UPDATES     */   03320
+ /*                                                                   */   03330
+       OPEN FILE(SYSUT1) INPUT;                                            03340
+       LINEA = '-OUTPUT FILES ARE:';                                       03350
+       WRITE FILE(PRINT) FROM(LINEA);                                      03360
+       N = 1;                                                              03370
+       OPEN FILE(SYSUT2) OUTPUT;                                           03380
+       IF N = 1                                                            03390
+       THEN DO;                                                            03400
+               SW_SYSUT2 = '1'B;                                           03410
+               LINEA = '0SYSUT2    COMPLETE UPDATED FILE';                 03420
+               WRITE FILE(PRINT) FROM(LINEA);                              03430
+            END;                                                           03440
+       N = 1;                                                              03450
+       OPEN FILE(SYSUT3) OUTPUT;                                           03460
+       IF N = 1                                                            03470
+       THEN DO;                                                            03480
+               SW_SYSUT3 = '1'B;                                           03490
+               LINEA = '0SYSUT3    SELECTED RECORDS ONLY';                 03500
+               WRITE FILE(PRINT) FROM(LINEA);                              03510
+            END;                                                           03520
+       N = 1;                                                              03530
+       OPEN FILE(SYSUT4) OUTPUT;                                           03540
+       IF N = 1                                                            03550
+       THEN DO;                                                            03560
+               SW_SYSUT4 = '1'B;                                           03570
+               LINEA = '0SYSUT4    REFORMATTED OUTPUT';                    03580
+               WRITE FILE(PRINT) FROM(LINEA);                              03590
+            END;                                                           03600
+ /*                                                                   */   03610
+       CALL CORECHK(CORE_PTR);                                             03620
+       MAX_UPD = (COREVAL - 10000) / 100;                                  03630
+       ALLOCATE UPD_ARRAY;                                                 03640
+          UPD_MULT = 0;                                                    03650
+ /*                                                                   */   03660
+       CLOSE FILE(SYSUT1);                                                 03670
+       IF SW_SYSUT2 THEN CLOSE FILE(SYSUT2);                               03680
+       IF SW_SYSUT3 THEN CLOSE FILE(SYSUT3);                               03690
+       IF SW_SYSUT4 THEN CLOSE FILE(SYSUT4);                               03700
+ /*                                                                   */   03710
+ /*    NEXT STAGE IS TO READ IN THE USER UPDATES, VALIDATING AGAINST  */   03720
+ /*    THE BK2 & BK3 CONTROLS (AND AGAINST MAXIMUM ALLOWED).          */   03730
+ /*    CONVERT 'CUR' TO NUMERIC MULTIPLIER.                           */   03740
+ /*                                                                   */   03750
+       NO_UPD = 0;                                                         03760
+       NO_ERR = 0;                                                         03770
+       UPD_COUNT = 0;                                                      03780
+       CALL DYNAML(UT435_PTR1);                                            03790
+       OPEN FILE(DATA) INPUT;                                              03800
+       ON ENDFILE(DATA) GO TO D1;                                          03810
+ /*                                                                   */   03820
+ C1:   READ FILE(DATA) INTO(DATA_RECORD);                                  03830
+       NO_UPD = NO_UPD + 1;                                                03840
+       IF NO_UPD > MAX_UPD                                                 03850
+       THEN DO;                                                            03860
+               NO_UPD = MAX_UPD;                                           03870
+               NO_ERR = 2;                                                 03880
+               GO TO X1;                                                   03890
+            END;                                                           03900
+ /*                                                                   */   03910
+       UPD_CARD(NO_UPD) = DATA_RECORD;                                     03920
+       IF CTL_BK5_UPOS = 0                                                 03930
+       THEN UPD_TYPE(NO_UPD) = '*';                                        03940
+       ELSE UPD_TYPE(NO_UPD) = SUBSTR(DATA_RECORD,CTL_BK5_UPOS,1);         03950
+       UPD_MNEM(NO_UPD) = SUBSTR(DATA_RECORD,CTL_BK5_FPOS,6);              03960
+       IF UPD_TYPE(NO_UPD) = ' ' | UPD_TYPE(NO_UPD) = '*'                  03970
+       THEN DO;                                                            03980
+               IF SUBSTR(DATA_RECORD,CTL_BK5_PPOS,3) = 'CUR'               03990
+               THEN DO;                                                    04000
+          UT435_INCOD = SUBSTR(DATA_RECORD,CTL_BK5_PPOS+3,2);              04010
+          UT435_OTCOD = SUBSTR(DATA_RECORD,CTL_BK5_PPOS+5,2);              04020
+                       CALL DYNAMO(UT435_PTR1,UT435_PTR2);                 04030
+                       IF UT435_RTCOD ^= '1'                               04040
+                       THEN DO;                                            04050
+                               NO_ERR = 1;                                 04060
+                               UPD_COUNT(NO_UPD) = 3;                      04070
+                            END;                                           04080
+                       ELSE UPD_MULT(NO_UPD) = UT435_OTVAL;                04090
+                    END;                                                   04100
+               ELSE DO;                                                    04110
+                       NREC = 0;                                           04120
+                       SUBSTR(AREC,16-CTL_BK5_PLEN,CTL_BK5_PLEN) =         04130
+              SUBSTR(DATA_RECORD,CTL_BK5_PPOS,CTL_BK5_PLEN);               04140
+     IF CTL_BK5_PDEC = 0 THEN UPD_MULT(NO_UPD) = NREC0;                    04150
+     IF CTL_BK5_PDEC = 1 THEN UPD_MULT(NO_UPD) = NREC1;                    04160
+     IF CTL_BK5_PDEC = 2 THEN UPD_MULT(NO_UPD) = NREC2;                    04170
+     IF CTL_BK5_PDEC = 3 THEN UPD_MULT(NO_UPD) = NREC3;                    04180
+     IF CTL_BK5_PDEC = 4 THEN UPD_MULT(NO_UPD) = NREC4;                    04190
+     IF CTL_BK5_PDEC = 5 THEN UPD_MULT(NO_UPD) = NREC5;                    04200
+     IF CTL_BK5_PDEC = 6 THEN UPD_MULT(NO_UPD) = NREC6;                    04210
+                    END;                                                   04220
+            END;                                                           04230
+ /*                                                                   */   04240
+ /*    VALIDATE FIELD MNEMONIC AGAINST RECORD TYPE AGAINST BK2 DATA.  */   04250
+ /*                                                                   */   04260
+       IF UPD_TYPE(NO_UPD) = 'D' | UPD_TYPE(NO_UPD) = 'X'                  04270
+          THEN GO TO C3;                                                   04280
+       DO I = 1 TO NO_BK2;                                                 04290
+          IF CTL_BK2_MNEM(I) ^= UPD_MNEM(NO_UPD)                           04300
+          THEN GO TO C2;                                                   04310
+          J = CTL_BK2_RPOS(I);                                             04320
+          K = CTL_BK2_RLEN(I);                                             04330
+          AREC = CTL_BK2_RTYP(I);                                          04340
+          IF J = 0                                                         04350
+          THEN GO TO C3;                                                   04360
+          IF SUBSTR(DATA_RECORD,J,K) = SUBSTR(AREC,1,K)                    04370
+          THEN GO TO C3;                                                   04380
+ C2:   END;                                                                04390
+ /*                                                                   */   04400
+       NO_ERR = 1;                                                         04410
+       UPD_COUNT(NO_UPD) = 1;                                              04420
+ /*                                                                   */   04430
+ /*    VALIDATE EXISTENCE OF FORCED KEYS AGAINST BK3 CARD (IF THERE). */   04440
+ /*                                                                   */   04450
+ C3:   IF NO_BK3 = 0                                                       04460
+       THEN GO TO C1;                                                      04470
+       DO I = 1 TO 5;                                                      04480
+          J = CTL_BK3_KPOS(I);                                             04490
+          K = CTL_BK3_KLEN(I);                                             04500
+          IF J = 0                                                         04510
+          THEN GO TO C4;                                                   04520
+          IF SUBSTR(DATA_RECORD,J,K) = ' '                                 04530
+          THEN DO;                                                         04540
+                  NO_ERR = 1;                                              04550
+                  UPD_COUNT(NO_UPD) = 2;                                   04560
+               END;                                                        04570
+ C4:   END;                                                                04580
+       GO TO C1;                                                           04590
+ /*                                                                   */   04600
+ /*    END OF UPDATE CARD VALIDATION. IF ANY ERRORS WERE FOUND, GO    */   04610
+ /*    TO BLOCK X1 TO PRINT AND END.                                  */   04620
+ /*    OTHERWISE CONTINUE WITH MASTER FILE PROCESSING.                */   04630
+ /*                                                                   */   04640
+ D1:   CLOSE FILE(DATA);                                                   04650
+       IF NO_ERR ^= 0                                                      04660
+       THEN GO TO X1;                                                      04670
+ /*                                                                   */   04680
+       OPEN FILE(SYSUT1) INPUT;                                            04690
+       IF SW_SYSUT2 THEN OPEN FILE(SYSUT2) OUTPUT;                         04700
+       IF SW_SYSUT3 THEN OPEN FILE(SYSUT3) OUTPUT;                         04710
+       IF SW_SYSUT4 THEN OPEN FILE(SYSUT4) OUTPUT;                         04720
+       ON ENDFILE(SYSUT1) GO TO X0;                                        04730
+ /*                                                                   */   04740
+ D5:   READ FILE(SYSUT1) INTO(MASTER_RECORD);                              04750
+       NEWREC = ' ';                                                       04760
+       FORMAT_RECORD = MASTER_RECORD;                                      04770
+       L = LENGTH(MASTER_RECORD);                                          04780
+       IF CTL_BK1_OREC = 0                                                 04790
+       THEN CTL_BK1_OREC = L;                                              04800
+ /*                                                                   */   04810
+ /*    SCAN THROUGH THE USER UPDATES TO FIND THOSE (IF ANY) THAT      */   04820
+ /*    APPLY TO THIS RECORD.                                          */   04830
+ /*    IF ANY DO, THE FOLLOWING COUNTER WILL BE SET ON TO SIGNAL THE  */   04840
+ /*    RECORD NEEDS TO BE WRITTEN TO THE SYSUT3 FILE.                 */   04850
+ /*                                                                   */   04860
+       NO_RECUPD = 0;                                                      04870
+ /*                                                                   */   04880
+       NULLREC = '';                                                       04890
+       DO J = 1 TO 5;                                                      04900
+          K = CTL_BK1_KPOS(J);                                             04910
+          L = CTL_BK1_KLEN(J);                                             04920
+          IF K ^= 0 THEN NULLREC = NULLREC || SUBSTR(SETREC,K,L);          04930
+       END;                                                                04940
+       TESTREC = NULLREC;                                                  04950
+       DO I = 1 TO NO_UPD;                                                 04960
+          TESTCRD = SUBSTR(UPD_CARD(I),CTL_BK5_KPOS,CTL_BK5_KLEN);         04970
+          CALL UT493(UT493_MASTKEY,                                        04980
+                     UT493_TESTKEY,                                        04990
+                     UT493_RETCODE,                                        05000
+                     UT493_BLKCHAR,                                        05010
+                     UT493_LENGTH);                                        05020
+          IF RETCOD493 ^= '0' THEN GO TO D9;                               05030
+ /*                                                                   */   05040
+ /*    AT THIS WE HAVE ESTABLISHED THAT THE UPDATE CARD I IS TO BE    */   05050
+ /*    PROCESSED ON THIS RECORD.                                      */   05060
+ /*    SIGNAL COUNTS, OUTPUTS, AND COMMENCE UPDATE ACCORDING TO TYPE. */   05070
+ /*                                                                   */   05080
+          NO_RECUPD = 1;                                                   05090
+          UPD_COUNT(I) = UPD_COUNT(I) + 1;                                 05100
+          IF UPD_TYPE(I) = 'D'                                             05110
+          THEN GO TO D5;                                                   05120
+          IF UPD_TYPE(I) = 'X'                                             05130
+          THEN GO TO D9;          /* NO UPDATE - JUST SELECT          */   05140
+          DO J = 1 TO NO_BK2;      /* SCAN FOR UPDATE MNEMONIC        */   05150
+             IF UPD_MNEM(I) ^= CTL_BK2_MNEM(J)                             05160
+             THEN GO TO D8;                                                05170
+             DO K = 1 TO 6;                                                05180
+                L1 = CTL_BK2_FPOS(J,K);                                    05190
+                IF L1 = 0 THEN GO TO D7;                                   05200
+                L2 = CTL_BK2_FLEN(J,K);                                    05210
+                L3 = CTL_BK2_FPAK(J,K);                                    05220
+            IF L3 = 1          /* FIELD IS PACKED DECIMAL */               05230
+            THEN DO;                                                       05240
+                    DREC = 0;                                              05250
+                    SUBSTR(AREC,16-L2,L2) = SUBSTR(SETREC,L1,L2);          05260
+                    DECR = DREC;                                           05270
+        IF UPD_TYPE(I) = ' ' | (UPD_TYPE(I) = '*' & UPD_MULT(I) ^=0)       05280
+                    THEN DO;                                               05290
+                            DECR = ROUND(DECR*UPD_MULT(I),0);              05300
+                         END;                                              05310
+                    ELSE DO;                                               05320
+                            L4 = 2 * L2 - 1;                               05330
+                            NREC = 0;                                      05340
+                            SUBSTR(AREC,16-L4,L4) =                        05350
+              SUBSTR(UPD_CARD(I),CTL_BK5_NPOS,L4);                         05360
+          IF UPD_TYPE(I) = '1' | UPD_TYPE(I) = '*'                         05370
+                            THEN DECR = NREC;                              05380
+                            ELSE DECR = DECR + NREC;                       05390
+                         END;                                              05400
+                    DREC = DECR;                                           05410
+                    SUBSTR(SETREC,L1,L2) = SUBSTR(AREC,16-L2,L2);          05420
+                    GO TO D7;                                              05430
+                 END;                                                      05440
+        IF UPD_TYPE(I) = '1' | (UPD_TYPE(I) = '*' & UPD_MULT(I) = 0)       05450
+            THEN DO;                                                       05460
+       SUBSTR(SETREC,L1,L2) = SUBSTR(UPD_CARD(I),CTL_BK5_NPOS,L2);         05470
+                    GO TO D7;                                              05480
+                 END;                                                      05490
+            NREC = 0;                                                      05500
+            SUBSTR(AREC,16-L2,L2) = SUBSTR(SETREC,L1,L2);                  05510
+            DECR = NREC;                                                   05520
+        IF UPD_TYPE(I) = ' ' | (UPD_TYPE(I) = '*' & UPD_MULT(I) ^=0)       05530
+            THEN DECR = ROUND(DECR*UPD_MULT(I),0);                         05540
+            ELSE DO;                                                       05550
+                    NREC = 0;                                              05560
+         SUBSTR(AREC,16-L2,L2) = SUBSTR(UPD_CARD(I),CTL_BK5_NPOS,L2);      05570
+                    DECR = DECR + NREC;                                    05580
+                 END;                                                      05590
+            NREC = DECR;                                                   05600
+            SUBSTR(SETREC,L1,L2) = SUBSTR(AREC,16-L2,L2);                  05610
+ D7:      END;     /* K-LOOP */                                            05620
+        IF CTL_BK2_RETCOD(J) = '1' THEN RETCODSW = '1'B;                   05630
+ D8:      END;     /* J-LOOP */                                            05640
+ D9:   END;        /* I-LOOP */                                            05650
+ /*                                                                   */   05660
+ /*    THE PROGRAM FALLS THROUGH TO THIS POINT AFTER ALL THE UPDATES  */   05670
+ /*    HAVE BEEN PERFORMED ON THE CURRENT MASTER RECORD. NOW WE WRITE */   05680
+ /*    THE RECORD OUT TO THE VARIOUS OUTPUT FILE(S) & GET ANOTHER.    */   05690
+ /*                                                                   */   05700
+       IF SW_SYSUT2                                                        05710
+       THEN WRITE FILE(SYSUT2) FROM(MASTER_RECORD);                        05720
+       IF SW_SYSUT3 & NO_RECUPD = 1                                        05730
+       THEN WRITE FILE(SYSUT3) FROM(MASTER_RECORD);                        05740
+       IF SW_SYSUT4 & NO_BK4 ^= 0                                          05750
+       THEN DO;                                                            05760
+               FORMAT_RECORD = SUBSTR(NEWREC,1,CTL_BK1_OREC);              05770
+               DO I = 1 TO NO_BK4;                                         05780
+                  J = CTL_BK4_IPOS(I);                                     05790
+                  K = CTL_BK4_LEN (I);                                     05800
+                  L = CTL_BK4_OPOS(I);                                     05810
+                  SUBSTR(NEWREC,L,K) = SUBSTR(SETREC,J,K);                 05820
+               END;                                                        05830
+               WRITE FILE(SYSUT4) FROM(FORMAT_RECORD);                     05840
+            END;                                                           05850
+       GO TO D5;                                                           05860
+ /*                                                                   */   05870
+ X0:   CLOSE FILE(SYSUT1);                                                 05880
+       IF SW_SYSUT2 THEN CLOSE FILE(SYSUT2);                               05890
+       IF SW_SYSUT3 THEN CLOSE FILE(SYSUT3);                               05900
+       IF SW_SYSUT4 THEN CLOSE FILE(SYSUT4);                               05910
+ /*                                                                   */   05920
+ /*    END OF PROCESSING. NOW THERE REMAINS BUT TO PRINT THE CONTROL/ */   05930
+ /*    ERROR REPORT.                                                  */   05940
+ /*                                                                   */   05950
+ X1:   DO I = 1 TO NO_UPD;                                                 05960
+          IF LINECT > 55                                                   05970
+          THEN DO;                                                         05980
+                  PAGENO = PAGENO + 1;                                     05990
+                  HA_PAGE = PAGENO;                                        06000
+                  WRITE FILE(PRINT) FROM(HEADA);                           06010
+                  WRITE FILE(PRINT) FROM(HEADC);                           06020
+                  WRITE FILE(PRINT) FROM(HEADD);                           06030
+                  LINECT = 10;                                             06040
+               END;                                                        06050
+          LINEA = '0';                                                     06060
+          LA_CARD = UPD_CARD(I);                                           06070
+          IF NO_ERR = 0                                                    06080
+          THEN LA_CNT = UPD_COUNT(I);                                      06090
+          ELSE DO;                                                         06100
+    IF UPD_COUNT(I) = 0 THEN LA_NARR = ' ';                                06110
+    IF UPD_COUNT(I) = 1 THEN LA_NARR = '*** INVALID FIELD NAME ***';       06120
+    IF UPD_COUNT(I) = 2 THEN LA_NARR = '*** FORCED KEY MISSING ***';       06130
+    IF UPD_COUNT(I) = 3 THEN LA_NARR = '*** INVLD CURRNCY CODE ***';       06140
+               END;                                                        06150
+          WRITE FILE(PRINT) FROM(LINEA);                                   06160
+          LINECT = LINECT + 2;                                             06170
+       END;                                                                06180
+ /*                                                                   */   06190
+       IF NO_ERR = 2                                                       06200
+       THEN DO;                                                            06210
+               LINEA = '0***** NO. OF UPDATES EXCEEDS MAXIMUM ALLOWED';    06220
+               WRITE FILE(PRINT) FROM(LINEA);                              06230
+            END;                                                           06240
+       IF NO_ERR > 0                                                       06250
+       THEN DO;                                                            06260
+               LINEA = '0***** ERRORS FOUND - RUN ABORTED';                06270
+               WRITE FILE(PRINT) FROM(LINEA);                              06280
+            END;                                                           06290
+       CLOSE FILE(PRINT);                                                  06300
+        IF NO_ERR > 0                                                      06310
+        THEN CALL IHESARC(16);                                             06320
+        ELSE DO;                                                           06330
+                IF RETCODSW                                                06340
+                THEN CALL IHESARC(8);                                      06350
+                ELSE CALL IHESARC(0);                                      06360
+             END;                                                          06370
+       END;                                                                06380

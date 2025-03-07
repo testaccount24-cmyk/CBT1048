@@ -1,0 +1,542 @@
+         TITLE 'BUDGIE3E - INTERNAL MACROS'                             E 000010
+         MACRO                                                          E 000020
+         $CB   &PRINT=OFF                                               E 000030
+         PUSH PRINT                PRESERVE CURRENT PRINT STATUS        E 000040
+         PRINT &PRINT              ESTABLISH NEW PRINT STATUS           E 000050
+               TITLE 'CB02 - CB02 CONTROL BLOCK'                        E 000060
+         CB02  ,                   GENERATE DSECT                       E 000070
+               TITLE 'CB04 - CB04 CONTROL BLOCK'                        E 000080
+         CB04  ,                   GENERATE DSECT                       E 000090
+               TITLE 'CB05 - CB05 CONTROL BLOCK'                        E 000100
+         CB05  ,                   GENERATE DSECT                       E 000110
+               TITLE 'CB11 - PRIMARY MS11 CONTROL BLOCK'                E 000120
+         CB11  ,                   GENERATE DSECT                       E 000130
+               TITLE 'CB13 - CB13 CONTROL BLOCK'                        E 000140
+         CB13  ,                   GENERATE DSECT                       E 000150
+               TITLE 'CB20 - CB20 CONTROL BLOCK'                        E 000160
+         CB20  ,                   GENERATE DSECT                       E 000170
+               TITLE 'CCB  - CENTRAL CONTROL BLOCK'                     E 000180
+         CCB   ,                   GENERATE DSECT                       E 000190
+               TITLE '     - BATCH BALANCING REPORT LINES'              E 000200
+      DETAILBB ,                   GENERATE DSECTS                      E 000210
+               TITLE '     - GENERAL EQUATES'                           E 000220
+       EQUATES ,                   GENERATE EQUATES                     E 000230
+               TITLE 'SB11 - SECONDARY CB11 CONTROL BLOCK'              E 000240
+         SB11  ,                   GENERATE DSECT                       E 000250
+         POP   PRINT               RESTORE ORIGINAL PRINT STATUS        E 000260
+         MEND                                                           E 000270
+         SPACE 5                                                        E 000280
+BUDGIE3E CSECT                                                          E 000290
+         $CB   ,                   GENERATE DSECTS AND EQUATES          E 000300
+         TITLE 'BUDGIE3E - DETAIL CARD PROCESSING'                      E 000310
+        SCSECT E                   START CSECT BUDGIE3E                 E 000320
+         ENTRY CB13TST             PERFORM TEST ON CHAIN OF CB13'S      E 000330
+         ENTRY DETAIL              DETAIL CARD MAIN-LINE                E 000340
+         TITLE 'BUDGIE3E - DETAIL CARD PROCESSING'                      E 000350
+*********************************************************************** E 000360
+*        PROCESS DETRAIL RECORDS - MAIN-LINE                          * E 000370
+*********************************************************************** E 000380
+         SPACE 1                                                        E 000390
+*        IN ADDITION TO PROCESSING DETAIL RECORDS, THIS ROUTINE ALSO    E 000400
+*         PERFORMS SOME 'RECORD-LEVEL' PROCESSING ON BATCH CARDS.  ON   E 000410
+*         ENTRY, THE PSW CONDITION CODE IS SET TO INDICATE THE NATURE   E 000420
+*         OF THE INPUT RECORD:                                          E 000430
+*              BL - B/C ( NORMAL PROCESSING )                           E 000440
+*              BE - D/C                                                 E 000450
+*              BH - B/C AND PARM=KEYBREAK OR                            E 000460
+*                   PARM=NOBC AND 1ST RECORD                            E 000470
+         SPACE 1                                                        E 000480
+         USING CB02NTRY,R10        ESTABISH CB02 ADDRESSABILITY         E 000490
+         USING CB11NTRY,R11         ESTABLISH CB11 ADDRESSABILITY       E 000500
+         USING SB11NTRY,R8         ESTABLISH SB11 ADDRESSABILITY        E 000510
+         USING DETAILBB,R7         ESTABLISH B/B REPORT LINE ADDRESSABY E 000520
+DETAIL   SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              E 000530
+         CLI   $TSTTSTX,C'X'       SET COND CODE TO DECIDE ACTION       E 000540
+         BL    DETAIL17            B/C ( NORMAL PROCESSING )            E 000550
+         BE    DETAIL0             D/C                                  E 000560
+         BH    DETAIL0             B/C AND PARM=KEYBREAK                E 000570
+*                                  OR PARM=NOBC AND 1ST RECORD          E 000580
+DETAILX SUBOUT RESTORE=R4          RESTORE AND RETURN TO MAIN-LINE      E 000590
+         EJECT                                                          E 000600
+*********************************************************************** E 000610
+*        SET UP DETAIL LINE                                           * E 000620
+*********************************************************************** E 000630
+         SPACE 1                                                        E 000640
+DETAIL0  XC    CB02INDD(7),CB02INDD SET OFF DETAIL INDS 00-55           E 000650
+         TM    AFSWITCH,AFSWKIND   ARE INDS 56-99 TO BE PRESERVED       E 000660
+         BO    *+10                BR IF YES                            E 000670
+         XC    CB02INDD,CB02INDD   SET OFF ALL DETAIL LEVEL INDICATORS  E 000680
+         NI    PSWITCH,FF-PSWBCARD SHOW NOT PROCESSING B/C              E 000690
+         NI    MASTER,FF-SWMDETL   SET OFF DETAIL SW FOR HEADING        E 000700
+         CP    PRINTBB+IOPSRCNT(4),=P'59' TEST FOR IMMINENT EOP         E 000710
+         BL    DETAIL0B            BR IF NOT NEAR EOP                   E 000720
+         CBAL  R4,HEADBB           PRINT B/B REPROT HEADINGS            E 000730
+DETAIL0B MVC   DTBBCARD,0(R6)      MOVE RECORD TO B/B RETORT            E 000740
+         OI    MASTER,SWMDETL      SHOW PROCESSING DETAIL RECORD        E 000750
+         AP    CB02RCNT,$ONE       INCREMENT BATCH RECORD COUNT         E 000760
+         MVC   $WRKAREA(8),EDITCNO EDIT MASK TO WARK AREA               E 000770
+         AP    CB02LCNT,$ONE       INCREMENT CARD NUMBER                E 000780
+         ED    $WRKAREA(8),CB02LCNT EDIT CARD NO FOR PRINTING           E 000790
+         AP    CB02RETC,$ONE       INCREMEMNT RETAINED COUNT            E 000800
+         MVC   DTBBCNO-2(6),$WRKAREA+2 CARD NO TO LINE                  E 000810
+         LA    R2,DTBBCARD         POINT R2 AT CARD IMAGE IN THIS LINE  E 000820
+         SR    R1,R1               ZEROISE RU                           E 000830
+         IC    R1,CB02PCRN         GET POSN OF CORRECTION REC NO        E 000840
+         LTR   R1,R1               TEST IF REC NO PL SUPPLIED           E 000850
+         BZ    DETAIL0A            BR IF NO REC NUM P                   E 000860
+         BCTR  R1,0                DECREMENT TO ALTER LGTH TO DISPLACE  E 000870
+         AR    R2,R1               POINT R2 AT REC NO FLD               E 000880
+         IC    R1,CB02LCRN         GET LGTH OF RECO NO                  E 000890
+         LTR   R1,R1               TEST IF LGTH SUPPLIED                E 000900
+         BZ    DETAIL0A            BR IF NO REC NUM PL                  E 000910
+         BCTR  R1,0                DECREMENT LGTH FOR EXECUTE           E 000920
+         LA    R14,$WRKAREA+7      POINT AT END OF EBCDIC CARD NO       E 000930
+         SR    R14,R1              POINT R14 AT 1ST CHAR REQUIRED       E 000940
+         EX    R1,MVCR14R2         MOVE REC NO TO CARD IMAGE            E 000950
+         EJECT                                                          E 000960
+*********************************************************************** E 000970
+*        SET UP DETAIL LINE                                           * E 000980
+*********************************************************************** E 000990
+         SPACE 1                                                        E 001000
+DETAIL0A ZAP   $BLNECNT,$ZERO      ZEROISE COUNT OD LINES THIS RECORD   E 001010
+         TM    MASTER,SWMNLIST     TEST IF DATA NOT TO BE LISTED        E 001020
+         BO    DETAIL00            BYPASS PRINTING LINE IF NOT          E 001030
+         MVC   DTBBCC,$DTBSPCE     ESTABLISH CARRIAGE CONTROL           E 001040
+         CBAL  R4,PRNTBBL          PRINT B/B LINE                       E 001050
+         SP    PRINTBB+IOPSRCNT(4),$ULNDECR CEDREMENT L/CNT IF NO SPCE  E 001060
+         SP    $BLNECNT,$ULNDECR   REDUCE LINE CNT IF PRINT-NO-SPACE    E 001070
+         EJECT                                                          E 001080
+*********************************************************************** E 001090
+*        DETERMINE CARD TYPE AND IGNORE IF NECESSARY                  * E 001100
+*********************************************************************** E 001110
+         SPACE 1                                                        E 001120
+DETAIL00 CBAL  R4,DCSCAN           TEST IF RECORD DETAIL TYPE           E 001130
+         BE    DETAIL03            BRANCH IF KNOWN RECORD TYPE          E 001140
+         TM    CB02SW,SW02DROP     DO WE DROP UNKNOWN RECORDS           E 001150
+         BNO   DETAIL01            BR IF NOT DROPPED TO IGNORE          E 001160
+        BBMESS 02                  MOVE DROPPED MESSAGE TO LINE         E 001170
+         MVC   DTBBFLAG-1(6),=C'DELETE' INDICATE REOORD DROPPED         E 001180
+         OI    PSWITCH,PSWDLETE    FLAG TO DELETE RECORD                E 001190
+         B     *+10                BYPASS MOVING 'IGNORED' MESSAGE      E 001200
+         SPACE 1                                                        E 001210
+DETAIL01 EQU   *                   TELL CARD TO BE IGNORED              E 001220
+        BBMESS 01                  MOVE IGNORED MESSAGE TO LINE         E 001230
+         TM    PSWITCH,PSWKIGN     TEST IF RECORD TYPE KNOWN            E 001240
+         BZ    *+10                BR IF UNKNOWN RECORD TYPE            E 001250
+         MVC   DTBBEMSS(2),$SPACES  BLANK OUT 'UN'                      E 001260
+         OI    PSWITCH,PSWIGN      SET TO SHOW IGNORED                  E 001270
+         CBAL  R4,PRNTBBL          PRINR ERROR MESSAGE                  E 001280
+         EJECT                                                          E 001290
+*********************************************************************** E 001300
+*        WRITE TO WORK FILE                                           * E 001310
+*********************************************************************** E 001320
+         SPACE 1                                                        E 001330
+DETAIL02 TM    PSWITCH,PSWDLETE    IS RECORD TO BE DELETED              E 001340
+         BO    DETAL021            BR IF RECORD TO BE DELETED           E 001350
+         TM    BRSWITCH,SWBRNOBC   IS IT PARM=NOBC                      E 001360
+         BZ    DETAL02A            GO WRITE TO WORK IF NOT              E 001370
+         CBAL  R4,PUTUT2           WRITE DIRECT TO SYSUT2               E 001380
+         B     DETAL02C            BYPASS WRITING TO WORK               E 001390
+DETAL02A CBAL  R4,WORKPUT          WRITE RECORD TO WORK FILE            E 001400
+DETAL02C B     DETAL022            BYPASS WRITING TO DELETED            E 001410
+DETAL021 TM    YPSWITCH,YPSWSFIN   WAS PARM SF=IN SPECIFIED             E 001420
+         BZ    *+8                 BR IF NOT                            E 001430
+         L     R6,$PTRPARM         POINT AT INPUT RECORD IMAGE          E 001440
+         CBAL  R4,PUTDLET          WRITE RECORD TO 'DELETED'            E 001450
+         L     R6,SYSUT1+IOPSRECA  REFRESH RECORD ADDRESS LEST SF=IN    E 001460
+         TM    SUSPOUT+IOPSSW,IOSWPRES DOES SUSPENSE FILE EXIST         E 001470
+         BZ    *+10                NO POINT IN DECRENENTING COUNT IF NO E 001480
+         SP    CB02LCNT,$ONE       DECREMENT CARD NO IN BATCH           E 001490
+         SP    CB02RETC,$ONE       DECREMENT COUNT OF RETAINED RECORDS  E 001500
+DETAL022 TM    PSWITCH,PSWPRNT     TEST IF LINE WRITTEN YET             E 001510
+         BNZ   DETAL023            BYPASS WRITE IF LINE ALREADY WRITTEN E 001520
+         TM    PSWITCH,PSWBCARD    IS THIS THE BATCH CARD               E 001530
+         BO    *+12                FORWARD SPACE IF YES                 E 001540
+         TM    MASTER,SWMNLIST     IS DATA TO BE LISTED                 E 001550
+BO       BO    DETAL026            DO NOT FORCE FORWARD SPACE IF NOT    E 001560
+         CBAL  R4,PRNTBBL          WRITE LINE TO FORCE FORWARD SPACE    E 001570
+         EJECT                                                          E 001580
+*********************************************************************** E 001590
+*        ENSURE THAT REPORT SPACING IS AS REQUESTED                   * E 001600
+*********************************************************************** E 001610
+         SPACE 1                                                        E 001620
+DETAL023 TM    PRINTSW,PRSWSPC3    WAS TRIPL APACING REQUESTED          E 001630
+         BZ    DETAL024            BR IF NO TRIPLE REQUEST              E 001640
+         CP    $BLNECNT,=P'2'      HAVE AT LEAST 3 LINES BEEN WRITTEN   E 001650
+         TM    PRINTSW,PRSWSPBL    ARE BLANK SPACING LINES REQUIRED     E 001660
+         BO    *+18                THEN GO SPACE REGARDLESS             E 001670
+         BH    DETAL026            BR IF SPACING ACCOMPLISHED           E 001680
+         BE    *+14                2 LINES ALREADY SO 1 MORE SUFFICES   E 001690
+         MVI   DTBBCC,SPCE2AFT     ESTABLISH DOUBLE SPACE               E 001700
+         COUNT PRINTBB,1           ADJUST LINE COUNT FOR EOP PROCESSIN  E 001710
+         B     DETAL025            GO PRINT LINE                        E 001720
+DETAL024 TM    PRINTSW,PRSWSPC2    WAS DOUBLE SPACING REQUESTED         E 001730
+         BZ    DETAL026            BYPASS PRINTING IF NOT               E 001740
+         TM    PRINTSW,PRSWSPBL    IS BLANK SPACING LINE RESUIRED       E 001750
+         BO    *+14                IF YES THEN GO SPACE REGARDLESS      E 001760
+         CP    $BLNECNT,=P'2'      WERE 2 LINES PRINTED ALREADY         E 001770
+         BNL   DETAL026            BR IF SPACING ACCOMPLISHED           E 001780
+DETAL025 CBAL  R4,PRNTBBL          PRINT NECESSARY SPACING LINES        E 001790
+DETAL026 EQU   *                   CONTINUE PRINT PROCESSING            E 001800
+         EJECT                                                          E 001810
+*********************************************************************** E 001820
+*        CREATE TURNAROUND DOCUMANT IF REQUIRED                       * E 001830
+*********************************************************************** E 001840
+         SPACE 1                                                        E 001850
+         TM    AFSWITCH,AFSWTURN   IS TURNAROUND DOCUMENT REQUIRED      E 001860
+         BZ    DETAL027            BR IF NOT REQUIRED                   E 001870
+         CBAL  R4,PRNTBBL          SPACE WITH BLANK LINE                E 001880
+         MVC   DTBBCARD(10),=C'.........,' SET UP PROTOTYPE GUIDE       E 001890
+         MVC   DTBBCARD+10(70),DTBBCARD PROPAGATE FOR LENGTH OF CARD    E 001900
+         MVI   DTBBCARD+09,C'1'    SET UP TENS INDICATION FOR K/P       E 001910
+         MVI   DTBBCARD+19,C'2'    SET UP TENS INDICATION FOR K/P       E 001920
+         MVI   DTBBCARD+29,C'3'    SET UP TENS INDICATION FOR K/P       E 001930
+         MVI   DTBBCARD+39,C'4'    SET UP TENS INDICATION FOR K/P       E 001940
+         MVI   DTBBCARD+49,C'5'    SET UP TENS INDICATION FOR K/P       E 001950
+         MVI   DTBBCARD+59,C'6'    SET UP TENS INDICATION FOR K/P       E 001960
+         MVI   DTBBCARD+69,C'7'    SET UP TENS INDICATION FOR K/P       E 001970
+         MVI   DTBBCARD+79,C'8'    SET UP TENS INDICATION FOR K/P       E 001980
+         CBAL  R4,PRNTBBL          PRINT TURNAROUND DOCUMENT            E 001990
+DETAL027 B     DETAILX             GO TO EXIT                           E 002000
+         EJECT                                                          E 002010
+*********************************************************************** E 002020
+*        LOCATE CB11 FOR THIS RECORD  TYPE                            * E 002030
+*********************************************************************** E 002040
+         SPACE 1                                                        E 002050
+DETAIL03 EQU   *                   PROCESS KNOWN RECORD TYPE            E 002060
+         L     R11,$PTRCB11         GET ADDRESS OF RELEVANT CB11        E 002070
+         TM    CB11SW,SW11IGN      IS RECORD TO BE IGNORED              E 002080
+         BZ    *+12                BR IF NOT TO BE IGNORED              E 002090
+         OI    PSWITCH,PSWKIGN     SET TO SHOW KNOWN BEING IGNORED      E 002100
+         B     DETAIL01            GO IGNORE RECORD                     E 002110
+         L     R8,CB11SB11         GET ADDRESS OF 1ST SB11              E 002120
+         B     *+8                 BYPASS FORWARD CHAINING              E 002130
+         EJECT                                                          E 002140
+*********************************************************************** E 002150
+*        PERFORM TESTS SPECIFIED IN SB11'S                            * E 002160
+*********************************************************************** E 002170
+         SPACE 1                                                        E 002180
+DETAIL04 EQU   *                   PROCESS SB11 ELEMENTS                E 002190
+         L     R8,SB11SB11         GET ADDRESS OF NEXT SB11             E 002200
+         LA    R8,0(,R8)           PURIFY HIGH-ORDER BYTE               E 002210
+         LTR   R8,R8               TEST FOR END OF CHAIN                E 002220
+         BZ    DETAIL09            BRANCH IF END OF CHAIN               E 002230
+         MVC   $ULINEPL,SB11PDC     SET UP FIELD TO BE UNDERLINED       E 002240
+         TM    SB11SW,SW11DTID     TEST FOR A TEST REQUEST              E 002250
+         BNO   DETAIL05            BR IF NOT A ETST RESUEST             E 002260
+         LA    R3,SB11PDC          POINT R3 AT FIELD 'PL'               E 002270
+         TSEL  SB11TID             SELECT & PERFORM DESIRED TEST        E 002280
+         BNH   DETAIL04            IF TEST SATISFIED, GET NXT SB11      E 002290
+         TM    APSWITCH,APSWMS1S   ARE THESE ERRORS FORCED SOFT         E 002300
+         BO    DETAL04S            BR IF YES                            E 002310
+         MVC   DTBBFLAG,=C'****'   INDICATE HARD ERROR IN MESSAGE       E 002320
+         OI    PSWITCH,PSWHARD     SET ON HARD ERROR SWITCHFOR CARD     E 002330
+         OI    MASTER,SWMHARD      SET ON HARD ERROR SWITCH FOR BATCH   E 002340
+         AP    CB02HCNT,$ONE       INCREMENT COUNT OF HARD ERRORS/BATCH E 002350
+         B     DETAL04P            GO PRINT ERROR MESSAGE               E 002360
+DETAL04S OI    PSWITCH,PSWSOFT     SET ON SOFT ERROR SWITCH FOR CARD    E 002370
+         OI    MASTER,SWMSOFT      SET ON SOFT ERROR SWITCH FOR BATCH   E 002380
+         AP    CB02SCNT,$ONE       INCREMENT COUNT OF SOFT ERRORS/BATCH E 002390
+DETAL04P CBAL  R4,PRNTBBL          PRINT ERROR MESSAGE                  E 002400
+         B     DETAIL04            GET NEXT SB11                        E 002410
+         EJECT                                                          E 002420
+*********************************************************************** E 002430
+*        DETERMINE IF FIELD IS NEGATIVE                               * E 002440
+*********************************************************************** E 002450
+         SPACE 1                                                        E 002460
+DETAIL05 EQU   *                   PRICESS NUNERIC FIELD                E 002470
+         TM    SB11SW2,SW11COND    IS THIS A CONDITIONAL ACCUMULATOR    E 002480
+         BO    DETAIL04            IGNORE IF YES & GET NEXT SB11        E 002490
+         TM    SB11SW,SW11INPD     IS THE INPUT FIELD PACKED DECIMAL    E 002500
+         BO    DETAL05A            BR IF PACKED FIELD                   E 002510
+         NI    PSWITCH,FF-PSWNEG   SET OFF NEGATINE FLAG                E 002520
+         MVC   $SFTEST,$SFDFLT     ASSUME THAT SIGNED TEST IS REQUIRED  E 002530
+         TM    SB11SW,SW11NGID     TEST IF -VE INDICATED BY A FIELD     E 002540
+         BZ    DETAIL06            BR IF NO SEPARATE -VE INDICATOR      E 002550
+         MVC   $SFTEST,$SFUDFLT    ESTABLISH UNSIGNED TEST              E 002560
+         OI    PSWITCH,PSWNEG      ASUME -VE UND IS ON                  E 002570
+         TM    SB11SW,SW11NGNZ     TEST IF NON-ZERO FLD AUTO -VE        E 002580
+         BO    DETAIL06            BRANCH IF FDL AUTO -VE               E 002590
+         MVC   $WRKAREA,$SPACES     BLANK OUT WORK AREA                 E 002600
+         LA    R2,$WRKAREA         POINT R2 AT WORK AREA                E 002610
+         LA    R3,SB12PNEG         POINT R3 AT PL OF -VE ID             E 002620
+         CBAL  R4,EXTRACT          MOVE -VE ID TO WORK AREA             E 002630
+         CLC   SB12NGID,$WRKAREA   SEE IF IDENTIFIER SHOWS -VE          E 002640
+         BE    DETAIL06            BR IF -VE ID ON                      E 002650
+         NI    PSWITCH,FF-PSWNEG   SET OFF -VE FLAG                     E 002660
+         B     DETAIL06            BR AROUND PACKED FIELD PROCESSING    E 002670
+         SPACE 5                                                        E 002680
+DETAL05A SR    R14,R14             ZEROISE WORK REGISTER                E 002690
+         IC    R14,SB11PDC         RETRIEVE POSN OF INPUT FIELD         E 002700
+         BCTR  R14,0               DECREMENT POSN TO DISPLACEMENT       E 002710
+         AR    R14,R6              POMT AT INPUT FIELD                  E 002720
+         SR    R1,R1               ZEROISE WORK REGISTER                E 002730
+         IC    R1,SB11LDC          RETRIEVE LENFTH OF INPUT FIELD       E 002740
+         BCTR  R1,0                DECREMENT FOR EXECUTE                E 002750
+         TM    SB11SW,SW11DBCN     IS THERE AN ASSOC BATCH CARD FIELD   E 002760
+         BZ    DETAL05B            BR IF NOT                            E 002770
+         L     R15,SB11CB05        GET ADDRESS OF ASSOC C/B             E 002780
+         EX    R1,SB11AP05         ADD VALUE TO CB05 ACCUMULATOR        E 002790
+DETAL05B TM    SB11SW,SW11DCRN     IS THERE AN ASSOC CONTROL REC FIELD  E 002800
+         BZ    DETAL05C            BR IF NOT                            E 002810
+         L     R15,SB11CB04        GET ADDRESS OF ASSOC CB04 C/B        E 002820
+         EX    R1,SB11AP04         ADD VALUE TO CB04 ACCUMULATOR        E 002830
+DETAL05C B     DETAIL04            GO GET NEXT SB11 ELEMENT             E 002840
+         EJECT                                                          E 002850
+*********************************************************************** E 002860
+*        VERIFY FIELD NUMERIC AND ACCUMULATE AS NECESSARY             * E 002870
+*********************************************************************** E 002880
+         SPACE 1                                                        E 002890
+DETAIL06 LA    R3,SB11PDC          POINT R3 AT PL OF NUMERIC FIELD      E 002900
+         CBAL  R4,SFVERIF          VERIFY NUMERIC                       E 002910
+         BNH   DETAIL07            BR IF FIELD BLANK OR NUMERIC         E 002920
+         TM    SB11SW,SW11SOFT     TEST IF THIS IS A SOFT ERROR         E 002930
+         BZ    *+16                BR IF HARD ERROR                     E 002940
+         OI    PSWITCH,PSWSOFT     SET ON SOFT ERROR SWITCH FOR CARD    E 002950
+         OI    MASTER,SWMSOFT      SET ON SOFT ERROR SWITCH FOR BATCH   E 002960
+         B     *+18                BYPASS SETTING HARD SWITCH           E 002970
+         MVC   DTBBFLAG,=C'****'   INDICATE HARD ERROR IN MESSAGE       E 002980
+         OI    PSWITCH,PSWHARD     SET O HARD ERROR SWITCH FOR CARD     E 002990
+         OI    MASTER,SWMHARD      SET ON HARD ERROR SW FOR BATCH       E 003000
+         AP    CB02HCNT,$ONE       INCREMENT COUNT OF HARD ERRORS/BATCH E 003010
+         CBAL  R4,PRNTBBL          PRINT ERROR MESSAGE                  E 003020
+         EJECT                                                          E 003030
+*********************************************************************** E 003040
+*        VERIFY NUMERIC AND ACCUMULATE ( CONT'D )                     * E 003050
+*********************************************************************** E 003060
+         SPACE 1                                                        E 003070
+DETAIL07 TM    SB11SW,SW11DBCN     TEST IF ASSOC BATCH CARD FIELD EXIST E 003080
+         BZ    DETAIL08            BR IF OO BATCH CARD FIELD            E 003090
+         L     R1,SB11CB05         RETRIEVE ADDRESS OF CB05             E 003100
+         USING CB05NTRY,R1         ESTABLISH CB05 ADDRESSABILITY        E 003110
+         TM    PSWITCH,PSWNEG      TEST IF FIELD IS -VE                 E 003120
+         BO    *+14                BR IF FIELD IS -VE                   E 003130
+         AP    CB05BACC,$WRKPACK   ADD DETAIL VALUE TO ACCUMULATOR      E 003140
+         B     *+10                BYPASS SUBTRACTION                   E 003150
+         SP    CB05BACC,$WRKPACK   SUBTRACT DETAIL FROM ACCUMULATOR     E 003160
+         DROP  R1                  DROP CB05 ADDRESSABILITY             E 003170
+DETAIL08 TM    SB11SW,SW11DCRN     TEST IF ASSOC CONTROL RECORD FIELD   E 003180
+         BZ    DETAIL04            IF NO C/R FLD, GET  NEXT SB11        E 003190
+         L     R1,SB11CB04         GET ADDRESS OF ASSOC CB04            E 003200
+         USING CB04NTRY,R1         ESTABLISH CB04 ADDRESSABLIITY        E 003210
+         TM    PSWITCH,PSWNEG      TEST IF FIELD -VE                    E 003220
+         BO    *+14                BR IF NEGATIBE                       E 003230
+         AP    CB04BACC,$WRKPACK   ADD DETAIL VALUE TO ACCUMULATOR      E 003240
+         B     *+10                BYAPSS SUBTRACTION                   E 003250
+         SP    CB04BACC,$WRKPACK   SUBTRACT DETAIL FROM ACCULULATOR     E 003260
+         DROP  R1                  DRIP CB04 ADDRESSALULITY             E 003270
+         B     DETAIL04            GO GET NEST SB11 ELEMENT             E 003280
+         EJECT                                                          E 003290
+*********************************************************************** E 003300
+*        PERFORM TESTS SPECIFIED BY CB13'S                            * E 003310
+*********************************************************************** E 003320
+         SPACE 1                                                        E 003330
+DETAIL09 EQU   *                   GET START OF CB13 CHAIN              E 003340
+         L     R8,CB11CB13         GET ADDRESS OF 1ST CB13 ELEMENT      E 003350
+         DROP  R8                  DROP SB11 ADDRESSANILITY             E 003360
+         LA    R4,DETAIL16         SET R4 TO DROP THROUGH               E 003370
+CB13TST  SUBIN SAVE=R4,FLOWTHR=YES SAVE RETURN ADDREES                  E 003380
+         USING CB13NTRY,R8         ESTABLISH CB13 ADDRESSABILITY        E 003390
+         B     *+8                 BYAPDS FORWARD CHAINING              E 003400
+         SPACE 1                                                        E 003410
+DETAIL10 EQU   *                   PROCESS CB13 ELEMENTC                E 003420
+         L     R8,CB13CB13         GET NEXT CB13 ADDRESS                E 003430
+         LA    R8,0(,R8)           PURIFY ADDRESS                       E 003440
+         LTR   R8,R8               TEST FOR END OF CB13 CHAIN           E 003450
+         BZ    DETAL15B            BR IF END OF CB13 CHAIN              E 003460
+         TM    CB13SW,SW13NTST     TEST IF C/B NO-OPED                  E 003470
+         BO    DETAIL10            GO GET NEXT CB13                     E 003480
+         ST    R8,$PTRCB13         PRESERVE ADDRESS OF CURRENT CB13     E 003490
+         MVC   $ULINEPL,CB13PFLD    SET UP FIELD TO BE UNDERLINED       E 003500
+         TM    CB13SW,SW13LIT      TEST IF CB13 CONTAINS COMPARAND      E 003510
+         BZ    DETAIL12            BR IF CB13 APPLIES TO ALL RECORDS    E 003520
+         LA    R5,3                ESTABLISH LOOP FOR 3 ELEMENTS        E 003530
+         LA    R2,$WRKAREA         POINT R2 AT WORK AREA                E 003540
+         MVC   $WRKAREA,$SPACES     BLANK OUT WORK AREA                 E 003550
+         LA    R3,CB13PRT1         POINT R3 AT PL OF 1ST COMPONENT      E 003560
+DETAIL11 CBAL  R4,EXTRACT          ADD COMPONENT TO WORK AREA           E 003570
+         LA    R3,2(,R3)           POINT AT NEXT COMPONENT PL           E 003580
+         BCT   R5,DETAIL11         LOOP BACK IF COMPONENTS LEFT         E 003590
+         SR    R1,R1               ZEROISE REGISTER 1                   E 003600
+         IC    R1,CB13LTYP         INSERT COMPARISON TYPE INTO R1       E 003610
+         CLC   $WRKAREA(L'CB13LIT),CB13LIT COMPARE EXTRACTED DATA & LIT E 003620
+         CBAL  R4,COMPARE          PERFO RM REQUIRED RELATIOSHIP TEST   E 003630
+         BNE   DETAIL10            GO GET NEXT CB13 IF NOT SATISFIED    E 003640
+         EJECT                                                          E 003650
+*********************************************************************** E 003660
+*        PERFORM TESTS SPECIFIED BY CB13'S ( CONT'D )                 * E 003670
+*********************************************************************** E 003680
+         SPACE 1                                                        E 003690
+DETAIL12 LA    R5,3                ESTABLISH LOOP OF 3 ELEMENETS        E 003700
+         TM    CB13SW2,SW13INDS    ARE THERE ANY IND TESTS TO BE MADE ? E 003710
+         BZ    DETAL12D            BYPASS TESTS IF NOT                  E 003720
+         LA    R3,CB13IND0         POINT AT 1ST INDICATOR               E 003730
+DETAL12C CBAL  R4,TESTIND          TEST IF INDICATOR HAS RIGHT STATUS   E 003740
+         BNE   DETAIL10            GO GET NEXT CB13 IF NOT SATISFIED    E 003750
+         LA    R3,2(,R3)           INCREMENT TO NEXT BUDKET             E 003760
+         BCT   R5,DETAL12C         LOOP BACK IF BUCKETS LEFT            E 003770
+DETAL12D LA    R3,CB13PFLD         POINT R3 AT PL OF FIELD TO BE TESTED E 003780
+         CLI   CB13TMOD,C'B'       IS A BLANK FIELD VALID               E 003790
+         BNE   DETAL12A            BR IF NOT TO AVOID TEST              E 003800
+         TSEL  SFBLANK             TEST IF FIELD BLANK                  E 003810
+         BNH   DETAIL10            BR IF ETEST SATISFIED TO GET NEXT    E 003820
+         MVI   DTBBCARD,C' '       BLANK OUT CARD AREA IN LINE LEST ... E 003830
+         MVC   DTBBCARD+1(L'DTBBCARD-1),DTBBCARD .. UNDERLINE LEFT.     E 003840
+         MVC   DTBBEMSS(L'DTBBEMSS+1),$SPACES BLANK OUT MESSAGE         E 003850
+DETAL12A CLI   CB13TMOD,C'*'       IS 1ST CHAR=* VALID                  E 003860
+         BNE   DETAL12B            BR FI NOT TO AVOID TEST              E 003870
+         EJECT                                                          E 003880
+*********************************************************************** E 003890
+*        PERFORM TESTS SPECIFIED BY CB13'S ( CONT'D )                 * E 003900
+*********************************************************************** E 003910
+         SPACE 1                                                        E 003920
+         TSEL  SFASTRSK            TEST IF FIELD BEGINS WITH ASTERISK   E 003930
+         BNH   DETAIL10            BR IF TEST SATISFIED TO GET NEXT     E 003940
+         MVI   DTBBCARD,C' '       BLANK OUT CARD AREA IN LINE LEST ... E 003950
+         MVC   DTBBCARD+1(L'DTBBCARD-1),DTBBCARD .. UNDERLINE LEFT.     E 003960
+         MVC   DTBBEMSS(L'DTBBEMSS+1),$SPACES BLANK OUT MESSAGE         E 003970
+DETAL12B TSEL  CB13TEST,CB13CBXX   SELECT & PERFORM REQUESTED TEST      E 003980
+         BH    DETAL12E            BR IF TEST FAILED                    E 003990
+         TM    APSWITCH,APSWSRTN   ARE WE WITHIN MS40 SUB-ROUTINE       E 004000
+         BO    DETAIL10            GO GET NEXT TEST IF YES              E 004010
+         TM    CB13SW2,SW132TMG    SHOULD WE TERMINATE PROCESSING       E 004020
+         BO    DETAL15B            SIMULATE END-OF-CB13-CHAIN IF YES    E 004030
+         B     DETAIL10            GO GET NEXT CB13                     E 004040
+DETAL12E TM    CB13SW,SW13OIND     IS IND SETTING ONLY REQUIRED         E 004050
+         BO    DETAL15A            BR IF SET IND ONLY                   E 004060
+         TM    CB13SW,SW13MESS     TEST IF ERROR MESSAGE SUPPLIED       E 004070
+         BZ    *+16                BR IF NO USER MESSAGE                E 004080
+         MVC   DTBBEMSS(L'DTBBEMSS+1),$SPACES BLANK OUT DEFAULT MESSAGE E 004090
+         MVC   DTBBEMSS,CB13MESS   MOVE ERROR MESSAGE TO LINE           E 004100
+         TM    CB13SW,SW13DLET     TEST IF RECORD TO BE DELETED         E 004110
+         BZ    DETAIL13            BR IF RECORD NOT TO BE DELETED       E 004120
+         OI    PSWITCH,PSWDLETE    SHOW RECORD TO BE DELETED            E 004130
+         TM    A2SWITCH,A2SWNDFL   IS THE DELETED FLAG REQUIRED         E 004140
+         BO    *+10                BRANCH IF FLAG TO BE SUPPRESSED      E 004150
+         MVC   DTBBFLAG-1(6),=C'DELETE' SHOW DELETED IN ERROR MESSAGE   E 004160
+         B     DETAIL15            GO WRITE ERROR MESSAGE               E 004170
+         EJECT                                                          E 004180
+*********************************************************************** E 004190
+*        PERFORM TESTSS SPECIFIED BY CB13'S ( CONT'D )                * E 004200
+*********************************************************************** E 004210
+         SPACE 1                                                        E 004220
+DETAIL13 TM    CB13SW,SW13SOFT     TEST IF ERROR IS SOFT                E 004230
+         BZ    DETAIL14            BR IF ERROR IS HARD                  E 004240
+         OI    PSWITCH,PSWSOFT     SET ON SOFT ERROR FLAG  FOR CARD     E 004250
+         OI    MASTER,SWMSOFT      SET ON SOFT ERROR FLAG FRO BATCH     E 004260
+         AP    CB02SCNT,$ONE       INCREMENT COUNT OF SOFT ERRORS       E 004270
+         B     DETAIL15            GO WRITE ERROR MESSAGE               E 004280
+DETAIL14 OI    PSWITCH,PSWHARD     SET ON HARD ERRROR FLAG FOR CARD     E 004290
+         OI    MASTER,SWMHARD      SET ON HARD EEROR FLAG FOR BATCH     E 004300
+         AP    CB02HCNT,$ONE       INCREMENT COUNT OF HARD ERRORS       E 004310
+         MVC   DTBBFLAG,=C'****'   SHOW HARD ERROR IN MESSAGE           E 004320
+DETAIL15 TM    MASTER,SWMNLIST     ARE ONLY ERRORS BEING LISTED         E 004330
+         BZ    DETAL15D            BR IF NOT COS CAR IMAGE ALREDAY PRT  E 004340
+         TM    YPSWITCH,YPSWCLST   HAS CARD IMAGE ALREADY BEEN PRINTED  E 004350
+         BO    DETAL15D            BR IF YES TO AVOID PRINTING AGAIN    E 004360
+         L     R1,$DBUFF            RETRIEVE ADDRESS OF DUMY BUFFER     E 004370
+         MVC   0(133,R1),0(R7)     PRESERVE THIS PRINT LINE             E 004380
+         MVC   0(1,R7),$DTBSPCE    ESTABLISH CARRIAGE CONTROL           E 004390
+         MVC   DTBBEMSS(38),$SPACES BLANK OUT BEYOND CARD IMAGE IN LINE E 004400
+         L     R1,$PTRPARM         POINT AT PRESERVED INPUT RECORD IMAG E 004410
+         MVC   DTBBCARD,0(R1)      MOVE CARD IMAGE TO LINE              E 004420
+         CBAL  R4,PRNTBBL          PRINT LINE WITH INPUT IMAGE          E 004430
+         OI    YPSWITCH,YPSWCLST   FLAG THAT CARD IMAGE PRINTED         E 004440
+         SP    PRINTBB+IOPSRCNT(4),$ULNDECR DECREMENT L/CNT IF NO SPACE E 004450
+         SP    $BLNECNT,$ULNDECR   REDUCE LINE COUNT IF PRINT-NO SPCE   E 004460
+         L     R1,$DBUFF            RETRIEVE ADRESS OF DUMMY BUFFER     E 004470
+         MVC   0(133,R7),0(R1)     MOVE ORIGINAL LINE BACK TO BUFFER    E 004480
+DETAL15D TM    PRINTSW,PRSWNDTA    IS NO DATA TO BE PRINTED             E 004490
+         BO    DETAL15A            BR IF NO DATA TO BE PRINTED          E 004500
+         CBAL  R4,PRNTBBL          PRINT LINE WITH ERROR MESSAGE        E 004510
+         EJECT                                                          E 004520
+*********************************************************************** E 004530
+*        PERFORM TESTS SPECIFIED BY CB13'S ( CONT'D )                 * E 004540
+*********************************************************************** E 004550
+         SPACE 1                                                        E 004560
+DETAL15A CBAL  R4,SETINDS          SET ERROR INDICATORS                 E 004570
+         MVC   DTBBEMSS(L'DTBBEMSS+1),$SPACES BLANK OUT MESSAGE         E 004580
+         MVI   DTBBCARD,C' '       BLANK OUT CARD AREA IN LINE LEST ... E 004590
+         MVC   DTBBCARD+1(L'DTBBCARD-1),DTBBCARD ... UNDERLINE LEFT IN  E 004600
+         TM    APSWITCH,APSWSRTN   ARE WE WITHIN SUBROUTINE             E 004610
+         BO    DETAL15C            IGNORE TERMINATION REQUEST IF YES    E 004620
+         TM    CB13SW2,SW132TMB    SHOULD WE TERMINATE POCESSING        E 004630
+         BO    DETAL15B            SIMULATE END OF CB13 CHAIN IF YES    E 004640
+DETAL15C B     DETAIL10            GO GET NEXT CB13                     E 004650
+DETAL15B SUBOUT RESTORE=R4         DROP THRU OR RETURN TO BATCH AS NEC  E 004660
+         EJECT                                                          E 004670
+*********************************************************************** E 004680
+*        PERFORM USER ORUTINE IF NECESSARY                            * E 004690
+*********************************************************************** E 004700
+         SPACE 1                                                        E 004710
+DETAIL16 EQU   *                   INVOKE USER RTN IF REQUIRED          E 004720
+         TM    CB02SW,SW02URTN     TEST IF USER RTN REQUIRED            E 004730
+         BZ    DETAL16B            BR IF USER RTN NOT REQUIRED          E 004740
+         CBAL  R4,URTCALL          INVOKE USER RTN                      E 004750
+DETAL16B EQU   *                   CONTINUE PROCESSING                  E 004760
+         SPACE 1                                                        E 004770
+DETAIL17 B     DETAIL02            WRITE FIOE TO WORK & GET NEXT RECORD E 004780
+         DROP  R10,R11,R8           DROP CONTROL BLOCK ADDRESSABILITY   E 004790
+         DROP  R7                  DROP B/B REPORT ADDRESSABILITY       E 004800
+         EJECT                                                          E 004810
+*********************************************************************** E 004820
+*        DETERMINES WHETHER THE CURRENT RECORD IS A KNOWN DETAIL      * E 004830
+*         CARD TYPE.  ON INPUT, R6 POINTS AT THE RECORD TO BE TESTED  * E 004840
+*         AND 'CURRMS02' CONTAINS THE ADDRESS OF THE RELEVANT CB02    * E 004850
+*         CONTROL BLOCK.  ON OUTPUT, 'CURRMS11' POINTS AT THE         * E 004860
+*         APPROPRIATE MS11 CONTROL BLOCK.  THE CONDITION CODE IS      * E 004870
+*         SET SUCJ THAT THE USER CAN MAKE THE FOLLOWING TESTS -       * E 004880
+*              BE  - CARD IS A KNOWN DETAIL TYPE                      * E 004890
+*              BNE - CARD TYPE UNKNOWN                                * E 004900
+*********************************************************************** E 004910
+         SPACE 1                                                        E 004920
+         USING CB02NTRY,R10        ESTABLISH CB02 ADDRESSABILITY        E 004930
+         USING CB11NTRY,R8         ESAABLISH CB11 ADDRESSABILITY        E 004940
+         PRINT NOGEN               SUPPRESS EXPANSION OF SUBIN          E 004950
+DCSCAN   SUBIN SAVE=(R4,R8,R10)    PRESERVE REGISTERS                   E 004960
+         PRINT GEN                 ALLOW EXPANSION OF MAXROS            E 004970
+         MVI   DCSCANX,C'Y'        ASSUME UNKNOWN CARD TYPE             E 004980
+         L     R10,$PTRCB02        RETRIEVE B/C C/B ADDRESS             E 004990
+         XC    $PTRCB11,$PTRCB11   ZEROISE D/C C/B POINTER              E 005000
+         L     R8,CB02CB11         GET 1ST CB11 ADDRESS                 E 005010
+         B     *+8                 BYPASS FORWARD CHAINNNG              E 005020
+DCSCAN01 L     R8,CB11CB11         GET ADDRESS OF NEXT CB11             E 005030
+         LTRR  R8,R8               PURIFY AND TEST                      E 005040
+         BZ    DCSCANX1            GO RETURN TO CALLER IF END OF CHAIN  E 005050
+         LA    R2,$WRKAREA         POINT R2 AT WORK AREA                E 005060
+         LA    R3,CB11PRTI         POINT AT CARD ID 'PL'                E 005070
+         MVC   $WRKAREA,$SPACES     BLANK OUT WORK AREA                 E 005080
+         CBAL  R4,EXTRACT          MOVE CARD ID TO WORK AREA            E 005090
+         CLC   CB11RTI,$WRKAREA    TEST IF CARD ID MATCHES CB11         E 005100
+         BNE   DCSCAN01            BRANCH IF NO TO NEXT TEST            E 005110
+         ST    R8,$PTRCB11         PRESERVE ADDRESS OF CURRENT CB11     E 005120
+         AP    CB11CNT,$ONE         INCREMENT COUNT OF THIS TYPE        E 005130
+         MVI   DCSCANX,C'X'        SET TO SHOW CARD TYPE KNOWN          E 005140
+DCSCANX1 CLI   DCSCANX,C'X'        SET COND CODE FOR CALLER             E 005150
+        SUBOUT RESTORE=(R4,R8,R10) RESTORE EEGISTERS AND RETURN         E 005160
+         SPACE 1                                                        E 005170
+DCSCANX  DC    C' '                COMPARAND TO SET COND CODE           E 005180
+         DROP  R8,R10              DROP CONTROL BLOCK ADDRESSABILITY    E 005190
+         EJECT                                                          E 005200
+*********************************************************************** E 005210
+*        EXECUTED INSTRUCTIONS                                        * E 005220
+*********************************************************************** E 005230
+         SPACE 1                                                        E 005240
+MVCR14R2 MVC   0(0,R2),0(R14)      MOVE REC NUMBER TO CARD IMAGE        E 005250
+SB11AP04 AP    CB04BACC-CB04NTRY(L'CB04BACC,R15),0(0,R14)               E 005260
+SB11AP05 AP    CB05BACC-CB05NTRY(L'CB05BACC,R15),0(0,R14)               E 005270
+         TITLE 'BUDGIE3E - MISCELLANEOUS CONSTANTS AND FIELDS'          E 005280
+BBMESS01 DC    C'UNIDENTIFIED CARD TYPE IGNORED'                        E 005290
+BBMESS02 DC    C'UNIDENTIFIED CARD TYPE DROPPED'                        E 005300
+         SPACE 1                                                        E 005310
+SFBLANK  DC    X'04'               TES IF FIELD IS ALL BLANK            E 005320
+SFASTRSK DC    X'15'               TES IF 1ST POSN IS AN ASTERISK       E 005330
+         SPACE 1                                                        E 005340
+EDITCNO  DC    X'4020202120202020'                                      E 005350
+         SPACE 1                                                        E 005360
+        SCSEND E                   TERMINATE CSECT BUDGIE3E             E 005370
+         END                                                            E 005380
+         SPACE 1                                                        E 005390
+         REPRO                                                          E 005400
+ IDENTIFY BUDGIE3E('DETAIL CARD PROCESSING')                            E 005410
+         END                                                            E 005420

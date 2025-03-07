@@ -1,0 +1,917 @@
+FILE     TITLE '    F    I    L    E    S    M    O    N           SRD' IFS06030
+         SPACE 2                                                        IFS06040
+*        PROGRAM.   FILESMON  (CREATE FILE AND FILE DESCRIPTION)        IFS06050
+         SPACE 2                                                        IFS06060
+         SPACE 2                                                        IFS06070
+*        PURPOSE.   THIS CALLABLE SUBROUTINE CREATES AN ISAM DATA       IFS06080
+*                   SET WITH A HIERARCHICAL FILE  STRUCTURE   AND       IFS06090
+*                   STORES  THE   FILE  DESCRIPTION  AND  SEGMENT       IFS06100
+*                   ATTRIBUTES  IN  THE  FILE DESCRIPTOR  (SRDFD)       IFS06110
+*                   FROM USER DATA.  THE DESCRIPTOR IS A DATA SET       IFS06120
+*                   CONTAINING  FILE DESCRIPTIONS UTILIZED BY THE       IFS06130
+*                   SYSTEM MONITOR (INFO) AND THE UTILITY MONITOR       IFS06140
+*                   (UTMON) WHEN PROCESSING THE  ISAM FILES    IN       IFS06150
+*                   THE S R D  SYSTEM.                                  IFS06160
+         SPACE 2                                                        IFS06170
+*CALL FILESMON(FUNCT,FILENAME,SEGMNAME,SEGMKEY,SEGMAREA,SEGMLEV,STATUS) IFS06180
+         SPACE 2                                                        IFS06190
+*              FUNCT    =DESC      FILE DESCRIPTION DATA                IFS06200
+*                       =CREATE    ISAM FILE DATA                       IFS06210
+*                       =CLOSE      CLOSE ISAM FILE                     IFS06220
+         SPACE                                                          IFS06230
+*              FILENAME =NAME OF FILE BEING CREATED AND DESCRIPTION     IFS06240
+         SPACE                                                          IFS06250
+*              SEGMNAME =NAME OF SEGMENT BEING PROCESSED                IFS06260
+         SPACE                                                          IFS06270
+*              SEGMKEY  =CONCATENATED KEY VALUE                         IFS06280
+         SPACE                                                          IFS06290
+*              SEGMAREA =AREA OF SEGMENT DATA                           IFS06300
+         SPACE                                                          IFS06310
+*              SEGMLEV  =LEVEL OF SEGMENT (SUPPLIED BY FILESMON)        IFS06320
+         SPACE                                                          IFS06330
+*              STATUS   =ERROR RETURN CODE (SUCCESFUL IF = 0 )          IFS06340
+         EJECT                                                          IFS06350
+FILESMON START 0000                                                     IFS06360
+         ENTRY B0728E                                                   IFS06370
+B0728E   EQU   FILESMON                                                 IFS06380
+         ENTRY CREATE                                                   IFS06390
+CREATE   EQU   FILESMON                                                 IFS06400
+GOSRDGO  SAVE  (2,12),T,*                                               IFS06410
+         SPACE 4                                                        IFS06420
+         BALR  12,0                                                     IFS06430
+         USING *,12                    BASE REGISTERS                   IFS06440
+         USING *+4096,11                                                IFS06450
+         USING *+8192,10                                                IFS06460
+         USING IHADCB,2                 DSECT FOR DCBS                  IFS06470
+         USING SEGMDESC,3               DSECT FOR SEGMENT DESC          IFS06480
+BASE     L     11,BASE2                                                 IFS06490
+         L     10,BASE3                                                 IFS06500
+*********************************************************************** IFS06510
+*********************************************************************** IFS06520
+         SPACE 4                                                        IFS06530
+         ST    13,SAVE+4                                                IFS06540
+         LA    5,SAVE                                                   IFS06550
+         ST    5,8(0,13)                                                IFS06560
+         LR    13,5                                                     IFS06570
+         LM    3,9,0(1)                 LOAD 7 PARAMS FROM REG1 LIST    IFS06580
+         STM   3,9,ARGUMENT             STORE INTO ARGUMENT AREA        IFS06590
+         LA    2,USERDCB                LOAD USER DCB FOR DSECT USE     IFS06600
+         CLC   CREATES(4),0(3)          FUNCT = CREATE ?                IFS06610
+CALL1    BE    OPENDCB                                                  IFS06620
+         CLC   CLOSES(4),0(3)           FUNCT = CLOSE  ?                IFS06630
+         BE    CLOSE                                                    IFS06640
+         BAL   8,BLNKEY                 BLANK OUT AND STORE FILENAME    IFS06650
+         CLC   DESCR,0(3)               FUNCT = DESC   ?                IFS06660
+         BE    DESC                                                     IFS06670
+         B     PARMERR1                                                 IFS06680
+CALL2    BE    FINDSEGM                                                 IFS06690
+CALL3    BE    OPENDCB                                                  IFS06700
+*                                                                       IFS06710
+BASE2    DC    A(BASE+4096)                                             IFS06720
+BASE3    DC    A(BASE+8192)                                             IFS06730
+         TITLE 'FILESMON -    FILE DESCRIPTION INFORMATION'             IFS06740
+*********************************************************************** IFS06750
+DESC     ST    4,DESCADDR               DESC LIST IN REG 4              IFS06760
+         SPACE                                                          IFS06770
+         CLI   OPENTIME,C'O'                                            IFS06780
+         BE    OPENED                                                   IFS06790
+         MVI   OPENTIME,C'O'                                            IFS06800
+         OPEN  (FDBDCB,(OUTPUT))        BISAM SRDFD                     IFS06810
+         SPACE 2                                                        IFS06820
+         OPEN  (FDQDCB)                 QISAM SRDFD                     IFS06830
+         SPACE 2                                                        IFS06840
+         OPEN  (PRINTDCB,(OUTPUT))      OPEN THE SYSOUT PRINTER         IFS06850
+         SPACE                                                          IFS06860
+*********************************************************************** IFS06870
+         LA    2,FDBDCB                 LOAD FILE DESC DCB FOR DCB USE  IFS06880
+         LH    7,DCBLRECL               FILE DESC RECORD LENGTH         IFS06890
+         ST    7,DLEN                   DESC LEN                        IFS06900
+         BCTR  7,0                      REC LEN - 1                     IFS06910
+         ST    7,DLENM1                 DESC LEN - 1                    IFS06920
+         STC   7,FDMOVE1+1              STORE MOVE CHARACTERS AT FDMOVE IFS06930
+         STC   7,FDMOVE2+1                                              IFS06940
+         STC   7,SDMOVE+1                                        SDMOVE IFS06950
+OPENED   EQU   *                                                        IFS06960
+         XC    TOTSEGS(44),TOTSEGS                                      IFS06970
+*********************************************************************** IFS06980
+         MVI   FTYPE,X'00'              SEGMENTS WITH KEYS EMBEDDED     IFS06990
+         CLC   0(6,5),NOKEYS            TEST IF SEGMENTS WITH NOKEYS    IFS07000
+         BNE   OPTIONS                                                  IFS07010
+         MVI   FTYPE,X'01'              SEGMENTS WITHOUT KEYS EMBEDDED  IFS07020
+OPTIONS  CLC   CREATES,24(4)            OPTION = CREATE ?               IFS07030
+         BE    KREATE                                                   IFS07040
+         CLC   DELADD,24(4)             OPTION = DELADD ?               IFS07050
+         BE    DELETE                                                   IFS07060
+         SPACE 2                                                        IFS07070
+         B     PARMERR2                 OPTION IS INCORRECT             IFS07080
+         SPACE 2                                                        IFS07090
+*********************************************************************** IFS07100
+DELETE   BCR   0,0                                                      IFS07110
+         LA    2,FDBDCB                                                 IFS07120
+         BAL   8,FREE                                                   IFS07130
+         BAL   8,READFD                                                 IFS07140
+         L     1,FDK+16                                                 IFS07150
+         CLI   0(1),X'FF'                                               IFS07160
+         BE    KREATE                                                   IFS07170
+DELETER  LA    2,FDQDCB                                                 IFS07180
+         SETL  FDQDCB,K,KEY             FIND EXISTING FILE NAME DATA    IFS07190
+GETDEL   GET   FDQDCB                                                   IFS07200
+         CLC   1(8,1),KEY               DELETE OLD DATA TO              IFS07210
+         BNE   ESETL                                                    IFS07220
+         MVI   0(1),X'FF'               ADD NEW FILE AND SEGMENT DESC   IFS07230
+         PUTX  FDQDCB                                                   IFS07240
+         B     GETDEL                                                   IFS07250
+ESETL    ESETL FDQDCB                   TERMINATE SEQ MODE              IFS07260
+         SPACE 2                                                        IFS07270
+*********************************************************************** IFS07280
+KREATE   LA    2,FDBDCB                 LOAD BISAM SRDFD FOR IHADCB     IFS07290
+         MVI   FRKP+3,X'01'             FRKP = 1                        IFS07300
+         MVC   FNAME,0(4)               FILENAME 1                      IFS07310
+         MVC   FDDNAME,8(4)             DDNAME                          IFS07320
+         MVC   FOPCD,20(4)              OVERRIDE DCB OPTION             IFS07330
+         MVC   RECFM,30(4)                                              IFS07340
+         MVC   OPT2BLK,16(4)                                            IFS07350
+         MVC   FBLKSIZE,F3476           USE BLOKSIZE OF MAX 3476        IFS07360
+         CLC   C2314,16(4)                                              IFS07370
+         BNE   FDMOVE1                                                  IFS07380
+         MVC   FBLKSIZE,F7249           USE BLOKSIZE OF MAX 7249        IFS07390
+FDMOVE1  MVC   FDREC+16,FILEDESC        FILE DESCRIPTION RECORD         IFS07400
+         BAL   8,FREE                                                   IFS07410
+         BAL   8,ADDFD                  ATTEMPT TO ADD NEW FD           IFS07420
+         CLI   FOPCD,C'Z'               SPECIAL FOR CONTROL MASTER      IFS07430
+         BNE   LOADRKP                                                  IFS07440
+         MVI   FTYPE,X'01'                                              IFS07450
+         MVC   FRKP+3(1),FOPCD+1        FRKP=RKP OF C.M.,OTHERWISE = 1  IFS07460
+*********************************************************************** IFS07470
+LOADRKP  L     5,FRKP                                                   IFS07480
+         SR    6,6                                                      IFS07490
+         ST    6,FMAXLEN                CLEAR FMAXLEN  FOR EACH FILE    IFS07500
+         LA    3,SEGMENTS              SEGMENT WORK AREA  60X44         IFS07510
+         LA    7,20               MAXIMUM NUMBER SEGMENTS ALLOWED       IFS07520
+SEGMENT  LA    4,32(4)                  START NEW SEGMENT               IFS07530
+         CLC   ENDSDESC(4),0(4)         SEGMDESC = ENDSDESC ?           IFS07540
+         BE    ENDS                                                     IFS07550
+         MVC   SFILE,FNAME                                              IFS07560
+         MVC   SNAME,0(4)               SEGMENT NAME                    IFS07570
+         CVD   6,CVD1                                                   IFS07580
+         BAL   8,CONVBDS                                                IFS07590
+         MVC   SLEVA,CVD3+2             SEGMENT LEVEL                   IFS07600
+         MVC   SENSE,10(4)              SEGMENT SENSITIVITY             IFS07610
+         MVC   SLEN,12(4)              SEGMENT LENGTH                   IFS07620
+         SR    8,8                      ZERO SEGMENT KEY POSITION       IFS07630
+         CLI   FTYPE,X'01'              IS SEGMENT WITHOUT KEYS         IFS07640
+         BE    NOSRKP                   YES                             IFS07650
+         L     8,16(4)                  SEGMENT KEY COLUMN              IFS07660
+         BCTR  8,0                                                      IFS07670
+NOSRKP   ST    8,SRKP                   SEGMENT RELATIVE KEY POSITION   IFS07680
+         MVC   SKEYLEN,20(4)            SEGMENT KEY LENGTH              IFS07690
+         ST    5,SFRKP                  SEGMENT KEY FILE RKP            IFS07700
+         A     5,SKEYLEN                SFRKP = SFRKP + SKEYLEN         IFS07710
+         STC   6,STYPE                  LEVEL NO IN HEX                 IFS07720
+         ST    6,SLEVB                                                  IFS07730
+         LA    6,1(6)                                                   IFS07740
+         CLC   FMAXLEN,SLEN             MAXIMUM SEGMENT LENGTH          IFS07750
+         BH    SDMOVE                                                   IFS07760
+         MVC   FMAXLEN,SLEN             NEW MAX LENGTH                  IFS07770
+SDMOVE   MVC   FDREC+16,SEGMDESC        SEGMENT DESCRIPTION RECORD      IFS07780
+         MVC   KEY(10),SFILE            KEY = FILENAME + LEVEL          IFS07790
+         BAL   8,FREE                                                   IFS07800
+         BAL   8,ADDFD                  ADD NEW SD                      IFS07810
+         A     3,DLEN                   INCREMENT SEGMENTS WORKAREA     IFS07820
+         BCT   7,SEGMENT                                                IFS07830
+         B     TABLFULL           MORE THAN 20 SEGMENTS                 IFS07840
+         SPACE 2                                                        IFS07850
+ENDS     MVI   STYPE,X'FF'              DELIMIT SEGMENTS AREA           IFS07860
+*********************************************************************** IFS07870
+*********************************************************************** IFS07880
+SETDCB   LA    2,USERDCB                CONSTRUCT DCB FOR USER          IFS07890
+         MVC   DCBDDNAM(8),FDDNAME      DDNAME                          IFS07900
+         XC    JFCB,JFCB                                                IFS07910
+         RDJFCB USERDCB                                                 IFS07920
+         MVC   DSNAME,JFCB                                              IFS07930
+         MVC   DCBOPTCD,JFCB+101                                        IFS07940
+         MVC   DCBNTM,JFCB+107                                          IFS07950
+         MVC   DCBCYLOF,JFCB+110                                        IFS07960
+         ST    6,FNOSEGM                NO OF SEGMENTS                  IFS07970
+         S     5,FRKP                                                   IFS07980
+         ST    5,FKEYLEN                CONCATENATED KEY LENGTH         IFS07990
+         STC   5,DCBKEYLE               KEYLEN                          IFS08000
+         L     5,FRKP                                                   IFS08010
+         STH   5,DCBRKP                 RKP                             IFS08020
+         L     4,FRKP                                                   IFS08030
+         A     4,FKEYLEN                                                IFS08040
+         A     4,FMAXLEN                                                IFS08050
+         STH   4,FLRECL                                                 IFS08060
+         STH   4,DCBLRECL               LRECL                           IFS08070
+SETRECFM CLC   RECFM,FB                                                 IFS08080
+         BNE   NOBLOCK                                                  IFS08090
+         MVI   DCBRECFM,X'90'           RECFM = FB                      IFS08100
+         MVI   FRECFM,X'90'                                             IFS08110
+         CLC   OPT3,FOPCD                                               IFS08120
+         BE    OPT3USER                                                 IFS08130
+         CLC   OPT2,FOPCD                                               IFS08140
+         BE    OPT2USER                                                 IFS08150
+SETBLOCK BAL   8,LRECLBLK                                               IFS08160
+         B     BLOCK                                                    IFS08170
+OPT3USER MVC   FOPCD,OPT1                                               IFS08180
+OPT2USER PACK  CVD1,OPT2BLK                                             IFS08190
+         CVB   5,CVD1                                                   IFS08200
+         CR    4,5                                                      IFS08210
+         BH    JBLK2                                                    IFS08220
+         STH   5,FBLKSIZE                                               IFS08230
+         B     SETBLOCK                                                 IFS08240
+JBLK2    MVC   PRINTS(54),LINE4                                         IFS08250
+         MVI   CODE,X'40'                                               IFS08260
+         BAL   8,PRINT                                                  IFS08270
+         B     SETBLOCK                                                 IFS08280
+NOBLOCK  MVI   DCBRECFM,X'80'           RECFM = F                       IFS08290
+         MVI   FRECFM,X'80'                                             IFS08300
+         LA    5,1                                                      IFS08310
+         STH   5,RECNT                                                  IFS08320
+         STH   5,PADCNT                                                 IFS08330
+BLOCK    STH   4,FBLKSIZE                                               IFS08340
+         STH   4,DCBBLKSI               BLKSIZE                         IFS08350
+OPT1USER CLC   OPT1,FOPCD                                               IFS08360
+         BE    ENDSDCB                                                  IFS08370
+         MVI   DCBNTM,X'00'             TRACK INDEX LIMIT               IFS08380
+         MVI   DCBCYLOF,X'00'           CYLINDER OVFLOW TRACKS          IFS08390
+         MVI   DCBOPTCD,X'13'           OPTCD = ILR                     IFS08400
+         SPACE 2                                                        IFS08410
+*********************************************************************** IFS08420
+*********************************************************************** IFS08430
+ENDSDCB  MVC   KEY(10),FNAME                                            IFS08440
+         LA    2,FDBDCB                 LOAD FILE DESC DCB FOR DCB USE  IFS08450
+         BAL   8,FREE                                                   IFS08460
+         BAL   8,READFD                                                 IFS08470
+         L     6,FDK+16                                                 IFS08480
+FDMOVE2  MVC   0(0,6),FILEDESC                                          IFS08490
+         BAL   8,UPDATEFD               UPDATE FILE DESC                IFS08500
+         B     PRNTDESC                 PRINT FILE DESC                 IFS08510
+*                                                                       IFS08520
+         TITLE 'FILESMON -    PRINT FILE DESCRIPTION INFORMATION'       IFS08530
+         PRINT ON,NOGEN                                                 IFS08540
+PRNTDESC MVI   CODE,C'1'                EJECT A PAGE FOR FILE DESC      IFS08550
+         BAL   8,PRINT                                                  IFS08560
+         CALL  DATE,(MONTH,DAY,YEAR)                                    IFS08570
+         L     4,MONTH                                                  IFS08580
+         BAL   8,CONVBD                                                 IFS08590
+         MVC   PRINTS+9(32),LINE1                                       IFS08600
+         MVC   PRINTS+57(2),CVD3+2                                      IFS08610
+         MVI   PRINTS+59,C'-'                                           IFS08620
+         L     4,DAY                                                    IFS08630
+         BAL   8,CONVBD                                                 IFS08640
+         MVC   PRINTS+60(2),CVD3+2                                      IFS08650
+         MVI   PRINTS+62,C'-'                                           IFS08660
+         L     4,YEAR                                                   IFS08670
+         BAL   8,CONVBD                                                 IFS08680
+         MVC   PRINTS+63(2),CVD3+2                                      IFS08690
+         MVI   CODE,C'0'                                                IFS08700
+         BAL   8,PRINT                                                  IFS08710
+         MVC   PRINTS+9(48),LINE2                                       IFS08720
+         MVI   CODE,C'-'                                                IFS08730
+         BAL   8,PRINT                                                  IFS08740
+         L     4,FNOSEGM                                                IFS08750
+         BAL   8,CONVBD                                                 IFS08760
+         MVC   PRINTS+49(4),CVD3                                        IFS08770
+         MVC   PRINTS+9(8),FNAME                                        IFS08780
+         MVC   PRINTS+29(8),FDDNAME                                     IFS08790
+         MVI   CODE,C'0'                                                IFS08800
+         BAL   8,PRINT                                                  IFS08810
+         MVC   PRINTS+9(68),LINE3                                       IFS08820
+         MVI   CODE,C'-'                                                IFS08830
+         BAL   8,PRINT                                                  IFS08840
+         LA    3,SEGMENTS                                               IFS08850
+         SPACE 2                                                        IFS08860
+PRINTSEG CLI   STYPE,X'FF'                                              IFS08870
+         BE    DCBPRINT                                                 IFS08880
+         MVI   CODE,C'0'                                                IFS08890
+         MVC   PRINTS+19(2),SLEVA                                       IFS08900
+         MVC   PRINTS+29(8),SNAME                                       IFS08910
+         MVC   PRINTS+69(2),SENSE                                       IFS08920
+         L     4,SLEN                                                   IFS08930
+         BAL   8,CONVBD                                                 IFS08940
+         MVC   PRINTS+39(4),CVD3                                        IFS08950
+         L     4,SKEYLEN                                                IFS08960
+         BAL   8,CONVBD                                                 IFS08970
+         MVC   PRINTS+49(4),CVD3                                        IFS08980
+         MVC   PRINTS+59(4),ASTERISK    MOVE **** TO SRKP-PRINT WHEN    IFS08990
+         CLI   FTYPE,X'01'              SEGMENTS WITHOUT KEYS ARE       IFS09000
+         BE    NOSRKPS                  TO BE CREATED FOR THE FILE      IFS09010
+         L     4,SRKP                                                   IFS09020
+         LA    4,1(4)                                                   IFS09030
+         BAL   8,CONVBD                                                 IFS09040
+         MVC   PRINTS+59(4),CVD3                                        IFS09050
+NOSRKPS  BAL   8,PRINT                  PRINT SEGMENT DESC LINE         IFS09060
+         A     3,DLEN                                                   IFS09070
+         B     PRINTSEG                                                 IFS09080
+DCBPRINT LA    2,USERDCB                                                IFS09090
+         CLI   DSNAME,X'00'                                             IFS09100
+         BE    NODSNAME                                                 IFS09110
+         CLI   DSNAME,X'40'                                             IFS09120
+         BE    NODSNAME                                                 IFS09130
+         MVC   PRINTS+9(7),J                                            IFS09140
+         MVC   PRINTS+18(44),DSNAME                                     IFS09150
+         MVI   CODE,C'-'                                                IFS09160
+         BAL   8,PRINT                                                  IFS09170
+NODSNAME LA    1,PRINTS+9                                               IFS09180
+         MVC   0(18,1),A                                                IFS09190
+         LA    1,18(1)                                                  IFS09200
+         L     4,FRKP                                                   IFS09210
+         BAL   14,CONVSUPP                                              IFS09220
+         MVC   0(8,1),B                                                 IFS09230
+         LA    1,8(1)                                                   IFS09240
+         L     4,FKEYLEN                                                IFS09250
+         BAL   14,CONVSUPP                                              IFS09260
+         MVC   0(7,1),C                                                 IFS09270
+         LA    1,7(1)                                                   IFS09280
+         LH    4,FLRECL                                                 IFS09290
+         BAL   14,CONVSUPP                                              IFS09300
+         MVC   0(9,1),D                                                 IFS09310
+         LA    1,9(1)                                                   IFS09320
+         LH    4,FBLKSIZE                                               IFS09330
+         BAL   14,CONVSUPP                                              IFS09340
+         MVC   0(7,1),E                                                 IFS09350
+         LA    1,7(1)                                                   IFS09360
+         MVI   0(1),C'F'                                                IFS09370
+         LA    1,1(1)                                                   IFS09380
+         CLI   FRECFM,X'90'                                             IFS09390
+         BNE   NTM                                                      IFS09400
+         MVI   0(1),C'B'                                                IFS09410
+         LA    1,1(1)                                                   IFS09420
+NTM      CLI   DCBNTM,X'00'                                             IFS09430
+         BE    CYLOF                                                    IFS09440
+         MVC   0(5,1),F                                                 IFS09450
+         LA    1,5(1)                                                   IFS09460
+         SR    4,4                                                      IFS09470
+         IC    4,DCBNTM                                                 IFS09480
+         BAL   14,CONVSUPP                                              IFS09490
+CYLOF    CLI   DCBCYLOF,X'00'                                           IFS09500
+         BE    OPTCD                                                    IFS09510
+         MVC   0(8,1),G                                                 IFS09520
+         LA    1,8(1)                                                   IFS09530
+         SR    4,4                                                      IFS09540
+         IC    4,DCBCYLOF                                               IFS09550
+         BAL   14,CONVSUPP                                              IFS09560
+OPTCD    CLI   DCBOPTCD,X'00'                                           IFS09570
+         BNE   OPTCDS                                                   IFS09580
+         MVI   DCBOPTCD,X'13'                                           IFS09590
+OPTCDS   MVC   0(7,1),H                                                 IFS09600
+         LA    1,7(1)                                                   IFS09610
+W        TM    DCBOPTCD,X'80'                                           IFS09620
+         BZ    M                                                        IFS09630
+         MVI   0(1),C'W'                                                IFS09640
+         LA    1,1(1)                                                   IFS09650
+M        TM    DCBOPTCD,X'20'                                           IFS09660
+         BZ    I                                                        IFS09670
+         MVI   0(1),C'M'                                                IFS09680
+         LA    1,1(1)                                                   IFS09690
+I        TM    DCBOPTCD,X'10'                                           IFS09700
+         BZ    Y                                                        IFS09710
+         MVI   0(1),C'I'                                                IFS09720
+         LA    1,1(1)                                                   IFS09730
+Y        TM    DCBOPTCD,X'08'                                           IFS09740
+         BZ    L                                                        IFS09750
+         MVI   0(1),C'Y'                                                IFS09760
+         LA    1,1(1)                                                   IFS09770
+L        TM    DCBOPTCD,X'02'                                           IFS09780
+         BZ    R                                                        IFS09790
+         MVI   0(1),C'L'                                                IFS09800
+         LA    1,1(1)                                                   IFS09810
+R        TM    DCBOPTCD,X'01'                                           IFS09820
+         BZ    WMIYLR                                                   IFS09830
+         MVI   0(1),C'R'                                                IFS09840
+         LA    1,1(1)                                                   IFS09850
+WMIYLR   MVI   0(1),C')'                                                IFS09860
+         MVI   CODE,C'-'                                                IFS09870
+         BAL   8,PRINT                                                  IFS09880
+LASTLINE MVI   CODE,C'1'                                                IFS09890
+         BAL   8,PRINT                                                  IFS09900
+         B     RETURN0                                                  IFS09910
+*                                                                       IFS09920
+         TITLE 'FILESMON -    CREATE HIERARCHICAL USER FILE'            IFS09930
+*********************************************************************** IFS09940
+OPENDCB  MVC   CALL1,CALL2              REPLACE INITIAL BRANCH          IFS09950
+         L     6,FKEYLEN                LOAD MAX KEYLENGTH FOR FILE     IFS09960
+         BCTR  6,0                                                      IFS09970
+         STC   6,MOVEKEY+1              STORE MOVE CHARACTERS FOR FILE  IFS09980
+         SPACE                                                          IFS09990
+         SPACE 2                                                        IFS10000
+         OPEN  (USERDCB,(OUTPUT))       OPEN USER DCB                   IFS10010
+*********************************************************************** IFS10020
+FINDSEGM LA    3,SEGMENTS               SEGMENT DESC                    IFS10030
+         L     4,SEGMNAME               SEGMENT NAME                    IFS10040
+COMPSEGM CLI   STYPE,X'FF'              STYPE = FF ?                    IFS10050
+         BE    PARMERR3                 SEGMENT NOT FOUND               IFS10060
+         CLC   SNAME,0(4)               SNAME = SEGNAME ?               IFS10070
+         BE    PUTS                                                     IFS10080
+         A     3,DLEN                   NEXT SEGMENT                    IFS10090
+         B     COMPSEGM                 CONTINUE SEARCH                 IFS10100
+         SPACE 2                                                        IFS10110
+PUTS     CLI   FTYPE,X'01'              IS SEGMENT WITHOUT KEY          IFS10120
+         BE    PUTOUT                                                   IFS10130
+         L     6,SKEYLEN                COMPARE KEYS SEGMKEY-SEGMENT    IFS10140
+         BCTR  6,0                                                      IFS10150
+         STC   6,COMPKEY+1                                              IFS10160
+         L     6,SEGMKEY                                                IFS10170
+         A     6,SFRKP                                                  IFS10180
+         BCTR  6,0                                                      IFS10190
+         L     7,SEGMAREA                                               IFS10200
+         A     7,SRKP                                                   IFS10210
+COMPKEY  CLC   0(0,6),0(7)                                              IFS10220
+         BNE   PARMERR4                                                 IFS10230
+         SPACE 2                                                        IFS10240
+PUTOUT   BAL   8,PUT                                                    IFS10250
+         SPACE 4                                                        IFS10260
+         LH    6,PADCNT                 RECORDS REMAINING IN BLOCK      IFS10270
+         BCT   6,PADCNTS                SUBTRACT ONE FROM REMAINDER     IFS10280
+         LH    6,RECNT                  RELOAD NO. OF RECORDS           IFS10290
+PADCNTS  STH   6,PADCNT                 STORE REMAINDER IN BLOCK        IFS10300
+         SPACE 2                                                        IFS10310
+         SR    7,7                      NUMBER OF SEGMENTS CREATED      IFS10320
+         IC    7,STYPE                                                  IFS10330
+         SLA   7,1                      FOR EACH SEGMENT TYPE           IFS10340
+         LH    6,LEVCNT(7)                                              IFS10350
+         LA    6,1(6)                                                   IFS10360
+         STH   6,LEVCNT(7)                                              IFS10370
+         L     6,TOTSEGS                                                IFS10380
+         LA    6,1(6)                                                   IFS10390
+         ST    6,TOTSEGS                                                IFS10400
+         MVC   0(1,1),STYPE             STYPE = HEX LEVEL NO            IFS10410
+         L     6,SEGMLEV                SEGMENT LEVEL                   IFS10420
+         MVC   0(2,6),SLEVA             RETURN LEVEL TO USER            IFS10430
+         L     6,SEGMKEY                SEGMENT KEY                     IFS10440
+MOVEKEY  MVC   1(1,1),0(6)                                              IFS10450
+         A     1,SFRKP                  PAD OUT REMAINDER OF KEY        IFS10460
+         A     1,SKEYLEN                                                IFS10470
+         L     4,FKEYLEN                                                IFS10480
+         S     4,SFRKP                                                  IFS10490
+         S     4,SKEYLEN                                                IFS10500
+         BM    MOVESEG                  NO KEY LEFT TO PAD              IFS10510
+         STC   4,MOVEPAD+1                                              IFS10520
+         MVI   0(1),X'01'               PAD CHARACTER IS X'01'          IFS10530
+MOVEPAD  MVC   1(1,1),0(1)                                              IFS10540
+         AR    1,4                                                      IFS10550
+         LA    1,1(1)                                                   IFS10560
+MOVESEG  L     4,SLEN                                                   IFS10570
+         L     5,FMAXLEN                                                IFS10580
+         L     6,SEGMAREA               SEGMENT AREA FROM USER          IFS10590
+MOVEREC  S     5,F256                                                   IFS10600
+         S     4,F256                                                   IFS10610
+         BC    12,MOVEPART                                              IFS10620
+         MVC   0(256,1),0(6)                                            IFS10630
+         LA    1,256(1)                                                 IFS10640
+         LA    6,256(6)                                                 IFS10650
+         B     MOVEREC                                                  IFS10660
+MOVEPART LA    4,255(4)                                                 IFS10670
+         LA    5,255(5)                                                 IFS10680
+         STC   4,MOVEREST+1                                             IFS10690
+MOVEREST MVC   0(1,1),0(6)                                              IFS10700
+         LA    1,1(1)                                                   IFS10710
+         AR    1,4                      PAD WITH BLANKS UNUSED          IFS10720
+         SR    5,4                      AREAS IN THE SEGMENT RECORDS    IFS10730
+         BZ    RETURN0                  MAXIMUM SPACE USED              IFS10740
+         MVI   0(1),C' '                                                IFS10750
+         BCTR  5,0                                                      IFS10760
+         BCTR  5,0                                                      IFS10770
+         BM    RETURN0                                                  IFS10780
+         STC   5,BLANKOUT+1                                             IFS10790
+BLANKOUT MVC   1(1,1),0(1)                                              IFS10800
+         B     RETURN0                                                  IFS10810
+*                                                                       IFS10820
+         EJECT                                                          IFS10830
+CLOSE    SR    4,4                                                      IFS10840
+         IC    4,DCBKEYLE               PICKUP KEY LENGTH               IFS10850
+         AH    4,DCBRKP                 ADD START KEY POSI              IFS10860
+         BCTR  4,0                                                      IFS10870
+         STC   4,DUMMY1+1               MOVE CHAR CNT                   IFS10880
+         BCTR  4,0                                                      IFS10890
+         STC   4,DUMMY2+3               DISPLACEMENT VALUE              IFS10900
+         XC    DUMPAD,DUMPAD                                            IFS10910
+         MVI   DUMPAD,X'FF'                                             IFS10920
+         LH    5,DUMPAD                                                 IFS10930
+         LH    7,PADCNT                 RECORDS REMAINING IN FINAL BLK  IFS10940
+         SPACE 4                                                        IFS10950
+DUMMY    BAL   8,PUT                                                    IFS10960
+         MVI   0(1),X'FF'               MOVE DELETE CODE                IFS10970
+DUMMY1   MVC   1(0,1),0(1)                                              IFS10980
+DUMMY2   MVC   0(2,1),DUMPAD                                            IFS10990
+         LA    5,1(5)                                                   IFS11000
+         STH   5,DUMPAD                 STORE PAD CHARACTERS            IFS11010
+         BCT   7,DUMMY                  LOOP UNTIL BLOCK COMPLETE       IFS11020
+         SPACE 2                                                        IFS11030
+         CLOSE (USERDCB)                USER FILE                       IFS11040
+         SPACE 2                                                        IFS11050
+         CLOSE (FDQDCB)                 FILEDESC FILE QISAM             IFS11060
+         SPACE 2                                                        IFS11070
+         CLOSE (FDBDCB)                 FILEDESC FILE BISAM             IFS11080
+         SPACE 2                                                        IFS11090
+         MVI   CODE,C'1'                                                IFS11100
+         MVC   PRINTS+9(28),LINE5                                       IFS11110
+         MVC   PRINTS+18(8),FNAME                                       IFS11120
+         MVC   PRINTS+37(30),DSNAME                                     IFS11130
+         BAL   8,PRINT                                                  IFS11140
+         MVI   CODE,C'0'                                                IFS11150
+         MVC   PRINTS+9(28),LINE6                                       IFS11160
+         BAL   8,PRINT                                                  IFS11170
+         LA    3,SEGMENTS                                               IFS11180
+         L     7,FNOSEGM                                                IFS11190
+SEGTOTAL SR    6,6                                                      IFS11200
+         IC    6,STYPE                                                  IFS11210
+         SLA   6,1                                                      IFS11220
+         LH    4,LEVCNT(6)                                              IFS11230
+         BAL   8,CONVBD                                                 IFS11240
+         MVC   PRINTS+12(2),SLEVA                                       IFS11250
+         MVC   PRINTS+16(8),SNAME                                       IFS11260
+         MVC   PRINTS+33(4),CVD3                                        IFS11270
+         BAL   8,PRINT                                                  IFS11280
+         A     3,DLEN                                                   IFS11290
+         BCT   7,SEGTOTAL                                               IFS11300
+         L     4,TOTSEGS                                                IFS11310
+         BAL   8,CONVBD                                                 IFS11320
+         MVC   PRINTS+9(5),LINE6+29                                     IFS11330
+         MVC   PRINTS+33(4),CVD3                                        IFS11340
+         BAL   8,PRINT                                                  IFS11350
+         SPACE 2                                                        IFS11360
+         XC    USERDCB(252),USERDCB     CLEAR DCB FOR RE-USE            IFS11370
+         SR    7,7                                                      IFS11380
+         LA    7,1(7)                                                   IFS11390
+         STC   7,DCBBUFCB+3                                             IFS11400
+         STC   7,DCBIOBAD+3                                             IFS11410
+         STC   7,DCBEODAD+3                                             IFS11420
+         STC   7,DCBMSWA+3                                              IFS11430
+         STC   7,DCBMSHI+3                                              IFS11440
+         STC   7,DCBSETL+3                                              IFS11450
+         STC   7,DCBESETL+3                                             IFS11460
+         STC   7,DCBWKPT1+3                                             IFS11470
+         MVI   DCBDSORG,X'80'                                           IFS11480
+         MVC   DCBEXLST,EXLSTADD                                        IFS11490
+         MVC   DCBOFLGS(4),MACRADD                                      IFS11500
+         MVC   DCBSYNAD,SYNADADD                                        IFS11510
+         MVC   DCBLRAN(24),DCBESETL                                     IFS11520
+         MVC   DCBWKPT2(20),DCBWKPT1                                    IFS11530
+         SPACE 2                                                        IFS11540
+         SR    7,7                                                      IFS11550
+          ST   7,FDK                                                    IFS11560
+          ST   7,AFDK                                                   IFS11570
+         STH   7,FDK+6                                                  IFS11580
+         STH   7,AFDK+6                                                 IFS11590
+          ST   7,FDK+12                                                 IFS11600
+          ST   7,FDK+16                                                 IFS11610
+         ST    7,AFDK+16                                                IFS11620
+         STH   7,FDK+24                                                 IFS11630
+         STH   7,AFDK+24                                                IFS11640
+         SPACE 2                                                        IFS11650
+         MVC   CALL1,CALL3                                              IFS11660
+         MVI   OPENTIME,C' '                                            IFS11670
+         SPACE 2                                                        IFS11680
+         CLOSE (PRINTDCB)                                               IFS11690
+         SPACE 2                                                        IFS11700
+RETURN0  L     9,STATUS                                                 IFS11710
+         MVI   0(9),C'0'                STATUS = 0                      IFS11720
+         SPACE 2                                                        IFS11730
+RETURN   L     13,SAVE+4                                                IFS11740
+         RETURN (14,12),T                                               IFS11750
+*                                                                       IFS11760
+         TITLE 'FILESMON -    S U B R O U T I N E S'                    IFS11770
+         PRINT ON,GEN                                                   IFS11780
+         SPACE 4                                                        IFS11790
+         READ  FDK,KU,FDBDCB,'S','S',KEY,MF=L                           IFS11800
+         SPACE 4                                                        IFS11810
+FREE     FREEDBUF  FDK,K,FDBDCB                                         IFS11820
+         BR    8                                                        IFS11830
+         SPACE 4                                                        IFS11840
+READFD   READ  FDK,K,MF=E                                               IFS11850
+WAIT     WAIT  ECB=FDK                                                  IFS11860
+ST8      ST    8,SAVE8                                                  IFS11870
+         TM    FDK+24,X'DD'                                             IFS11880
+         BM    IOERR                                                    IFS11890
+         BR    8                                                        IFS11900
+         SPACE 4                                                        IFS11910
+UPDATEFD WRITE FDK,K,MF=E                                               IFS11920
+         B     WAIT                                                     IFS11930
+         EJECT                                                          IFS11940
+         SPACE 4                                                        IFS11950
+ADDFD    WRITE AFDK,KN,FDBDCB,FDREC,'S',KEY                             IFS11960
+         WAIT  ECB=AFDK                                                 IFS11970
+         MVC   FDK+24(1),AFDK+24                                        IFS11980
+         B     ST8                                                      IFS11990
+         SPACE 4                                                        IFS12000
+PUT      PUT   USERDCB                                                  IFS12010
+         BR    8                                                        IFS12020
+         SPACE 4                                                        IFS12030
+CONVBD   CVD   4,CVD1                   CONVERT BINARY TO DECIMAL       IFS12040
+CONVBDS  ZAP   CVD2,CVD1                                                IFS12050
+         UNPK  CVD3,CVD2                                                IFS12060
+         OI    CVD3+3,X'F0'                                             IFS12070
+         BR    8                                                        IFS12080
+         SPACE 4                                                        IFS12090
+PRINT    PUT   PRINTDCB,PRINTS-1                                        IFS12100
+         MVI   PRINTS,X'40'                                             IFS12110
+         MVC   PRINTS+1(131),PRINTS                                     IFS12120
+         BR    8                                                        IFS12130
+         SPACE 4                                                        IFS12140
+BLNKEY   MVI   KEY,X'40'                BLANK OUT ENTIRE KEY FIELD      IFS12150
+         MVC   KEY+1(255),KEY                                           IFS12160
+         MVC   KEY(8),0(4)              KEY = FILE NAME                 IFS12170
+         BR    8                                                        IFS12180
+         SPACE 4                                                        IFS12190
+LRECLBLK BCR   0,0                                                      IFS12200
+         LH    6,FLRECL                                                 IFS12210
+         LH    4,FBLKSIZE                                               IFS12220
+         SRDA  4,32(0)                                                  IFS12230
+         DR    4,6                                                      IFS12240
+         STH   5,RECNT                                                  IFS12250
+         STH   5,PADCNT                                                 IFS12260
+         MR    4,6                                                      IFS12270
+         LR    4,5                                                      IFS12280
+         BR    8                                                        IFS12290
+         SPACE 4                                                        IFS12300
+SUPPRESS LA    6,CVD3                   4 NUMBERS TO DROP 'F0'          IFS12310
+         LA    5,3                                                      IFS12320
+SUPPA    CLI   0(6),X'F0'                                               IFS12330
+         BNE   SUPPB                                                    IFS12340
+         LA    6,1(6)                                                   IFS12350
+         BCT   5,SUPPA                                                  IFS12360
+SUPPB    EX    5,MOVEDCBS               MOVE WITHOUT LEADING 'F0'       IFS12370
+         LA    5,1(5)                                                   IFS12380
+         AR    1,5                                                      IFS12390
+         BR    8                                                        IFS12400
+MOVEDCBS MVC   0(0,1),0(6)                                              IFS12410
+         SPACE 4                                                        IFS12420
+CONVSUPP BAL   8,CONVBD                                                 IFS12430
+         BAL   8,SUPPRESS                                               IFS12440
+         BR    14                                                       IFS12450
+*                                                                       IFS12460
+         TITLE 'FILESMON -    E R R O R      R E C O V E R Y'           IFS12470
+         PRINT ON,NOGEN                                                 IFS12480
+         SPACE 4                                                        IFS12490
+*              R    A    N    D    O    M                               IFS12500
+         SPACE 2                                                        IFS12510
+IOERR    MVC   CK,FDK+24                                                IFS12520
+         MVI   0(9),C'E'                                                IFS12530
+         TM    CK,X'80'                 RECORD NOT FOUND ?              IFS12540
+         BO    ERR19                                                    IFS12550
+         TM    CK,X'40'                 RECORD LENGTH CHECK ?           IFS12560
+         BO    ERR13                                                    IFS12570
+         TM    CK,X'20'                 NO SPACE TO ADD ?               IFS12580
+         BO    ERR14                                                    IFS12590
+         TM    CK,X'10'                 INVALID REQUEST ?               IFS12600
+         BO    ERR15                                                    IFS12610
+         TM    CK,X'08'                 UNCORRECTABLE I/O ERROR ?       IFS12620
+         BO    ERR16                                                    IFS12630
+         TM    CK,X'04'                 UNREACHABLE BLOCK ?             IFS12640
+         BO    ERR17                                                    IFS12650
+         TM    CK,X'01'                 DUPLICATE ADD                   IFS12660
+         BO    ERR18                                                    IFS12670
+         B     ERR7                                                     IFS12680
+         SPACE 4                                                        IFS12690
+*              S    E    Q    U    E    N    T    I     A   L           IFS12700
+         SPACE 2                                                        IFS12710
+SCANERRS L     9,STATUS                                                 IFS12720
+         MVI   0(9),C'E'                STATUS = E                      IFS12730
+         TM    DCBEXCD1,X'80'           KEY NOT FOUND-SETL ?            IFS12740
+         BO    ERR1                                                     IFS12750
+         TM    DCBEXCD1,X'10'           INVALID REQUEST-SETL ?          IFS12760
+         BO    ERR2                                                     IFS12770
+         TM    DCBEXCD1,X'08'           UNCORRECTABLE INPUT-GET ?       IFS12780
+         BO    ERR3                                                     IFS12790
+         TM    DCBEXCD1,X'04'           UNCORRECTABLE OUTPUT-GET/CLOSE? IFS12800
+         BO    ERR4                                                     IFS12810
+         TM    DCBEXCD1,X'02'           UNREACHABLE BLOCK-GET ?         IFS12820
+         BO    ERR5                                                     IFS12830
+         TM    DCBEXCD1,X'01'           UNREACHABLE BLOCK-GET/CLOSE ?   IFS12840
+         BO    ERR6                                                     IFS12850
+SEXCD220 TM    DCBEXCD2,X'20'           CLOSED DCB ERROR ?              IFS12860
+         BO    ERR8                                                     IFS12870
+         B     ERR7                                                     IFS12880
+         EJECT                                                          IFS12890
+LOADERRS MVI   0(9),C'E'                                                IFS12900
+         TM    DCBEXCD1,X'24'                                           IFS12910
+         BZ    SEXCD230                                                 IFS12920
+         TM    DCBEXCD1,X'20'           SPACE NOT FOUND-PUT ?           IFS12930
+         BO    ERR9                                                     IFS12940
+         TM    DCBEXCD1,X'04'           UNCORRECTABLE OUTPUT-PUT/CLOSE? IFS12950
+         BO    ERR10                                                    IFS12960
+         B     ERR7                                                     IFS12970
+SEXCD230 TM    DCBEXCD2,X'80'           SEQUENCE CHECK                  IFS12980
+         BO    ERR11                                                    IFS12990
+         TM    DCBEXCD2,X'40'           DUPLICATE RECORD                IFS13000
+         BO    ERR12                                                    IFS13010
+         TM    DCBEXCD2,X'20'           DCB CLOSED ERROR                IFS13020
+         BO    ERR8                                                     IFS13030
+         B     ERR7                                                     IFS13040
+         SPACE 2                                                        IFS13050
+ERR1     CLC   DELADD,24(4)             IF OPTION = DELADD              IFS13060
+         BE    KREATE                   GO TO KREATE                    IFS13070
+         WTO   'KEY NOT FOUND-SETL'     FILE DESC NOT ON SRDFD          IFS13080
+         B     RETURN                                                   IFS13090
+ERR2     WTO   'INVALID REQUEST-SETL'                                   IFS13100
+         B     RETURN                                                   IFS13110
+ERR3     WTO   'UNCORRECTABLE INPUT-GET'                                IFS13120
+         B     RETURN                                                   IFS13130
+ERR4     WTO   'UNCORRECTABLE OUTPUT-GET/CLOSE'                         IFS13140
+         B     SEXCD220                                                 IFS13150
+ERR5     WTO   'UNREACHABLE BLOCK-GET'                                  IFS13160
+         B     RETURN                                                   IFS13170
+ERR6     WTO   'UNREACHABLE BLOCK-GET/CLOSE'                            IFS13180
+         B     SEXCD220                                                 IFS13190
+ERR7     WTO   'UNEXPLAINABLE ERROR'                                    IFS13200
+         B     RETURN                                                   IFS13210
+ERR8     WTO   'DCB CLOSED WHEN ERROR OCCURRED'                         IFS13220
+         BR    14                                                       IFS13230
+ERR9     WTO   'SPACE NOT FOUND-PUT'                                    IFS13240
+         B     RETURN                                                   IFS13250
+ERR10    WTO   'UNCORRECTABLE OUTPUT-PUT/CLOSE'                         IFS13260
+         B     SEXCD220                                                 IFS13270
+ERR11    WTO   'SEQUENCE CHECK'                                         IFS13280
+         B     RETURN                                                   IFS13290
+ERR12    WTO   'DUPLICATE RECORD'                                       IFS13300
+         B     RETURN                                                   IFS13310
+ERR13    WTO   'RECORD LENGTH CHECK'                                    IFS13320
+         B     RETURN                                                   IFS13330
+ERR14    WTO   'NO SPACE TO ADD'                                        IFS13340
+         B     RETURN                                                   IFS13350
+ERR15    WTO   'INVALID REQUEST'                                        IFS13360
+         B     RETURN                                                   IFS13370
+ERR16    WTO   'UNCORRECTABLE I/O ERROR'                                IFS13380
+         B     RETURN                                                   IFS13390
+ERR17    WTO   'UNREACHABLE BLOCK'                                      IFS13400
+         B     RETURN                                                   IFS13410
+ERR18    WTO   'DUPLICATE ADD'                                          IFS13420
+         B     RETURN                                                   IFS13430
+ERR19    CLC   DELADD,24(4)                                             IFS13440
+         BE    KREATE                                                   IFS13450
+         WTO   'RECORD NOT FOUND'                                       IFS13460
+         B     RETURN                                                   IFS13470
+         SPACE 4                                                        IFS13480
+*              P    A    R    A    M    E    T    E    R    S           IFS13490
+         SPACE 2                                                        IFS13500
+PARMERR1 MVI   0(9),C'1'                STATUS = 1                      IFS13510
+         WTO   'PARAM 1 ERROR'          FUNCT IS INCORRECT              IFS13520
+         B     RETURN                                                   IFS13530
+PARMERR2 MVI   0(9),C'2'                STATUS = 2                      IFS13540
+         WTO   'PARAM 2 ERROR'          FILENAME//DESC IS INCORRECT     IFS13550
+         B     RETURN                                                   IFS13560
+PARMERR3 MVI   0(9),C'3'                STATUS = 3                      IFS13570
+         WTO   'PARAM 3 ERROR'          SEGMNAME     IS INCORRECT       IFS13580
+         B     RETURN                                                   IFS13590
+PARMERR4 MVI   0(9),C'4'                STATUS = 4                      IFS13600
+         WTO   'PARAM 4 ERROR'          SEGMKEY IS INCORRECT            IFS13610
+         B     RETURN                                                   IFS13620
+PARMERR5 MVI   0(9),C'5'                STATUS = 5                      IFS13630
+         WTO   'PARAM 5 ERROR'          SEGMAREA IS INCORRECT           IFS13640
+         B     RETURN                                                   IFS13650
+PARMERR6 MVI   0(9),C'6'                STATUS = 6                      IFS13660
+         WTO   'PARAM 6 ERROR'          SEGMLEV IS INCORRECT            IFS13670
+         B     RETURN                                                   IFS13680
+PARMERR7 MVI   0(9),C'7'                STATUS = 7                      IFS13690
+         WTO   'PARAM 7 ERROR'          UNEXPLAINABLE PARAM ERROR(S)    IFS13700
+         B     RETURN                                                   IFS13710
+TABLFULL MVI   0(9),C'8'                                                IFS13720
+         WTO   'SEGMENT TABLE EXCEEDED 20'                              IFS13730
+         B     RETURN                                                   IFS13740
+*                                                                       IFS13750
+         TITLE 'FILESMON -    C O N S T A N T S '                       IFS13760
+EXLSTADD DC    A(EXLIST)                                                IFS13770
+MACRADD  DC    XL4'02000048'                                            IFS13780
+SYNADADD DC    A(LOADERRS)                                              IFS13790
+F256     DC    F'256'                                                   IFS13800
+F3476    DC    H'3476'                  BLOCK 1 ON 2311,BLOCK 2 ON 2314 IFS13810
+F7249    DC    H'7249'                  BLOCK 1 ON 2314                 IFS13820
+CK       DC    H'0'                                                     IFS13830
+OPENTIME DC    C' '                                                     IFS13840
+ASTERISK DC    C'****'                                                  IFS13850
+CLOSES   DC    C'CLOSE'                                                 IFS13860
+CREATES  DC    C'CREATE'                                                IFS13870
+DELADD   DC    C'DELADD'                                                IFS13880
+DESCR    DC    C'DESC'                                                  IFS13890
+ENDSDESC DC    C'ENDSDESC'                                              IFS13900
+NOKEYS   DC    C'NOKEYS'                                                IFS13910
+FOPCD    DC    C'XXXX'                                                  IFS13920
+OPT1     DC    C'OPT1'                                                  IFS13930
+OPT2     DC    C'OPT2'                                                  IFS13940
+OPT3     DC    C'OPT3'                                                  IFS13950
+C2314    DC    C'2314'                                                  IFS13960
+FB       DC    C'FB'                                                    IFS13970
+CODE     DS    CL1                                                      IFS13980
+PRINTS   DC    132CL1' '                                                IFS13990
+LINE1    DC    C'F I L E    D E S C R I P T I O N'                      IFS14000
+LINE2    DC    C'FILENAME            DDNAME              SEGMENTS'      IFS14010
+LINE3    DS    0CL68                                                    IFS14020
+         DC    C'SEGMENT   LEVEL     NAME'                              IFS14030
+         DC    C'      LENGTH    KEYLEN    KEYPOS    SECURITY'          IFS14040
+LINE4    DC    C'OPT2 REQUESTED. BLKSIZE   IS INCORRECT.'               IFS14050
+         DC    C' DEFAULT TAKEN.'                                       IFS14060
+LINE5    DC    C'FILENAME=            DSNAME='                          IFS14070
+LINE6    DC    C'LEVEL  NAME      NO. CREATED TOTAL'                    IFS14080
+A        DC    C'DCB=(DSORG=IS,RKP='                                    IFS14090
+B        DC    C',KEYLEN='                                              IFS14100
+C        DC    C',LRECL='                                               IFS14110
+D        DC    C',BLKSIZE='                                             IFS14120
+E        DC    C',RECFM='                                               IFS14130
+F        DC    C',NTM='                                                 IFS14140
+G        DC    C',CYLOFL='                                              IFS14150
+H        DC    C',OPTCD='                                               IFS14160
+J        DC    C'DSNAME='                                               IFS14170
+*                                                                       IFS14180
+         TITLE 'FILESMON -    W O R  K I N G      S T O R A G E'        IFS14190
+SAVE     DS    18F                                                      IFS14200
+SAVE8    DS    F                                                        IFS14210
+MONTH    DS    F                                                        IFS14220
+DAY      DS    F                                                        IFS14230
+YEAR     DS    F                                                        IFS14240
+DLEN     DS    F                                                        IFS14250
+DLENM1   DS    F                                                        IFS14260
+DESCADDR DS    F                                                        IFS14270
+TOTSEGS  DS    F                                                        IFS14280
+LEVCNT   DS    20H                                                      IFS14290
+DUMPAD   DS    H                                                        IFS14300
+PADCNT   DS    H                                                        IFS14310
+RECNT    DS    H                                                        IFS14320
+CVD1     DS    D                                                        IFS14330
+CVD2     DS    PL4                                                      IFS14340
+CVD3     DS    CL4                                                      IFS14350
+OPT2BLK  DS    CL4                                                      IFS14360
+RECFM    DS    CL2                                                      IFS14370
+DSNAME   DS    CL44                                                     IFS14380
+         DS    0D                                                       IFS14390
+KEY      DS    CL256                                                    IFS14400
+FDREC    DS    CL100                                                    IFS14410
+         DS    0D                                                       IFS14420
+SEGMENTS DS    20CL44                   SEE SEGMENTS IN INFORSRD        IFS14430
+         DC    X'FF'                                                    IFS14440
+*********************************************************************** IFS14450
+EXLIST   DS    0F                                                       IFS14460
+         DC    XL1'87'                                                  IFS14470
+         DC    AL3(JFCB)                                                IFS14480
+JFCB     DS    CL176                                                    IFS14490
+*********************************************************************** IFS14500
+ARGUMENT DS    0D                                                       IFS14510
+FUNCT    DS    F                                                        IFS14520
+FILENAME DS    F                                                        IFS14530
+SEGMNAME DS    F                                                        IFS14540
+SEGMKEY  DS    F                                                        IFS14550
+SEGMAREA DS    F                                                        IFS14560
+SEGMLEV  DS    F                                                        IFS14570
+STATUS   DS    F                                                        IFS14580
+*********************************************************************** IFS14590
+FILEDESC DS    0D                                                       IFS14600
+FTYPE    DC    X'00'                                                    IFS14610
+FNAME    DS    CL8                                                      IFS14620
+         DC    CL2'  '                                                  IFS14630
+FRECFM   DS    CL1                                                      IFS14640
+FDDNAME  DS    CL8                                                      IFS14650
+FNOSEGM  DC    F'0'                                                     IFS14660
+FMAXLEN  DC    F'0'                                                     IFS14670
+FKEYLEN  DC    F'0'                                                     IFS14680
+FRKP     DC    F'1'                                                     IFS14690
+FILEINDX DC    F'0'                                                     IFS14700
+FLRECL   DC    H'0'                                                     IFS14710
+FBLKSIZE DC    H'0'                                                     IFS14720
+SEGMDESC DSECT                                                          IFS14730
+         DS    0D                                                       IFS14740
+STYPE    DS    XL1                                                      IFS14750
+SFILE    DS    CL8                                                      IFS14760
+SLEVA    DS    CL2                                                      IFS14770
+         DS    CL1                                                      IFS14780
+SNAME    DS    CL8                                                      IFS14790
+SLEVB    DS    F                                                        IFS14800
+SLEN     DS    F                                                        IFS14810
+SRKP     DS    F SEG KEY RKP IN DATA, BEGIN AT DATA, CNT FROM 0.        IFS14820
+SFRKP    DS    F SEG KEY RKP IN CONC KEY, INCL DEL BYTE, CNT FROM 0     IFS14830
+SKEYLEN  DS    F                                                        IFS14840
+SHOLD    DS    H                                                        IFS14850
+SENSE    DS    CL2                                                      IFS14860
+FILESMON CSECT                                                          IFS14870
+*********************************************************************** IFS14880
+*                                                                       IFS14890
+         TITLE 'FILESMON -    D A T A   C O N T R O L   B L O C K S'    IFS14900
+         PRINT ON,GEN                                                   IFS14910
+         SPACE 4                                                        IFS14920
+         SPACE 2                                                        IFS14930
+         DC    C'USERDCB'                                               IFS14940
+         DS    4F                                                       IFS14950
+USERDCB  DCB   DSORG=IS,MACRF=PL,SYNAD=LOADERRS,DDNAME=NODDNAME,       XIFS14960
+               EXLST=EXLIST                                             IFS14970
+         SPACE 4                                                        IFS14980
+         SPACE 2                                                        IFS14990
+         SPACE 2                                                        IFS15000
+         DC    C'PRINTDCB'                                              IFS15010
+         DS    4F                                                       IFS15020
+PRINTDCB DCB   DSORG=PS,MACRF=PM,DDNAME=SYSOUT,DEVD=PR,RECFM=FA,       XIFS15030
+               BFTEK=S,BUFNO=2,EROPT=ACC,LRECL=133,BLKSIZE=133          IFS15040
+         SPACE 4                                                        IFS15050
+         SPACE 4                                                        IFS15060
+         DC    C'FDBDCB'                                                IFS15070
+         DS    4F                                                       IFS15080
+FDBDCB   DCB   DSORG=IS,MACRF=(RUS,WUA),NCP=1,DDNAME=SRDFD,BUFNO=1      IFS15090
+         SPACE 4                                                        IFS15100
+         SPACE 4                                                        IFS15110
+         DC    C'FDQDCB'                                                IFS15120
+         DS    4F                                                       IFS15130
+FDQDCB   DCB   DSORG=IS,MACRF=(GL,SK,PU),EODAD=RETURN,SYNAD=SCANERRS,  XIFS15140
+               DDNAME=SRDFD                                             IFS15150
+*                                                                       IFS15160
+         TITLE 'FILESMON -    I H A D C B    D S E C T'                 IFS15170
+         DCBD  DSORG=IS                                                 IFS15180
+         END   GOSRDGO                                                  IFS15190

@@ -1,0 +1,140 @@
+         TITLE 'DATA SET GENERATOR - UT361'
+         ISEQ  73,80
+* THIS UTILITY PROGRAM CREATES TEMPORARY DATA SETS FROM DATA IN THE IN-
+* PUT STREAM AND PLACES THEM ON TAPE OR DISK AS SPECIFIED BY THE USER.
+* THESE DATA SETS ARE SUBSEQUENTLY PASSED TO THE USERS PROGRAM FOR USE
+* AS INPUT TO A PROGRAM TEST UNDER A COMPILE AND GO ENVIRONMENT.
+*
+*
+* WRITTEN BY D. R. HURTGEN         JUNE 1966
+*
+*
+DSGMAIN  START
+         DCBD  DSORG=LR
+CDDEFIN  DSECT
+CDSEQ    DS    CL4            CARD AREA DEFINITION
+CKOD     DS    CL2
+CLEN     DS    CL2
+         DS    CL2
+CDTA     DS    CL70
+         EJECT
+*                             INITIALIZATION
+DSGMAIN  CSECT
+BEGIN    SAVE  (2,12),T  ESTABLISH PROGRAM LINKAGE
+         BALR  12,0
+         USING *,12
+         USING CDDEFIN,3
+         USING IHADCB,10
+         ST    13,SAVEREG+4
+         LA    13,SAVEREG
+         L     5,=A(WORKAREA) LOAD BASE FOR OUTPUT WORK AREA
+         L     10,=A(DATASET) LOAD BASE FOR DCB DSECT
+         OPEN  (CARD,,DATASET,(OUTPUT),PRINTER,(OUTPUT))
+         SR    6,6       SET X6
+         EJECT
+*                             BEGIN PROGRAM MAIN LINE
+GETEM    GET   CARD                READ DSG CARD
+         LR    3,1       POINTER TO COLUMN ONE OF DATA CARD
+         CLC   CKOD,=C'PF'    Q.-PACKED FIELD CARD
+         BNE   RESUME         B.-NO
+         LR    4,3
+         LA    4,10(0,4) POINT TO FIRST COLUMN OF DATA
+         L     9,=F'70'  SET LIMIT
+STARTSCN SR    7,7
+         LR    2,4
+SCN      CLI   0(2),X'F0'  Q.-SIGNED POSITION
+         BL    SIGN        B.-YES
+         LA    7,1(0,7)    INCREMENT FIELD LENGTH
+         LA    2,1(0,2)    UPDATE SCAN INSTRUCTION
+         BCT   9,SCN       DECREMENT LIMIT
+         MVC   SMES1,=C' UNSIGNED FIELD IN PF CD.'
+         B     ABORTKD
+SIGN     CLI   0(2),X'40'  Q.-BLANK
+         BE    GETEM       B.-YES, GET NEXT CARD
+         CH    7,=H'16'    Q.-FIELD LONGER THAN 16
+         BL    PACKFLD     B.-NO
+         BE    ODD         B.-EQUAL
+         CH    7,=H'17'    Q.-FIELD IS 18 POS. LONG
+         BE    EVEN
+         MVC   SMES1,=C' FIELD OVER 18 POSITIONS.'
+         B     ABORTKD
+EVEN     PACK  0(3,5),0(4,4)  PACK 3 DIGITS INTO TWO POSITIONS AND LAP
+         LA    5,2(0,5)       ONE POSITION
+         LA    6,2(0,6)
+         LA    4,3(0,4)
+         B     PACKFLD-4
+ODD      PACK  0(2,5),0(3,4)  PACK 2 DIGITS INTO ONE POSITION AND LAP
+         LA    5,1(0,5)       ONE POSITION
+         LA    6,1(0,6)
+         LA    4,2(0,4)
+         L     7,=F'14'
+PACKFLD  LR    8,7
+         LA    7,1(0,7)
+         ST    7,TXLEN
+         SRA   7,1
+         SLA   7,4
+         AR    8,7
+         SRA   7,4
+         LA    7,1(0,7)
+         ST    7,RXLEN
+         STC   8,*+5
+         PACK  0(0,5),0(0,4)
+         A     4,TXLEN
+         A     5,RXLEN
+         A     6,RXLEN
+         BCT   9,STARTSCN
+         B     GETEM
+RESUME   CLC   CLEN,=C'00'    Q.-LENGTH ZERO
+         BE    TESTCODE       B.-YES
+         CLC   CLEN,=C'  '    Q.-LENGTH SPECIFIED
+         BNE   *+10           B.-YES
+         MVC   CLEN,=C'70'    OTHERWISE, MAKE LENGTH 70
+         PACK  DBLLEN,CLEN    CONVERT LENGTH TO BINARY
+         CVB   4,DBLLEN
+         BCTR  4,0
+         EX    4,MOVEM   MOVE CARD DATA TO WORK AREA
+         LA    4,1(0,4)
+         AR    5,4            INCREMENT X5 TO POINT TO NEXT POS.
+         AR    6,4            INCREMENT RECORD LENGTH
+TESTCODE CLC   CKOD,=C'  '    Q.-BLANK OPERATION CODE
+         BE    GETEM          B.-YES
+         CLC   CKOD,=C'WT'    Q.-WRITE TAPE
+         BE    *+14          B.-YES
+         MVC   SMES1,=C' INVALID CARD CODE IN 5-6'
+         B     ABORTKD        TERMINATE
+         STH   6,DCBLRECL     STORE RECORD LENGTH IN DCB
+         SR    5,6       DECREMENT X5 TO WRITE AREA START POINT
+         PUT   DATASET,(5)    WRITE DATA SET
+         LR    5,1            PLACE ADDRESS OF NEW WORK AREA IN X5
+         B     GETEM-2        GET NEXT CARD
+MOVEM    MVC   0(0,5),10(3)
+ABORTKD  MVC   SMES,CDSEQ     INSERT SEQUENCE NUMBER OF CARD IN ERROR
+         MVI   SEQMES,X'89'   SET PRINTER SPACING
+         PUT   PRINTER,SEQMES MESSAGE AND WRITE
+         ABEND 256,,STEP      ABNORMAL END - IGNORE REST OF JOB
+CDEND    CLOSE (CARD,,DATASET,,PRINTER)
+         FREEPOOL CARD        RELEASE BUFFER POOLS
+         FREEPOOL DATASET
+         FREEPOOL PRINTER
+         L     13,SAVEREG+4   ESTABLISH RETURN LINKAGE
+         RETURN (14,12)
+         EJECT
+         LTORG
+*                             CONSTANTS
+TXLEN    DC    F'0'      TRANSMIT LENGTH
+RXLEN    DC    F'0'      RECEIVING LENGTH
+SEQMES   DS    0CL70     CARD ERROR MESSAGE
+         DC    C'    CARD NUMBER '
+SMES     DS    CL4
+         DC    C' WAS INCORRECTLY PUNCHED.'
+SMES1    DC    CL25' '
+SAVEREG  DS    18F           REGISTER SAVE AREA
+DBLLEN   DC    D'0'
+CARD     DCB   DSORG=PS,MACRF=GL,DDNAME=DSGCARDS,RECFM=F,LRECL=80,     C
+               BLKSIZE=80,BFTEK=S,BUFNO=3,EODAD=CDEND,EROPT=ABE
+DATASET  DCB   DSORG=PS,MACRF=PM,DDNAME=TESTDATA,RECFM=U,BLKSIZE=8180, C
+               BFTEK=S,BUFNO=2,EROPT=ABE
+PRINTER  DCB   DSORG=PS,MACRF=PM,DDNAME=SYSPRINT,RECFM=FM,LRECL=70,    C
+               BLKSIZE=70,BFTEK=S,EROPT=ABE
+WORKAREA DS    CL8180         OUTPUT WORK AREA.
+         END   BEGIN

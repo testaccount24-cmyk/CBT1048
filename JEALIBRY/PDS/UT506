@@ -1,0 +1,301 @@
+//JEAUT506 JOB (1580,5),'0053 UT506   ',CLASS=N
+//STEP1 EXEC ASMFCL,L=H
+         TITLE 'PDS DIRECTORY PROCESSING ROUTINE'
+***********************************************************************
+*                      U T 5 0 6                                      *
+*                                                                     *
+*       PROCESS PROGRAM LIBRARY DIRECTORY AND CREATES LINKAGE EDITOR  *
+*       CONTROL CARDS FOR EACH LOAD MODULE.                           *
+*                                                                     *
+*        REGISTER USAGE
+*        REG0  PARAMETER REGISTER AND WORK REGISTER                   *
+*        REG1  PARAMETER REGISTER AND WORK REGISTER                   *
+*        REG2  WORK REGISTER                                          *
+*        REG3  ADDRESS OF CURRENT ENTRY OF DIRECTORY                  *
+*        REG4  LENGTH OF ACTIVE DATA IN CURRENT BLOCK                 *
+*        REG5  ADDRESS OF END OF ACTIVE DATA IN DIRECTORY BLOCK       *
+*        REG6  WORK REGISTER                                          *
+*        REG7  ADDRESS OF NEXT OUTPUT PARAMETER CARD                  *
+*        REG8  LENGTH OF OUTPUT CARDS (80)                            *
+*        REG9  ADDRESS OF LAST OUTPUT PARAMETER CARD                  *
+*        REG10 LINK REGISTER FOR LOADNAME ROUTINE                     *
+*        REG11 LINK REGISTER FOR DOENTRY ROUTINE                      *
+*        REG12 WORK REGISTER                                          *
+*        REG13 BASE ADDRESS. ADDRESS OF REGISTER SAVE AREA            *
+*        REG14 PROGRAM LINK REGISTER                                  *
+*        REG15 PROGRAM LINK REGISTER AND WORK REGISTER                *
+*                                                                     *
+***********************************************************************
+REG0    EQU   00
+REG1    EQU   01
+REG2    EQU   02
+REG3    EQU   03
+REG4    EQU   04
+REG5    EQU   05
+REG6    EQU   06
+REG7    EQU   07
+REG8    EQU   08
+REG9    EQU   09
+REG10    EQU   10
+REG11    EQU   11
+REG12    EQU   12
+REG13    EQU   13
+REG14    EQU   14
+REG15    EQU   15
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING                                   *
+***********************************************************************
+         SPACE 2
+UT506    CSECT
+         PGMIN  USING=(R13)
+         EJECT
+***********************************************************************
+*        EXAMINE SYSIN FOR ANY ADDITIONAL CONTROL CARDS               *
+***********************************************************************
+         SPACE 2
+SYSINTST DS    0H
+         XC    SYSINCHN,SYSINCHN   CLEAR THE SYSIN CHAIN POINTER
+         OPEN  (SYSIN)             OPEN THE FILE OF EXTRA CONTROL CRDS
+         TM    SYSIN+48,X'10'      OPEN SUCCESSFUL ?
+         BZ    SYSINXIT            NO. EXIT FROM ROUTINE
+         LA    REG3,SYSINCHN       LOAD START ADDRESS OF SYSIN CHAIN
+SYSNLOOP GET   SYSIN               READ FIRST/NEXT RECORD
+         LR    REG2,REG1           SAVE ADDRESS OF RECORD
+         GETMAIN R,LV=84,SP=2      GETMAIN SOME CORE
+         XC    0(4,REG1),0(REG1)   CLEAR CHAIN FIELD
+         MVC   4(80,REG1),0(REG2)  SAVE CARD IN GETMAINED AREA
+         ST    REG1,0(REG3)        SAVE THIS CARD ON CHAIN
+         LR    REG3,REG1           UPDATE END OF CHAIN POINTER
+         B     SYSNLOOP            READ ALL SYSIN RECORDS
+SYSINEND CLOSE (SYSIN)             CLOSE THE INPUT FILE
+SYSINXIT B     BDALIAS             BRANCH TO NEXT ROUTINE
+         SPACE 2
+SYSINCHN DC    F'0'                START ADDRESS OF SYSIN CHAIN
+         EJECT
+***********************************************************************
+*        CALL UT506A TO BUILD AN ALIAS REFERENCE CHAIN                *
+***********************************************************************
+         SPACE 2
+BDALIAS  CALL  UT506A
+         ST    REG1,ALIASCHN       SAVE ADDRESS OF ALIAS CHAIN
+         EJECT
+***********************************************************************
+*        OPEN THE INPUT PDS FILE AND INITIALISE WORK AREAS            *
+***********************************************************************
+         SPACE 2
+OPENFILE DS    0H
+         OPEN  (PDS,INPUT,SYSLIN,OUTPUT) OPEN FILES
+         EJECT
+***********************************************************************
+*        READ EACH BLOCK INTHE DIRECTORY                              *
+***********************************************************************
+         SPACE 2
+READBLK  DS    0H
+         GET   PDS                 READ A BLOCK FROM THE PDS
+         LR    REG3,REG1           LOAD BASE ADDRESS OF BLOCK
+         LH    REG4,0(REG3)        LOAD LZNGTH OF USED DATA
+         LTR   REG4,REG4           TEST FOR UNUSED BLOCK
+         BZ    READBLK             YES. IGNORE IT AND GET NEXT BLOCK
+         LA    REG5,0(REG4,REG3)   LOAD ADDRESS OF END OF DATA
+         LA    REG3,2(REG3)        LOAD ADDRESS OF FIRST ENTRY
+         CLC   0(8,REG3),HEXFF     TEST FOR END OF DIRECTORY
+         BE    EODADX              YES. TERMINATE PROCESSING
+SENDBLK  BAL   REG11,DOENTRY       GO PROCESS THIS ENTRY OF PDS
+         IC    REG6,11(REG3)       LOAD LENGTH OF ENTRY IN HALFWDS
+         N     REG6,=F'31'         STRIP OF ALIAS BIT ETC
+         AR    REG6,REG6           CONVERT TO BYTES
+         LA    REG3,12(REG6,REG3)  LOAD ADDRESS OF NEXT ENTRY
+         CLC   0(8,REG3),HEXFF     TEST FOR END OF PDS
+         BE    EODADX              BRANCH TO EXIT ROUTINE
+         CR    REG3,REG5           TEST FOR END OF THIS BLOCK
+         BL    SENDBLK             MORE ENTRIES. PROCESS
+         B     READBLK             GO READ NEXT BLOCK
+         EJECT
+***********************************************************************
+*        PROCESS THE PDS ENTRY                                        *
+***********************************************************************
+         SPACE 2
+DOENTRY  DS    0H
+         TM    11(REG3),X'80'      TEST FOR AN ALIAS ENTRY
+         BO    DOEXIT              YES. IGNORE THIS ENTRY
+         L     REG6,SYSINCHN       LOAD ADDRESS OF FIRST SAVED CARD
+SYSNLOAD LTR   REG6,REG6           ANY/ANY MORE CARDS PRESENT ?
+         BZ    CALL6B              NO. GO CALL NEXT ROUTINE
+         PUT   SYSLIN              OBTAIN AN OUTPUT BUFFER
+         MVC   0(80,REG1),4(REG6)  MOVE SAVED RECORD TO BUFFER
+         BAL   REG10,LOADNAME      GO SEE IF NAME SUBSTITUTE NEEDED
+         L     REG6,0(REG6)        LOAD ADDRESS OF NEXT ELEMENT
+         B     SYSNLOAD            LOOP FOR ENTIRE CHAIN
+CALL6B   MVC   ENTYNAME,0(REG3)    SAVE POSSIBLE ENTRY NAME
+         CALL  UT506B,(ENTYNAME)   SCRUTINISE CESD OF LOAD MODULE
+         LTR   REG15,REG15         TEST RETURN CODE
+         BNZ   PUTDUMMY            DUMMY CSECT IS NEEDED
+DUMMYOUT BAL   REG10,DOALIAS       GO SEE IF ANY ALIASES NEEDED
+         LA    REG7,FRSTCARD       LOAD ADDRESS OF FIRST PARAMETER CARD
+         LA    REG8,80             LOAD LENGTH OF EACH CARD
+         LA    REG9,LASTCARD       LOAD ADDRESS OF LAST CARD
+CARDLOOP PUT   SYSLIN              OBTAIN AN OUTPUT BUFFER
+         MVC   0(80,REG1),0(REG7)  MOVE FIRST/NEXT CARD TO BUFFER
+         BAL   REG10,LOADNAME      GO SEE IF NAME INSERTION NEEDED
+         BXLE  REG7,REG8,CARDLOOP  LOOP FOR ALL OUTPUT CARDS
+DOEXIT   BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        PUT OUT CARDS FOR A DUMMY CSECT                              *
+***********************************************************************
+         SPACE 2
+PUTDUMMY DS    0H
+         CH    REG15,=H'8'         REFRESH NEEDED ON THIS MEMBER ?
+         BE    REFRESH             YES. GO DO IT
+         PUT   SYSLIN
+         MVC   0(80,REG1),DUMMY1   OUTPUT RENAME CARD
+         BAL   REG10,LOADNAME      REPLACE NAMES
+         LA    REG1,1(REG1)        HUNT FOR LEFT BRACKET ALONG CARD
+         CLI   0(REG1),C'('        FOUND IT YET?
+         BNE   *-8                 NO. TRY NEXT BYTE
+         MVI   1(REG1),C'$'        GIVE CSECT A NEW NAME
+         PUT   SYSLIN              OBTAIN NEXT BUFFER
+         MVC   0(80,REG1),DUMMY2   OUTPUT INCLUDE CARD
+         BAL   REG10,LOADNAME      GO REPLACE NAMES
+         MVI   ENTYNAME,C'$'       ASSIGN DUMMY AS ENTRY POINT
+         B     DUMMYOUT            RETURN TO MAINLINE
+         EJECT
+***********************************************************************
+*        REFRESH A MEMBER FROM AN OLD RELINK WITH A NEW NAME          *
+***********************************************************************
+         SPACE 2
+REFRESH  DS    0H
+         PUT   SYSLIN              OBTAIN A BUFFER
+         MVC   0(80,REG1),REFRESH1 MOVE DUMMY RENAME CARD IN
+         BAL   REG10,LOADNAME      PERFORM NAME SUBSTITUTION
+         LA    REG1,1(REG1)        ADDRESS NEXT BYTE ALONG
+         CLI   0(REG1),C'('        FOUND A LEFT BRACKET YET
+         BNE   *-8                 NO. TRY NEXT ONE
+         MVI   1(REG1),C'$'        GIVE DUMMY ITS NEW NAME
+         PUT   SYSLIN              OBTAIN A SECOND BUFFER
+         MVC   0(80,REG1),REFRESH2 OUTPUT THE MAIN MEMBER RENAME
+         BAL   REG10,LOADNAME      REPLACE NAME FIELDS
+         MVI   ENTYNAME,C'$'       FORCE USE OF DUMMY ENTRY POINT
+         B     DUMMYOUT            RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        EXAMINE THE ALIAS CHAIN FOR ALIAS CARDS NEEDED               *
+***********************************************************************
+         SPACE 2
+DOALIAS  DS    0H
+         L     REG7,ALIASCHN       LOAD ADDRESS FIRST ALIAS ELEMENT
+ALIASLP  LTR   REG7,REG7           TEST FOR FIRST/NEXT ALIAS ELEMENT
+         BZ    ALIASEXT            END OF CHAIN. EXIT
+         CLC   12(3,REG7),8(REG3)  COMPARE THE TTR'S
+         BNE   *+8                 NOT EQUAL JUMP OVER BAL INSTRUCTION
+         BAL   REG8,MAKECARD       YES. THIS IS AN ALIAS
+         L     REG7,0(REG7)        LOAD ADDRESS OF NEXT ALIAS ENTRY
+         B     ALIASLP             LOOP FOR ALL PROSPECTIVE ALIASES
+ALIASEXT BR    REG10               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        AN ALIAS ID FOUND. PREPARE THE CARD                          *
+***********************************************************************
+         SPACE 2
+MAKECARD DS    0H
+         PUT   SYSLIN              GET A BUFFER
+         MVC   0(80,REG1),ALIASCRD MOVE IN BASIC ALIAS CARD
+         MVC   20(8,REG1),4(REG7)  MOVE IN THE NAME OF ALIAS
+         BR    REG8                RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        EXAMINE THE CARD TO SEE IF A NAME INSERT IS REQUIRED         *
+***********************************************************************
+         SPACE 2
+LOADNAME DS    0H
+         ST    REG1,LOADSAVE       SAVE ADDRESS OF RECORD
+LOADLOOP LA    REG15,80(REG1)      LOAD ADDRESS OF END OF CARD
+         TRT   0(64,REG1),ASTERISK SEARCH FOR AN ASTERISK IN CARD
+         BZ    LOADEXIT            NO. NO NAME INSERTION NEEDED
+         CLC   0(8,REG1),=8C'*'    SPACE FOR A FULL NAME ?
+         BNE   LOADEXIT            NO. IT MUST BE A COMMENT
+         LA    REG12,8(REG1)       LOAD ADDRESS OF NEXT BYTE AFTER NAME
+         MVC   0(8,REG1),0(REG3)   MOVE NAME TO OUTPUT CARD
+BLNKLOOP CLI   0(REG1),C' '        END OF NAME HERE
+         BE    SHUFFLE IT UP       YES. GO SHUFFLE REST OF CARD
+         LA    REG1,1(REG1)        STEP TO NEXT BYTE
+         CR    REG12,REG1          END OF NAME FIELD
+         BNE   BLNKLOOP            NO. CONTINUE LOOPIN
+         B     LOADENDS            NAME IS 8 BYTES LONG. LEAVE IT
+SHUFFLE  SR    REG15,REG12         LOAD LENGTH OF REST OF CARD
+         BCT   REG15,*+10          SUBTRACT ONE FOR EXECUTE
+         MVC   0(0,REG1),0(REG12)  SHUFFLE CARD TO LEFT
+         EX    REG15,*-6           EXECUTE THE MOVE
+LOADENDS L     REG1,LOADSAVE       RELOAD ADDRESS OF RECORD
+         B     LOADLOOP            REPLACE ALL OCCURRENCES IN CARD
+LOADEXIT BR    REG10               RETURN TO CALLER
+         SPACE 2
+LOADSAVE DS    F                   SAVE AREA FOR RECORD ADDRESS
+         EJECT
+***********************************************************************
+*        TERMINATION ROUTINES                                         *
+***********************************************************************
+         SPACE 2
+EODADX   DS    0H
+TERMINTE DS    0H
+         CLOSE (PDS,,SYSLIN)       CLOSE FILES
+         EJECT
+***********************************************************************
+*        PROGRAM EXIT ROUTINE                                         *
+***********************************************************************
+         SPACE 2
+EXITPGM  DS    0H
+         NC    SYSINCHN,SYSINCHN   ANY GETMAINED SYSIN BLOCKS
+         BZ    NOFREESP            NO. DO NOT ATTEMPT FREEMAIN
+         FREEMAIN R,SP=2           FREE ALL CORE USED TO SAVE SYSIN
+NOFREESP PGMOUT
+         EJECT
+SYSLIN   DCB   DDNAME=SYSLIN,DSORG=PS,MACRF=PL,LRECL=80,               X
+               BLKSIZE=800,RECFM=FB
+PDS      DCB   DDNAME=SYSUT1,DSORG=PS,MACRF=GL,RECFM=F,                X
+               LRECL=256,BLKSIZE=256,EODAD=TERMINTE
+SYSIN    DCB   DDNAME=SYSIN,DSORG=PS,MACRF=GL,EODAD=SYSINEND
+HEXFF    DC    8X'FF'
+ALIASCHN DS    F                   ADDRESS OF ALIAS REFERENCE CHAIN
+ASTERISK DC    256X'00'
+         ORG   ASTERISK+C'*'
+         DC    C'*'
+         ORG
+FRSTCARD EQU   *
+CARD1    DC    CL80' INCLUDE INPUT(********)'
+CARD4    DC    CL80' ENTRY '
+         ORG   CARD4+7
+ENTYNAME DS    CL8                 WORK AREA FOR ENTRY NAME
+         ORG
+CARD5    DC    CL80' NAME ********(R)'
+LASTCARD EQU   *-80
+ALIASCRD DC    CL80' ALIAS'
+DUMMY1   DC    CL80' CHANGE DUMMY(********)'
+DUMMY2   DC    CL80' INCLUDE DUMMYLIB(********)'
+REFRESH1 DC    CL80' CHANGE ********(********)'
+REFRESH2 DC    CL80' CHANGE $$$$$$$$(********)'
+         LTORG
+         END
+//LKED.SYSLMOD DD DSN=SYS1.LINKLIB2,DISP=SHR
+//LINKLIB2 DD DSN=SYS1.LINKLIB2,DISP=SHR
+ INCLUDE LINKLIB2(UT506)
+ ENTRY UT506
+ NAME UT506(R)
+/*
+// EXEC PGM=IEBCOPY,REGION=100K
+//SYSPRINT DD SYSOUT=A
+//IN DD DSN=SYS1.LINKLIB2,DISP=SHR
+//OUT DD DSN=&&DUMMY,UNIT=SYSDA,SPACE=(TRK,(10,10,10)),
+// DCB=(RECFM=U,BLKSIZE=13030),DISP=(,PASS)
+ COPY O=OUT,I=IN
+ SELECT MEMBER=DUMMY
+// EXEC PGM=UT506,REGION=80K
+//SYSPRINT DD SYSOUT=A
+//SYSLIN DD SYSOUT=A,DCB=(LRECL=80,RECFM=F,BLKSIZE=80)
+//SYSUT1 DD DSN=BOSS.PROGLIB,DISP=SHR
+//DUMMYLIB DD DSN=&&DUMMY,DISP=(OLD,DELETE)
+//SYSUDUMP DD SYSOUT=A
+//SYSIN DD *
+ REPLACE RIGAM
+/*

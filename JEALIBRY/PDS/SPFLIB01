@@ -1,0 +1,191 @@
+//JEASPF01 JOB (1330,5),'J ABBEY',CLASS=N,NOTIFY=JEA
+//SPFLIB01 EXEC LIBRARYN,FILE=TESTLIB,BLKSIZE=800
+-OPT NOLIST,EXEC
+-DLM SPFLIB01,SPF1
+-ADD SPFLIB01,SPF1
+-PGMR JEABBEY
+-DESC SPF/LIBRARYN INTERFACE
+***********************************************************************
+*                     S P F L I B 0 1                                 *
+*                                                                     *
+*            THIS IS THE HIGH LEVEL DRIVER FOR THE MONSANTO SPF TO    *
+*        LIBRARYN INTERFACE ROUTINES. ITS PURPOSE IS TO PRESENT       *
+*        THE CALLER WITH A CHOICE OF FACILITIES AND ROUTE CONTROL     *
+*        ACCORDING TO HIS INDICATED WISHES.                           *
+*            THE ROUTINE OPERATES BY PERFORMING THE FOLLOWING         *
+*        THE FOLLOWING STEPS:                                         *
+*                                                                     *
+*        1)    ALLOCATE AND INITIALISE THE COMMON SPF/LIBRARYN        *
+*              CONTROL FILE. THIS IS USED BY THE MAIN ROUTINES.       *
+*        2)    GET A RESPONSE FROM THE USER BY ISSUING A MENU.        *
+*              THE MAIN MENU IS 'ZLIB01' IN THE SPF MENU DATA SET     *
+*              AND IS DISPLAYED BY A CALL TO 'MHA', THE SPF MENU      *
+*              HANDLER. ERROR MESSAGES ARE OUTPUT BY A CALL TO        *
+*              'MERR', THE COMMON ERROR ROUTINE. IN ORDER TO USE      *
+*              THESE FACILITIES, IT IS NECCESSARY TO ADDRESS TWO      *
+*              OF SPF'S CONTROL BLOCKS. THESE MUST BE CHECKED WITH    *
+*              ANY NEW RELEASE OF SPF IN CASE THE OFFSETS WITHIN      *
+*              THEM CHANGE. CURRENT LEVEL IS SPF 2.2.0                *
+*        3)    INVOKE THE APPROPRIATE ROUTINE TO PROCESS THAT REQUEST *
+*        4)    REPEAT 2 AND 3 UNTIL USER INDICATES THAT HE IS         *
+*              FINISHED WITH THE INTERFACE BY HITTING PFK3.           *
+*        5)    CLOSE AND FREE THE COMMON CONTROL FILE.                *
+*        6)    IF THE USER ENTERS A SECOND-MENU SELECTION ON THE      *
+*              PRIMARY MENU, (8.1 INSTEAD OF 8 THEN 1), AN INDICATION *
+*              IS GIVEN OF THIS BY THE SECOND PARAMETER PASSED TO     *
+*              THIS ROUTINE BY THE PRIMARY MENU 'APRIOPT'. IF         *
+*              THIS PARAMETER INDICATES THE NEED, MENU ZLIB01 IS      *
+*              NOT DISPLAYED BUT CONTROL IS PASSED DIRECTLY TO THE    *
+*              PROCESSOR OF THE SELECTED SECONDARY LEVEL MENU. ON     *
+*              RETURN FROM THAT ROUTINE, CONTROL IS PASSED, (VIA      *
+*              STEP 5 ABOVE), DIRECTLY BACK TO SPF'S PRIMARY MENU.    *
+*                                                                     *
+*        ON ENTRY TO THIS ROUTINE, REG1 WILL ADDRESS A LIST OF        *
+*        TWO PARAMETERS:                                              *
+*                                                                     *
+*        1)    SPF'S PRIMARY CONTROL TABLE - THE TLD                  *
+*        2)    THE SECOND PARAMETER DEFINED AND RETURNED BY THE       *
+*              PRIMARY MENU.                                          *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING
+***********************************************************************
+         SPACE 2
+SPFLIB01 ZCSECT
+         LA    REG10,DATAAREA      ADDRESS OF COMMON WORK AREA
+         USING DATAAREA,REG10      ADDRESSABILITY FOR IT
+         LM    REG8,REG9,0(REG1)   GET ADDRESS OF SPF TLD AND PARMS
+         ST    REG8,LTDADDR        AND SAVE ADDRESS OF THE LTD
+         EJECT
+***********************************************************************
+*        ALLOCATE AND INITIALISE THE INTERFACE CONTROL FILE
+***********************************************************************
+         SPACE 2
+         LINK  EP=UT501,PARAM=(CNTLJCL,AFUNCT,RETCODE,X1,X2),VL=1
+         CLI   RETCODE,0           ALLOCATION WAS SUCCESSFUL ?
+         BNE   ALLCFAIL            NO. GO GIVE ERROR MESSAGE
+         EJECT
+***********************************************************************
+*        RETRIEVED THE SAVED KEY VALUES FROM THE TKV
+***********************************************************************
+         SPACE 2
+         L     REG15,X'7C'(REG8)   ADDRESS OF COMMON SUBS TABLE
+         L     REG15,X'90'(REG15)  ADDRESS OF CKVGET ROUTINE
+         CALL  (15),((8),KVBLOCK,LIBFNAME),VL,MF=(E,CALLLIST)
+         EJECT
+***********************************************************************
+*        TEST FOR PRE-DEFINED MENU SELECTION
+***********************************************************************
+         SPACE 2
+         CLI   0(REG9),C'0'        NORMAL ENTRY ?
+         BE    INVITE              YES. CARRY ON
+         OI    WRKFLAG4,SHORTCUT   NO. HE'S GONE STRAIGHT TO A MENU
+         PACK  DBLWORD,0(1,REG9)   GET THE ENTERED DATA
+         B     GOWITHNO            AND GO WITH THAT NUMBER
+         EJECT
+***********************************************************************
+*        GIVE THE USER A MENU AND WAIT FOR REPLY
+***********************************************************************
+         SPACE 2
+INVITE   DS    0H
+         XC    REQUEST,REQUEST     CLEAR HIS REQUEST AREA
+         L     REG15,X'7C'(REG8)  LOAD ADDRESS OF THE PTC
+         L     REG15,X'104'(REG15) ADDRESS OF MHA ROUTINE
+         CALL  (15),((8),SCREEN1,MHAOPTN,REQUEST),VL,MF=(E,CALLLIST)
+INVITE2  EQU   *
+         TM    X'C6'(REG8),X'80'   END KEY PRESSED ?
+         BO    LIBNEXIT            YES. RETURN TO CALLER
+         CLI   REQUEST,C' '        NULL RESPONSE ?
+         BE    INVITE              YES. GO ASK HIM AGAIN
+         CLI   REQUEST,C'*'        INVALID RESPONSE ?
+         BE    ERRMESS1            YES. GO ISSUE ERROR MESSAGE
+         PACK  DBLWORD,REQUEST     GET THE DECIMAL OF HIS DATA
+GOWITHNO EQU   *                   ENTERED FROM SHORT CUT ROUTINE
+         CVB   REG15,DBLWORD       CONVERT IT TO BINARY
+         BCTR  REG15,0             ALLOW FOR INDEX NOT OFFSET
+         SLL   REG15,2             MULTIPLY BY FOUR
+         L     REG15,RTNTABLE(REG15) GET ADDRESS OF ROUTINE
+         LA    REG1,DATAAREA       LOAD ADDRESS OF COMMON WORK AREA
+         BALR  REG14,REG15         INVOKE THE ROUTINE
+         TM    WRKFLAG4,SHORTCUT   ARE WE IN A SHORTCUT SITUATION ?
+         BO    LIBNEXIT            YES. RETURN IMMEDIATELY
+         B     INVITE              AND THE GO ASK AGAIN
+         EJECT
+***********************************************************************
+*        RETURN THE KEYWORD VALUES TO THE TKV TABLE
+***********************************************************************
+         SPACE 2
+LIBNEXIT DS    0H
+         L     REG15,X'7C'(REG8)   ADDRESS OF COMMON SUBS TABLE
+         L     REG15,X'94'(REG15)  ADDRESS OF CKVPUT ROUTINE
+         CALL  (15),((8),KVBLOCK,LIBFNAME),VL,MF=(E,CALLLIST)
+         EJECT
+***********************************************************************
+*        RETURN TO THE CALLER OF THIS ROUTINE
+***********************************************************************
+         SPACE 2
+         LA    REG1,CNTLFILE       CONTROL FILE DCB
+         USING IHADCB,REG1         ADDRESSABILITY
+         TM    DCBOFLGS,DCBOFOPN   CONTROL FILE STILL OPEN
+         BZ    NOCLOSE             NO. LEAVE IT ALONE
+         CLOSE (CNTLFILE)          CLOSE THE CONTROL FILE
+NOCLOSE  EQU   *
+         LINK  EP=UT501,PARAM=(CNTLJCL,DFUNCT,RETCODE,X1,X2),VL=1
+         EJECT
+         ZRETURN ,                 FREE THE FILE AND RETURN
+         EJECT
+***********************************************************************
+*        GENERATE ERROR MESSAGES
+***********************************************************************
+         SPACE 2
+ERRMESS1 DS    0H
+         LA    REG2,ERR1ID         ADDRESS OF MESSAGE ID
+         B     OUTERROR            GO OUTPUT THE ERROR
+ALLCFAIL DS    0H
+         L     REG15,X'7C'(REG8)  LOAD ADDRESS OF THE PTC
+         L     REG15,X'104'(REG15) ADDRESS OF MHA ROUTINE
+         CALL  (15),((8),SCREEN1,MHAOPTN2,REQUEST),VL,MF=(E,CALLLIST)
+         LA    REG2,ERR2ID         ADDRESS OF MESSAGE ID
+         B     OUTERROR            GO OUTPUT THE ERROR
+OUTERROR EQU   *
+         L     REG15,X'7C'(REG8)   ADDRESS OF THE PTC
+         L     REG15,X'100'(REG15) ADDRESS OF ERROR ROUTINE
+         CALL  (15),((8),(2),ZERO),VL,MF=(E,CALLLIST)
+         B     INVITE2             AND PROCESS THE RESPONSE
+         EJECT
+***********************************************************************
+*        CONSTANTS AND WORK AREAS
+***********************************************************************
+         SPACE 2
+SCREEN1  DC    CL8'ZLIB01'        NAME OF THE MENU
+MHAOPTN  DC    F'0'               MHA OPTION FLAGS
+MHAOPTN2 DC    F'2'               MHA OPTION FLAGS
+ZERO     DC    F'0'               MERR OPTION FLAGS
+ERR1ID   DC    CL4'Z000'          ERROR 1 MESSAGE ID
+ERR2ID   DC    CL4'Z039'          ERROR 2 MESSAGE ID
+         DATAAREA DSECT=NO         COMMON WORK AND DATA AREA
+         LTORG
+         EJECT
+***********************************************************************
+*        DSCECTS USED BY THIS ROUTINE
+***********************************************************************
+         SPACE 2
+         PRINT NOGEN
+         DCBD  DSORG=QS,DEVD=DA
+         PRINT GEN
+         END
+-EMOD
+-END
+//SPFLIB01 EXEC ASMFCL,L=H,LOPT=RENT
+//SYSLIB DD DSN=JEA.MACLIB,DISP=SHR
+// DD DSN=SYS1.MACLIB,DISP=SHR
+// DD DSN=SYS2.MACLIB,DISP=SHR
+// DD DSN=SYS1.AMODGEN,DISP=SHR
+//SYSIN DD DSN=&&OSJOB,DISP=(OLD,DELETE)
+//LKED.SYSLMOD DD DSN=JEA.LOADLIB,DISP=SHR
+ INCLUDE SYSLMOD(SPFLIB01)
+ ENTRY SPFLIB01
+ NAME SPFLIB01(R)
+/*

@@ -1,0 +1,793 @@
+UT451    CSECT
+         SPACE 5
+*    REGISTER ASSIGNMENTS AND EQUATES
+         SPACE
+R0       EQU   0
+R1       EQU   1
+R2       EQU   2
+R3       EQU   3    SUBSCRIPT FOR IN-CORE REPORT TABLE
+R4       EQU   4    BAL RETURN ADDRESS
+R5       EQU   5    POINTER TO DD-TABLE ENTRY
+R6       EQU   6    USED BY BCT
+R7       EQU   7    POINTER TO CURRENT DCB
+R8       EQU   8
+R9       EQU   9
+R10      EQU   10
+R11      EQU   11   BASE REGISTER 3
+R12      EQU   12   BASE REGISTER 2
+R13      EQU   13   POINTER TO REGISTER SAVE AREA, BASE REGISTER 1
+R14      EQU   14   BALR RETURN ADDRESS
+R15      EQU   15   BALR ROUTINE ADDRESS
+         SPACE 5
+         PRINT ON,NOGEN,NODATA
+         USING UT451,R15
+         SAVE  (14,12)        **
+         BAL   R10,*+76        *
+SAVEAREA DS    18F             *
+         LA    R9,SAVEAREA     *
+         ST    R9,8(R13)       *
+         ST    R13,4(R9)       *
+         LR    R13,R10         *
+         LR    R12,R10         **  HOUSEKEEPING
+         LR    R11,R10         *
+         LA    R10,2048        *
+         AR    R10,R10         *
+         AR    R12,R10         *
+         AR    R11,R10         *
+         AR    R11,R10         *
+         DROP  R15            **
+         USING SAVEAREA,R13,R12,R11
+         EJECT
+         L     R8,0(R1)            STORE ADDRESS PARM OF EXEC CARD
+         OPEN  (TABLE,,SYSPRINT,(OUTPUT))
+         LA    R3,REPTABLE    POINT R3 AT START OF IN-CORE TABLE
+         PUT   SYSPRINT,PAGESKIP   SKIP TO CHANNEL 1
+         PUT   SYSPRINT,UTL5HEAD   WRITE HEADING LINE
+         LH    R9,0(R8)            LOAD LENGTH OF PARM
+         LTR   R9,R9               TEST IF PARM SUPPLIED
+         BZ    GETTABLE            BRANCH IF NO
+         CH    R9,=H'5'            TEST IF LENGTH IS GREATER THAN 5
+         BH    TELPERR             BRANCH IF YES
+         BCTR  R9,0                DECREMENT ONE FOR EXECUTE INSTRUCTIO
+         EX    R9,MVCPARM0         MOVE PARM TO DDNAME PARM AREA
+         CLC   2(5,R8),=C'LOCAL'   TEST IF VALUE OF PARM = 'LOCAL'
+         BE    PLOCAL              BRANCH IF YES
+         CLC   2(5,R8),=C'ABEND'   TEST IF VALUE OF PARM = 'ABEND'
+         BE    PLOCAL              BRANCH IF YES
+         CLC   2(5,R8),=C'DUMMY'   TEST IF VALUE OF PARM = 'DUMMY'
+         BNE   *+14                BRANCH IF NO
+         MVC   RPLYAREA,=C'IGNORE' MOVE 'IGNORE' TO REPLY AREA
+         B     NX1
+         TESTIOT DDNAME=PARMDDN    TEST IF THIS DD STATEMENT IS SUPPLIE
+         LTR   R15,R15
+         BNZ   TELPERR             NO - TELL OF ERROR
+PLOCAL   EQU   *
+         EX    R9,MVCPARM1         MOVE PARM TO REPLY AREA
+NX1      EX    R9,MVCPARM2         MOVE PARM TO MESSAGE FOR CONSOLE
+         MVI   SWPARM,X'FF'        TELL PARM OF EXEC CARD IS SUPPLIED
+         B     GETTABLE            CONTINUE PROCESSING
+TELPERR  PUT   SYSPRINT,BADPARM    TELL OF INVALID PARM
+         USING TABLEDST,R1    ESTABLISH ADDRESSABILITY OF DSECT
+GETTABLE GET   TABLE          READ TABLE
+         CLC   TABLEID,=C'PT01'    IS RECORD VALID ?
+         BNE   INVRECD        NO - GO TELL SOME-ONE ABOUT IT
+         MVC   0(11,R3),TABREPNO   MOVE DATA TO IN-CORE TABLE
+         AP    TABLNTRY,=P'1' ADD 1 TO ENTRY COUNT
+         CP    TABLNTRY,=P'200'    IS TABLE FULL ?
+         BNL   TABLFULL       YES - GO TELL SOME-ONE ABOUT IT
+         LA    R3,11(R3)      INCREMENT POINTER TO IN-CORE TABLE
+         B     GETTABLE       LOOP BACK TO READ
+         SPACE
+INVRECD  PUT   SYSPRINT,BADRECD    TELL OF INVALID RECORD
+         B     GETTABLE       GO READ NEXT RECORD
+         SPACE
+TABLFULL PUT   SYSPRINT,FULLTABL   TELL OF FULL TABLE
+         WTO   'UT451  - U0451 BECAUSE TABLE IS FULL'
+         ABEND 451,DUMP
+         SPACE
+ENDOFTAB CLOSE TABLE
+         BAL   R4,EMPTY       EMPTY AVAILABLE DS'S, LEST NEVER WRT
+         OPEN  PRINTIN
+         GET   PRINTIN,NEXTREC     READ NEXT RECORD
+         BAL   R4,TSTVALID    VERIFY BEFORE AND AFTER SKIP/SPACE
+         B     NXTOCURR       GO LEAP INTO PROCESSING
+         SPACE 1
+PARMDDN  DC    C'PRT     '
+MVCPARM0 MVC   PARMDDN+3(0),2(R8)  EXECUTED MOVE INSTRUCTION
+MVCPARM1 MVC   RPLYAREA(0),2(R8)   EXECUTED MOVE INSTRUCTION
+MVCPARM2 MVC   WTOPARM+18(0),2(R8) EXECUTED MOVE INSTRUCTION
+         SPACE 3
+GETINPUT GET   PRINTIN,NEXTREC     READ NEXT RECORD
+         BAL   R4,TSTVALID    VERIFY BEFORE AND AFTER SKIP/SPACE
+         CLC   NXTREPNO,CURREPNO   Q - CHANGE OF REPORT NUMBER
+         BNE   REPCHNGE       YES - WRITE CURRENT LINE
+         TM    CURRNTSW,CURBEFON   Q - CURRENT BEFORE CODE INVALID
+         BNO   CURRNTGD       NO - BYPASS ERROR WRITE
+         NI    CURRNTSW,CURBEFOF   SET OFF INVALID BEFOR SWITCH
+         MVI   SKIPCODE,C'/'  INSERT SPACE 1 AFTER CHARACTER
+         MVI   PRINTLNE,C' '  INSERT BLANK IN FIRST BYTE
+         MVC   PRINTLNE+1(131),PRINTLNE AND PROPAGATE THROUGH LINE
+         MVC   PRINTLNE+5(71),BADBEFOR INSERT ERROR MESSAGE
+         MVC   ERRORCDE,ERCURBEF MOVE ERROR CODE TO WORK AREA
+         BAL   R4,CONVHEX     CONVERT TO HEX AND MOVE TO MESSAGE
+         BAL   R4,PRINT       WRITE WHERE APPROPRIATE
+CURRNTGD TM    CURRNTSW,X'20' Q - ACTION BEFORE SWITCH ON
+         BNO   GETINPT2       NO - BYPASS ACTIONING BEFORE
+         NI    CURRNTSW,X'DF' SET ACTION BEFORE SWITCH OFF
+         MVC   SKIPCODE,CURBEFCD MOVE CURRENT BEFORE TO PRINT LINE
+         MVI   PRINTLNE,C' '  INSERT BLANK IN FIRST BYTE
+         MVC   PRINTLNE+1(131),PRINTLNE AND PROPAGATE THROUGH LINE
+         BAL   R4,PRINT       WRITE WHERE APPROPRIATE
+GETINPT2 BAL   R4,COMBINE     CHECK IF CAN COMBINE BEFORE & AFTER
+         B     COMBPOSS       RETURN POINT IF COMBINATION POSSIBLE
+         BAL   R4,PRINT       WRITE CURRENT WITHOUT COMBINATION
+         TM    CURRNTSW,CURAFTON Q - IS CURRENT AFTER INVALID
+         BNO   TSTBEFOR       NO - GO CHECK ON NEXT BEFORE
+         MVI   SKIPCODE,C'/'  INSERT SPACE 1 AFTER CHARACTER
+         MVI   PRINTLNE,C' '  INSERT BLANK IN FIRST BYTE
+         MVC   PRINTLNE+1(131),PRINTLNE AND PROPAGATE THROUGH LINE
+         MVC   PRINTLNE+5(73),BADAFTER INSERT ERROR MESSAGE
+         MVC   ERRORCDE,ERCURAFT MOVE ERROR CODE TO WORK AREA
+         BAL   R4,CONVHEX     CONVERT TO HEX AND MOVE TO MESSAGE
+         BAL   R4,PRINT       WRITE WHERE APPROPRIATE
+TSTBEFOR TM    NEXTSW,NXTBEFON Q - IS NEXT BEFORE CODE VALID
+         BO    MOVENEXT       NO - GO MOVE NEXT TO CURRENT
+         MVC   SKIPCODE,NXTBEFCD MOVE NEXT BEFORE CODE TO PRINTLNE
+         MVI   PRINTLNE,C' '  INSERT BLANK IN FIRST BYTE
+         MVC   PRINTLNE+1(131),PRINTLNE AND PROPAGATE THROUGH LINE
+         BAL   R4,PRINT       WRITE TO GIVE IMMEDIATE SKIP/SPACE
+         B     MOVENEXT       GO MOVE NEXT TO CURRENT
+COMBPOSS BAL   R4,PRINT       WRITE CURRENT WITH COMBINATION
+MOVENEXT MVC   CURREC,NEXTREC MOVE NEXT RECORD TO CURRENT
+         MVC   CURRNTSW,NEXTSW MOVE NEXT SWITCH TO CURRENT SWITCH
+         MVC   ERCURBEF,ERNXTBEF MOVE NEXT BEFORE STORE TO CURRENT
+         MVC   ERCURAFT,ERNXTAFT MOVE NEXT AFTER  STORE TO CURRENT
+         B     GETINPUT       RETURN TO READ
+         EJECT
+INPUTEND EQU   *
+         TM    CURRNTSW,CURBEFON Q - CURRENT BEFORE CODE INVALID
+         BNO   CURNTGD        NO - BYPASS ERROR WRITE
+         NI    CURRNTSW,CURBEFOF SET OFF INVALID BEFORE SWITCH
+         MVI   SKIPCODE,C'/'  INSERT SPACE 1 AFTER CHARACTER
+         MVI   PRINTLNE,C' '  INSERT BLANK IN FIRST BYTE
+         MVC   PRINTLNE+1(131),PRINTLNE AND PROPAGATE THROUGH LINE
+         MVC   PRINTLNE+5(71),BADBEFOR INSERT ERROR MESSAGE
+         MVC   ERRORCDE,ERCURBEF MOVE ERROR CODE TO WORK AREA
+         BAL   R4,CONVHEX     CONVERT TO HEX AND MOVE TO MESSAGE
+         BAL   R4,PRINT       AND SPREAD THE GOOD WORD
+CURNTGD  MVC   SKIPCODE,CURAFTCD INSERT CURRENT AFTER SKIP CODE
+         MVC   PRINTLNE,CURLINE MOVE CURRENT LINE TO OUTPUT AREA
+         BAL   R4,PRINT       WRITE CURRENT LINE
+         TM    CURRNTSW,CURAFTON Q - IS CURRENT AFTER INVALID
+         BNO   FINISH         NO - BYPASS ERROR WRITE
+         MVI   SKIPCODE,C'/'  INSERT SPACE 1 AFTER CHARACTER
+         MVI   PRINTLNE,C' '  INSERT BLANK IN FIRST BYTE
+         MVC   PRINTLNE+1(131),PRINTLNE AND PROPAGATE THROUGH LINE
+         MVC   PRINTLNE+5(73),BADAFTER INSERT ERROR MESSAGE
+         MVC   ERRORCDE,ERCURAFT MOVE ERROR CODE TO WORK AREA
+         BAL   R4,CONVHEX     CONVERT TO HEX AND MOVE TO MESSAGE
+         BAL   R4,PRINT       AND WRITE
+FINISH   CLOSE (PRINTIN)      CLOSE INPUT DATA SET
+         PUT   SYSPRINT,PAGESKIP SKIP TO CHANNEL 1
+         SPACE
+         LA    R6,15          SET BCT VALUE TO '15'
+         LA    R5,DDTABLE+12  POINT R5 PAST SYSPRINT ENTRY
+MESSLOOP TM    0(R5),X'40'    Q - IS OPEN BIT ON
+         BNO   MESSEXIT       NO - GO INCREMENT POINTER
+         TM    0(R5),X'20'    Q - IS IN-USE BIT ON
+         BNO   MESSEXIT       NO - GO INCREMENT POINTER
+         MVC   DDNAMESS,4(R5) MOVE DDNAME TO MESSAGE
+         PUT   SYSPRINT,DCBMESS AND TELL OF OPENING DATA SET
+MESSEXIT LA    R5,12(R5)      POINT R5 AT NEXT TABLE ENTRY
+         BCT   R6,MESSLOOP    IF STILL WITHIN TABLE LOOP BACK
+         SPACE
+         PUT   SYSPRINT,PAGESKIP SKIP TO CHANNEL 1
+         PUT   SYSPRINT,ENDMESS WRITE END OF PROGRAM MESSAGE
+         BAL   R4,CLOSE       CLOSE ALL OPEN DCB'S
+         L     R13,4(R13)     POINT R13 AT PREVIOUS SAVE AREA
+        RETURN (14,12),RC=0   RETURN CONTROL TO OS
+         EJECT
+REPCHNGE EQU   *
+         TM    CURRNTSW,CURBEFON Q - CURRENT BEFORE CODE INVALID
+         BNO   CURENTGD       NO - BYPASS ERROR WRITE
+         NI    CURRNTSW,CURBEFOF SET OFF INVALID BEFORE SWITCH
+         MVI   SKIPCODE,C'/'  INSERT SPACE 1 AFTER CHARACTER
+         MVI   PRINTLNE,C' '  INSERT BLANK IN FIRST BYTE
+         MVC   PRINTLNE+1(131),PRINTLNE AND PROPAGATE THROUGH LINE
+         MVC   PRINTLNE+5(71),BADBEFOR INSERT ERROR MESSAGE
+         MVC   ERRORCDE,ERCURBEF MOVE ERROR CODE TO WORK AREA
+         BAL   R4,CONVHEX     CONVERT TO HEX AND MOVE TO MESSAGE
+         BAL   R4,PRINT       AND WRITE
+CURENTGD MVC   SKIPCODE,CURAFTCD INSERT CURRENT AFTER SKIP CODE
+         MVC   PRINTLNE,CURLINE MOVE CURRENT LINE TO OUTPUT AREA
+         BAL   R4,PRINT       WRITE CURRENT LINE
+         TM    CURRNTSW,CURAFTON Q - IS CURRENT AFTER INVALID
+         BNO   NXTOCURR       NO - BYPASS ERROR WRITE
+         MVI   SKIPCODE,C'/'  INSERT SPACE 1 AFTER CHARACTER
+         MVI   PRINTLNE,C' '  INSERT BLANK IN FIRST BYTE
+         MVC   PRINTLNE+1(131),PRINTLNE AND PROPAGATE THROUGH LINE
+         MVC   PRINTLNE+5(73),BADAFTER INSERT ERROR MESSAGE
+         MVC   ERRORCDE,ERCURAFT MOVE ERROR CODE TO WORK AREA
+         BAL   R4,CONVHEX     CONVERT TO HEX AND MOVE TO MESSAGE
+         BAL   R4,PRINT       AND WRITE
+         EJECT
+NXTOCURR EQU   *
+         MVC   CURRNTSW,NEXTSW MOVE NEXT SWITCH TO CURRENT SWITCH
+         MVC   CURREC,NEXTREC MOVE NEXT RECORD TO CURRENT
+         MVC   ERCURBEF,ERNXTBEF MOVE NEXT BEFORE STORE TO CURRENT
+         MVC   ERCURAFT,ERNXTAFT MOVE NEXT AFTER  STORE TO CURRENT
+         OI    CURRNTSW,X'20' TURN ON ACTION BEFORE SWITCH
+         MVC   DDCOUNT,=PL2'0' ZEROISE DD COUNT
+         LA    R6,16          SET BCT VALUE TO '16'
+         LA    R5,DDTABLE     POINT R5 TO START OF DD TABLE
+SETOFF   NI    0(R5),X'7F'    SET OFF PRINT SWITCH
+         LA    R5,12(R5)      POINT R5 AT NEXT TABLE ENTRY
+         BCT   R6,SETOFF      IF STILL WITHIN TABLE, LOOP BACK
+         LA    R3,REPTABLE    POINT R3 AT START OF IN-CORE TABLE
+         SPACE
+REPTLOOP EQU   *
+         CLC   NXTREPNO,0(R3) Q - IS TABLE ENTRY SAME AS REPT NO
+         BNE   INCREMNT       NO - GO POINT AT NEXT ENTRY
+         AP    DDCOUNT,=P'1'  ADD 1 TO DD COUNT
+         CLC   6(5,R3),=C'DUMMY' Q - IS ENTRY EQUAL TO DUMMY
+         BE    INCREMNT       YES - GO POINT AT NEXT ENTRY
+         CLC   6(5,R3),=C'LOCAL' Q - IS ENTRY EQUAL TO LOCAL
+         BNE   DDFOUND        NO - GO TO DCB ROUTINE
+         OI    DDTABLE,X'80'  SET ON SYSPRINT PRINT SWITCH
+         SPACE
+INCREMNT EQU   *
+         LA    R3,11(R3)      POINT R3 AT NEXT ENTRY IN TABLE
+         CLC   0(6,R3),=C'******' Q - IS R3 STILL WITHIN TABLE
+         BNE   REPTLOOP       YES - GO COMPARE REPORT NUMBERS
+         CP    DDCOUNT,=PL2'0' Q - IS DD COUNT GREATER THAN ZERO
+         BH    READNEXT       YES - GO READ NEXT RECORD
+         SPACE
+*    PASSING THIS POINT MEANS THAT A REPORT HAS BEEN FOUND FOR
+*         WHICH NO OUTPUT DDNAME HAS BEEN SPECIFIED.
+*    UT451 , IN ITS INFINITE WISDOM AND MERCY,WILL GIVE THE
+*         OPERATOR A CHANCE TO RECTIFY THE SITUATION.
+         SPACE
+         MVC   0(6,R3),NXTREPNO    MOVE REPORT NO INTO TABLE
+         AP    TABLNTRY,=P'1'      ADD 1 TO ENTRY COUNT
+         CP    TABLNTRY,=P'200'    IS TABLE FULL ?
+         BNL   TABLFULL            YES - GO TELL SOME-ONE ABOUT IT
+         MVC   WTO01+28(6),NXTREPNO MOVE REPORT NO INTO MESSAGE
+WTO01    WTO   'UT451  - REPORT NO.        HAS NO DDNAME'
+         BAL   R4,WTOR        GO INTERROGATE OPERATOR
+         B     DDNAME01       REPLY = DDNAME SO GO PROCESS
+         B     LOCAL01        REPLY = LOCAL  SO GO PROCESS
+         B     READNEXT       REPLY = IGNORE SO GO IGNORE
+         B     ABEND          REPLY = ABEND SO GO ABEND
+LOCAL01  OI    DDTABLE,X'80'  SET ON SYSPRINT PRINT SWITCH
+         B     READNEXT       GO READ NEXT RECORD
+DDNAME01 MVC   DDNAME,RPLYAREA MOVE DDNAME TO WORK AREA
+         B     DDFOUND1       GO PROCESS DDNAME
+         EJECT
+DDFOUND  EQU   *
+         MVC   DDNAME,6(R3)   MOVE TABLE ENTRY TO WORK AREA
+DDFOUND1 AP    DDCOUNT,=P'1'  ADD 1 TO DDCOUNT
+         LA    R6,15          SET BCT VALUE TO '15'
+         LA    R5,DDTABLE+12  POINT R5 AT FIRST VARIABLE TAB ENTRY
+DDFOUND2 TM    0(R5),X'20'    Q - IS DCB IN USE
+         BNO   DCBAVAIL       NO - SO NO MATCH BUT DCB AVAILABLE
+         CLC   DDNAAM(8),4(R5) Q - IS DDNAME ALREADY IN DCB TABLE
+         BNE   DDFOUND3       NOT EQUAL TO THIS ENTRY SO GO INCR
+         OI    0(R5),X'80'    MATCH FOUND SO SET ON PRINT SWITCH
+         B     INCREMNT       GO LOOK AT NEXT ENTRY IN REPORT TABL
+DDFOUND3 LA    R5,12(R5)      POINT R5 AT NEXT TABLE ENTRY
+         BCT   R6,DDFOUND2    IF STILL WITHIN TABLE, LOOP BACK
+*                             PASSING THIS POINT MEANS THAT THE
+*                             DDNAME IS NOT ALREADY IN USE, AND
+*                             NO FURTHUR DCB'S ARE AVAILABLE, SO
+         B     NODCBS         GO TELL OF ACUTE DCB SHORTAGE
+         SPACE 5
+DCBAVAIL EQU   *
+         L     R7,0(R5)       POINT R7 AT AVAILABLE DCB
+         MVC   40(8,R7),DDNAAM MODIFY DDNAME IN DCB
+         MVC   FILEJFCB(8),=C'        ' BLANK OUT START OF JFCB
+*       RDJFCB (R7)           READ JFCB
+         LA    R1,AFILEDCB    POINT R1 AT PARAMETER LIST
+         ST    R7,AFILEDCB    INSERT DCB ADDRESS IN PARAMETER LIST
+         OI    AFILEDCB,X'80' INDICATE FIRST ENTRY IS ALSO LAST
+         SVC   64             ISSUE RDJFCB SVC
+         CLC   FILEJFCB(8),=C'        ' Q - IS START OF JFCB BLANK
+         BE    NOSTTMNT       YES - THEN NO DD STATEMENT EXISTS
+         OPEN  ((R7),(OUTPUT)) OPEN OUTPUT DATA SET
+         OI    0(R5),X'E0'    SET ON PRINT, OPEN, IN-USE SWITCHES
+         MVC   4(8,R5),DDNAAM MOVE DDNAME TO TABLE
+         B     INCREMNT
+         EJECT
+NODCBS   EQU   *
+         MVC   WTO02+35(6),NXTREPNO MOVE REPORT NUMBER INTO MESAGE
+         MVC   WTO02+49(8),DDNAAM MOVE DDNAME INTO MESSAGE
+WTO02    WTO   'UT451  - NO DCB FOR REPORT       ,DDNAME         '
+         BAL   R4,WTOR        ASK OPERATOR WHAT TO DO
+         B     DDNAME01       REPLY IS DDNAME - GO PROCESS
+         B     LOCAL02        REPLY IS LOCAL  - GO PROCESS
+         B     INCREMNT       REPLY IS IGNORE - GO LOOK AT REPTABL
+         B     ABEND          REPLY IS ABEND  - SO GO ABEND
+LOCAL02  OI    DDTABLE,X'80'  SET ON SYSPRINT PRINT SWITCH
+         B     INCREMNT
+         SPACE 5
+NOSTTMNT EQU   *
+         MVC   WTO03+37(8),DDNAAM MOVE DD NAME INTO MESSAGE
+         MVC   WTO03+51(6),NXTREPNO MOVE REPORT NO INTO MESSAGE
+WTO03    WTO   'UT451  - NO DD STATEMENT FOR         , RPT       '
+         BAL   R4,WTOR        ASK OPERATOR FOR ADVICE
+         B     DDNAME01       REPLY IS DDNAME - GO PROCESS
+         B     LOCAL02        REPLY IS LOCAL  - GO SET SWITCH
+         B     INCREMNT       REPLY IS IGNORE - GO LOOK AT RPT TAB
+         B     ABEND          REPLY IS ABEND  - SO GO ABEND
+         EJECT
+TSTVALID NI    NXTBFINV,NXTBEFON SET NEXT BEFORE CODE INV SW OFF
+         NI    NXTAFINV,NXTAFTON SET NEXT AFTER CODE INV SW OFF
+         MVC   ERNXTBEF,NXTBEFCD STORE NEXT SKIP/SPACE BEFORE CODE
+         MVC   ERNXTAFT,NXTAFTCD STORE NEXT SKIP/SPACE AFTER CODE
+         CLI   NXTBEFCD,C'9'  **
+         BH    BADBEF          *
+         CLI   NXTBEFCD,C'0'   *
+         BNL   AFTERTST        *
+         CLI   NXTBEFCD,C'='   *      ** ENSURE THAT BEFORE
+         BE    AFTERTST        *      *  SKIP/SPACE CODE IS
+         CLI   NXTBEFCD,X'7D'  *      *  IN THE PERMITTED
+         BE    AFTERTST        **    **  RANGE -
+         CLI   NXTBEFCD,C'J'   *      *      0 THROUGH 9
+         BE    AFTERTST        *      *      J, K, L, =
+         CLI   NXTBEFCD,C'K'   *      **     X'7D', X'40'
+         BE    AFTERTST        *
+         CLI   NXTBEFCD,C'L'   *
+         BE    AFTERTST        *
+         CLI   NXTBEFCD,C' '   *
+         BE    AFTERTST       **
+         SPACE
+BADBEF   OI    NXTBFINV,NXTBEFON SET NEXT BEFORE CODE INV SWTCH ON
+         MVI   NXTBEFCD,X'40' BEFORE SKIP/SPACE CODE DEFAULT NO-OP
+         SPACE
+AFTERTST CLI   NXTAFTCD,C'/'  **
+         BE    AFTEROK         *
+         CLI   NXTAFTCD,C'S'   *
+         BE    AFTEROK         *
+         CLI   NXTAFTCD,C'T'   *      ** ENSURE THAT AFTER
+         BE    AFTEROK         *      *  SKIP/SPACE CODE IS
+         CLI   NXTAFTCD,C'I'   *      *  IN THE PERMITTED
+         BH    BADAFT          **    **  RANGE -
+         CLI   NXTAFTCD,C'A'   *      *      A THROUGH I
+         BNL   AFTEROK         *      *      /, S, T, X'6F'
+         CLI   NXTAFTCD,X'4B'  *      **     X'4B', X'4C'
+         BE    AFTEROK         *
+         CLI   NXTAFTCD,X'4C'  *
+         BE    AFTEROK         *
+         CLI   NXTAFTCD,X'6F'  *
+         BE    AFTEROK        **
+         SPACE
+         CLI   NXTAFTCD,X'40' Q - IS CODE A BLANK
+         BNE   BADAFT         NO - THEN CODE IS BAD
+         MVI   NXTAFTCD,C'/'  ALTER C' ' TO C'/' SINCE ' ' NOP
+         B     AFTEROK        GO, NOW TRANSLATES TO WRITE-NO-SPACE
+         SPACE
+BADAFT   OI    NXTAFINV,NXTAFTON SET ON NEXT AFTER CODE INVALID SW
+         MVI   NXTAFTCD,C'/'  INVALID CODE DEFAULTS TO SINGLE SPCE
+         SPACE
+AFTEROK  BR    R4
+         EJECT
+COMBINE  EQU   *
+         MVC   SKIPCODE,CURAFTCD INSERT DEFAULT OF CURRENT AFTERCD
+         MVC   PRINTLNE,CURLINE MOVE CURRENT LINE TO OUTPUT AREA
+         TM    NEXTSW,NXTBEFON Q - IS NEXT BEFORE COD INVALID
+         BO    4(R4)          YES - CANNOT COMBINE - RET TO BAL +4
+         TM    CURRNTSW,CURAFTON Q - IS CURRENT AFTER INVALID
+         BO    4(R4)          YES - CANNOT COMBINE - RET TO BAL +4
+         CLI   NXTBEFCD,C' '  Q - IS NEXT BEFORE A BLANK
+         BNE   COMBINE2       NO - GO TO NEXT TEST
+         MVC   SKIPCODE,CURAFTCD BLANK + CURAFTCD GIVES CURAFTCD
+         BR    R4             RETURN TO BAL + 0
+COMBINE2 CLI   NXTBEFCD,C'1'  Q - IS NEXT BEFORE A SKIP TO CH 1
+         BNE   COMBINE3       NO - GO TO NEXT TEST
+         MVI   SKIPCODE,C'A'  CURAFTCD + IMMEDSK1  GIVES AFTERSKP1
+         BR    R4             RETURN TO BAL + 0
+COMBINE3 CLI   NXTBEFCD,C'J'  Q - IS NEXT BEFORE A SINGLE SPACE
+         BNE   COMBINE5       NO - GO TO NEXT TEST
+         CLI   CURAFTCD,C'/'  Q - IS CURRENT AFTER A SINGLE SPACE
+         BNE   COMBINE4       NO - GO CHECK FOR AN 'S'
+         MVI   SKIPCODE,C'S'  J + / GIVE S S - A DOUBLE SPACE
+         BR    R4             RETURN TO BAL + 0
+COMBINE4 CLI   CURAFTCD,C'S'  Q - IS CURRENT AFTER A DOUBLE SPACE
+         BNE   4(R4)          NO - CANNOT COMBINE - RET TO BAL + 4
+         MVI   SKIPCODE,C'T'  J + S GIVES T - A TRIPLE SPACE
+         BR    R4             RETURN TO BAL + 0
+COMBINE5 CLI   NXTBEFCD,C'K'  Q - IS NEXT BEFORE A DOUBLE SPACE
+         BNE   4(R4)          NO - CANNOT COMBINE - RET TO BAL + 4
+         CLI   CURAFTCD,C'/'  Q - IS CURRENT AFTER A SINGLE SPACE
+         BNE   4(R4)          NO - CANNOT COMBINE - RET TO BAL + 4
+         MVI   SKIPCODE,C'T'  K + / GIVES T - A TRIPLE SPACE
+         BR    R4             RETURN TO BAL + 0
+         EJECT
+PRINT    EQU   *
+         TR    SKIPCODE,TRANSTAB-64 TRANSLATE SKIP CODE TO MACH CH
+         LA    R6,16          SET BCT VALUE TO '16'
+         LA    R5,DDTABLE     POINT R5 TO START OF DD TABLE
+PRNTLOOP TM    0(R5),X'80'    Q - IS PRINT BIT ON
+         BNO   PRNTEXIT       NO - GO INCREMENT POINTER
+         TM    0(R5),X'40'    Q - IS OPEN BIT ON
+         BNO   PRNTEXIT       NO - GO INCREMENT POINTER
+         TM    0(R5),X'20'    Q - IS IN USE BIT ON
+         BNO   PRNTEXIT       NO - GO INCREMENT POINTER
+         L     R7,0(R5)       LOAD DCB ADDRESS INTO R7
+         PUT   (R7),PRNTLINE  WRITE PRINT LINE
+PRNTEXIT LA    R5,12(R5)      POINT R5 AT NEXT TABLE ENTRY
+         BCT   R6,PRNTLOOP    IF STILL WITHIN TABLE, LOOP BACK
+         BR    R4             RETURN
+         SPACE 5
+CLOSE    EQU   *
+         LA    R6,16          SET BCT VALUE TO '16'
+         LA    R5,DDTABLE     POINT R5 TO START OF DD TABLE
+CLSELOOP TM    0(R5),X'40'    Q - IS OPEN BIT ON
+         BNO   CLOSEXIT       NO - GO INCREMENT POINTER
+         TM    0(R5),X'20'    Q - IS IN USE BIT ON
+         BNO   CLOSEXIT       NO - GO INCREMENT POINTER
+         L     R7,0(R5)       LOAD DCB ADDRESS INTO R7
+         CLOSE ((R7))         CLOSE DCB
+CLOSEXIT LA    R5,12(R5)      POINT R5 AT NEXT TABLE ENTRY
+         BCT   R6,CLSELOOP    IF STILL WITHIN TABLE LOOP BACK
+         BR    R4             RETURN
+         SPACE 5
+CONVHEX  EQU   *
+         MVI   ERRORCDE+1,X'00' SET SECOND BYTE TO BINARY ZEROES
+         MVN   ERRORCDE+1(1),ERRORCDE MOVE NUMERIC PORTION TO 2ND
+         TR    ERRORCDE(1),HEXTAB01 TRANSLATE ZONE PORTION OF CODE
+         TR    ERRORCDE+1(1),HEXTAB02 TRANSLATE NUMERIC PORTION
+         MVC   INVCODE+17(2),ERRORCDE MOVE HEX CODE TO MESSAGE
+         MVC   PRINTLNE+90(20),INVCODE MOVE MESSAGE TO PRINT LINE
+         BR    R4             RETURN
+         EJECT
+WTOR     EQU   *
+         SPACE
+*    THIS ROUTINE ASKS THE OPERATOR WHETHER TO ABEND, IGNORE THE
+*         CURRENT REPORT-DDNAME COMBINATION, ROUTE THE CURRENT
+*         REPORT TO SYSPRINT, OR WRITE IT TO AN OPERATOR-SUPPLIED
+*         DDNAME.  THE ROUTINE RETURNS CONTROL TO DIFFERENT PLACES
+*         DEPENDING ON THE REPLY.
+         SPACE 2
+*        *- REPLY -*          *- RETURN TO -*
+         SPACE
+*           DDNAME                BAL + 0
+*            LOCAL                BAL + 4
+*           IGNORE                BAL + 8
+*           ABEND                 BAL + 12
+         SPACE 1
+         CLI   SWPARM,X'FF'        TEST IF PARM SUPPLIED
+         BNE   ASKOPER             BRANCH IF NO
+WTOPARM  WTO   'UT451  - ''     '' IS ASSUMED'
+         B     PARMRPLY
+         SPACE 1
+ASKOPER  EQU   *
+         MVC   RPLYAREA,=C'      ' BLANK OUT REPLY AREA
+         WTOR  'UT451  - REPLY IGNORE, ABEND, LOCAL, OR DDNAME',       *
+               RPLYAREA,6,REPLYECB
+         WAIT  ECB=REPLYECB   WAIT FOR REPLY
+         XC    REPLYECB(4),REPLYECB SET ECB TO BINARY ZEROES
+PARMRPLY EQU   *
+         OC    RPLYAREA,=C'      ' OR LOWER CASE INTO CAPITALS
+         CLC   RPLYAREA,=C'IGNORE' Q - IS REPLY IGNORE
+         BNE   *+14                BRANCH IF NO
+         MVC   6(5,R3),=C'DUMMY'   YES - MOVE DUMMY TO DDNAME IN TABLE
+         B     *+10                BYPASS NEXT INSTRUCTION
+         MVC   6(5,R3),RPLYAREA    MOVE REPLY TO DDNAME IN TABLE
+         CLC   RPLYAREA,=C'ABEND ' Q - IS REPLY ABEND
+         BE    12(R4)         YES - RETURN TO BAL + 12
+         CLC   RPLYAREA,=C'IGNORE' Q - IS REPLY IGNORE
+         BE    8(R4)          YES - RETURN TO BAL + 8
+         CLC   RPLYAREA,=C'LOCAL ' Q - IS REPLY LOCAL
+         BE    4(R4)          YES - RETURN TO BAL + 4
+         BR    R4             REPLY IS DDNAME - RETURN TO BAL + 0
+         SPACE 5
+ABEND    EQU   *
+         WTO   'UT451  - USER 451 DUMP OPERATOR-INVOKED'
+         ABEND 451,DUMP
+         EJECT
+EMPTY    EQU   *
+         EXTRACT ADRTIOT,FIELDS=TIOT    EXTRACT TASK I/O TABLE ADDRESS
+         L     R3,ADRTIOT          LOAD ADDRESS OF TASK I/O TABLE
+         LA    R3,24(R3)           POINT R3 AT START OF FIRST DD ENTRY
+LTIOT    CLC   0(4,R3),=F'0'       TEST IF END OF TIOT
+         BE    0(R4)               YES, RETURN
+         CLC   4(3,R3),=C'PRT'     TEST IF 3 FIRST POS OF THIS DDNAME -
+         BE    OPECLOS             BRANCH IF YES         / IS = 'PRT'
+AOFNENT  SR    R1,R1               ZEROISE
+         IC    R1,0(R3)            LOAD LENGTH OF CURRENT DD ENTRY
+         LA    R3,0(R1,R3)         GET ADDRESS OF NEXT DD ENTRY
+         B     LTIOT               GO REPEAT TEST FOR THIS DD ENTRY
+OPECLOS  MVC   DCBPRT01+40(8),4(R3) MOVE DDNAME TO DCB
+         OPEN  (DCBPRT01,(OUTPUT)) OPEN DD STATEMENT AS OUTPUT
+         CLOSE DCBPRT01            CLOSE DS, CREATING EMPTY FILE
+         MVI   DCBPRT01+36,X'92'   RESET RECFM IN DCBPRT01
+         MVI   DCBPRT01+83,X'85'   RESET LRECL IN DCBPRT01
+         B     AOFNENT
+         SPACE 3
+BLKSZRTN EQU   *                   ROUTINE EXEC. WHILE OPENING SYSPRINT
+         CLC   SYSPRINT+62(2),=H'0' HAS BLKSIZE BEEN SUPPLIED
+         BNE   0(R14)               YES, SO RETURN TO COMPLETE OPEN
+         MVC   SYSPRINT+62(2),SYSPRINT+82 NO, SO MOVE LRECL TO BLKSIZE
+         BR    R14                  RETURN COMPLETE OPEN
+         EJECT
+REPTABLE DC    200CL11'******     ' REPORT NAME / DDNAME TABLE
+ENDTABLE DC    CL6'******'    END OF TABLE INDICATOR
+FILEJFCB DS    44F            WORK AREA FOR JFCB
+AFILEDCB DS    F              PARAMETER PASSED TO JFCB SVC
+EXITLIST DC    X'87',AL3(FILEJFCB) DCB EXIT LIST FOR RDJFCB
+REPLYECB DC    F'0'           ECB FOR USE BY WTOR
+RPLYAREA DC    CL6' '         REPLY AREA FOR USE BY WTOR
+DDCOUNT  DC    PL2'0'         COUNT OF TABLE ENTRIES / REPORT NO
+DDNAAM   DC    C'PRT'         CONSTANT PART OF VARIABLE DDNAME
+DDNAME   DC    CL5' '         WORK AREA FOR VARIABLE PART OF DDNME
+         SPACE
+PRNTLINE DS    0CL133         AREA FROM WHICH REPORT LINES ARE PUT
+SKIPCODE DS    CL1            CONTROL CHARACTER
+PRINTLNE DC    CL132' '       DATA PORTION
+         SPACE
+TABLNTRY DC    PL2'0'         NO OF ENTRIES IN IN-CORE TABLE
+PAGESKIP DC    X'8B'          IMMEDIATE SKIP TO CHANNEL 1
+ERRORCDE DC    CL2' '         WORK AREA FOR INVALID SKIP/SPACE CDE
+ERCURBEF DC    CL1' '         STORE FOR CURRENT BEFORE SKIP/SPACE
+ERCURAFT DC    CL1' '         STORE FOR CURRENT AFTER  SKIP/SPACE
+ERNXTBEF DC    CL1' '         STORE FOR NEXT    BEFORE SKIP/SPACE
+ERNXTAFT DC    CL1' '         STORE FOR NEXT    AFTER  SKIP/SPACE
+ADRTIOT  DS    F                   L
+SWPARM   DC    X'00' IF PARM NOT PRESENT OR X'FF' IF PARM PRESENT
+         SPACE 1
+UTL5HEAD DC    X'19'          WRITE FOLLOWED BY TRIPLE SPACE
+         DC    C'    UT451  SYSPRINT DATA SET'
+         DC    CL104' '
+BADRECD  DC    X'09'          WRITE FOLLOWED BY SINGLE SPACE
+         DC    C'    INVALID RECORD TYPE IN TABLE'
+         DC    CL100' '
+FULLTABL DC    X'09'          WRITE FOLLOWED BY SINGLE SPACE
+         DC    C'    IN-CORE TABLE IS FULL - SUBSEQUENT RECORDS '
+         DC    C'IGNORED'
+         DC    CL78' '
+DCBMESS  DC    X'09'          WRITE FOLLOWED BY SINGLE SPACE
+         DC    C'    THE DATA SET ASSOCIATED WITH DDNAME '
+DDNAMESS DC    CL8' '                                    '
+         DC    C' HAS BEEN OPENED'                       '
+         DC    CL68' '                                   '
+ENDMESS  DC    X'89'          WRITE FOLLOWED BY SKIP TO CHANNEL 1
+         DC    C'    END OF UT451 '
+         DC    CL115' '
+BADPARM  DC    X'09'
+         DC    CL50'    INVALID LENGTH OF PARM VALUE OR NO DD STATEMEN'
+         DC    CL82'T FOR THE SPECIFIED DDNAME - PARM IS IGNORED      '
+BADBEFOR DC    C'***** THE FOLLOWING LINE HAD AN INVALID '
+         DC    C'IMMEDIATE SKIP/SPACE CODE *****'
+BADAFTER DC    C'***** THE PRECEDING LINE HAD AN INVALID AFTER '
+         DC    C'PRINT SKIP/SPACE CODE *****'
+INVCODE  DC    C'INVALID CODE = X''  '''
+         EJECT
+NEXTREC  DS    0CL140         AREA INTO WHICH PRINTIN IS READ
+NXTREPNO DS    CL6            REPORT NUMBER
+NXTAFTCD DS    CL1            AFTER PRINT SKIP/SPACE CODE
+NXTBEFCD DS    CL1            BEFORE PRINT SKIP/SPACE CODE
+NXTLINE  DS    CL132          PRINT LINE
+         SPACE
+CURREC   DS    0CL140
+CURREPNO DS    CL6            REPORT NUMBER
+CURAFTCD DS    CL1            AFTER PRINT SKIP/SPACE CODE
+CURBEFCD DS    CL1            BEFORE PRINT SKIP/SPACE CODE
+CURLINE  DS    CL132          PRINT LINE
+         SPACE 3
+*    LAYOUT OF CURRENT AND NEXT SWITCHES -
+         SPACE
+*         0    BEFORE PRINT SKIP/SPACE CODE INVALID
+*         1    AFTER  PRINT SKIP/SPACE CODE INVALID
+*         2    ACTION THE BEFORE SKIP/SPACE CODE
+*         3
+*         4
+*         5
+*         6
+*         7
+         SPACE
+CURRNTSW DC    X'00'
+         SPACE
+CURBFINV EQU   CURRNTSW
+CURBEFON EQU   X'80'
+CURBEFOF EQU   X'7F'
+CURAFINV EQU   CURRNTSW
+CURAFTON EQU   X'40'
+CURAFTOF EQU   X'BF'
+         SPACE 3
+NEXTSW   DC    X'00'
+         SPACE
+NXTBFINV EQU   NEXTSW
+NXTBEFON EQU   X'80'
+NXTBEFOF EQU   X'7F'
+NXTAFINV EQU   NEXTSW
+NXTAFTON EQU   X'40'
+NXTAFTOF EQU   X'BF'
+         EJECT
+TRANSTAB DC    X'03'
+         DC     X'01'
+         DC    9X'00'
+         DC    X'D9E1'
+         DC    20X'00'
+         DC    X'09'
+         DC    25X'00'
+         DC    X'DBE3'
+         DC    67X'00'
+         DC    X'D1899199A1A9B1B9C1C9'
+         DC    7X'00'
+         DC    X'0B131B'
+         DC    14X'00'
+         DC    X'1119'
+         DC    12X'00'
+         DC    X'D38B939BA3ABB3BBC3CB'
+         SPACE
+         DS    0F
+DDTABLE  DC    X'60',AL3(SYSPRINT),C'SYSPRINT'
+         DC    X'00',AL3(DCBPRT01),CL8' '
+         DC    X'00',AL3(DCBPRT02),CL8' '
+         DC    X'00',AL3(DCBPRT03),CL8' '
+         DC    X'00',AL3(DCBPRT04),CL8' '
+         DC    X'00',AL3(DCBPRT05),CL8' '
+         DC    X'00',AL3(DCBPRT06),CL8' '
+         DC    X'00',AL3(DCBPRT07),CL8' '
+         DC    X'00',AL3(DCBPRT08),CL8' '
+         DC    X'00',AL3(DCBPRT09),CL8' '
+         DC    X'00',AL3(DCBPRT10),CL8' '
+         DC    X'00',AL3(DCBPRT11),CL8' '
+         DC    X'00',AL3(DCBPRT12),CL8' '
+         DC    X'00',AL3(DCBPRT13),CL8' '
+         DC    X'00',AL3(DCBPRT14),CL8' '
+         DC    X'00',AL3(DCBPRT15),CL8' '
+         SPACE
+*        THE FIRST BYTE OF EACH ENTRY IS A SWITCH OF FORMAT -
+         SPACE
+*        0          PRINT SWITCH
+*        1          OPEN SWITCH
+*        2          'IN USE' SWITCH
+*        3
+*        4
+*        5
+*        6
+*        7
+         SPACE 2
+TABLEDST DSECT
+TABLEID  DS    CL4            TABLE IDENTITY CODE
+TABREPNO DS    CL6            REPORT NUMBER
+TABDDNAM DS    CL5            DDNAME PREFIX
+         DS    CL65
+UT451    CSECT
+         SPACE 1
+TABLE    DCB   DDNAME=TABLE,                                           *
+               DSORG=PS,                                               *
+               EODAD=ENDOFTAB,                                         *
+               MACRF=GL,                                               *
+               RECFM=FB
+         SPACE 5
+SYSPRINT DCB   DDNAME=SYSPRINT,                                        *
+               DSORG=PS,                                               *
+               MACRF=PM,                                               *
+               RECFM=FBM,                                              *
+               LRECL=133,                                              *
+               EXLST=BLKS
+BLKS     DC    X'85',AL3(BLKSZRTN) DCB EXIT ROUTINE
+         SPACE 5
+PRINTIN  DCB   DDNAME=PRINTIN,                                         *
+               DSORG=PS,                                               *
+               MACRF=GM,                                               *
+               EODAD=INPUTEND,                                         *
+               RECFM=FB,                                               *
+               LRECL=140
+         SPACE 5
+DCBPRT01 DCB   DDNAME=PRT01,EXLST=EXITLIST,                            *
+               DSORG=PS,                                               *
+               MACRF=PM,                                               *
+               RECFM=FBM,                                              *
+               LRECL=133
+         SPACE 5
+DCBPRT02 DCB   DDNAME=PRT02,EXLST=EXITLIST,                            *
+               DSORG=PS,                                               *
+               MACRF=PM,                                               *
+               RECFM=FBM,                                              *
+               LRECL=133
+         EJECT
+DCBPRT03 DCB   DDNAME=PRT03,EXLST=EXITLIST,                            *
+               DSORG=PS,                                               *
+               MACRF=PM,                                               *
+               RECFM=FBM,                                              *
+               LRECL=133
+         SPACE 5
+DCBPRT04 DCB   DDNAME=PRT04,EXLST=EXITLIST,                            *
+               DSORG=PS,                                               *
+               MACRF=PM,                                               *
+               RECFM=FBM,                                              *
+               LRECL=133
+         SPACE 5
+DCBPRT05 DCB   DDNAME=PRT05,EXLST=EXITLIST,                            *
+               DSORG=PS,                                               *
+               MACRF=PM,                                               *
+               RECFM=FBM,                                              *
+               LRECL=133
+         SPACE 5
+DCBPRT06 DCB   DDNAME=PRT06,EXLST=EXITLIST,                            *
+               DSORG=PS,                                               *
+               MACRF=PM,                                               *
+               RECFM=FBM,                                              *
+               LRECL=133
+         SPACE 5
+DCBPRT07 DCB   DDNAME=PRT07,EXLST=EXITLIST,                            *
+               DSORG=PS,                                               *
+               MACRF=PM,                                               *
+               RECFM=FBM,                                              *
+               LRECL=133
+         EJECT
+DCBPRT08 DCB   DDNAME=PRT08,EXLST=EXITLIST,                            *
+               DSORG=PS,                                               *
+               MACRF=PM,                                               *
+               RECFM=FBM,                                              *
+               LRECL=133
+         SPACE 5
+DCBPRT09 DCB   DDNAME=PRT09,EXLST=EXITLIST,                            *
+               DSORG=PS,                                               *
+               MACRF=PM,                                               *
+               RECFM=FBM,                                              *
+               LRECL=133
+         SPACE 5
+DCBPRT10 DCB   DDNAME=PRT10,EXLST=EXITLIST,                            *
+               DSORG=PS,                                               *
+               MACRF=PM,                                               *
+               RECFM=FBM,                                              *
+               LRECL=133
+         SPACE 5
+DCBPRT11 DCB   DDNAME=PRT11,EXLST=EXITLIST,                            *
+               DSORG=PS,                                               *
+               MACRF=PM,                                               *
+               RECFM=FBM,                                              *
+               LRECL=133
+         SPACE 5
+DCBPRT12 DCB   DDNAME=PRT12,EXLST=EXITLIST,                            *
+               DSORG=PS,                                               *
+               MACRF=PM,                                               *
+               RECFM=FBM,                                              *
+               LRECL=133
+         EJECT
+DCBPRT13 DCB   DDNAME=PRT13,EXLST=EXITLIST,                            *
+               DSORG=PS,                                               *
+               MACRF=PM,                                               *
+               RECFM=FBM,                                              *
+               LRECL=133
+         SPACE 5
+DCBPRT14 DCB   DDNAME=PRT14,EXLST=EXITLIST,                            *
+               DSORG=PS,                                               *
+               MACRF=PM,                                               *
+               RECFM=FBM,                                              *
+               LRECL=133
+         SPACE 5
+DCBPRT15 DCB   DDNAME=PRT15,EXLST=EXITLIST,                            *
+               DSORG=PS,                                               *
+               MACRF=PM,                                               *
+               RECFM=FBM,                                              *
+               LRECL=133
+         EJECT
+HEXTAB01 DC    16X'F0'
+         DC    16X'F1'
+         DC    16X'F2'
+         DC    16X'F3'
+         DC    16X'F4'
+         DC    16X'F5'
+         DC    16X'F6'
+         DC    16X'F7'
+         DC    16X'F8'
+         DC    16X'F9'
+         DC    16X'C1'
+         DC    16X'C2'
+         DC    16X'C3'
+         DC    16X'C4'
+         DC    16X'C5'
+         DC    16X'C6'
+         SPACE 5
+HEXTAB02 DC    X'F0F1F2F3F4F5F6F7F8F9C1C2C3C4C5C6'
+         SPACE 5
+         LTORG
+         SPACE
+READNEXT EQU   GETINPUT
+         SPACE
+         END

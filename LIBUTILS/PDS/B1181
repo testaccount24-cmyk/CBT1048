@@ -1,0 +1,2607 @@
+UT029    START
+         EJECT
+*
+* WRITTEN BY - KENT PATRICK (RCA)
+* MODIFIED FOR OS/360 BY - JIM VELTEN (MONSANTO) AND ED MELTON (IBM)
+*
+* MONSANTO COMPANY - CREVE COEUR
+*
+* NOVEMBER 1967
+*
+*  THIS PROGRAM INPUTS PARAMETERS AND TAILORS THE LOGIC TO DO BALANCING
+* ON DATA RECORDS READ IN FROM THE CARD READER OR A TAPE UNIT.
+*  PARAMETERS ROUTINE SETS VARIOUS RUN OPTIONS TO CONTROL:
+*                1. BALANCING TYPES & FIELDS TO BALANCE
+*                2. INPUT DATA RECORD SPECIFICATIONS
+*                3. OUTPUT RECORD & BLOCK SPECIFICATIONS
+*                4. INPUT SEQUENCE CHECKING SPECIFICATIONS
+*                5. OUTPUT LABEL SET SPECIFICATIONS
+*                6. REPORT HEADERS & OUTPUT DEVICE TYPE
+*
+*                NOTE: SEE UT29 APPLICATIONS MANUAL FOR GREATER DETAIL
+*
+*
+*  REGISTER ASSIGNMENTS-
+*
+*            0 -UTILITY
+*            1 -UTILITY
+*            2 -UTILITY
+*            3 -UTILITY
+*            4 -UTILITY
+*            5 -UTILITY
+*            6 -UTILITY
+*            7 -UTILITY
+*            8 - I/O DEBLOCK & BLOCK LOGIC
+*            9 - BASE
+*           10 - BASE
+*           11 - BASE
+*           12 - BASE
+*           13 - LINKAGE & SOFTWARE  (PROTECTED WHEN ENTERING EMS)
+*           14 - SOFTWARE
+*           15 -
+START    STM   14,12,12(13)                  SAVE REGISTERS
+         EJECT
+         BALR  9,0
+         USING *,9,10,11,12        BASE REGISTER ASSIGNMENTS
+BASE     LM    10,12,ACON
+         ST    13,SAV13                      SAVE R13
+         LA    13,SAV18                      POIJT TO PROGRAM SAVE AREA
+         OPEN  (SNAPDCB,OUTPUT)
+         OPEN  (READER,(INPUT),PRINT,(OUTPUT),PUNCHDCB,(OUTPUT))
+         GET   READER,ALTIN
+         B     READ
+ACON     DC    A(BASE+4096)
+         DC    A(BASE+4096*2)
+         DC    A(BASE+4096*3)
+         EJECT
+SAV13    DS    F
+SAV18    DS    18F
+******DATA INPUT AREA AND REPORT TAPE OUTPUT AREA
+         SPACE 3
+INPUT    DS    CL200                         CARD INPUT FOR PARAMETERS
+         ORG   INPUT                         OR DATA ALSO DATA INPUT IF
+PFN      DS    CL3                           FROM TAPE
+DOLLAR   DS    CL1
+CRDCODE  DS    CL2
+CRDTYPE  DS    CL14
+         ORG
+ALTIN    DC    CL200' '
+         DC    C'  '
+         EJECT
+RPTTPEIO DC    10CL136' '                    OUTPUT AREA REPORT TAPE
+ENDRPTIO EQU   *                             END IO AREA
+****** CONSTANTS AND WORK AREAS
+         SPACE 3
+*  CONSTANTS USED IN SEQUENCE CHECK ROUTINE
+THISSEQ  DC    60X'0'
+LASTSEQ  DC    60X'0'
+*   CONSTANTS FOR DATE ROUTINE
+LIST     DC    A(DATEHOLD)                            INSERT 6/3/68
+         DC    A(DATEOUT)                             INSERT 6/3/68
+DATEOUT  DC    PL4'0'                                 INSERT 6/3/68
+VCON1    DC    V(CONVT)                               INSERT 6/3/68
+         SPACE 3
+*  CONSTANTS USED IN INPUT ROUTINE & OUTPUTROUTINE
+RCDSZEIN DC    F'80'
+RCDSZEOT DC    F'80'
+BLKSZEOT DC    F'80'
+BLKFCT   DC    PL2'1'
+PADCHR   DC    C'9'
+         SPACE 3
+* PARAMETER ANALYSIS CONSTANTS
+CNTCRDSQ DC    X'00'
+DATAC    DC    CL14'DATA'
+PROGRAMC DC    CL14'PROGRAM'
+TOTALC   DC    CL14'TOTAL'
+SEQUENCE DC    CL14'SEQUENCE'
+CONTROLC DC    CL14'CONTROL RCD'
+BATCHC   DC    CL14'BATCH'
+BATCHFOR DC    CL14'BATCH FORMS'
+REPORT   DC    CL14'REPORT-PRINTER'
+PUNCH7S  DC    CL14'SEVENS-PUNCH'
+COLHDR   DC    CL14'COL HDR'
+         SPACE 3
+******  MISC WORK AREAS AND SWITCHES
+CLOSEACC DC    A(CODE1)
+SEQCLOSE DC    2A(SEQCHK)
+CODEFCT  DC    H'10'               NUMBER OF ALLOWABLE RANDOM PFNS
+CODEFULL DC    A(CODE10+ENDINT-INTACCUM)     END OF CODE AREAS
+FLDLIMIT DC    H'11'
+CNTRHLD  DC    P'0'
+DBLWORD  DC    D'12'
+INVALPFN DC    CL3' '                        HOLD LAST INVALID PFN
+LASTPFN  DC    CL3' '
+SEQDISP  DC    X'00'
+STDPFN   DC    CL3' '                        PICK UP FROM FRST PRM CARD
+BADEOJSW DC    X'00'                   BAD EOJ SW. FOR COMPL. CODE
+         SPACE 3
+* HOLD AREAS FOR RELATIVE POSITIONS OF FIELDS IN CONTROL RECORC
+RELHSH   DC    CL1' '
+RELRCD   DC    CL1' '
+RELATE   DC    CL1' '
+RELCTL   DC    CL1' '
+CONTHASH DC    PL8'0'              HASH TOTAL OF ALL FIELDS
+TOTALDET DC    PL4'0'              TOTAL RCD COUNT OF DETAILS
+COUNT789 DC    PL4'0'              TOTAL RCD COUNT OF 7-8-9 RECORDS
+         EJECT
+****** PARAMETER SWITCHES
+         SPACE 3
+* PARAMETER FLAG AREA
+DATAP    DC    X'0'      DATA PARAMETER CARD HAS BEEN PROCESSED
+TAPEINSW DC    X'0'               INPUT DATA IS ON TAPE
+PFNS     DC    X'0'      PFN NUMBERS WILL COME IN IN SEQUENCE
+SNGLPROC DC    X'0'      7 CARDS IGNORED ONLY ONE PROCESS PER CYCLE
+CTLBRK   DC    X'0'      CONTROL ON DIVISION OR SOME KEY
+SEQ51    DC    X'0'      CHECK SEQ OF DATA
+SEQ52    DC    X'0'      52 SEQ CARD HAS BEEN PROCESSED
+EQURJCT  DC    X'0'      REJECT EQUALS IN SEQ C ROUTINE
+ORDDEE   DC    X'0'      DESCENDING SEQ TO BE CHECKED IN SEQ ROUTINE
+CONTROL  DC    X'0'      CONTROL RECORD ON OUTPUT TAPE
+RCD      DC    X'0'      RECORD COUNT IN CONTROL RECORD
+HSH      DC    X'0'      HASH TOTAL IN CONTROL RECORD
+CTL      DC    X'0'      TOTAL CARD RECORD COUNT IN CONTROL RECORD
+ATE      DC    X'0'      ATE PLACED IN CONTROL RECORD
+BATCH    DC    X'0'      BATCH PROCESSING
+BATCHFRM DC    X'0'      BATCH FORMS PFN TABLE PROCESSING
+DATA     DC    X'0'      FIRST DATA CARD HAS BEEN READ
+TAPE     DC    X'0'      INTERMEDIATE TAPE IN FLAG
+TOTAL    DC    X'0'      AT LEAST 1 TOTAL CARD HAS BEEN PROCESSED
+CODE42   DC    X'0'      CODE 42 TOTAL CARD READ
+CODE43   DC    X'0'      43 TOTAL CARD READ
+PROGRAMP DC    X'0'      PROGRAM PARAMETER CARD READ
+EOJ      DC    X'00'                        SET TO F0 AT END OF JOB
+PREPROC  DC    X'F0'                         SET TO 00 IF FINAL PROC.
+TPEOUT   DC    X'F0'                        CLEARED IF NO TAPE OUT
+NOZZ     DC    X'F0'                         SET ON PRLIM OR NOZZ PARM
+PRINTRPT DC    X'00'                        SET TO F0 IF OUTPUT=PRINTER
+BCHDIVBK DC    X'0'                          SET ON BATCH DIV BREAK
+WRITERCD DC    X'0'                          RECORD COUNT = NO IF SET
+LASTCOMW DC    X'00'                         SWITCH FOR TAPE CONDITION
+DIFFSWCH DC    X'0'                          SET IF DIFFERENCE FOUND
+DATAERR  DC    X'0'                          ON FOR BAD EOJ
+DCACTION DC    X'0'                          BAD EOJ
+SEQERR   DC    X'0'
+PARAMERR DC    X'0'                          SET IF ANY PARAM ERRORS
+         EJECT
+******ACCUMULATION ROUTINE WORK AREAS AND TOTAL BUFFER COUNTERS
+         SPACE 3
+* HOLD AREAS FOR 8 CARDS IF PREPROCESSING
+HOLD8KEY DC    15XL4'0'                      HOLD 15 BATCH CODES
+* TABLE OF VALID PFN NUMBERS AND THEIR RESPECTIVE CODE & TOTAL AREAS.
+*  FORMAT:  3-BYTES PFN
+*           1-BYTE RCD COUNT FLAG        F0=NO RCD COUNT 00=RCD COUNT
+*           4-BYTES ADDRESS OF ACCUMULATION CODE
+*           4-BYTES ADDRESS OF TOTAL AREAS
+         CNOP  0,4
+PFNTABLE DC    XL4'0'
+         DC    A(CODE1)
+         DC    A(TOTALS1)
+         DC    XL4'0'
+         DC    A(CODE2)
+         DC    A(TOTALS2)
+         DC    XL4'0'
+         DC    A(CODE3)
+         DC    A(TOTALS3)
+         DC    XL4'0'
+         DC    A(CODE4)
+         DC    A(TOTALS4)
+         DC    XL4'0'
+         DC    A(CODE5)
+         DC    A(TOTALS5)
+         DC    XL4'0'
+         DC    A(CODE6)
+         DC    A(TOTALS6)
+         DC    XL4'0'
+         DC    A(CODE7)
+         DC    A(TOTALS7)
+         DC    XL4'0'
+         DC    A(CODE8)
+         DC    A(TOTALS8)
+         DC    XL4'0'
+         DC    A(CODE9)
+         DC    A(TOTALS9)
+ENDPFNTB DC    XL4'0'
+         DC    A(CODE10)
+         DC    A(TOTALS10)
+PFNLSTBT DC    XL3'0'                        PFN LAST BUILT
+TABLEADD DC    A(0)                          ADDRESS OF TABLE SLOT
+* BATCH FORM TABLE OF VALID  PROJECT AND FORM NUMBERS  FORMAT
+BFMTABLE DC    5XL38'0'                      1-2=PROJECT 3-38=FORMS
+* TRANSLATE TABLE TO VERIFY THAT CONTROL FIELDS ARE ADDABLE
+VERNUMTB DC    10C'0'
+         DC    C'991191'
+         DC    10C'0'
+         DC    C'991191'
+         DC    10C'0'
+         DC    C'991191'
+         DC    10C'0'
+         DC    C'991191'
+         DC    10C'0'
+         DC    C'9911+1'                    PLUS STOPS FIELD CHECK
+         DC    10C'0'
+         DC    C'991191'
+         DC    10C'0'
+         DC    C'991191'
+         DC    10C'0'
+         DC    C'991191'
+         DC    10C'0'
+         DC    C'991191'
+         DC    10C'0'
+         DC    C'991191'
+         DC    96C'9'
+TRANWORK DS    70C'0'
+*   NOTE *** TABLES BELOW ARE INITIALIZED BY SPECIAL ROUTINE AT TIME
+*            FIRST DATA CARD IS READ. INITIALLY THIS AREA CONTAINS A
+*            TRANSLATE TABLE FOR PRELIMINARY BALANCING. THIS TABLE IS
+*            RELOCATED TO PARAMETER PROCESS AREA AT TIME FIRST DATA
+*            CARD IS READ.
+* TOTAL BUFFERS TO HOLD ALL ACCUMULATED TOTALS  DETAIL & CONTROL
+*  FIRST 35 BYTES ARE 5-7BYTE COUNTERS WHICH YIELD THE 5 TOTALS ALLOWED
+*  LAST 6 BYTES ARE 2-3BYTE FIELD USED TO HOLD RCD COUNT  DETAIL & CON
+*  SECOND 35 BYTES ARE THE 5 POCKETS WHERE THE '8' CARDS ARE ACCUMULATE
+TOTALS1  DC    5PL7'0'                       DETAIL COUNTERS
+         DC    5PL7'0'                       '8' CARD COUNTERS
+         DC    PL3'0'                        DETAIL RECORD COUNT
+         DC    PL3'0'                        RECORD COUNT IN'8' CARDS
+TOTALS2  DC    5PL7'0'
+         DC    5PL7'0'
+         DC    PL3'0'
+         DC    PL3'0'
+TOTALS3  DC    5PL7'0'
+         DC    5PL7'0'
+         DC    PL3'0'
+         DC    PL3'0'
+TOTALS4  DC    5PL7'0'
+         DC    5PL7'0'
+         DC    PL3'0'
+         DC    PL3'0'
+TOTALS5  DC    5PL7'0'
+         DC    5PL7'0'
+         DC    PL3'0'
+         DC    PL3'0'
+TOTALS6  DC    5PL7'0'
+         DC    5PL7'0'
+         DC    PL3'0'
+         DC    PL3'0'
+TOTALS7  DC    5PL7'0'
+         DC    5PL7'0'
+         DC    PL3'0'
+         DC    PL3'0'
+TOTALS8  DC    5PL7'0'
+         DC    5PL7'0'
+         DC    PL3'0'
+         DC    PL3'0'
+TOTALS9  DC    5PL7'0'
+         DC    5PL7'0'
+         DC    PL3'0'
+         DC    PL3'0'
+TOTALS10 DC    5PL7'0'
+         DC    5PL7'0'
+         DC    PL3'0'
+         DC    PL3'0'
+         SPACE 3
+* WORK A REAS (EED IN ACCUMULATION LOGIC OF CONTROL FIELDS
+WORK1    DC    CL7'+'                        CARD FIELD IS PACKED INTO
+WORK2    DC    CL7'+'                        THIS AREA IF ABSOLUTE
+WORK3    DC    CL7'+'                        ACCUMULATION IS SPECIFIED
+WORK4    DC    CL7'+'                        THE SIGN IN THIS AREA IS
+WORK5    DC    CL7'+'                        CHANGED TO + THEN THE
+WORK6    DC    CL7'+'                        FIELD IS ADDED TO THE
+WORK7    DC    CL7'+'                        PROPER COUNTER
+WORK8    DC    CL7'+'
+WORK9    DC    CL7'+'
+WORK10   DC    CL7'+'
+* HOLD AREA FOR SEVEN CARDS
+MTD7     DC    PL2'0'                        MTD CONTROL COUNT
+CONT7OUT DC    CL6' '                        HOLD 7 CARD CONTROL OUT
+DAY7     DC    C' '                          HOLD 7 CARD DAY
+* HOLD AREA FOR NINE CARDS
+DAY9     DC    C' '                          DAY NUMBER PREV HIGH 9CARD
+PTD9     DC    PL2'0'                        DATA FROM 9 CARD
+MTD9     DC    PL2'0'                        DATA FROM 9 CARD
+BCOUNT8  DC    PL3'0'                        COUNT 8 CARDS FOR 8ZZ
+BATCHCNT DC    PL3'0'                        COUNT OF NUMBER OF BATCHES
+COUNT8S  DC    PL2'0'                        COUNT OF 8 CARDS
+*  TRANSLATE TABLE FOR CARD LIST    CHANGES +0 TO + AND -0 TO -
+*           ALL OTHER NON PRINTABLES ARE CHANGED TO ª.
+         ORG   TOTALS1
+PRETRANI DC    32C'ª'
+         DC    32C'ª'
+         DC    C' ªªªªªªªªªó.<(+|&&ªªªªªªªªªª$*);^'
+         DC    C'-/ªªªªªªªªª,%ª>ªªªªªªªªªªª:#@''="'
+         DC    32C'ª'
+         DC    32C'ª'
+         DC    C'+ABCDEFGHIªªªªªª-JKLMNOPQRªªªªªª'
+         DC    C'ªªSTUVWXYZªªªªªª0123456789ªªªªªª'
+         ORG
+         EJECT
+****** INPUT ROUTINE FOR DATA FILE   INCLUDES FAN OUT OF PARAMETER TYPE
+         SPACE 3
+*  THIS ROUTINE READS ALL INPUT RECORDS TAPE OR CARD
+*     A. INITIALLY CARDS ARE READ TO PICK UP PARAMETER CARDS THEN:
+*     B. IF THE PARAMETER CARD'PROGRAM' IS READ AND THE ENTRY INP=T IS
+*        PRESENT THERE IS A SWITH SET CALLED'TAPEIN' THIS SWITCH IS
+*        THEN TESTED AT EOF ON THE CARD READER AND IF ON ANOTHER SWITCH
+*        CALLED'TAPE' IS SET SO THE NEXT INPUT RECORD REQUEST WILL BE
+*        DIRECTED TO A TAPE UNIT.
+READ     CLI   EOJ,X'F0'       CHECK FOR EOJ
+         BE    U29J1810        GO READ OUT TOTALS
+         CLI   TAPE,X'F0'       CHECK FOR CHANGE TO TAPE
+*                                            READ INSTEAD OF CARD READ
+         BE    U29B0620                      GO TO TAPE READ ROUTINE
+         MVC   INPUT,ALTIN                   BRING DATA FROM ALT AREA
+         AP    CARDCNT,=P'1'                 UPDATE CARD COUNT
+         GET   READER,ALTIN
+U29B0290 CLI   DOLLAR,C'$'                   IS THIS A PARAMETER?
+         BNE   U29H0150                      GO PROCESS DATA CARDS
+*                                            ROUTINE AND START DATA
+*                                            ROUTINE
+         CLI   DATA,X'F0'                    HAS A DATA CARD BEEN READ
+         BE    U29H0470                      GO TO INVALID PFN ROUTINE
+         CLC   CRDCODE,CNTCRDSQ              CHECK CONTROL CARD SEQ.
+         BL    U29F0190                      CONTROL CARD OUT SEQ EXIT
+         MVC   CNTCRDSQ,CRDCODE
+         CLC   CRDTYPE,DATAC                 CHECK FOR 'DATA' PARAM CRD
+         BE    U29G0380
+         CLC   CRDTYPE,PROGRAMC              CHECK FOR 'PROGRAM' CARD
+         BE    U29G1460
+         CLC   CRDTYPE,TOTALC                CHECK FOR 'TOTAL' CARD
+         BE    U29G2370
+         CLC   CRDTYPE,SEQUENCE              CHECK FOR 'SEQUENCE' CARD
+         BE    U29G3800
+         CLC   CRDTYPE,CONTROLC              CHECK FOR 'CONTROL RCD'CRD
+         BE    U29G4680
+         CLC   CRDTYPE,BATCHC                CHECK FOR 'BATCH' CARD
+         BE    U29G5600
+         CLC   CRDTYPE,BATCHFOR              CHECK FOR 'BATCH FORM' CRD
+         BE    U29G6020
+         CLC   CRDTYPE,REPORT                CHECK FOR PRINTER OUTPUT
+         BE    U29G6190
+         CLC   CRDTYPE,PUNCH7S               CHECK FOR USE OF PUNCH
+         BE    U29G6205                      GO SET PUNCH IDICATOR
+         CLC   CRDTYPE(8),COLHDR             CHECK FOR COLUMN HEADERS
+         BE    U29G6230
+         B     U29F0210                      INVALID $ CARD TYPE EXIT
+* TAPE READ DATA ROUTINE *****
+U29B0620 EQU   *
+U29B0630 MVC   INPUT,ALTIN                   MOVE RECORD FROM BUFFER
+         GET TAPEIN,ALTIN
+         B     U29B0290                      GO BACK TO ANALYSE RECORD
+* CARD READER AT EOF'/*' CHECK IF THIS IS END OF DATA OR PARAMETERS
+CARDEOF  CLOSE READER
+         CLI   TAPEINSW,X'F0'     IS TAPE RCD WITTCH SET
+         BE    U29B0720                      GO OPEN TAPE & SET SWITCH
+         B     EOJLATCH                      END OF JOB INITIATE
+U29B0720 MVI   TAPE,X'F0'                    SET'TAPE' PROG SWITCH
+         LA    1,TAPEIN
+         USING IHADCB,1
+         MVC   DCBBLKSI,RCDSZEIN+2  MOVE IN RECORD SIZEL
+         MVC   DCBLRECL,RCDSZEIN+2
+         DROP  1
+         OPEN  (TAPEIN,INPUT)     OPEN TAPE INPUT
+         GET   TAPEIN,ALTIN
+         B     U29B0290       GO PROCESS LAST CARD
+READER   DCB   DDNAME=READER,MACRF=(GM),DEVD=DA,DSORG=PS,EODAD=CARDEOF
+TAPEIN   DCB   DDNAME=TAPEIN,MACRF=(GM),DEVD=DA,DSORG=PS,RECFM=F,      X
+               LRECL=80,BLKSIZE=80,EODAD=U29B1020
+         SPACE 3
+*   REWIND AND UNLOAD INPUT TAPE
+U29B1020 CLOSE TAPEIN
+         B     EOJLATCH                      GO TO EOJ
+         EJECT
+****** OUTPUT REPORT TAPE I/O ROUTINES
+         SPACE 3
+* OUTPUT ROUTINE FOR WORK TAPE & PRINT TAPE
+U29C0150 MVI   LASTCOMW,X'F0'                TAPE IN OUTPUT MODE
+         L     8,CURRCD                      LOAD REG 8 WITH NEXT SLOT
+         LA    2,CODE1                       LOAD 2 WITH CODING
+U29C0180 CLI   WRITCODE,X'F0'                IS IT TIME TO WRITE A BLK
+         BE    U29C0330                      GO WRITE BLOCK
+U29C0200 MVC   CODEMASK+4(128),0(2)          MOVE IN CODE FROM CORE
+         MVC   CODEMASK(4),PFNTABLE          MOVE IN PFN & RCD CNT FLAG
+         MVC   0(136,8),CODEMASK             MOVE CODE IN MASK TO OUTPT
+         LA    8,136(8)                      BUMP OUTPUT REGISTER
+         LA    2,128(2)                      BUMP TO NEXT CODE AREA
+         C     8,=A(ENDRPTIO)                IS BLOCK TO BE WRITTEN
+         ST    8,CURRCD
+         BE    U29C0310                      IF SO GO SET WRITE FLAG
+U29C0280 C     2,=A(CODE2)                   IS CODE ALL WRITTEN
+         BL    U29C0180                      IF NOT LOOP & WRITE NXT
+         BR    14                            IF DONE RETURN
+U29C0310 MVI   WRITCODE,X'F0'                SET WRIT SWITCH
+         B     U29C0280                      GO LOOK AT CODE ADDRESS
+U29C0330 ST    14,U29C0370                   SAVE LINK ADDRESS
+         BAL   14,U29C0410                   GO DO ACTUAL TAPE WRITE
+         L     14,U29C0370                   RELOAD LINK REG
+         B     U29C0200                      GO WRITE RECORDS
+U29C0370 DC    A(0)                          SAVE LINK ADDRESS HERE
+         SPACE 3
+* WRITE A BLOCK OF DATA TO OUTPUT TAPE     *(REPORT TAPE)*
+U29C0400 DC    A(0)                          SAVE I/O LINK REG13 HERE
+U29C0410 L     8,CURRCD                      LOAD 8 WITH LOC CUR RCD
+U29C0430 EQU   *
+         S     8,=A(RPTTPEIO)                GET BLOCK LENGTH IN REG 8
+         LTR   8,8                           SEE IF REG 8 IS ZERO
+         BE    U29C0510                      IF IT IS RETURN
+         USING IHADCB,1
+         LA    1,RPTTPE
+         STH   8,DCBBLKSI          STORE BLODK LENGTH IN DCB
+         STH   8,BSPBLK
+         DROP  1
+         ST    14,U29C0400                   SAVE LINK
+         WRITE DECB1,SF,RPTTPE,RPTTPEIO
+         CHECK DECB1
+         MVC   CURRCD,=A(RPTTPEIO)           SET UP NEW RCD ADDRESS
+U29C0510 MVI   WRITCODE,X'00'                CLEAR WRITE FLAG
+         LA    8,RPTTPEIO                    SET UP IO RECORD REG
+         B     U29C2050                      RETURN
+         SPACE 3
+****** WRITE PRINT RECORD TO REPORT TAPE
+* WRITE PRINT RECORD TO REPORT TAPE
+U29C0570 DC    A(0)                          SAVE RETURN
+U29C0580 ST    14,U29C0570                   SAVE LINK BACK
+         CLI   LBLDONE,X'F0'                 CHECK IF LABELS ALREADY
+         BE    U29C0630                      WRITTEN
+         BAL   14,U29C2340                   GO WRITE HEADER TO TAPE
+         B     U29C0760                       GO PROCESS RECORD
+U29C0630 CLI   LASTCOMW,X'F0'                IS TAPE ALREADY IN OUTPUT
+         BE    U29C0760                      MODE
+U29C0650 BAL   14,U29C2650                   READ A BLOCK
+         TM    WEODFLG,X'01'
+         BZ    U29C0650                      NO TAPE MARK TRY AGAIN
+         BAL   14,U29C1860                   REWIND A BLOCK
+         BAL   14,U29C2650                   READ A BLOCK
+         CLC   BLKEND,=A(ENDRPTIO)           IS BLOCK AT END
+         BE    U29C0790                      GO PROCESS RECORD
+         BAL   14,U29C1860                   REWIND A BLOCK
+         MVC   CURRCD,BLKEND                 SET UP NEXT BLOCK LOCATION
+U29C0760 CLI   WRITCODE,X'F0'                IS IT TIME TO WRITE BLOCK
+         BNE   U29C0790                      DONT WRITE
+         BAL   14,U29C0410                   GO WRITE A BLOCK
+U29C0790 L     8,CURRCD
+         MVI   LASTCOMW,X'F0'
+         MVC   0(135,8),0(6)                 MOVE PRINT TO TAPE OUT
+         MVI   135(8),X'E0'                  PLACE RCD MARK IN RECORD
+         LA    8,136(8)                      BUMP 8 TO NEXT RCD
+         C     8,=A(ENDRPTIO)                IS OUTPUT AREA FULL
+         BL    U29C0860                      NO
+         MVI   WRITCODE,X'F0'                YES FORCE WRITE NEXT TIME
+U29C0860 ST    8,CURRCD                      SAVE NEXT RCD SLOT
+         MVI   U29K0190+1,X'0'               FORCE LABELS OUT
+         L     14,U29C0570                   LOAD RETURN ADDRESS
+         BR    14                            RETURN
+         SPACE 3
+U29C0910 LA    6,WCHDR1                      PRINT TAPE WRITE
+         BAL   14,U29C0580                        OF
+         LA    6,WCHDR2                             HEADER LINES
+         BAL   14,U29C0580
+         LA    6,WCHDR3
+         BAL   14,U29C0580
+         B     U29D0620
+         SPACE 3
+* ROUTINE TO WRITE OUT 7 RECORDS FOR LATER PUNCHING
+U29C1000 MVI   CODEMASK,C' '                 BLANK OUT PUNCH RCD AREA
+         MVC   CODEMASK+1(134),CODEMASK
+         MVI   CODEMASK+134,C'B'             SET REPORT CODE TO B
+U29C1030 MVI   CODEMASK+1,C'1'               SET TO SKIP TO CHANNEL 1
+         MVI   U29C1030+1,C'J'               SET TO SPACE 1 BEFORE PRT
+         MVC   CODEMASK+7(1),DAY7            MOVE DAY CODE FROM LAST 7
+         CLI   DAY9,C' '                     WAS DAY CODE READ FROM 9
+         BE    U29C1090                      NO LET 7 CARD DAY STAY
+         MVC   CODEMASK+7(1),DAY9            MOVE IN 9 DAY OVER 7 DAY
+U29C1090 MVC   CODEMASK+72(8),DATE+2         MOVE DATE TO 7 CARD OUT
+         MVC   CODEMASK+56(12),HDRHOLD       MOVE ID TO 7 CARD OUT
+         MVC   CODEMASK+9(6),CONT7OUT        MOVE CONTROL TO 7 CARD OUT
+         MVC   CODEMASK+4(3),STDPFN          MOVE IN PFN
+         MVI   CODEMASK+8,C'7'               SET TRN CODE TO 7
+         OI    MTD7+1,X'0F'
+         UNPK  CODEMASK+32(3),MTD7           MOVE IN COUNT  7 + 8S
+         MVC   CODEMASK+84(12),=C'PUNCH RECORD'
+PUNCHSW  BC    0,U29C1197                    MODIFIED IF SEVENS-PUNCH
+         LA    6,CODEMASK                    LOAD ADDRESS IN 6 OF RCD
+         BAL   14,U29C0580                   GO OUTPUT RCD TO TAPE
+         B     U29J2270                      RETURN TO DIV INITIALIZE
+*   PUNCH 7 CARDS
+U29C1197 PUT   PUNCHDCB,PUNCHOUT
+         B     U29J2270                      RETURN TO DIV INITIALIZE
+         SPACE 3
+*  LOOK FOR PFN CODE ON WORK TAPE
+U29C1220 CLI   LASTCOMW,X'F0'                SEE IF WRITE NECESSARY
+         BNE   U29C1270                      SKIP WRITE & CLOSE OF TAPE
+         BAL   14,U29C0410                   WRITE BLOCK
+         BAL   14,U29C1920
+         B     U29C1265
+U29C1270 BSP   RPTTPE
+         LTR   15,15
+         BZ    U29C1270
+U29C1265 EQU   *
+U29C1290 BAL   14,U29C2650                   GO READ BLOCK
+         TM    WEODFLG,X'01'
+         BZ    U29C1340                      NO TM CONTINUE
+         BAL   14,U29C1860                   REWIND TAPE 1 BLOCK
+         B     U29H0470                      INVALID PFN
+U29C1340 LA    7,RPTTPEIO                    LOAD 7 WITH START LOC
+U29C1350 CLI   134(7),C'9'                   IS THIS A CODE RECORD
+         BE    U29C1410                      GO LOOK AT PFN
+U29C1370 LA    7,136(7)                      BUMP TO NEXT INPUT RCD
+         C     7,BLKEND                      IS BLOCK PROCESSED
+         BL    U29C1350                      NO,GO LOOK AT THIS RECORD
+         B     U29C1290                      GO READ ANOTHER BLOCK
+U29C1410 CLC   0(3,7),INPUT                  IS THIS PROPER PFNS
+         BNE   U29C1370                      IF NOT LOOK AT NEXT RECORD
+         MVC   PFNLSTBT,=XL3'0'              ZERO PFN LAST BUILT SLOT
+* BUILD UP CODE IN ALL SLOTS EXCEPT 1
+         LA    4,PFNTABLE+12                 LOAD ADDRESS OF PFN TABLE
+*                                            2ND ENTRY
+         LA    6,CODE2                       CODE AREA CODE2
+         LA    2,ENDINT-INTACCUM(6)          SET UP MODIFY DELIMITER
+U29C1490 LA    3,128                         MAX MOVE IN IN REG. 3
+         LR    5,7                           LOAD REG 5 WITH THIS RCD
+U29C1510 CR    2,6                           IS ALL CODE IN
+         BE    U29C1710                      IF SO SET UP FOR NEXT CODE
+         MVC   0(1,6),4(5)                   MOVE IN 1 CHARACTER
+         LA    6,1(6)                        ADD 1 TO RECEIVE AREA REG
+         LA    5,1(5)                        ADD 1 TO SEND AREA REG
+         BCT   3,U29C1510                    TEST FOR RECORD LIMIT
+U29C1570 LA    7,136(7)                      BUMP TO NEXT INPUT RCD
+         C     7,BLKEND                      IS BLOCK AT END
+         BL    U29C1660                      BLOCK NOT AT END IF .
+         BAL   14,U29C2650                   GO READ BLOCK
+         TM    WEODFLG,X'01'
+         BZ    U29C1650                      BRANCH AROUND IF NO TM
+         BAL   14,U29C1860                   REWIND TAPE 1 BLOCK
+         B     U29C1770                      GO TRY PFN VALIDATE
+U29C1650 LA    7,RPTTPEIO                    SET REG 7 AT FIRST RCD BLK
+U29C1660 CLI   134(7),C'9'                   IS RECORD A CODE RDC
+         BNE   U29C1570                      IF NOT READ NEXT
+         CLC   0(3,7),PFNLSTBT               IS THIS SAME AS LAST BUILT
+         BNE   U29C1490                      IF NOT SAME PROCESS
+         B     U29C1570                      IF SAME GET ANOTHER
+U29C1710 MVC   0(4,4),0(7)                   MOVE PFN & FLAG TO TABLE
+         MVC   PFNLSTBT,0(7)                 MOVE PFN TO LAST BUILT
+         LA    4,12(4)                       BUMP 4 TONEXT TABLE ENTRY
+         LA    2,ENDINT-INTACCUM(6)          BUMP UP LIMITER
+         C     6,CODEFULL                    IS THIS LAST CODE AREA
+         BNE   U29C1570                      NO GO BUILD MORE CODE
+U29C1770 B     U29H0340                      GO BACK THROUGH PFN VAL.
+         SPACE 3
+         SPACE 3
+*  REWIND TAPE 1 BLOCK
+U29C1860 EQU   *
+         ST    14,U29C0400                   SAVE LINK
+         USING IHADCB,1
+         LA    1,RPTTPE
+         MVC   DCBBLKSI,BSPBLK
+         DROP  1
+         BSP   RPTTPE
+         B     U29C2050                      RETURN
+         SPACE 3
+*  REWIND TAPE TO TAPE MARK
+U29C1920 EQU   *
+         ST    14,U29C0400                   SAVE LINK
+         CLOSE (RPTTPE,REREAD),TYPE=T
+         B     U29C2050                      RETURN
+         SPACE 3
+* WRITE A TAPEMARK ON OUTPUT TAPE      *(REPORT TAPE)*
+U29C1980 EQU   *
+         ST    14,U29C0400                   SAVE LINK
+         CLOSE (RPTTPE,LEAVE),TYPE=T
+         MVI   LASTCOMW,X'00'
+         B     U29C2050                      RETURN
+         EJECT
+* RETURN MECHANISM FROM I/O SUBROUTINES REPORT TAPE
+U29C2050 L     14,U29C0400                   LOAD 13 WITH LINK BACK
+         BR    14                            RETURN
+VOLLINK  DC    F'0'
+         SPACE 3
+* CHECK EXSPIRATION DATE OF TAPE
+U29C2320 DC    A(0)                          HOLD RETURN ADDRESS
+LBLDONE  DC    X'0'                          SET TO F0 WHEN RPT LBL OUT
+U29C2340 ST    14,U29C2320
+         OPEN  (RPTTPE,OUTIN)
+         MVI   LBLDONE,X'F0'                 SET LABEL WRITTEN SWITCH
+         BR    14
+         EJECT
+* READ A BLOCK ROUTINE FOR REPORT TAPE
+U29C2650 EQU   *
+         ST    14,U29C0400                   SAVE LINK
+         USING IHADCB,1
+         LA    1,RPTTPE
+         MVC   DCBBLKSI,WORKBLK   STORE BLOCK LENGTH IN DCB
+         DROP  1
+         READ  DECB2,SF,RPTTPE,RPTTPEIO
+         CHECK DECB2
+U29C2680 MVC   CURRCD,=A(RPTTPEIO)
+         LA    8,ENDRPTIO                    LOAD 8 WITH END IO AREA
+         L     14,DECB2+16        GET RESIDUAL COUNT
+         SH    8,14(14)           SUBTRACT
+         MVI   WEODFLG,X'00'
+         ST    8,BLKEND
+         S     8,=A(RPTTPEIO)
+         STH   8,BSPBLK
+         B     U29C2050                      RETURN
+WORKEOD  EQU   *
+         LA    8,RPTTPEIO         SHOW ZERO BLOCK
+         ST    8,BLKEND
+         MVI   WEODFLG,X'01'
+         CLOSE (RPTTPE,LEAVE),TYPE=T
+         B     U29C2050
+         EJECT
+RPTTPE   DCB   DDNAME=RPTTPE,RECFM=FB,LRECL=136,BLKSIZE=1360,DSORG=PS, X
+               EODAD=WORKEOD,DEVD=DA,MACRF=(R,W)
+BSPBLK   DC    H'1360'
+WORKBLK  DC    H'1360'
+WEODFLG  DC    X'00'
+CURRCD   DC    A(RPTTPEIO)
+WRITCODE DC    X'00'
+CODEMASK DC    CL133' '                       AREA TO OUTPUT CODE FOR
+         DC    C'99'                          PFN=S ALSO 7 PUNCH RCDS
+BLKEND   DC    A(0)
+         SPACE 3
+PUNCHDCB DCB   DDNAME=PUNCH,MACRF=(PM),DEVD=DA,DSORG=PS,RECFM=F,       X
+               LRECL=80,BLKSIZE=80
+PUNCHOUT EQU   CODEMASK+4
+         EJECT
+******  PRINT RECORD OUTPUT ROUTINES
+         SPACE 3
+*  PRINT SUBROUTINE TO WRITE A LINE TO PRINTER & WRITE HEADERS
+WCHDR1   DS    0CL2                TAPE PRINTER CONTROL
+         DC    C'S'
+HEAD1    DC    C'1'                PRINTER CONTROL
+HEADER1  DC    CL3' '
+DIVPLT   DC    CL6' '                        FROM CONTROL FIELD
+         DC    CL43' '
+         DC    C'CONTROL TOTALS'
+         DC    CL22' '
+         DC    C'DATE OF PROCESSING  '
+DATE     DC    CL10'          '    FROM DATE CONST. CHANGED 6/3/68
+         DC    CL2' '                                      CHG. 6/03/68
+HDRHOLD  DC    CL12'*PARAMETERS*'
+         DC    C'A'                          REPORT CODE
+WCHDR2   DS    0CL2                TAPE PRINTER CONTROL
+         DC    C'/'
+HEAD2    DC    C' '                PRINTER CONTROL
+HEADER2  DC    CL10'ACT'
+         DC    CL8'PAGE NO.'
+HDRPAGE  DC    CL5' '                        FROM PAGE COUNT
+         DC    CL9' '
+         DC    C'D T   RECORD  BATCH   COUNT'
+         DC    CL73' '
+         DC    C'A'                          REPORT CODE
+WCHDR3   DS    0CL2                TAPE PRINTER CONTROL
+         DC    C'/'
+HEAD3    DC    C' '                PRINTER CONTROL
+HEADER3  DC    CL28'REQ'
+         DC    C'P-F A R   COUNT   CODE   PRD MTD      COL 20-31     '
+         DC    C'COL 32-43     COL 44-55     COL 56-67     COL 68-79 '
+         DC    C'A'                          REPORT CODE
+SAVECONT DC    C' '
+STDCONT  DS    0CL2                TAPE PRINTER CONTROL
+         DC    C'/'
+LINECONT DC    C' '                PRINTER CONTROL
+PRINTLNE DC    CL132' '
+MESSAGEP EQU   PRINTLNE+4                    START LOC OF MESSAGE
+PF       EQU   PRINTLNE+28                   START LOC OF PROJ FORM #
+DA       EQU   PRINTLNE+32                   START LOC OF DAY CODE
+TR       EQU   PRINTLNE+34                   START LOC OF TRANSACTION
+RCDCOUNT EQU   PRINTLNE+38                   START LOC OF RCD CNT
+BTCHCDE  EQU   PRINTLNE+47                   START LOC OF BATCH CODE
+CNTPRD   EQU   PRINTLNE+52                   START LOC CONT CNT PTD
+CNTMTD   EQU   PRINTLNE+56                   START LOC CONT CNT MTD
+TOTAL1   EQU   PRINTLNE+62                   START LOC OF TOTALS
+         DC    C'A'                          PRINT TAPE REPORT CODE
+PRNTCONT DC    C' '                          USED TO CONTROL PRINT SPAC
+PAGECNT  DC    PL2'0'                        RUNNING PAGE COUNT
+DATEEDIT DC    X'40212020612020612020' MASK FOR DATE  INSERT 6/3/68
+         DS    0F                      ALIGN TO FULLWORD   INS. 5/14/68
+DATEHOLD DC    PL4'0'                  HOLD DATE INSERTED 5/14/68
+PAGEEDIT DC    X'4020202060'                 EDIT MASK FOR PAGE
+HDRFLAG  DC    X'F0'                         HEADER CONTROL FLAG
+LINECNT  DC    PL2'0'                        COUNT OF LINES PRINTED
+LINEWORK DC    P'0'                          USED TO ADD FROM CONT. BYT
+U29D0570 DC    A(0)
+* ENTRY POINT OF WRITE A LINE ROUTINE
+U29D0590 ST    14,U29D0570                   SAVE LINK
+         CLI   HDRFLAG,X'F0'
+         BE    U29D0920                      GO PRINT HEADER
+U29D0620 TM    PRNTCONT,X'40'                IS SKIP BEFORE PRINT
+         BO    U29D0790                      GO UP DATE LINE COUNT
+U29D0640 CLC   LINECNT,=P'055'               HAVE 55 LINES BEEN PRINTED
+         BH    U29D0920                      GO WRITE HEADER
+         CLI   PRINTRPT,X'F0'
+         BNE   U29D0870                      GO WRITE PRINT TAPE
+         MVC   SAVECONT,LINECONT   SAVE TEPE CONTROL
+         TM    PRNTCONT,X'40'      SKIP LINE?
+         BZ    NOSKIP              NO
+         MVI   LINECONT,X'0B'      SPACE ONE LINE
+         PUT   PRINT,LINECONT
+NOSKIP   EQU   *
+         MVI   LINECONT,X'09'      PRINT LINE
+         PUT   PRINT,LINECONT
+         MVC   LINECONT,SAVECONT   RESTORE TAPE CONTOOL
+U29D0720 MVC   STDCONT,=C'/ '
+         MVC   PRINTLNE(132),PRINTLNE-1
+         TM    PRNTCONT,X'40'                WAS LINE SPACING BEFORE
+         BO    U29D0840                      YES GO ADD 1 TO LINE CNT
+         MVO   LINEWORK,PRNTCONT             MOVE IN LINE SPACED
+         AP    LINECNT,LINEWORK              ADD TO LINE COUNT
+         B     U29D0850                      RETURN
+U29D0790 MVO   LINEWORK,PRNTCONT             UPDATE LINE COUNT ON A
+         AP    LINECNT,LINEWORK              IMMEDIATE SKIP OPERATION
+         MVI   STDCONT+1,X'D0'               SET UP MONSANTO IMEDIATE
+         MVN   STDCONT+1(1),PRNTCONT         SPACE CHARACTER
+         B     U29D0640                      RETURN FROM WHERE YOU CAME
+U29D0840 AP    LINECNT,=P'1'                 UPDATE LINE COUNT 1
+U29D0850 L     14,U29D0570                   LOAD RETUTN ADDRESS
+         BR    14                            RETURN TO MAIN LINE
+U29D0870 LA    6,STDCONT                     LOAD OUTPUT LOCATION DATA
+         BAL   14,U29C0580                   GO WRITE TO PRINT TAPE
+         B     U29D0720
+         EJECT
+* WRITE HEADER LINE ROUTINE
+U29D0920 AP    PAGECNT,=P'1'                 UPDATE PAGE COUNT
+         MVI   HDRFLAG,X'00'                 CLEAR HEADER FLAG
+         MVC   HDRPAGE,PAGEEDIT              MOVE EDIT MASK TO PRINT
+         ED    HDRPAGE,PAGECNT               EDIT PAGE NUMBER
+         MVC   DIVPLT,LASTCONT               MOVE IN DIVISION
+         TIME  DEC                           GET DATE IN R1 & USE LATER
+         ST    1,DATEHOLD              STORE DATE FOR MVC  INS. 5/14/68
+         LA    1,LIST                                 INSERT 6/3/68
+         L     15,VCON1                               INSERT 6/3/68
+         BALR  14,15                                       INS.6/3/68
+         MVC   DATE,DATEEDIT           EDIT MASK TO PRINT  INS. 5/14/68
+         ED    DATE,DATEOUT        EDIT DATE FOR RPT  INSERT 6/3/68
+         ZAP   LINECNT,=P'5'                 SET UP NEW PAGE COUNT
+         CLI   PRINTRPT,X'F0'                CHK FOR HDR LINES TO TAPE
+         BNE   U29C0910
+         MVC   SAVECONT,HEAD1      SAVE TAPE CONTROL
+         MVI   HEAD1,X'8B'         PRINT CONTROL
+         PUT   PRINT,HEAD1         TOP OF PAGE
+         MVI   HEAD1,X'11'         PRINT CONTROL
+         PUT   PRINT HEAD1         HEADER1
+         MVC   HEAD1,SAVECONT      RESTORE TAPE CONTROL
+         MVC   SAVECONT,HEAD2      SAVE TAPE CONTROL
+         MVI   HEAD2,X'09'         PRINT CONTROL
+         PUT   PRINT,HEAD2         HEADER2
+         MVC   HEAD2,SAVECONT      RESTORE TAPE CONTROL
+         MVC   SAVECONT,HEAD3      SAVE TAPE CONTROL
+         MVI   HEAD3,X'09'         PRINT CONTROL
+         PUT   PRINT,HEAD3         HEADER3
+         MVC   HEAD3,SAVECONT      RESTORE TAPE CONTROL
+         B     U29D0620                      GO BACK TO PRINT LINE
+         EJECT
+PRINT    DCB   BLKSIZE=1330,DDNAME=PRINT,DEVD=DA,DSORG=PS,LRECL=133,   X
+               MACRF=(PM),RECFM=FBM
+         EJECT
+****** PRINT EDIT SUBROUTINE
+* PRINT EDIT ROUTINE
+* THIS ROUTINE EDITS FIELDS AS DELIVERED AND PRINTS LINE
+EDTMASK1 DC    X'40202020202060'                   EDIT 3 BYTES TO 6
+EDTMASK2 DC    X'4020202060'                       EDIT 2 BYTES TO 4
+EDTMASK3 DC    X'402020202020202020202020202060'   EDIT 7 BYTES TO 14
+U29D1360 DC    A(0)                                SAVE R13 FOR RETURN
+U29D1370 DC    CL15' '                             EDIT WORK AREA
+         SPACE 3
+* ENTRY POINT FOR EDIT ROUTINE
+U29D1400 ST    14,U29D1360                   SAVE LINK REG.FOR RETURN
+         CLI   RCDCOUNT+2,C' '                IS RECORD COUNT FIELD BLK
+         BE    U29D1460                      IF SO DO NOT EDIT
+         MVC   U29D1370(7),EDTMASK1          SET UP EDIT MASK IN WORK/S
+         ED    U29D1370(7),RCDCOUNT          EDIT RECORD COUNT
+         MVC   RCDCOUNT(6),U29D1370+1        MOVE EDITED RCDCNT TO LINE
+U29D1460 CLI   CNTPRD+1,C' '                  IS COUNT PERIOD BLANK?
+         BE    U29D1510                      IF SO DO NOT EDIT
+         MVC   U29D1370(5),EDTMASK2          SET UP EDIT MASK IN WORK/S
+         ED    U29D1370(5),CNTPRD            EDIT COUNT PERIOD
+         MVC   CNTPRD(4),U29D1370+1          MOVE COUNT BACK TO LINE
+U29D1510 CLI   CNTMTD+1,C' '                  IS COUNT MO-TO-DA BLANK?
+         BE    U29D1560                      IF SO DONT EDIT
+         MVC   U29D1370(5),EDTMASK2          MOVE EDIT MASK TO WORK/S
+         ED    U29D1370(5),CNTMTD            EDIT COUNT MO-TO-DA
+         MVC   CNTMTD(4),U29D1370+1          MOVE EDITED COUNT MTD BACK
+U29D1560 LA    6,5                           LOAD LOOP LIMITER
+         LA    7,TOTAL1                     LOAD 7 WITH FIRST FIELD
+U29D1580 CLI   6(7),C' '                      IS FIELD BLANK
+         BE    U29D1630                     IF SO DONT EDIT
+         MVC   U29D1370(15),EDTMASK3        MOVE EDIT MASK TO PRNT LINE
+         ED    U29D1370(15),0(7)            EDIT FIELD
+         MVC   0(14,7),U29D1370+1            MOVE EDIT FIELD TO PRINT
+U29D1630 LA    7,14(7)                       BUMP TO NEXT FIELD
+         BCT   6,U29D1580                   IF 6 >0 DO AGAIN
+         BAL   14,U29D0590                  GO PRINT THE LINE
+         L     14,U29D1360                  LOAD 14 WITH RETURN
+         BR    14                           RETURN TO MAIN LINE
+         EJECT
+****** OUTPUT DATA TAPE  I/O ROUTINES
+         SPACE 3
+* DATA TAPE LOGICAL RECORD OUTPUT ROUTINE
+U29E0180 DC    A(0)                         SAVE RETURN ADDRESS HERE
+U29E0190 ST    14,U29E0180                  STORE LINK
+         PUT   DATAPE,INPUT
+U29E0460 L     14,U29E0180                  LOAD RETURN ADDRESS
+         BR    14                           RETURN TO MAIN LINE
+         SPACE 3
+* WRITE TRAILERS TO DATA TAPE
+U29E0750 DC    A(0)                          SAVE RETURN ADDRESS HERE
+U29E0760 ST    14,U29E0750                   STORE LINK
+         CLOSE DATAPE
+U29E0840 L     14,U29E0750                   LOAD RETURN ADDRESS
+         BR    14                            RETURN
+         SPACE 3
+* WRITE OUT CONTROL RECORD ROUTINE
+U29E1100 MVC   INPUT(1),PADCHR               FILL OUTPUT BUFFER WITH
+         MVC   INPUT+1(199),INPUT            PADDING CHARACTERS
+         SR    4,4                           CLEAR WORK REGISTER
+         CLI   HSH,X'F0'                     SHOULD A HASH TOTAL BE
+         BNE   U29E1180                      INCLUDED IN CTL RCD
+         IC    4,RELHSH                      GET RECORD REL HASH TOTAL
+         LA    5,INPUT(4)                    GET START LOC FLD IN REG 5
+         UNPK  0(15,5),CONTHASH              MOVE  HASH TOTAL INTO OUT
+U29E1180 CLI   RCD,X'F0'                     SHOULD A RCD COUNT BE
+         BNE   U29E1230                      INCLUDED IN CTL RCD
+         IC    4,RELRCD
+         LA    5,INPUT(4)
+         UNPK  0(7,5),TOTALDET               MOVE RCD CNT TO OUTPUT
+U29E1230 CLI   CTL,X'F0'                     SHOULD A CTL RCD COUNT BE
+         BNE   U29E1280                      INCLUDED IN OUTPUT
+         IC    4,RELCTL
+         LA    5,INPUT(4)
+         UNPK  0(6,5),COUNT789               MOVE CONTROL CNT  TO OUT
+U29E1280 CLI   ATE,X'F0'                     SHOULD AN 8 BE PLACED
+         BNE   U29E1330                      NO
+         IC    4,RELATE
+         LA    5,INPUT(4)
+         MVI   0(5),C'8'                     PLACE 8 IN OUTPUT  CTL RCD
+U29E1330 BAL   14,U29E0190                   GO PUT THIS RECORD
+         B     U29K0380                      RETURN
+         SPACE 3
+DATAPE   DCB   DDNAME=DATAPE,MACRF=(PM),DEVD=DA,DSORG=PS,RECFM=FB,     X
+               LRECL=80,BLKSIZE=80
+         EJECT
+DATAIO   DS    10CL200                       OUTPUT AREA FOR DATA TAPE
+SAVEHDR2 DS    CL80                          SAVE HDR2 FOR EOF2
+PRETRAN  DS    256C                          SLOT FOR TRANSLATE TABLE
+         ORG   DATAIO
+         SPACE 3
+****** ERROR MESSAGE CODED TYPE OUT ROUTINES
+* ERROR MESSAGE SET UP ROUTINES(SEE INDEX OF ERRORS FOR MEANING)
+U29F0170 BAL   14,U29F1970
+         DC    C'0927'
+U29F0190 BAL   14,U29F1970
+         DC    C'0930'
+U29F0210 BAL   14,U29F1970
+         DC    C'0969'
+U29F0230 BAL   14,U29F1970
+         DC    C'4008'
+U29F0250 BAL   14,U29F1970
+         DC    C'4058'
+U29F0270 BAL   14,U29F1970
+         DC    C'4116'
+U29F0290 BAL   14,U29F1970
+         DC    C'4134'
+U29F0310 BAL   14,U29F1970
+         DC    C'4144'
+U29F0330 BAL   14,U29F1970
+         DC    C'4154'
+U29F0350 BAL   14,U29F1970
+         DC    C'4164'
+U29F0370 BAL   14,U29F1970
+         DC    C'4188'
+U29F0390 BAL   14,U29F1970
+         DC    C'4189'
+U29F0410 BAL   14,U29F1970
+         DC    C'4203'
+U29F0430 BAL   14,U29F1970
+         DC    C'4225'
+U29F0450 BAL   14,U29F1970
+         DC    C'4226'
+U29F0470 BAL   14,U29F1970
+         DC    C'4264'
+U29F0490 BAL   14,U29F1970
+         DC    C'4265'
+U29F0510 BAL   14,U29F1970
+         DC    C'4288'
+U29F0530 BAL   14,U29F1970
+         DC    C'4292'
+U29F0550 BAL   14,U29F1970
+         DC    C'4421'
+U29F0570 BAL   14,U29F1970
+         DC    C'4471'
+U29F0590 BAL   14,U29F1970
+         DC    C'4498'
+U29F0610 BAL   14,U29F1970
+         DC    C'4519'
+U29F0630 BAL   14,U29F1970
+         DC    C'4535'
+U29F0650 BAL   14,U29F1970
+         DC    C'4557'
+U29F0670 BAL   14,U29F1970
+         DC    C'4558'
+U29F0690 BAL   14,U29F1970
+         DC    C'4571'
+U29F0710 BAL   14,U29F1970
+         DC    C'4572'
+U29F0730 BAL   14,U29F1970
+         DC    C'4581'
+U29F0750 BAL   14,U29F1970
+         DC    C'4750'
+U29F0770 BAL   14,U29F1970
+         DC    C'4758'
+U29F0790 BAL   14,U29F1970
+         DC    C'4778'
+U29F0810 BAL   14,U29F1970
+         DC    C'4829'
+U29F0830 BAL   14,U29F1970
+         DC    C'4841'
+U29F0850 BAL   14,U29F1970
+         DC    C'4842'
+U29F0870 BAL   14,U29F1970
+         DC    C'4851'
+U29F0890 BAL   14,U29F1970
+         DC    C'4855'
+U29F0910 BAL   14,U29F1970
+         DC    C'4872'
+U29F0930 BAL   14,U29F1970
+         DC    C'4880'
+U29F0950 BAL   14,U29F1970
+         DC    C'4885'
+U29F0970 BAL   14,U29F1970
+         DC    C'4916'
+U29F0990 BAL   14,U29F1970
+         DC    C'4924'
+U29F1010 BAL   14,U29F1970
+         DC    C'5004'
+U29F1030 BAL   14,U29F1970
+         DC    C'5025'
+U29F1050 BAL   14,U29F1970
+         DC    C'5035'
+U29F1070 BAL   14,U29F1970
+         DC    C'5053'
+U29F1090 BAL   14,U29F1970
+         DC    C'5063'
+U29F1110 BAL   14,U29F1970
+         DC    C'5411'
+U29F1130 BAL   14,U29F1970
+         DC    C'5416'
+U29F1150 BAL   14,U29F1970
+         DC    C'5465'
+U29F1170 BAL   14,U29F1970
+         DC    C'5466'
+U29F1190 BAL   14,U29F1970
+         DC    C'5475'
+U29F1210 BAL   14,U29F1970
+         DC    C'5476'
+U29F1230 BAL   14,U29F1970
+         DC    C'5489'
+U29F1250 BAL   14,U29F1970
+         DC    C'5532'
+U29F1270 BAL   14,U29F1970
+         DC    C'5565'
+U29F1290 BAL   14,U29F1970
+         DC    C'5587'
+U29F1310 BAL   14,U29F1970
+         DC    C'5615'
+U29F1330 BAL   14,U29F1970
+         DC    C'5617'
+U29F1350 BAL   14,U29F1970
+         DC    C'5711'
+U29F1370 BAL   14,U29F1970
+         DC    C'5741'
+U29F1390 BAL   14,U29F1970
+         DC    C'5763'
+U29F1410 BAL   14,U29F1970
+         DC    C'5778'
+U29F1430 BAL   14,U29F1970
+         DC    C'5779'
+U29F1450 BAL   14,U29F1970
+         DC    C'5806'
+U29F1470 BAL   14,U29F1970
+         DC    C'5825'
+U29F1490 BAL   14,U29F1970
+         DC    C'5826'
+U29F1510 BAL   14,U29F1970
+         DC    C'5847'
+U29F1530 BAL   14,U29F1970
+         DC    C'5861'
+U29F1550 BAL   14,U29F1970
+         DC    C'5862'
+U29F1570 BAL   14,U29F1970
+         DC    C'5890'
+U29F1590 BAL   14,U29F1970
+         DC    C'5910'
+U29F1610 BAL   14,U29F1970
+         DC    C'5914'
+U29F1630 BAL   14,U29F1970
+         DC    C'6007'
+U29F1650 BAL   14,U29F1970
+         DC    C'6015'
+U29F1670 BAL   14,U29F1970
+         DC    C'6033'
+U29F1690 BAL   14,U29F1970
+         DC    C'6034'
+U29F1710 BAL   14,U29F1970
+         DC    C'6043'
+U29F1730 BAL   14,U29F1970
+         DC    C'6044'
+U29F1750 BAL   14,U29F1970
+         DC    C'6057'
+U29F1770 BAL   14,U29F1970
+         DC    C'6061'
+U29F1790 BAL   14,U29F1970
+         DC    C'6111'
+U29F1810 BAL   14,U29F1970
+         DC    C'6128'
+U29F1830 BAL   14,U29F1970
+         DC    C'6136'
+U29F1850 BAL   14,U29F1970
+         DC    C'4311'
+U29F1870 BAL   14,U29F1970
+         DC    C'4180'
+U29F1885 BAL   13,U29F1970                                 INS. 5023068
+         DC    C'4190'                                     INS. 5023068
+U29F1890 BAL   14,U29F1970
+         DC    C'6096'
+U29F1910 BAL   14,U29F1970
+         DC    C'4620'
+U29F1930 BAL   14,U29F1970
+         DC    C'6275'
+U29F1942 BAL   14,U29F1970
+         DC    C'4300'
+         SPACE 3
+*  TYPE OUT ERROR COMMON TYPE
+U29F1970 MVC   HMESSAGE,0(14)
+         WTO   MF=(E,MESSAGE)
+         MVC   LASTPFN,=C'000'
+         MVI   PARAMERR,X'F0'                PARAMETER ERROR
+         MVC   PRINTLNE(14),=C'*DC* PARAM-ERR'
+         MVC   PRINTLNE+16(4),HMESSAGE
+         B     U29H0490                      GO PRINT PARAMETER
+MESSAGE  DC    AL2(8)
+         DC    AL2(0)
+HMESSAGE DC    CL4' '                        HOLD MESSAGE
+* PARAMETER ERROR TYPE OUT
+U29F2100 WTO   'ERROR IN PARAMETERS RUN TERMINATED'
+         B     U29K0160
+         EJECT
+****** DATA PARAMETER ROUTINE
+* THIS R3UTINE PROCESSES THE'DATA'PARAMETER CARD WHICH DEFINES RECORD
+* LENGTHS IN AND OUT (INR= AND OUR=), BLOCK FACTOR (BLK=), PADDING
+* CHARACTER (PAD=), AND IF DATA TAPE IS TO BE WRITTEN(TPE=).
+         SPACE 3
+U29G0380 CLI   DATAP,X'F0'
+         BE    U29F0270
+         MVI   DATAP,X'F0'
+* CHECK FOR BLOCKING OF OUTPUT FILE (BLK= INCC21)
+         CLC   INPUT+20(3),=C'BLK'
+         BE    U29G0670
+         CLC   INPUT+20(3),=C'   '
+         BNE   U29F0290
+U29G0460 CLC   INPUT+28(3),=C'PAD'           CHECK FOR PADDING OPTION
+         BE    U29G0780                      PAD= IN CC 29
+         CLC   INPUT+28(3),=C'   '
+         BNE   U29F0310
+U29G0500 CLC   INPUT+36(3),=C'INR'           CHECK FOR INPUT RCD SIZE
+         BE    U29G0870                      INR= IN CC37
+         CLC   INPUT+36(3),=C'   '
+         BNE   U29F0330
+U29G0540 CLC   INPUT+44(3),=C'OUR'           CHECK FOR OUTPUT RCD SIZE
+         BE    U29G0990                      OUR= IN CC45
+         CLC   INPUT+44(3),=C'   '
+         BNE   U29F0350
+U29G0580 CLC   INPUT+52(3),=C'TPE'           IS TAPE OUT OPTION PRESENT
+         BE    U29G1270                      YES GO CHECK OPTION
+         CLC   INPUT+52(3),=C'   '           IT MUST BE BLANK OR
+         BNE   U29F1870                      THIS IS AN ERROR
+         B     OPENDATA       GO OPEN DATAPE
+U29G0612 CLC   INPUT+60(3),=C'ADD'           ARE 9 CARDS TO BE ADDED
+         BE    U29G1323                      GO MODIFY CODE TO ADD
+         CLC   INPUT+60(3),=C'   '
+         BNE   U29F1942                      INVALID ENTRY IN THIS COL
+U29G0620 MVC   INPUT+80(1),PADCHR            PLACE PAD CHAR IN CARD
+         MVC   INPUT+81(119),INPUT+80        INPUT AREA
+         B     U29H0490                      GO PRINT PARAMETER
+         SPACE 3
+* ROUTINE TO VALIDATE BLOCK FACTOR  *****  PLACE IN PACK FORMAT  BLKFCT
+U29G0670 MVC   LOW,=C'001'                   SET UP LOW LIMIT VALUE
+         MVC   HIGH,=C'010'                  SET UP HIGH LIMIT VALUE
+         MVI   VALADDR,C'0'                  ZERO UNUSED PART BUFFER
+         MVC   VALADDR+1(2),INPUT+24         SET ARGUMENT IN SUBROUTINE
+         BAL   14,SUBADDR                    GO TO SUBROUTINE
+         B     U29F0370                      BLOCK FACTOR >10
+         B     U29F0390                      BLOCK FACTOR <1
+         CLI   INPUT+44,C'O'                 MAKE SURE OUR= ENTRY THERE
+         BNE   U29F1885                                    INS. 5/22/68
+         PACK  BLKFCT,INPUT+24(2)            PACK BLOCK FACTOR TO SAVE
+         B     U29G0460                      GO CHK FOR PAD PARAMETER
+         SPACE 3
+* ROUTINE TO VALIDATE (' ' OR '9') PADDING CHARACTER
+U29G0780 CLI   INPUT+32,C'9'
+         BE    U29G0500                      9 ASSUMED GO TO NXT OPTION
+         CLI   INPUT+32,C' '
+         BNE   U29F0410                      ERROR IN PAD CHARACTER
+         MVI   ALTIN+80,C' '
+         MVC   ALTIN+81(119),ALTIN+80        SET PAD TO BLANKS
+         MVC   PADCHR,INPUT+32               SET UP PAD CHARACTER
+         B     U29G0500                      RETURN FOR NXT OPTION
+* ROUTINE TO VALIDATE INPUT RECORD LENGTH IN DATA CARD 'INR'
+U29G0870 MVC   LOW,=C'012'                   SET UP FOR ENTRY TO VALI-
+         MVC   HIGH,=C'200'                  DATE SIZE OF INPUT RECORD
+         MVC   VALADDR,INPUT+40              MOVE IN ARGUMENT
+         BAL   14,SUBADDR                    ENTER VALIDATION SUB/ROUT
+         B     U29F0430                      ENTER HERE IF >200
+         B     U29F0450                      ENTER HERE IS <012
+         PACK  DBLWORD,INPUT+40(3)           GET RECORD SIZE FROM CARD
+         CVB   14,DBLWORD                    GET SIZE TO BINARY
+         ST    14,RCDSZEIN                   PLACE BINARY RCD SIZE IN
+         B     U29G0540                      SAVE AREA
+         SPACE 3
+* ROUTINE TO VALIDATE OUTPUT LOGICAL RECORD AND CALCULATE BLOCK OUT
+U29G0990 MVC   LOW,=C'001'                   SET UP FOR ENTRY TO VALI-
+         MVC   HIGH,=C'200'                  DATE SIZE OF OUTPUT RECORD
+         MVC   VALADDR,INPUT+48              MOVE IN ARGUMENT
+         BAL   14,SUBADDR                    ENTER VALIDATION SUB/ROUT
+         B     U29F0470                      ENTER HERE IF >200
+         B     U29F0490                      ENTER HERE IF <001
+         PACK  DBLWORD,INPUT+48(3)           GET RECORD SIZE FROM CARD
+         CVB   14,DBLWORD                    GET SIZE TO BINARY
+         ST    14,RCDSZEOT                   PUT BINARY VALUE IN SAVE
+         MP    DBLWORD,BLKFCT                CALC BLOCK SIZE OUT
+         CVB   14,DBLWORD                    GET BLOCK SIZE OUT BINARY
+U29G1190 ST    14,BLKSZEOT                   SAVE BINARY VALUE BLKSZE
+         C     14,=F'12'                     IS BLOCK AT LEAST 12 BYTES
+         BL    U29F0510                      NO THIS IS AN ERROR
+         C     14,=F'2000'                   IS BLOCK OUT >2000
+         BH    U29F0530                      ERROR BLOCK TOO LARGE
+         B     U29G0580
+         SPACE 3
+* ROUTINE TO VALIDATE  TPE=Y/N  PARAMETER
+U29G1270 CLI   INPUT+56,C'Y'                 WRITE DATA TAPE IF'Y'
+         BE    OPENDATA
+         CLI   INPUT+56,C'N'                 DONT WRITE DATA TPE OUT
+         BNE   U29F1850                      ERROR
+         MVI   TPEOUT,X'00'                  INHIBIT TAPE OUT
+         B     U29G0612                      GO PROCESS NEXT
+OPENDATA LA    1,DATAPE
+         USING IHADCB,1
+         MVC   DCBBLKSI,BLKSZEOT+2  MOVE IN BLOCK SIZE
+         MVC   DCBLRECL,RCDSZEOT+2  MOVE IN RECORD LENGHT
+         DROP  1
+         OPEN  (DATAPE,OUTPUT)
+         B     U29G0612
+         SPACE 3
+*  ROUTINE TO MODIFY CODE FOR ADDING OF 9 CARDS
+U29G1323 MVI   U29I3650+1,X'00'              NO OP BRANCH HIGH INST
+         MVI   U29I3690,X'FA'                CHANGE A 'ZAP'TO AN'AP'
+         MVI   U29I3730,X'FA'                CHANGE A 'ZAP'TO AN'AP'
+         B     U29G0620                      RETURN
+         EJECT
+****** PROGRAM PARAMETER ROUTINE
+* THIS ROUTINE PROCESSES THE 'PROGRAM' CARD WHICH DEFINES THE FOLLOWING
+*   1. CC 21-32 VARIABLE HEADING INFORMATION FOR CONTROL REPORT
+*   2. INPUT SOURCE OF DATA (INP=C FOR CARD  INP=T FOR TAPE)
+*   3. ORGANIZATION OF PFN CODES (PFN=R FOR RANDOM PFN SEQUENCE OR
+*                                 PFN=S FOR SEQUENTIAL SEQUENCE)
+*   4. CONTROL BY DIVISION (CTL=NN/MM)
+*   5. PROCESSING PER CYCLE (BAL=M DESIGNATES PRELIMINARY PROCESSING &
+*                            MAIN PROCESSING BAL=S DESIGNATES ONLY ONE
+*                            PROCESSING PER CYCLE)
+*   6. WHETHER THIS IS PRELIMINARY OR FINAL BALANCING (TYP=P FOR PRELI-
+*                                   MINARY OR TYP=F FOR FINAL).
+U29G1460 CLI   PROGRAMP,X'F0'               IS THIS A SECOND PROGRAM
+         BE    U29F0550                     CARD IF SO THIS IS IN ERROR
+         MVI   PROGRAMP,X'F0'               SET PROGRAM SWITCH
+         MVC   STDPFN,INPUT                  SET UP STANDARD PFN 7 CARD
+         MVC   HDRHOLD,INPUT+20             SAVE HEADE LINE
+         MVC   ENDTYPHD,HDRHOLD              MOVE TO EOJ TYPE OUT
+         LA    2,INPUT+32                   SET UP LOOP REGISTER
+         LA    3,3(0,0)                     SET UP LOOP CONTROL 1
+         LA    4,5                           SET UP LOOP CONTROL 2
+U29G1550 CLC   0(3,2),=C'INP'               CHECK FOR INP= PARAMETER
+         BE    U29G1750                     GO TO INP= ROUTINE
+         CLC   0(3,2),=C'PFN'               CHECK FOR PFN= PARAMETER
+         BE    U29G1830                     GO TO PFN= ROUTINE
+         CLC   0(3,2),=C'CTL'               CHECK FOR CTL= PARAMETER
+         BE    U29G1990                     GO TO CTL= ROUTINE
+         CLC   0(3,2),=C'BAL'               CHECK FOR BAL= PARAMETER
+         BE    U29G1910                     GO TO BAL= ROUTINE
+         CLC   0(3,2),=C'TYP'                LOOK FOR PRELIMINARY OR
+         BE    U29G2200                      FINAL BALANCING PARAMETER
+         CLI   2(2),C' '                     CHECK FOR JUNK IN CARD
+         BNE   U29F0570
+U29G1670 LA    2,8(2)                        BUMP REG 2 TO NEXT FIELD
+         BCT   4,U29G1700                    HAVE ALL FIELDS BEEN PROC.
+         B     U29H0490                      GO PRINT PARAMETER
+U29G1700 BCT   3,U29G1550                    HAVE 3 FIELDS BEEN LOOKED
+         LA    2,INPUT+60                    AT IF SO NOW LOOK AT COL
+         B     U29G1550                      61 INPUT CARD
+         SPACE 3
+* INP=C/T ROUTINE TO SEE WHICH **
+U29G1750 CLI   4(2),C'C'                     CARD INPUT IF EQUAL TO 'C'
+         BE    U29G1670                      EXIT:C  IS PRE SET
+         CLI   4(2),C'T'                     CHECK FOR TAPE DATA INPUT
+         BNE   U29F0590                      INVALID CHAR IN PARAMETER
+         MVI   TAPEINSW,X'F0'     SET TAPE INPUT SWITCH
+         B     U29G1670                      EXIT TO LOOK AT NEXT
+         SPACE 3
+* PFN=R/S ROUTINE TO SEE WHICH **
+U29G1830 CLI   4(2),C'R'                     RANDOM SEQ IF EQUAL TO 'R'
+         BE    U29G1670                      EXIT:'R' IS PRESET
+         CLI   4(2),C'S'                     IF NOT 'R' IS IT 'S'
+         BNE   U29F0610                      IF NOT 'S' IT MUST BE ERRO
+         MVI   PFNS,X'F0'                    SET PFN=S INDICATER
+         B     U29G1670                      EXIT TO LOOK AT NEXT
+         SPACE 3
+* BAL=M/S ROUTINE TO SEE WHICH**
+U29G1910 CLI   4(2),C'M'                     MULTIPLE PROCESSING IF 'M'
+         BE    U29G1670                      EXIT:'M' PRESET
+         CLI   4(2),C'S'                     IF NOT 'M' IS IT 'S'
+         BNE   U29F0630                      IF NOT'S' IT IS ERROR
+         MVI   SNGLPROC,X'F0'                SET SNGLPROC SWITCH
+         B     U29G1670                      EXIT TO LOOK AT NEXT
+         SPACE 3
+* CTL=  PARAMETER ROUTINE VALIDATE CONTROL FIELD & SET UP CODING
+U29G1990 MVI   CTLBRK,X'F0'                  SET SWITCH TO ENTER LOGIC
+         MVC   LOW,=C'006'                   SET UP FOR ENTRY INTO
+         MVC   HIGH,=C'011'                  SUBROUTINE TO VALIDATE
+         MVI   VALADDR,C'0'                  RELATIVE LOCATIONS
+         MVC   VALADDR+1(2),4(2)             SET UP ARGUMENT
+         BAL   14,SUBADDR                    ENTER SUBROUTINE
+         B     U29F0650                      ADDR >11 EXIT
+         B     U29F0670                      ADDR <6  EXIT
+         MVC   HSD(3),VALADDR                SAVE ZERO FILLED HSD
+         MVC   VALADDR+1(2),7(2)             MOVE ARGUMENT FOR LSD
+         BAL   14,SUBADDR                    ENTER SUBROUTNE
+         B     U29F0690                      ADDR >11 EXIT
+         B     U29F0710                      ADDR <6  EXIT
+         MVC   HSD+3(3),VALADDR              PUT LSD IN SUBROUTINE WORK
+         BAL   14,CLCLTH                     ENTER CALC LTH SUBROUTINE
+         B     U29F0730                      ERROR RETURN LTH <1
+         MVC   CTLMOVE+5(1),DISPLACE         MODIFY SEQ CHK ROUTINE D2
+         MVC   CTLMOVE+1(1),INSLTH           MODIFY SEQ CHK ROUTINE LTH
+         B     U29G1670                      EXIT TO LOOK AT NEXT
+         SPACE 3
+* TYP=P/ F PAR AMETER ROUTINE
+U29G2200 CLI   4(2),C'P'                     PRELIMINARY PROCESS IF =P
+         BE    U29G1670                      EXIT  'P' IS ASSUMED
+         CLI   4(2),C'F'                     IF NOT P IT MUST BE F
+         BNE   U29F1910                      NOT F  THIS IS ERROR
+         MVI   PREPROC,X'00'                 CLEAR PRELIM. PROC. SWCH.
+         MVI   NOZZ,X'0'                     CLEAR NOZZ SWITCH
+         B     U29G1670                      EXIT
+         EJECT
+****** TOTAL PARAMETER ROUTINE
+* THIS ROUTINE PROCESSES THE TOTAL PARAMETER CARD AND TAILORS THE
+* ACCUMULATION LOGIC TO THE REQUIREMENTS OF THE DATA AS FOLLOWS:
+*     1.SHOULD A RECORD COUNT BE CHECK FOR A GIVEN PFN OR BATCH(RCD=Y/N
+*     2.FIELD DEFINITION OF CONTROL FIELDS    AAA/BBB/A/N
+*          A. AAA/BBB =RELATIVE FIELD POSITION
+*          B. A =ABSOLUTE ACCUMULATION
+*          C. N =COUNTER LOCATION  (1-5)
+* ROUTINE TO PROCESS TOTAL PARAMETER CARDS
+U29G2370 LM    5,6,CLOSEACC
+         CLC   PFN,LASTPFN                   HAS A TOTAL CARD BEEN PRE-
+*                                            VIOUSLY PROCESSED FOR THIS
+*                                            PFN
+         BE    U29G3290                      CONTINUE THIS PFN LOOP BLD
+         CLI   PFNS,X'F0'                    HAS PFN=S BEEN SPEC
+         BE    U29G3440                      GO CHECK SEQUENCE
+         CLI   TOTAL,X'F0'                   IS THIS FIRST TIME
+         BE    U29G3670                      GO CLOSE LAST ACCUM LOOP
+U29G2460 MVI   TOTAL,X'F0'                   SET TOTAL READ PROG SWITCH
+U29G2480 LH    3,CODEFCT                     LOAD CODING LIMITER
+         LA    4,PFNTABLE                    SET UP TO SLOT PFN CODE
+         CLC   CRDCODE,=C'41'                IS THIS A PROPER TOTAL CRD
+         BNE   U29F0750                      ERR
+U29G2520 CLC   0(3,4),PFN                    CHK THIS PFN AGAINST TABLE
+         BE    U29F0770                      ERR
+         CLI   0(4),X'0'                     IS THIS AN OPEN SLOT
+         BE    U29G2610                      GO INSERT THIS PFN
+         LA    4,12(4)                       KICK REG 4 TO NEXT TBL POS
+         BCT   3,U29G2520                    LOOP BACK FOR NEXT SLOT
+         B     U29F0790                      ERR
+         SPACE 3
+* INSERT THIS PFN IN TABLE
+U29G2610 MVC   0(3,4),PFN                    PLACE PFN IN TABLE
+         L     5,4(4)                        LOAD REG 5 WITH ADDR OF
+         MVC   0(ENDINT-INTACCUM,5),INTACCUM  ACUM LOGIC AREA THIS PFN
+         LH    6,FLDLIMIT                    SET UF NO. FIELDS LIMITER
+         LA    7,INPUT                       GET CC1 LOC IN REG 7
+         CLC   20(3,7),=C'RCD'               CHECK FOR RCD CNT
+         BE    U29G3170                      GO SET RCD CNT IN TBL
+         B     U29G3090                      CHECK FOR BLANK CARD
+U29G2690 CLI   23(7),C'/'                    IS THERE A SLASH IN CARD
+         BNE   U29F0810
+         MVC   HIGH,=C'200'
+         MVC   LOW,=C'006'
+         MVC   VALADDR,20(7)                 SET ADDR IN SUB ROUTINE
+         BAL   14,SUBADDR                    ENTER VAL ROUTINE ADDRESS
+         B     U29F0830                      ERROR RETURN  >200
+         B     U29F0850                      ERROR RETURN  <006
+         MVC   VALADDR,24(7)                 SET ADDR IN SUB ROUTINE
+         BAL   14,SUBADDR                    ENTER VAL ROUTINE ADDRESS
+         B     U29F0870                      ERROR RETURN >200
+         B     U29F0890                      ERROR RETURN <006
+         MVC   HSD(3),20(7)                  MOVE LEFT POS FIELD TO S/R
+         MVC   HSD+3(3),24(7)                MOVE RIGHT POS TO S/R
+         BAL   14,CLCLTH                     GO GET BINARY LTH OF FIELD
+         B     U29F0910                      IF LTH < 1 RETURN HERE
+         CLI   INSLTH,X'0A'                  IS LENGTH > 11
+         BH    U29F0930                      IF SO ERROR
+         BCT   6,U29G2890                    IS THERE ROOM FOR THIS
+         B     U29F0950                      ERROR
+U29G2890 MVN   3(1,5),INSLTH                 ESTABLISH LTH IN PACK
+         MVC   7(1,5),DISPLACE               ESTABLISH D2 OF PACK
+         CLI   28(7),C'A'                    IS ACCUM ABSOLUTE
+         BE    U29G3270                      IF SO DO NOT DEACTIVATE
+         MVC   72(2,5),SCONSIGN
+         PACK  CNTRHLD,29(1,7)               PACK TOTAL HOLD
+U29G2950 CLI   CNTRHLD,X'1F'                 CHECK TOTAL FIELD CODE <1
+         BL    U29F0970                      CODE <1 ERROR IN PARAMETER
+         CLI   CNTRHLD,X'5F'                 CHECK TOTAL FIELD CODE >5
+         BH    U29F0990                      CODE >5 ERROR IN PARAMETER
+         SP    CNTRHLD,=P'1'                 CALCULATE RELATIVE BUFFER-
+         ZAP   DBLWORD,CNTRHLD               ADD IN LOCATION
+         MP    DBLWORD,=P'7'
+         CVB   8,DBLWORD                     CONVERT TO INST COMPATIBLE
+         STC   8,137(5)                      INSERT D1 IN AP INST.
+         LA    5,6(5)                        BUMP REG5 TO NEXT COMMAND
+U29G3050 LA    7,12(7)                       BUMP REG7 TO NXT CARD FLD
+         LA    8,INPUT+55
+         CR    7,8
+         BH    U29G3120                      REG7 AT END OF CARD SAVE 5
+U29G3090 CLI   20(7),C' '
+         BE    U29G3120                      END PARAM THIS CARD SAVE 5
+         B     U29G2690
+U29G3120 STM   5,6,CLOSEACC                  SAVE VALUE IN REG 5 &6
+         MVC   LASTPFN,PFN                   MOVE IN NEXT PFN NUMBER
+         B     U29H0490                      GO PRINT PARAMETER
+         SPACE 3
+* RCD= IN TOTAL CARD SET UP PROPER CODE
+U29G3170 CLI   24(7),C'Y'
+         BE    U29G3230
+         CLI   24(7),C'N'
+         BNE   U29F1010                      ERROR IN PARAM
+         MVI   3(4),X'F0'                    SET NO RCD CNT SWITCH
+         B     U29G3050
+U29G3230 MVI   3(4),X'0'                     ALLOW RECORD COUNT
+         B     U29G3050
+         SPACE 3
+* ABSOLUTE ACCUMULATION PICK NXT FIELD UP OVER 1 POSITION IN CARD
+U29G3270 PACK  CNTRHLD,30(1,7)
+         B     U29G2950
+U29G3290 CLI   CODE43,X'F0'                  PFN WAS EQUAL TO LAST CHK
+         BE    U29F1030                      SEQ OF CARDS
+         CLI   CODE42,X'F0'                  HAS A 42 CARD BEEN PROCESS
+         BE    U29G3380                      ED IF SO THIS MUST BE 43
+         MVI   CODE42,X'F0'                  SET 42 SWITCH
+         CLC   CRDCODE,=C'42'                THIS CARD MUST BE A 42
+         BNE   U29F1050                      ERROR IF NOT A 42
+U29G3360 LA    7,INPUT                       SET CARD REG FOR LOOK UP
+         B     U29G2690
+U29G3380 MVI   CODE43,X'F0'                  43 CARD ROUTINE IS IT A
+         CLC   CRDCODE,=C'43'                43 CARD ?
+         BNE   U29F1070                      ERROR IF NOT A 43 CARD
+         B     U29G3360
+         SPACE 3
+* PFN=S CHECK PFN SEQ
+U29G3440 CLC   PFNTABLE(3),PFN               CHECK THIS AGAINST PREV
+         BH    U29F1090                      ERROR IN SEQ CARDS
+         CLI   TOTAL,X'F0'
+         BE    U29G3670
+         CLI   LBLDONE,X'F0'                 HAVE LABELS BEEN WRITTEN
+         BE    U29G2460                      BYPASS LABEL WRITE
+         BAL   14,U29C2340                   GO WRITE HDR ON TAPE
+         B     U29G2460
+U29G3520 BAL   14,U29C0150                   GO WRITE OUT CODE
+         MVC   PFNTABLE(3),=X'000000'        SET UP SO NXT CAN COME IN
+         MVI   CODE42,X'0'                   RESET INDICATERS
+         MVI   CODE43,X'0'
+         B     U29G2480
+         SPACE 3
+* CLOSE ACCUMULATION LOOP FOR THIS PFN
+U29G3590 MVC   2(4,5),BRCHSIGN               CLOSE UP PACK CODING
+         MVC   68(4,5),BRCHVER               CLOSE OC CODING
+         MVC   134(4,5),RCDAP               CLOSE ADD PACK CODING
+         MVI   CODE42,X'00'
+         MVI   CODE43,X'00'
+         BR    14
+         SPACE 3
+* CLOSE LOOP WHEN ANOTHER TOTAL CARD PFN READ
+U29G3670 BAL   14,U29G3590                  GO CLOSE CODE
+         CLI   PFNS,X'F0'
+         BE    U29G3520
+         B     U29G2480
+         EJECT
+****** SEQUENCE PARAMETER ROUTINE
+* THIS ROUTINE PROCESSES 'SEQUENCE' PARAMETER CARDS
+*    SEQUENCE PARAMETERS ARE :  EQU=A ACCEPT EQUAL KEYS
+*                               EQU=R REJECT EQUALS
+*                               ORD=A ASCENDING SEQUENCE
+*                               ORD=D DECENDING SEQUENCE
+*                               NNN/NNN  RECORD POSITIONS OF FIELDS
+*                                        MAJOR DEFINED FIRST.
+U29G3800 CLC   CRDCODE,=C'52'                CHECK FOR A 52 SEQ CARD
+         BE    U29G4490                      GO PROCESS 52 CARD
+         CLC   CRDCODE,=C'51'                CHECK FOR A 51 SEQ CARD
+         BNE   U29F1110                      IF NOT EQUAL THIS IS ERROR
+         CLI   SEQ51,X'F0'                   CHECK TO SEE IF 51 PROCESS
+         BE    U29F1130                      51 CARD ALREADY PROCESSED
+         MVI   SEQ51,X'F0'                   SET 51 SWITCH
+         LA    3,INPUT+20                    LOAD REG 3 WITH CARD AREA
+         LA    4,11(0)                       LOAD REG 4 WITH MAX FIELDS
+         LA    5,SEQCHK                      LOAD REG 5 WITH CODING
+U29G3900 CLC   0(3,3),=C'EQU'                CHECK FOR 'EQU' PARAMETER
+         BE    U29G4320                      GO TO ROUTINE TO SET PATH
+         CLC   0(3,3),=C'ORD'                CHECK FOR'ORD' PARAMETER
+         BE    U29G4410                      GO TO ROUTINE TO SET PATH
+U29G3940 CLI   0(3),C' '                     CHECK CARD FOR END
+         BE    U29G4590                      IF BLANK WRAPUP THIS CARD
+         CLI   3(3),C'/'                     CHECK FOR PROPER POS OF'/'
+         BNE   U29F1150                      IF SLASH MISSING PARAM ERR
+         MVC   LOW,=C'001'                   SET UP FIELD LOW LIMIT
+         MVC   HIGH,=C'200'                  HIGH & LOW LIMITS OF FIELD
+         MVC   VALADDR,0(3)                  MOVE FIELD FROM CARD
+         BAL   14,SUBADDR                    ENTER SUBROUTINE
+         B     U29F1150                      ADDRESS > 200
+         B     U29F1170                      ADDRESS > 006
+         MVC   VALADDR,4(3)                  MOVE NEXT FIELD FROM CARD
+         BAL   14,SUBADDR                    ENTER SUBROUTINE
+         B     U29F1190                      ADDRESS >200
+         B     U29F1210                      ADDRESS <006
+         MVC   HSD(3),0(3)                   SET UP FOR CALCULATION OF
+         MVC   HSD+3(3),4(3)                 FIELD LENGTH
+         BAL   14,CLCLTH                     ENTER ROUTINE TO CALC LTH
+         B     U29F1230                      EXIT HERE IF LTH <1
+         MVC   9(1,5),INSLTH                 MODIFY MOVE LENGTH
+         MVC   13(1,5),DISPLACE              MODIFY PICK UP DISPLACEMNT
+         MVC   11(1,5),SEQDISP               MODIFY KEY BUILD AREA LOC
+         SR    6,6                           ZERO REGISTER 6
+         IC    6,INSLTH                      LOAD REGISTER WITH LENGTH
+         SR    7,7                           ZERO REGISTER 7
+         IC    7,SEQDISP                     LOAD REG.7 WITH DISP.KEY
+         LA    6,1(6,7)                      ADD REG6+REG7+1 INTO REG6
+         LA    7,60(0)                       LOAD REG 7 WITH 60
+         CR    6,7                           CHECK FOR KEY LONGER 60
+         BH    U29F1250                      IF HIGH GO TO PARAM ERROR
+         STC   6,SEQDISP                     STORE NEW KEY DISPLACEMENT
+         LA    5,6(5)                        AUGMENT REG.5 TO NEXT MVC
+         LA    3,8(3)                        BUMP REG3 TO NXT CARD FLD
+         LA    7,INPUT+69                    SET REG 7 AT END CARD INPU
+         CR    3,7                           IS 3 PAST END OF CARD?
+         BH    U29G4590                      IF 3 HIGH READ NEXT CARD
+         B     U29G3940                      GO LOOK AT NEXT FIELD
+         SPACE 3
+* PROCESS A EQU PARAMETER IN THE 'SEQUENCE' PARAMETER CARD
+U29G4320 CLI   4(3),C'A'                     CHECK FOR PRESET FUNCTION
+         BE    U29G4370                      GO EXIT PRESET OPTION
+         CLI   4(3),C'R'                     CHECK FOR REJECT EQUALS
+         BNE   U29F1270                      IF NOT EQUAL ITS PARAM ERR
+         MVI   EQURJCT,X'F0'                 SET REJECT EQUALS SWITCH
+U29G4370 LA    3,8(3)                        BUMP REG TO NEXT CARD FLD
+         B     U29G3900                      GO LOOK AT NEXT FIELD
+         SPACE 3
+* PROCESS ORD PARAMETER IN 'SEQUENCE' PARAMETER CARD
+U29G4410 CLI   4(3),C'A'                     CHECK FOR PRESET FUNCTION
+         BE    U29G4370                      GO EXIT PRESET OPTION
+         CLI   4(3),C'D'                     CHECK FOR DESCENDING SEQ
+         BNE   U29F1290                      IF NOT THIS ITS AN ERROR
+         MVI   ORDDEE,X'F0'                  SET DESCENDING SWITCH
+         B     U29G4370                      GO BUMP REG3 & EXIT
+         SPACE 3
+* PROCESS 52 CARD IN 'SEQUENCE' PARAMETER CARDS
+U29G4490 LM    4,5,SEQCLOSE                  RELOAD ROUTINES REGISTERS
+         CLI   SEQ51,X'F0'                   CHECK IF 51 PROCESSED
+         BNE   U29F1310                      NOT PROCESSED ERROR
+         CLI   SEQ52,X'F0'                   CHECK FOR 52 ALREADY PROC.
+         BE    U29F1330                      ERR 2ND TIME 52 PROCESSED
+         MVI   SEQ52,X'F0'                   SET 52 SWITCH
+         LA    3,INPUT+20                    LOAD REG 3 WITH CARD FIELD
+         B     U29G3940                      ENTER FIELD LOOP
+         SPACE 3
+*  EXIT FROM ROUTINE SAVE REGISTER TO CLOSE LOOP
+U29G4590 STM   4,5,SEQCLOSE                  HOLD REGISTERS FOR LATER
+         B     U29H0490                      GO PRINT PARAMETER
+         EJECT
+****** CONTROL RECORD PARAMETER ROUTINE
+* THIS ROUTINE PROCESSES THE'CONTROL RCD' CARDS
+*    HSH=NNN POS IN RCD OF HASH TOTAL OF ALL FIELD ACCUMULATED  (15POS)
+*    RCD=NNN POS IN RCD OF RECORD COUNT OF DETAIL RECORDS       (7 POS)
+*    CTL=NNN POS IN RCD OF RECORD COUNT OF CONTROL RECORDS      (6 POS)
+*    ATE=NNN POS IN RCD OF '8' PLACED IN CONTROL RECORD
+U29G4680 CLI   CONTROL,X'F0'                 IS THIS 2ND CONTROL RCD
+         BE    U29F1350                      IF SO THIS IS ERROR
+         MVI   CONTROL,X'F0'                 SET CONTROL SWITCH
+         LA    3,INPUT+20                    SET REG 3 ON CARD FIELD
+U29G4720 CLC   0(3,3),=C'HSH'                CHECK FOR'HSH' PARAMETER
+         BE    U29G4890                      ENTER HASH ROUTINE
+         CLC   0(3,3),=C'RCD'                CHECK FOR'RCD'PARAMETER
+         BE    U29G5060                      ENTER RCD ROUTINE
+         CLC   0(3,3),=C'CTL'                CHECK FOR'CTL'PARAMETER
+         BE    U29G5230                      ENTER CTL ROUTINE
+         CLC   0(3,3),=C'ATE'                CHECK FOR 'ATE' PARAMETER
+         BE    U29G5400                      ENTER ATE ROUTINE
+         CLI   0(3),C' '                     CHECK FOR GARBAGE IN CARD
+         BNE   U29F1370
+U29G4820 LA    3,8(3)                        KICK UP TO NXT CARD FIELD
+         LA    4,INPUT+45                    SET UP FOR LIMIT CHECK
+         CR    3,4
+         BH    U29H0490                      GO PRINT PARAMETER
+         B     U29G4720                      RETURN TO LOOP
+         SPACE 3
+* HSH PARAMETER ROUTINE
+U29G4890 CLI   HSH,X'F0'                     IS THIS 2ND'HSH'PROCESSED
+         BE    U29F1390                      IF SO THIS IS ERROR
+         MVI   HSH,X'F0'                     SET HSH SWITCH
+         MVC   LOW,=C'012'                   SET UP TO VALIDATE POSITON
+         MVC   HIGH,=C'200'                  IN CONTROL RECORD BY USE
+         MVC   VALADDR,4(3)                  OF SUBROUTINE
+         BAL   14,SUBADDR                    ENTER SUBROUTINE
+         B     U29F1410                      EXIT ADDR >200
+         B     U29F1430                      EXIT ADDR <012
+         PACK  DBLWORD,4(3,3)                PACK REL ADDRESS
+         CVB   4,DBLWORD                     CONVERT IT TO BINARY
+         LA    4,241(4)                      CHANGE UNITS TO HIGH ORDER
+*                                            POSITION,ADD 256-FLD LTH15
+U29G5020 STC   4,RELHSH                      MODIFY CODE OF HSH OUT
+         B     U29G4820                      RETURN TO LOOK AT NEXT
+         SPACE 3
+* RCD PARAMETER ROUTINE
+U29G5060 CLI   RCD,X'F0'                     IS THIS 2ND'RCD' PROCESSED
+         BE    U29F1450                      IF SO THIS IS ERROR
+         MVI   RCD,X'F0'                     SET RCD SWITCH
+         MVC   LOW,=C'007'                   SET UP TO VALIDATE POSITIO
+         MVC   HIGH,=C'200'                  IN CONTROL RECORD BY USE
+         MVC   VALADDR,4(3)                  OF SUBROUTINE
+         BAL   14,SUBADDR                    ENTER SUBROUTINE
+         B     U29F1470                      EXIT ADDR  >200
+         B     U29F1490                      EXIT ADDR  <007
+         PACK  DBLWORD,4(3,3)                PACK REL ADDRESS
+         CVB   4,DBLWORD                     CONVERT TO BINARY
+         LA    4,249(4)                      CHANGE UNITS TO HIGH ORDER
+*                                            POSITION,ADD 256-FLD LTH 7
+U29G5190 STC   4,RELRCD                      MODIFY CODE OF RCD CNT OUT
+         B     U29G4820                      RETURN TO LOOK AT NEXT
+         SPACE 3
+* CTL PARAMETER ROUTINE
+U29G5230 CLI   CTL,X'F0'                     IS THIS 2ND TIME GHROUGH
+         BE    U29F1510                      IF SO THIS IS ERROR
+         MVI   CTL,X'F0'                     SET CTL SWITCH
+         MVC   LOW,=C'006'                   SET UP TO VALIDATE POSITON
+         MVC   HIGH,=C'200'                  IN CONTROL RECORD BY USE
+         MVC   VALADDR,4(3)                  OF SUBROUTINE
+         BAL   14,SUBADDR                    ENTER SUBROUTINE
+         B     U29F1530                      EXIT ADDR >200
+         B     U29F1550                      EXIT ADDR <006
+         PACK  DBLWORD,4(3,3)                PACK REL ADDRESS
+         CVB   4,DBLWORD                     CONVERT ADDRESS TO BINARY
+         LA    4,250(4)                      CHANGE UNITS TO HIGH ORDER
+*                                            POSITION,ADD 256-FLD LTH 7
+U29G5360 STC   4,RELCTL                      MODIFY CODE OF CTL OUT
+         B     U29G4820                      RETURN TO LOOK AT NEXT
+         SPACE 3
+* ATE PARAMETER ROUTINE
+U29G5400 CLI   ATE,X'F0'                     IS THIS 2ND TIME THROUGH
+         BE    U29F1570                      IF SO THIS IS ERROR
+         MVI   ATE,X'F0'                     SET ATE SWITCH
+         MVC   LOW,=C'001'                   SET UP TO VALIDATE POSITON
+         MVC   HIGH,=C'200'                  IN CONTROL RECORD BY USE
+         MVC   VALADDR,4(3)                  OF SUBROUTINE
+         BAL   14,SUBADDR                    ENTER SUBROUTINE
+         B     U29F1590                      EXIT ADDR >200
+         B     U29F1610                      EXIT ADDR <001
+         PACK  DBLWORD,4(3,3)                CONVERT ADDRESS TO BINARY
+         CVB   4,DBLWORD
+         BCT   4,U29G5520                    DECREMENT BY 1
+U29G5520 STC   4,RELATE                      MODIFY CODE OF ATE OUT
+         B     U29G4820                      RETURN TO LOOK AT NEXT
+         EJECT
+         ORG   TOTALS1+256                   DANGER!!! DO NOT ADD CODE
+*   TO END OF PARAMETER ROUNTINE NEXT ORG
+****** BATCH PARAMETER ROUTINE
+*  ROUTINE TO VALIDATE BATCH CARD & SET UP PROPER CONTROL FOR BATCH
+*  PROCESSING  NNN/NNN DEFINES POSITION IN RECORD OF BATCH CODE
+*              NOZZ BAL -KILLS BALANCING OF NUMBER OF BATCHES FOR A DAY
+*  PROCESSING.
+U29G5600 CLI   BATCH,X'F0'                   IS THIS 2ND BATCH CARD
+         BE    U29F1630                      IF SO THIS IS AN ERROR
+         MVI   BATCH,X'F0'                   SET BATCH SWITCH
+         CLI   INPUT+23,C'/'                 CHECK CARD FORMAT
+         BNE   U29F1650                      NO SLASH BETWEEN FIELDS
+         MVC   LOW,=C'006'                   SET UP FOR ENTRY TO SUB-
+         MVC   HIGH,=C'200'                  ROUTINE TO CHECK POSITION
+         MVC   VALADDR,INPUT+20              OF LEFT END OF FIELD
+         BAL   14,SUBADDR                    ENTER SUBROUTINE
+         B     U29F1670                      EXIT ADDR >200
+         B     U29F1690                      EXIT ADDR <006
+         MVC   VALADDR,INPUT+24              CHECK RIGHT END OF FIELD
+         BAL   14,SUBADDR                    ENTER SUBROUTINE
+         B     U29F1710                      EXIT ADDR >200
+         B     U29F1730                      EXIT ADDR <006
+         MVC   HSD(3),INPUT+20               SET UP FOR CALCULATION OF
+         MVC   HSD+3(3),INPUT+24             FIELD SIZE
+         BAL   14,CLCLTH                     ENTER SUBROUTINE
+         B     U29F1750                      ERROR LTH <1
+         CLI   INSLTH,X'02'                  CHECK LTH OF FIELD
+         BH    U29F1770                      INVALID BATCH CODE LENGTH
+         MVC   BCHMVC+1(1),INSLTH            MODIFY INSTRUCTION LENGTH
+         MVC   BCHMVC+5(1),DISPLACE          MODIFY DISPLACEMENT
+         IC    3,=X'02'                      LOAD MAX ALLOWED LENGHT
+         IC    4,INSLTH                      LOAD ACT BATCH CODE LTH
+         SR    3,4                           CALC DIFFERENCE
+         IC    4,U29I0620+5                  GET DISP FROM COMMAND.
+         AR    4,3                           ADD TO 8 CARD REL LOC
+         STC   4,U29I0620+5                  PUT BACK INTO COMMAND
+         IC    4,U29I0620+1                  LOAD LENGTH OF MOVE
+         SR    4,3                           SUB DISPLACE AUGMENTER
+         STC   4,U29I0620+1                  PUT BACK IN COMMAND
+         CLC   INPUT+28(8),=C'NOZZ BAL'      IS THERE TO BE 8ZZ BLANCE
+         BNE   U29G5960                      YES GO CHECK FOR BLANKS
+         MVI   NOZZ,X'F0'                    NO 8ZZ BALANCING
+         B     U29H0490                      GO PRINT PARAMETER
+U29G5960 CLC   INPUT+28(8),=CL8' '           IS THIS AREA IN CARD BLANK
+         BNE   U29F1890                      NO THIS COULD BE ERROR
+         B     U29H0490                      GO PRINT PARAMETER
+         EJECT
+****** BATCH FORM PARAMETER ROUTINE
+* ROUTINE TO SET UP BATCH FORM VALID PFN NUMBERS
+U29G6020 CLI   BATCHFRM,X'F0'                IS THIS FIRST BATCH FORM
+         BE    U29G6110                      NO GO AROUND INITILIZATION
+         CLI   BATCH,X'F0'                   IS BATCH SET
+         BNE   U29F1790                      IF NOT THIS IS ERROR
+         MVI   BATCHFRM,X'F0'                SET BATCH FORMS SWITCH
+         LA    3,6(0)                        SET FOR MAX OF 5 CARDS
+         LA    4,BFMTABLE                    LOAD 1ST POSITION OF TABLE
+         CLC   PFNTABLE+12(3),=X'000000'     HAS ONLY 1 TOTAL CARD BEEN
+         BNE   U29F1810                      PROCESSED IF NOT ERROR
+U29G6110 BCT   3,U29G6130                    CARD COUNT OF BATCHFORM
+         B     U29F1830                      OVER 5 ERROR
+U29G6130 MVC   2(36,4),INPUT+20              SET UP FORM NUMBERS
+         MVC   0(2,4),PFN                    SET UP PROJECT NUMBER
+         LA    4,38(4)                       KICK TO NEXT SLOT IN TABLE
+         B     U29H0490                      GO PRINT PARAMETER
+         EJECT
+* THIS ROUTINE SETS PROGAM TO OUTPUT REPORT TO PRINTER
+U29G6190 MVI   PRINTRPT,X'F0'
+         B     U29H0490                      GO PRINT PARAMETER
+         SPACE 3
+*   THIS ROUTINE SETS PROGRAM TO OUTPUT PUNCH RECORDS TO THE CARD PUNCH
+U29G6205 MVI   PUNCHSW+1,X'F0'               SET PUNCH SWITCH
+         B     U29H0490                      GO PRINT PARAMETER
+         EJECT
+* THIS ROUTINE SETS UP COLUMN HEADERS
+U29G6230 LA    5,5                           LOOP LIMIT
+         LA    6,INPUT+19                    LOCATION OF FIRST FIELD
+         LA    7,HEADER2+64                  HDR LOC OF FIRST PRT FLD
+U29G6260 MVC   0(11,7),0(6)                  MOVE IN HEADER
+         LA    7,14(7)                       BUMP TO NXT HDR LOC
+         LA    6,12(6)                       BUMP TO NXT CARD LOC
+         BCT   5,U29G6260                    CHK LIMITER
+         B     U29H0490                      GO PRINT PARAMETER
+         EJECT
+****** SUBROUTINE TO CHECK HIGH LOW LIMITS OF PARAMETER REL CARD LOCS
+* SUBROUTINE VALIDATE  RANGE OF FIELD(DELIMETERS FURNISHED    OUT LINE)
+VALADDR  DC    CL3' '                        POCKET FOR
+HIGH     DC    CL3' '                        HIGH LIMIT
+LOW      DC    CL3' '                        LOW LIMIT
+U29G6370 DC    2F'0'                         WORK AREA
+U29G6380 DC    X'00060606'                  CONSTANT FOR NUMERIC CHECK
+U29G6390 DC    1F'0'                         SAVE WORK REGISTER
+U29G6400 DC    XL3'0'                        WORK AREA
+SUBADDR  STM   3,3,U29G6390                  SAVE WORK REGISTERS
+         MVC   U29G6370+5(3),VALADDR
+         L     3,U29G6370+4                  CHECK FOR A RELATIVE POSI-
+         A     3,U29G6380                    TION WHICH CONTAINS NON-
+         ST    3,U29G6370+4
+         L     3,U29G6390
+         MVI   U29G6370+4,X'00'              ZERO POSSIBLE OVERFLOW
+         MVZ   U29G6400,U29G6370+5           CHECK FOR AN OVERFLOW INTO
+         CLC   U29G6400,=X'F0F0F0'           ZONE PORTION OF FIELD
+         BNE   0(14)                         ERROR EXIT
+         CLC   VALADDR,HIGH
+         BH    0(14)                         ERROR EXIT FIELD> HIGH
+         CLC   VALADDR,LOW
+         BL    4(14)                         ERROR EXIT FIELD< LOW
+         B     8(14)                         NORMAL RETURN
+         EJECT
+****** SUBROUTINE TO CALC LTH OF FIELD BETWEEN REL CARD LOCATIONS
+* SUBROUTINE TO CALCULATE INSTRUCTION LENGTH AND D2 OF FIELD
+INSLTH   DC    X'0'                          CALCULATE INSTRUCTION LTH
+DISPLACE DC    X'0'                          D2 DISPLACEMENT
+HSD      DC    CL6'0'                        LEFT & RIGHT POS OF FIELD
+         CNOP  0,8                           ALIGN ON DOUBLE-WORD BOUND
+U29G6630 DC    PL8'0'                        WORK AREA FOR CVB
+U29G6640 DC    PL8'0'                        SAVE AREA FOR REGISTERS
+CLCLTH   STM   3,4,U29G6640                  SAVE WORK REGISTERS
+         PACK  U29G6630,HSD(3)               CONVERT LEFT END FIELD TO
+         CVB   3,U29G6630                    A BINARY NUMBER
+         PACK  U29G6630,HSD+3(3)             CONVERT RIGHT END FIELD TO
+         CVB   4,U29G6630                    A BINARY NUMBER
+         SR    4,3                           CALC LENGTH
+         STC   4,INSLTH                      STORE LENGTH
+         LTR   4,4                           CHECK FOR NEG. VALUE
+         BL    U29G6770
+         BCT   3,U29G6750                    DECREASE DISPLACEMENT BY 1
+U29G6750 STC   3,DISPLACE                    STORE DISPLACEMENT
+         LA    14,4(14)
+U29G6770 LM    3,4,U29G6640                  RELOAD WORK REGISTERS
+         B     0(14)                         RETURN TO MAIN LINE
+         ORG
+         EJECT
+****** MAIN LINE PROCESSING OF DATA CARDS   VALIDATES PFN & ESTABLISHES
+****** CODE SLOT TO USE FOR THIS PFN.
+* MAIN LINE PROCESSING OF DATA AND CONTROL CARDS  STARTS HERE
+U29H0150 CLI   PARAMERR,X'F0'                IS THERE A PARAMETER ERROR
+         BE    U29F2100
+         CLI   DATA,X'F0'                    IS THIS FIRST DATA RECORD
+         BE    U29H0340                      NO WILL SKIP CODE CLOSE
+         MVI   DATA,X'F0'                    SET DATA RCD SWITCH
+         L     5,CLOSEACC                    ADDRESS OF LAST ACC CODE
+         BAL   14,U29G3590                   GO PERFORM CODE CLOSE
+         MVC   PRETRAN(256),PRETRANI         MOVE TRAN TABLE FROM TEMP
+         LA    5,TOTALS1                     LOAD 5  FOR SUBROUTINE
+         LA    6,10                          LOAD NUMBER OF SLOTS TO CL
+U29H0168 BAL   14,U29J2420                   GO ZERO 1 TOTAL AREA
+         LA    5,6(5)                        BUMP 5 TO NEXT TOTAL AREA
+         BCT   6,U29H0168                    GO DO NEXT UNLESS LAST
+         CLI   TOTAL,X'F0'                   HAS A TOTAL PARAM BEEN RED
+         BNE   U29F1930                      ERROR NO TOTAL CARD READ
+         MVI   HDRFLAG,X'F0'                 FORCE HEADER
+         CLI   PFNS,X'F0'                    CHECK FOR CODE WRITE
+         BNE   U29H0300                      BY PASS TAPE WRITE
+         BAL   14,U29C0150                   GO WRITE OUT CODE
+         BAL   14,U29C0410                   GO FORCE LAST BLOCK WRITE
+         BAL   14,U29C1980                   GO WRITE A TAPE MARK
+         BAL   14,U29C1860                   UNWIND TAPE 1 BLOCK
+U29H0300 L     5,SEQCLOSE+4                  ADDRESS OF LAST SEQ CODE
+         MVC   8(4,5),U29I2030               CLOSE SEQ CODE
+         SPACE 3
+* START PROCESSESSING OF DATA CARDS
+U29H0340 EQU   *
+U29H0360 CLI   BATCHFRM,X'F0'                IS PROCESSING BATCH FORMS
+         BE    U29H0550                      GO VALIDATE BATCH FORMS
+         CLC   INVALPFN,INPUT                IS THIS SAME AS LAST INVAL
+         BE    U29H0470                      EXIT TO INVALID PFN
+         LA    7,PFNTABLE                    SET UP FOR TABLE LOOP
+         LH    6,CODEFCT                     LIMIT LOOP TO SIX ENTRIES
+U29H0400 CLC   INPUT(3),0(7)                 COMPARE CARD PFN TO TABLE
+         BE    U29H0820                      PFN IS VALID
+         LA    7,12(7)                       KICK 7 TO NEXT TBL ENTRY
+         BCT   6,U29H0400                    BRANCH THROUGH LOOP IF REG
+*                                            6 NOT EQUAL TO ZERO
+         CLI   PFNS,X'F0'                    ARE PFNS SEQUENTIAL
+         BE    U29C1220                      GO LOOK FOR PFN ON TAPE
+U29H0470 MVC   PRINTLNE(28),=C'*DC*INVALID PROJ FORM NO.   '
+         MVC   INVALPFN,INPUT                MOVE INVALID FOR NEXT CHK
+U29H0480 MVI   DATAERR,X'F0'                 SET BAD EOJ SWITCH
+U29H0490 MVC   PRINTLNE+28(80),INPUT         MOVE CARD IMAGE TO PRINT
+         MVI   PRNTCONT,X'41'                SET LINE SPACING
+         BAL   14,U29D0590                   GO WRITE LINE
+         B     READ                          GO GET NEXT RCD
+         SPACE 3
+* VALIDATION ROUTINE FOR BATCHFORMS
+U29H0550 LA    7,BFMTABLE                    LOAD TABLE LOOP REGISTER
+         LA    6,5                           LIMIT LOOP TO 5
+U29H0570 CLC   INPUT(2),0(7)                 LOOK FOR VALID PROJECT
+         BE    U29H0630                      VALID PROJECT FOUND
+         LA    7,38(7)                       BUMP TO NEXT TABLE ENTRY
+         BCT   6,U29H0570                    DECREMENT LOOP CONTROL
+         B     U29H0470                      GO TO INVALID PFN
+* LOOK AT FORM NUMBER 3RD DIGIT OF PFN
+U29H0630 LA    6,36                          LIMIT LOOP FOR FORM NUMBER
+U29H0640 CLC   INPUT+2(1),2(7)               IS THIS VALID FORM NUMBER
+         BE    U29H0910                      VALID FORM NUMBER
+         LA    7,1(7)                        BUMP TO NEXT FORM NO
+         BCT   6,U29H0640                    IS LOOP EXHAUSTED
+         B     U29H0470                      LOOP EXH. WITHOUT HIT ERR
+*   SET UP ADDRESSES FOR PROCESSING
+U29H0820 LA    6,4(7)                        LOAD REG 6 WITH CODE AND
+*                                            TOTALS POINTERS
+         ST    6,TABLEADD                    SAVE ADDRESS FOR LATER USE
+         CLI   PFNS,X'F0'                    ARE PFNS SEQUENTIAL
+         BNE   U29H0920                      IF NOT DONT MOVE CODE
+         L     6,0(6)                        LOAD 6 WITH ADDRESS OF COD
+         MVC   CODE1(ENDINT-INTACCUM),0(6)   MOVE CODE TO CODE 1 SLOT
+         MVC   PFNTABLE(3),0(7)              MOVE PFN TO SLOT 1 OF TABL
+         MVC   PFNTABLE+3(1),3(7)            MOVE IN RCD COUNT FLAG
+U29H0910 MVC   TABLEADD,=A(PFNTABLE+4)       SET UP ADDRESS OF TBL ETRY
+U29H0920 B     U29I0270                      CODE ESTABLISHED GO PROC
+         EJECT
+****** CHECK FOR CONTROL BREAKS, ENTER ACCUM CODE AND SEQ ROUTINE
+         SPACE 3
+* LOOK AT CONTROL BREAKS
+THISCONT EQU   *                             RECORD IN PROCESS
+CONTDIV  DC    CL6' '
+CONTPFN  DC    CL3' '
+CONTDAY  DC    CL1' '
+CONTBTCH DC    CL3' '
+LASTCONT DC    CL13' '                       LAST RECORD PROCESSED
+INITDIV  DC    X'F0'                        SET TO F0 TO ALLOW NEW DIV
+INITDAY  DC    X'F0'                        SET TO F0 TO ALLOW NEW DAY
+INITDET  DC    X'F0'                        SET TO F0 TO ALLOW NEW CONT
+INITPFN  DC    X'F0'                         SET TO F0 TO ALLOW NEW PFN
+         SPACE 3
+* DEVELOP CONTROL FIELD BASED ON PROCESS MODE
+U29I0270 LA    6,INPUT                       LOAD INPUT REF REGISTER
+         CLI   CTLBRK,X'F0'                  IS DIVISION CONT SPE  CTL=
+         BNE   U29I0380                      NO DIV BYPASS PICK UP
+CTLMOVE  MVC   CONTDIV,0(6)                 MOVE IN DIV-MOD.BY CTL= PRM
+         CLI   INITDIV,X'F0'                 IS THIS FIRST TIME
+         BNE   U29I0360
+         MVI   INITDIV,X'00'
+         MVC   LASTCONT(6),THISCONT
+U29I0360 CLC   LASTCONT(6),THISCONT          LOOK FOR DIVISION BREAK
+         BNE   U29J1810
+U29I0380 CLI   INPUT+4,C'9'                  CHECK FOR'9' CONT.CARD
+         BE    U29I3640                      IF NINE ENTER NINE ROUTINE
+         CLI   INPUT+4,C'7'                  CHECK FOR'7' CONT.CARD
+         BE    U29I3550                      IF SEVEN ENTER SEVEN ROUT.
+         MVC   CONTPFN,STDPFN                 IF BATCH FORM FORCE STD
+         CLI   BATCHFRM,X'F0'                CHECK FOR BATCH FORMS
+         BE    U29I0480                      IF BATCH FORMS BYPASS PFN
+         CLI   PFNS,X'F0'                    CHECK FOR PFN IN SEQ
+         BNE   U29I0480                      IF NOT IGNORE PFN PICK UP
+         MVC   CONTPFN,INPUT                 PLACE PFN IN CONTROL
+U29I0480 CLI   BATCH,X'F0'                   IS THIS BATCH PROCESSING?
+         BNE   U29I0780                      IF NOT BYPASS BATCH & DAY
+         MVC   CONTDAY,INPUT+3               MOVE DAY CODE TO CONTROL
+         CLI   INITPFN,X'F0'                 IS THERE TO BE NEW PFN
+         BNE   U29I0550                      NO GO CHECK FOR BREAK
+         MVI   INITPFN,X'00'                 CLEAR INITIALIZATION SWITH
+         MVC   LASTCONT+6(3),CONTPFN         SET UP NEW CONTROL
+U29I0550 CLC   LASTCONT+6(3),CONTPFN         CHECK FOR PFN CHANGE
+         BE    U29I0600                      NO CHANGE CHECK DAY BREAK
+         BAL   14,U29J0160                   PERFORM 1ST LEVEL BREAK
+         BAL   14,U29J1530                   PERFORM  8ZZ & DAY TOTALS
+         B     U29I0270                      GO ESTABLISH NEW CONTROL
+U29I0600 CLI   INPUT+4,C'8'                  IS THIS AN 8 CARD
+         BNE   BCHMVC                        IF NOT PICK UP MOD COMMAND
+U29I0620 MVC   CONTBTCH,16(6)                MOVE BATCH FROM 8 CARD
+         CLC   INPUT+11(2),=C'ZZ'            IS THIS AN 8ZZ CARD
+         BNE   U29I0860                      BYPASS DAY CHECK ON 8 CARD
+         B     U29I0670                      BYPASS MODIFIED BATCH COMM
+BCHMVC   MVC   CONTBTCH,0(6)                 MODIFIED BATCH PICK UP
+U29I0670 CLI   INITDAY,X'F0'
+         BNE   U29I0710
+         MVI   INITDAY,X'00'
+U29I0700 MVC   LASTCONT+9(1),CONTDAY
+U29I0710 CLC   LASTCONT+9(1),CONTDAY        LOOK FOR DAY BREAK
+         BE    U29I0760
+         BAL   14,U29J0160                   PERFORM 1ST LEVEL BREAK
+         BAL   14,U29J1230                   PERFORM ZZ BREAK
+         B     U29I0670                      GO SET UP NEW DAY CODE
+U29I0760 CLC   INPUT+11(2),=C'ZZ'
+         BE    U29I0860
+U29I0780 CLI   INITDET,X'F0'
+         BNE   U29I0820
+         MVI   INITDET,X'00'
+U29I0810 MVC   LASTCONT,THISCONT
+U29I0820 CLC   LASTCONT,THISCONT             CHECK FOR CONTROL BREAK
+         BE    U29I0860                      NO BREAK -CONTINUE-
+         BAL   14,U29J0160                   GO ENTER 1ST LEVEL BREAK
+         B     U29I0810                      GO SET UP NEW CONTROL
+U29I0860 L     6,TABLEADD                    LOAD 6 WITH TABLE ENTRY
+         LA    4,INPUT                       LOAD 4 WITH INPUT RECORD
+         MVC   CONT7OUT,5(4)                 SAVE CONTROL FOR 7 CARD
+         MVC   WRITERCD,PFNTABLE+3           MOVE RCD COUNT FLAG TO HLD
+         CLI   INPUT+4,C'8'                  IS THIS AN 8 CARD
+         BE    U29I2420                      GO PROCESS 8 CARD FIELDS
+         L     5,4(6)                        LOAD REG 5 WITH TOTAL AREA
+         L     6,0(6)                        LOAD ENTRY ADDRESS INTO 6
+         BALR  14,6                          ENTER 1 OF MANY ACCUM ROUT
+         MVI   WORK1,C'+'                    SET WORK AREAS FOR NEXT
+         MVC   WORK1+1(69),WORK1             FIELD VALIDATION
+         CLI   SEQ51,X'F0'                   IS SEQ CHECK SPECIFIED
+         BNE   U29I0980                      IF NOT EXIT TO READ
+         B     SEQCHK                        ENTER SEQ CHECK ROUTINE
+U29I0980 CLI   PREPROC,X'F0'                 IS THIS LIST MODE
+         BNE   U29I1030                      BY PASS DETAIL LIST
+U29I1000 LA    15,INPUT              ***MOD***   PROVIDE FOR
+         L     14,RCDSZEIN           ***MOD***   INPUT RECORDS GREATER
+         STH   14,REMAIN             ***MOD***
+U29I1005 BCTR  14,0                  ***MOD***   THAN 80 BYTES BY
+         CH    14,=H'99'             ***MOD***   CREATING A SECOND
+         BNH   STUF                  ***MOD***   PRINT LINE
+         LH    14,=H'99'             ***MOD***
+STUF     STC   14,U29I1010+1         ***MOD***
+         STC   14,U29I1020+1         ***MOD***
+U29I1010 MVC   PRINTLNE+28,0(15)     ***MOD***
+U29I1020 TR    PRINTLNE+28,PRETRAN   ***MOD***
+         LA    14,1(14)              ***MOD***
+         LH    15,REMAIN             ***MOD***
+         SR    15,14                 ***MOD***
+         STH   15,REMAIN             ***MOD***
+         MVI   PRNTCONT,X'01'                SET SPACE CONTROL SNGL SPC
+         BAL   14,U29D0590                   GO WRITE LINE
+         SR    14,14                 ***MOD***
+         AH    14,REMAIN             ***MOD***
+         LA    15,INPUT+100          ***MOD***
+         BNZ   U29I1005              ***MOD***
+U29I1030 CLI   TPEOUT,X'F0'                  SHOULD RCD GO TO TAPE
+         BNE   READ                          NO GO READ
+         BAL   14,U29E0190                   GO WRITE RCD TO TAPE
+         B     READ                          GO READ
+REMAIN   DC    H'0'                  ***MOD***
+         EJECT
+* **** THIS SET OF CODE IS MODIFIED BY THE VARIOUS TOTAL PARAMETER
+*       CARDS READ FOR A GIVEN PFN. FOR RANDOM PFNS (PFN=R) THE CODE IS
+*       MOVED INTO THE NEXT AVAILABLE CODE SLOT AND MODIFIED THER.
+*       FOR SEQUENTIAL PFNS (PFN=S) THE CODE IS MOVED INTO CODE SLOT 1
+*       MODIFIED THERE AND THEN WRITTEN TO THE PRINT TPAE FOR LATER
+*       PROCESSING.
+RD       EQU   4                       ADDRESS OF DATA
+RE       EQU   5                       ADDRESS OF COUNTERS
+U29I1160 DC    A(U29I1700)                   ENTRY TO FIELD CHECK
+INTACCUM BALR  3,0
+         USING *,3
+         PACK  WORK1,0(1,RD)           MOD D2 AND LTH OF D2 OPERAND IN
+         PACK  WORK2,0(1,RD)           PACK INSTRUCTIONS AS NEEDED AND
+         PACK  WORK3,0(1,RD)           DEFINED BY TOTAL CARD PARAMETER
+         PACK  WORK4,0(1,RD)           AAA/BBB. FIELDS ARE SET UP AS
+         PACK  WORK5,0(1,RD)           READ FROM CARD AND WHEN LAST
+         PACK  WORK6,0(1,RD)           FIELD IS FOUND A BRANCH IS
+         PACK  WORK7,0(1,RD)           PLACED IN THE NEXT PACK INSTRUC-
+         PACK  WORK8,0(1,RD)           TION TO FORCE BYPASS OF REMAIN-
+         PACK  WORK9,0(1,RD)           ING PACK INSTRUCTIONS.
+         PACK  WORK10,0(1,RD)
+BRCHSIGN B     OC
+SIGNED   DC    X'08'
+ABSOLUTE DC    X'0F'
+         EJECT
+* SET UP ABSOLUTE ADD IF NEEDED*****
+OC       OC    WORK1+6(1),ABSOLUTE     THE OC COMMANDS ARE PRE-SET TO
+         OC    WORK2+6(1),ABSOLUTE     CAUSE AUTOMATIC SETTING OF THE
+         OC    WORK3+6(1),ABSOLUTE     WORK AREA SIGNS TO PLUS IF
+         OC    WORK4+6(1),ABSOLUTE     ABSOLUTE IS NOT SPECIFIED FOR
+         OC    WORK5+6(1),ABSOLUTE     A FIELD THE B OPERAND IS CHANGED
+         OC    WORK6+6(1),ABSOLUTE     TO OR IN A HEX 08. THIS WILL
+         OC    WORK7+6(1),ABSOLUTE     FACILITATE CHANGING A SPACE
+         OC    WORK8+6(1),ABSOLUTE     FILLED FIELD TO VALID ADDABLE
+         OC    WORK9+6(1),ABSOLUTE     CHARACTERS.
+         OC    WORK10+6(1),ABSOLUTE
+BRCHVER  B     DIGITCHK                FLOATABLE BRANCH TO VERIFY FIELD
+SCONSIGN DC    S(SIGNED)               S CON TO MOD '
+* ADD WORK AREAS TO COUNTERS ****
+ADDPACK  AP    0(7,RE),WORK1           REGISTER B (RB) WILL BE LOADED
+         AP    0(7,RE),WORK2           WITH ADDRESS OF TOTAL SLOTS FOR
+         AP    0(7,RE),WORK3           THIS PFN BEFORE ENTRY INTO
+         AP    0(7,RE),WORK4           THE ACCUMULATION LOGIC. THE D1
+         AP    0(7,RE),WORK5           PORTION OF THESE COMMANDS WILL
+         AP    0(7,RE),WORK6           BE MODIFIED TO POINT AT ONE OF
+         AP    0(7,RE),WORK7           THE FIVE ALLOWABLE COUNTERS FOR
+         AP    0(7,RE),WORK8           CONTROL TOTALS.
+         AP    0(7,RE),WORK9
+         AP    0(7,RE),WORK10
+RCDCNTAP AP    70(3,RE),PACK1
+* NEXT COMMAND HANDLES RECORD COUNTING OF VALID DATA CARDS
+         BR    14
+RCDAP    B     RCDCNTAP
+* THIS ROUTINE ENTERS FIELD VALIDATION ROUTINE AND HANDLES RETURN
+PACK1    DC    P'1'                    CONSTANT TO UPADATE RCD CNT
+U29I1620 DC    A(0)
+DIGITCHK L     6,U29I1160
+         BR    6                             ENTER FIELD CHECK
+U29I1650 B     ADDPACK                       GO BACK TO ACCUM LOGIC
+         DROP  3
+ENDINT   EQU   *
+* SUBROUTINE  TO  CHECK FIELDS BEING ADDED FOR VALID CHARACTERS
+U29I1700 MVC   TRANWORK(70),WORK1
+         TR    TRANWORK(70),VERNUMTB
+         LA    6,TRANWORK
+U29I1730 CLI   0(6),C'+'                    IS LOOP COMPLETE
+         BE    U29I1650                      EXIT FIELDS OK
+         CLC   0(6,6),=C'000000'           ARE FIRST 5 POSITIONS VALID
+         BNE   ARITHERR
+         CLI   6(6),C'1'
+         BNE   ARITHERR
+         LA    6,7(6)
+         C     6,=A(TRANWORK+69)
+         BH    U29I1650                      EXIT FIELDS OK
+         B     U29I1730
+ARITHERR MVC   PRINTLNE(28),=C'*DC* DATA FIELD INVALID     '
+         B     U29H0480
+         EJECT
+* THIS ROUTINE CHECKS THE SEQUENCE OF THE DATA CARDS IF SEQ. CHECKING
+*  HAS BEEN REQUESTED BY THE 'SEQUENCE' PARAMETER CARD
+* MOVE COMMANDS IN THIS ROUTINE HAVE BEEN MODIFIED TO SET UP KEYS.
+RB       EQU   2                       ADDRESS OF DATA
+RC       EQU   3                       ADDRESS OF COUNTERS
+SEQCHK   LA    RB,INPUT                SET REGISTER AT POS 1 OF DATA
+         LA    3,THISSEQ               SET REGISTER AT LOC KEY BUILD
+         MVC   0(1,RC),0(RB)           MOVE IN 1ST FIELD
+         MVC   0(1,RC),0(RB)           MOVE IN 2ND FIELD
+         MVC   0(1,RC),0(RB)           MOVE IN 3RD FIELD
+         MVC   0(1,RC),0(RB)           MOVE IN 4TH FIELD
+         MVC   0(1,RC),0(RB)           MOVE IN 5TH FIELD
+         MVC   0(1,RC),0(RB)           MOVE IN 6TH FIELD
+         MVC   0(1,RC),0(RB)           MOVE IN 7TH FIELD
+         MVC   0(1,RC),0(RB)           MOVE IN 8TH FIELD
+         MVC   0(1,RC),0(RB)           MOVE IN 9TH FIELD
+         MVC   0(1,RC),0(RB)           MOVE IN10TH FIELD
+U29I2030 B     U29I2040                FLOATING BLANCH
+U29I2040 BC    X'0',U29I2080           FIRST TIME SWITCH  MODIFIED
+         MVI   U29I2040+1,X'F0'        CHANGE BRANCH COND TO BRANCH
+U29I2060 MVC   LASTSEQ(60),THISSEQ           ESTABLISH NEW SEQ
+         B     U29I0980                RETURN TO CONTINUE MAIN LINE
+U29I2080 CLC   LASTSEQ(15),THISSEQ     CHECK FIRST 15 BYTES OF KEYS
+         BH    U29I2260                     LOW SEQ ON INPUT
+         BL    U29I2230                     HIGH SEQ ON INPUT
+         CLC   LASTSEQ+15(15),THISSEQ+15    CHECK NEXT 15 BYTES OF KEYS
+         BH    U29I2260                     LOW SEQ ON INPUT
+         BL    U29I2230                     HIGH SEQ ON INPUT
+         CLC   LASTSEQ+30(15),THISSEQ+30    CHECK NEXT 15 BYTES OF KEYS
+         BH    U29I2260                     LOW SEQ ON INPUT
+         BL    U29I2230                     HIGH SEQ ON INPUT
+         CLC   LASTSEQ+45(15),THISSEQ+45    CHECK LAST 15 BYTES OF KEYS
+         BH    U29I2260                     LOW SEQ ON INPUT
+         BL    U29I2230                     HIGH SEQ ON INPUT
+U29I2200 CLI   EQURJCT,X'F0'                EQUAL SEQUENSE ON INPUT
+         BE    U29I2350                      ERROR EXIT EQUALS INVALID
+         B     U29I2060                     GO TO NORMAL EXIT
+U29I2230 CLI   ORDDEE,X'F0'                 ENTRY ON HIGH INPUT SEQ
+         BE    U29I2300                     ERROR EXIT SEQ SB ASCENDING
+         B     U29I2060                     GO TO NORMAL EXIT
+U29I2260 CLI   ORDDEE,X'F0'                 ENTRY ON LOW INPUT SEQ
+         BNE   U29I2300                     ERROR EXIT DECENDING INVLID
+         B     U29I2060                     GO TO NORMAL EXIT
+* SEQUENCE ERROR EXIT
+U29I2300 MVI   SEQERR,X'F0'                 SET SEQUENCE ERROR SWITCH
+         MVC   PRINTLNE(03),=C'SEQ'         MOVE IN MESSAGE  'SEQ'
+         MVC   LASTSEQ(60),THISSEQ           ESTABLISH NEW SEQ
+         B     U29I1000                     GO PRINT RECORD
+*  DUPLICATE SEQ ERROR
+U29I2350 MVI   SEQERR,X'F0'
+         MVC   PRINTLNE(17),=C'DUPLICATE SEQ ERR'
+         MVC   SORTMESG,=C'DUP SEQUENCE '
+         B     U29I1000
+         EJECT
+****** PROCESS 8 CARD ROUTINE
+* PROCESS 8 CARDS AS READ
+U29I2420 MVC   CONT7OUT,5(4)                 SAVE CONTROL FIELD FOR 7
+*                                            CARD OUT
+         L     6,4(6)                        LOAD 6 WITH TOTAL ADDRESS
+         MVC   PF(3),0(4)                    MOVE IN PFN FOR PRINT
+         MVC   DA(1),3(4)                    MOVE IN DAY FOR PRINT
+         MVC   TR(1),4(4)                    MOVE IN TRANSACTION PRINT
+         CLI   BATCH,X'F0'                   CHECK FOR BATCHING
+         BNE   U29I2530                      NO BATCHING
+         CLC   11(2,4),=C'ZZ'                LOOK FOR 8ZZ CARD
+         BE    U29I3430                      ENTER 8ZZ ROUTINE
+         MVC   BTCHCDE(3),CONTBTCH           MOVE IN BATCH CODE
+U29I2530 CLI   79(4),C'J'                    LOOK FOR CORRECTED CONTROL
+         BNE   U29I2570
+         MVC   MESSAGEP(21),=C'CTL CARD AS CORRECTED'
+         B     U29I2630                      GO DO COUNTER UPDATE
+U29I2570 CLI   79(4),C'-'                    LOOK FOR BAD CONTROL CARD
+         BE    U29I3230                      GO PROCESS ERROR 8 CARD
+         MVC   MESSAGEP(21),=C'CTL CARD ORIG CORRECT'
+         CLI   PREPROC,X'F0'                 CHECK FOR PRELIMINARY BAL
+         BNE   U29I2630
+         MVC   MESSAGEP+9(12),MESSAGEP+8     BLANK ORIG CORRECT MESSAGE
+U29I2630 LA    5,5                           LOAD LOOP LIMITER
+         LA    7,TOTAL1                      LOAD ADDRESS OF PRINT LINE
+         CLI   BATCH,X'F0'                   IS THIS BATCHING
+         BNE   U29I2690                      IF NOT SKIP NEXT INSTRUCTS
+         CLI   PREPROC,X'F0'                 CHECK FOR PRELIMINARY BAL
+         BE    U29I2920                      GO SAVE 8 VALUES IN TABLE
+U29I2690 PACK  U29D1370(7),19(12,4)          PACK CARD FIELD TO WORK
+         CLI   U29D1370+6,X'04'              CHECK FOR BLANK FIELD
+         BNE   U29I2730                      IF NOT BLANK BYPASS NXT
+         MVI   U29D1370+6,X'0F'              SET UNITS POSITION TO ZERO
+U29I2730 AP    35(7,6),U29D1370(7)           ADD WORK TO COUNTER
+         MVC   0(7,7),U29D1370               MOVE FIELD TO PRINT LINE
+         LA    7,14(7)                       BUMP TO NEXT PRINT POS.
+         LA    4,12(4)                       BUMP 4 TO NEXT CARD FIELD
+         LA    6,7(6)                        BUMP 6 TO NEXT COUNTER
+         BCT   5,U29I2690                    IS LOOP COMPLETE
+         PACK  U29D1370(3),INPUT+11(5)       RECORD COUNT
+         CLI   U29D1370+2,X'04'              WAS FIELD BLANK
+         BNE   U29I2830                      IF NOT BLANK BYPASS
+         MVI   U29D1370+2,X'0F'              SET UNITS POS TO ZERO
+U29I2830 AP    38(3,6),U29D1370(3)           UPDATE RCD COUNT*D1 MOD.*
+         MVC   RCDCOUNT(3),U29D1370          MOVE RECORD COUNT TO PRINT
+         AP    COUNT8S,=P'1'                 UPDATE COUNT OF 8 CARDS
+         AP    BCOUNT8,=P'1'                UPDATE FOR 8ZZ CONTROL
+U29I2870 MVI   PRNTCONT,X'41'                SET SNGLE BEFORE
+         BAL   14,U29D1400                   GO EDIT & PRINT LINE
+         AP    COUNT789,=P'1'                UPDATE COUNT 789
+         B     U29I1030
+*   ROUTINE TO SAVE 8 CARDS WHEN BATCH BALANCING
+U29I2920 LA    1,HOLD8KEY                    LOAD REG 1 WITH KEY HOLD
+         LA    6,TOTALS3-35                  LOAD 6 WITH TOTAL SLOTS
+U29I2940 CLC   CONTDAY(4),0(1)               IS BATCH CODE EQUAL
+         BE    U29I3060                      GO UPDATE TOTALS IN 8 ROUT
+         CLI   0(1),X'0'                     IS SLOT BLANK
+         BE    U29I3030                      YES GO INITIALIZE SLOT
+         C     6,=A(TOTALS10-73)             IS LOOP AT END
+         BE    U29I3070                      YES GO DUMP INTO ALL SLOT
+         LA    6,38(6)                       BUMP 6 TO NEXT POSSIBLE
+         LA    1,4(1)                        BUMP 1 TO NEXT KEY
+         B     U29I2940                      GO TRY LOOP AGAIN
+U29I3030 MVI   U29I2830+3,X'23'              MODIFY RECORD COUNT ADD
+         MVC   0(4,1),CONTDAY                MOVE BATCH CODE TO TABLE
+         MVC   35(38,6),TOTALS10+35          INITIALIZE COUNTERS
+U29I3060 B     U29I2690                      RETURN TO 8 UPDATE ROUTINE
+U29I3070 MVC   0(4,1),=C'*DC*'               SET ALL SLOT FLAG
+         B     U29I3060                      RETURN TO 8 UPDATE ROUTINE
+* ROUTIN E TO  PULL 8 CARDS FROM TABLE WHEN PRELIMINARY BATCH PROC
+U29I3100 LA    1,HOLD8KEY                    LOAD REG 1 WITH KEY HOLD
+         LA    6,TOTALS3                     LOAD 6 WITH TOTAL SLOTS
+U29I3120 CLC   LASTCONT+9(4),0(1)            IS THIS SLOT FOR THIS BTCH
+         BE    U29I3190                      GO MOVE TOTALS TO SLOTS
+         C     6,=A(TOTALS10-38)             IS 6 AT END
+         BE    U29J2520                      RETURN TO PRINT TOTALS
+         LA    6,38(6)                       BUMP TO NEXT 8 HOLD AREA
+         LA    1,4(1)                        BUMP TO NEXT KEY SLOT
+         B     U29I3120                      TRY LOOP AGAIN
+U29I3190 MVC   0(4,1),=XL4'0'                CLEAR KEY AREA
+         MVC   TOTALS1+35(35),0(6)           MOVE 8 TOTALS TO TOTALS1
+         MVC   TOTALS1+73(3),35(6)           MOVE RCD COUNT TO TOTALS1
+         B     U29J2520                      RETURN TO PRINT TOTALS
+U29I3230 MVC   MESSAGEP(18),=C'CTL CARD SUBMITTED'    CTL ERR ROUTINE
+         LA    5,5                           LOAD LOOP LIMITER
+         LA    7,TOTAL1                      LOAD PRINT LOCATION
+U29I3260 PACK  U29D1370(7),19(12,4)          PACK CARD FIELD TO WORK
+         CLI   U29D1370+6,X'04'              CHECK FOR BLANK FIELD
+         BNE   U29I3300
+         MVI   U29D1370+6,X'0F'              SET UNITS POSITION TO ZERO
+U29I3300 MVC   0(7,7),U29D1370               MOVE FIELD TO PRINT LINE
+         LA    7,14(7)                       BUMP TO NEXT PRINT POS.
+         LA    4,12(4)                       BUMP 4 TO NEXT CARD FIELD
+         BCT   5,U29I3260                    IS LOOP COMPLETE
+         PACK  U29D1370(3),INPUT+11(5)       RECORD COUNT
+         CLI   U29D1370+2,X'04'              WAS FIELD BLANK
+         BNE   U29I3380                      IF NOT BLANK BYPASS
+         MVI   U29D1370+2,X'0F'              SET UNITS POS TO ZERO
+U29I3380 MVC   RCDCOUNT(3),U29D1370          MOVE RECORD COUNT TO PRINT
+         B     U29I2870                      GO PRINT THE LINE
+         EJECT
+****** PROCESS 8ZZ CARD ROUTINE
+* PROCESS 8ZZ CARD
+U29I3430 MVC   BTCHCDE(3),=C' ZZ'            MOVE ZZ TO PRINT LINE
+         MVC   MESSAGEP(21),=C'CTL CARD ORIG CORRECT'
+         PACK  U29D1370(2),16(3,4)            PACK BATCH COUNT TO WORK
+         CLI   U29D1370+1,X'04'              IS THIS FIELD BLANK
+         BNE   U29I3490
+         MVI   U29D1370+1,X'0F'              SET UNITS POSITION TO ZERO
+U29I3490 MVC   CNTPRD(3),U29D1370            MOVE COUNT TO PRINT LINE
+         AP    BATCHCNT,U29D1370(2)          ADD 8ZZ TOTAL TO BATCH CNT
+         B     U29I2870
+         EJECT
+****** PROCESS 7 CARD ROUTINE
+* PROCESS 7 CARDS
+U29I3550 PACK  U29D1370(2),INPUT+28(3)       PACK MTD CONT TYPE COUNT
+         OI    U29D1370+1,X'08'              SET A BLANK TO VALID ZONE
+         AP    MTD7,U29D1370(2)              ADD TO ACCUM SLOT FOR 7S
+         AP    COUNT789,=P'1'                UPDATE TOTALS  789 CARDS
+         MVC   DAY7,INPUT+3                  SAVE DAY CODE FOR 7 OUT
+         MVC   CONT7OUT,INPUT+5              SAVE CONT FOR 7 OUT
+         B     U29I1030
+****** PROCESS 9 CARD ROUTINE
+* PROCESS 9 CARDS
+U29I3640 CLC   DAY9,INPUT+3                  CHECK THIS DAY AGAINST LST
+U29I3650 BH    U29I3740                      MOD.   IF LESS DONT USE
+         MVC   DAY9,INPUT+3                  USE THIS DAY
+         PACK  U29D1370(2),INPUT+16(3)       PACK PTD COUNT INTO WORK
+         OI    U29D1370+1,X'08'              SET A BLANK TO VALID ZONE
+U29I3690 ZAP   PTD9,U29D1370(2)              CHANGE TO AP IF
+         CLI   SNGLPROC,X'F0'                IF SINGLE PROC USE PTD CC
+         BE    U29I3730                      FOR MTD TOTAL
+         PACK  U29D1370(2),INPUT+28(3)       PACK MTD COUNT INTO WORK
+         OI    U29D1370+1,X'08'              SET ZONE TO PLUS
+U29I3730 ZAP   MTD9,U29D1370(2)              CHANGE TO AP IF
+U29I3740 AP    COUNT789,=P'1'                UPDATE COUNT 789 CARDS
+         MVC   CONT7OUT,INPUT+5              SAVE CONT FOR 7 OUT
+         B     U29I1030
+         EJECT
+****** 1ST LEVEL OF CONTROL BREAK FROM PFN OR BATCH CHANGE
+         SPACE 3
+* 1ST LEVEL CONTROL BREAK SET UP FOR TOAL READ OUTS
+* ALWAYS READ OUT OF TOTAL 1 SLOT
+U29J0160 ST    14,U29J1500                   SAVE LINK
+         CLI   BCHDIVBK,X'F0'                IS THIS DIV BREAK BATCH
+         BE    U29J0240                      GO AROUND BATCH CHECK
+         MVC   BTCHCDE(3),LASTCONT+10         MOVE IN BATCH CODE
+         CLI   BATCH,X'F0'                   IS THIS BATCH PROCESSING
+         BE    U29J2500                      ROLL TOTALS FORWARD
+         CLI   PFNS,X'F0'                    IF PFNS ARE RANDOM
+         BNE   U29J1030                      GO PROCESS  6 SLOTS
+U29J0240 MVC   MESSAGEP(18),=C'TOTAL DAY CONTROLS'
+U29J0250 MVC   PF(3),LASTCONT+6              MOVE IN PROJ FORM
+         LA    6,TOTALS1+35                  REG6 8-CARD TOTALS
+         LA    5,5                           REG5 LOOP CONTROL
+         LA    4,TOTAL1                      REG4 PRINT LINE
+U29J0290 MVC   0(7,4),0(6)                   MOVE IN ACCUM TOTALS
+         LA    4,14(4)                       BUMP TO NEXT PRINT POS.
+         LA    6,7(6)                        BUMP TO NEXT COUNTER
+         BCT   5,U29J0290                    CHECK LOOP CONTROL
+         CLI   WRITERCD,X'F0'                SHOULD RCD COUNT BE USED
+         BE    U29J0360                      DO NOT USE RCD CNTS
+         MVC   RCDCOUNT(3),3(6)              MOVE IN RECORD COUNT
+U29J0360 MVI   PRNTCONT,X'41'                SET UP TO SPACE BEFORE PRT
+         BAL   14,U29D1400                   GO PRINT CONTROL TOTALS
+U29J0380 CLI   BATCH,X'F0'                   IS THIS BATCHING
+         BNE   U29J0460                      IF NOT USE REG.MESSAGE
+         CLI   BCHDIVBK,X'F0'                IS THIS DIV BRK BATCHING
+         BE    U29J0460                      IF SO USE REG. MESSAGE
+         MVC   BTCHCDE(3),LASTCONT+10         MOVE IN BATCH CODE
+         MVC   DA(1),LASTCONT+9              MOVE DAY TO PRINT LINE
+         MVC   MESSAGEP(18),=C'BATCH ACCUM DETAIL'
+         B     U29J0470                      BYPASS REG. MESSAGE
+U29J0460 MVC   MESSAGEP(18),=C'ACCUMULATED DETAIL'
+U29J0470 MVC   PF(3),LASTCONT+6              MOVE IN PFN CODE
+         LA    6,TOTALS1                     SET UP TO READ OUT TOTALS
+         LA    5,5                           LOAD LOOP DELIMITER
+         LA    4,TOTAL1                      SET 4 AT RECEIVE AREA
+U29J0510 MVC   0(7,4),0(6)                   MOVE COUNTER TO PRINT LINE
+         CLI   BCHDIVBK,X'F0'
+         BE    U29J0550                      SKIP UPDATE OF CONTROL RCD
+         AP    CONTHASH,0(7,6)
+U29J0550 LA    4,14(4)                       BUMP TO NXT PRINT FIELD
+         LA    6,7(6)                        BUMP TO NEXT COUNTER
+         BCT   5,U29J0510                    CHECK LOOP DELIMITER
+         CLI   BCHDIVBK,X'F0'
+         BE    U29J0610                      SKIP UPDATE OF CONTROL RCD
+         AP    TOTALDET,35(3,6)
+U29J0610 CLI   WRITERCD,X'F0'                SHOULD RCD COUNT BE USED
+         BE    U29J0640                      IF ON NO RCD COUNT
+         MVC   RCDCOUNT(3),35(6)             MOVE IN RECORD COUNT
+U29J0640 MVI   PRNTCONT,X'01'                SET SINGLE SPACE AFTR PRT
+         BAL   14,U29D1400                  GO PRINT LINE
+         CLI   BCHDIVBK,X'F0'               CHECK FOR DIV BREAK
+         BE    U29J0720                     IF DIV BREAK CALC DIFF
+         CLI   BATCH,X'F0'                    IS THIS BATCHING
+         BNE   U29J0720                       IF NOT CALCULATE DIFF
+         CLI   PREPROC,X'F0'                IS THIS PRE PROCESSING
+         BNE   U29J0960                     IF NOT BYPASS DIFF CALC.
+U29J0720 MVI   DIFFSWCH,X'0'                CLEAR DIFF SWITCH
+         LA    6,TOTALS1                     LOAD 6 WITH TOTAL AREAS
+         LA    4,TOTAL1                      LOAD 4 WITH PRINT AREA
+         LA    5,5                           LOAD 5 WITH LOOP DELIMITER
+U29J0760 SP    35(7,6),0(7,6)                CALCULATE DIFFERENCE FIELD
+         BE    U29J0800                      BRANCH IF NO DIFFERENCE
+         MVI   DIFFSWCH,X'F0'                SET DIFFERENCE FOUND SWCH
+         MVC   0(7,4),35(6)                  MOVE DIFF TO PRINT LINE
+U29J0800 LA    6,7(6)                        BUMP REG. 6 TO NXT COUNTER
+         LA    4,14(4)                       BUMP TO NEXT PRINT POS.
+         BCT   5,U29J0760                    CHECK LOOP DELIMITER
+         CLI   WRITERCD,X'F0'                SHOULD RECORD COUNT PRINT
+         BE    U29J0890                      IF ON NO RCD COUNT
+         SP    38(3,6),35(3,6)               CALC RCD COUNT DIFF
+         BE    U29J0890                      IF NO DIFF SKIP MOVE IN
+         MVI   DIFFSWCH,X'F0'                SET DIFF FOUND SWITCH
+         MVC   RCDCOUNT(3),38(6)             MOVE DIFF TO PRINT LINE
+U29J0890 CLI   DIFFSWCH,X'F0'                WAS THERE ANY DIFFERENCES
+         BNE   U29J0960                      NO DIFFERENCES BYPASS PRNT
+         MVC   PRINTLNE(18),=C'*DC*    DIFFERENCE'
+         MVI   DIFFSWCH,X'00'                CLEAR DIFFSWCH
+         MVI   PRNTCONT,X'01'                SINGLE SPACE AFTER PRINT
+         BAL   14,U29D1400                   GO EDIT & PRINT LINE
+         MVI   DCACTION,X'F0'                SET DIFFERENCE EOJ SWITCH
+U29J0960 LA    5,TOTALS1                     LOAD ADDRESS TO ZERO INTO5
+         BAL   14,U29J2420                   GO ZERO AREA
+         L     14,U29J1500                   LOAD RETURN ADDRESS
+         BR    14                            RETURN
+         EJECT
+****** ROUTINE TO READ OUT COUNTERS WHEN PFNS ARE RANDOM
+* CONTROL BREAK 1ST LEVEL WHEN PFN=R  NO BATCHING
+U29J1030 LA    6,PFNTABLE                    LOAD PFN TABLE ADDRESS
+U29J1040 CLI   0(6),X'0'                     IS POINTER CODE HEX '0'
+         BE    U29J1850                      OUT TO 789 ROUTINE
+         MVC   LASTCONT+6(3),0(6)            MOVE PFN INTO PICK UP SLOT
+         MVC   WRITERCD(1),3(6)              MOVE IN RCD CNT COMP FLAG
+         L     5,8(6)                        LOAD 5 WITH TOTAL COUNTERS
+         MVC   TOTALS1(76),0(5)              MOVE THIS TO SLOT 1
+         STM   5,6,U29J1190                  SAVE REG 5&6 FOR LATER
+         MVC   U29J1500(4),=A(U29J1130)      SET UP RETURN TO THIS ROUT
+         B     U29J0240                      ENTER CONTROL BRK 1ST LVL
+U29J1130 LM    5,6,U29J1190                  RELOAD REG 5&6
+         BAL   14,U29J2420                   ZERO COUNTERS ON REG 5
+         C     6,=A(ENDPFNTB)                HAS LAST SLOT BEEN PROC.
+         BE    U29J1850                      OUT TO 789 ROUTINE
+         LA    6,12(6)                       BUMP TO NEXT TABLE ENTRY
+         B     U29J1040                      GO DO NEXT PFN
+U29J1190 DC    2F'0'                         REG SAVE AREA
+         EJECT
+****** 8ZZ CONTROL BREAK PROCESSING
+* BATCH PROCESSIN SPECIAL HANDLEING OF CONTROL BREAKS
+U29J1230 MVI   INITDET,X'F0'                 ALLOW NEW DETAIL CONTROL
+         MVI   INITDAY,X'F0'                ALLOW NEW DAY CODE
+         CLI   NOZZ,X'F0'                    IS THERE TO BE 8ZZ BAL
+         BE    U29J1470
+         ST    14,U29J1480
+         MVC   MESSAGEP(19),=C'BATCH CONTROL COUNT'
+         MVC   BTCHCDE(3),=C'8ZZ'
+         MVC   RCDCOUNT(3),BATCHCNT          MOVE NO. OF BATCHES
+         MVI   PRNTCONT,X'41'                MOVE IN SNGLE SPC BEFORE
+         BAL   14,U29D1400                   GO PRINT LINE
+         MVC   MESSAGEP(18),=C'ACCUM. BATCH COUNT'
+         MVC   RCDCOUNT(3),BCOUNT8           MOVE IN COUNT FROM 8 CARD
+         MVI   PRNTCONT,X'01'                MOVE IN SNGL SPACE AFTER
+         BAL   14,U29D1400                   GO PRINT LINE
+         SP    BATCHCNT,BCOUNT8              CALC DIFF BETWEEN 8ZZ
+         BE    U29J1440                      NO DIFFERENCE DONT PRINT
+         MVC   PRINTLNE(18),=C'*DC*   DIFFERENCE'
+         MVC   RCDCOUNT(3),BATCHCNT          MOVE DIFF TO PRINT LINE
+         MVI   PRNTCONT,X'01'                SET LINE CONTROL
+         BAL   14,U29D1400                   GO PRINT LINE
+         MVI   DCACTION,X'F0'                SET BAD EOJ MESSAGE
+U29J1440 MVC   BATCHCNT,=PL3'0'              INITIALIZE COUNTERS FOR
+         MVC   BCOUNT8,=PL3'0'               8ZZ TO 8 COMPARISON
+         L     14,U29J1480                   LOAD RETURN ADDRESS
+U29J1470 BR    14                            RETURN
+U29J1480 DC    A(0)                          SAVE LINK REGISTER
+         SPACE 3
+U29J1500 DC    A(0)                          SAVE LINK AREA
+* BATCH CONTROL BREAK ON PFN  PERFORM     8ZZ & SUB TOTALS
+U29J1520 DC    A(0)                          SAVE AREA RETURN ADDRESS
+U29J1530 ST    14,U29J1520                   SAVE LINK ADDRESS
+         B     U29J1660                      GO PURGE 8 CARD TABLE
+U29J1550 BAL   14,U29J1230                   PERFORM 8ZZ BREAK
+         MVC   TOTALS1(76),TOTALS2           MOVE IN ACCUM BATCH TOTALS
+         LA    5,TOTALS2                     LOAD ZERO REQUEST ADDR.
+         BAL   14,U29J2420                   GO ZERO AREA ADDR BY R-5
+         MVI   BCHDIVBK,X'F0'                SET SWITCH TO DO DAY CONT.
+         BAL   14,U29J0160                   GO PERFORM DAY TOTALS
+         MVI   BCHDIVBK,X'00'                CLEAR SWITCH
+         MVI   INITPFN,X'F0'                 SET NEW PFN SWITCH
+         L     14,U29J1520                   SET UP RETURN ADDRESS
+         BR    14                            RETURN
+* ROUTINE TO CLEAR OUT UNUSED 8 CARDS IF PREPROCESSING
+U29J1660 LA    1,HOLD8KEY
+         LA    6,TOTALS3
+U29J1680 CLI   0(1),X'0'                     HAS THIS ENTRY BEEN USED
+         BNE   U29J1750                      NO GO FORCE IT OUT
+         C     6,=A(TOTALS10-38)             IS SEARCH AT END
+         BE    U29J1550                      GO COMPLETE CONTROL BREAK
+         LA    6,38(6)
+         LA    1,4(1)
+         B     U29J1680
+U29J1750 MVC   LASTCONT+9(4),0(1)            FORCE OUT THIS TOTAL
+         BAL   14,U29J0160                   GO PERFORM 1ST LEVEL BREAK
+         B     U29J1660
+         EJECT
+******   DIVISION CONTROL BREAK ROUTINE
+*  DIVISION CONTROL BREAK
+U29J1810 BAL   14,U29J0160                   GO PERFORM 1ST LEVEL BREAK
+         CLI   BATCH,X'F0'                   CHECK FOR BATCHING
+         BNE   U29J1850
+         BAL   14,U29J1530                   GO READ OUT TOTALS
+U29J1850 CLI   SNGLPROC,X'F0'               IS THIS SINGLE PROCESSING
+         BE    U29J1920                     DO NOT ANALYSE 7 CARDS
+         MVC   MESSAGEP(19),=C'PREVIOUS MO-TO-DATE'
+         MVI   TR,C'7'                      MOVE TRN CODE TO PRINT
+         MVC   CNTMTD(2),MTD7               MOVE MTD COUNT TO PRINT
+         MVI   PRNTCONT,X'41'               MOVE SINGLE SPACE BEFORE
+         BAL   14,U29D1400                  GO PRINT LINE
+U29J1920 MVC   MESSAGEP(25),=C'SUBMIT FOR PRD/MO-TO-DATE'
+         MVI   TR,C'9'                      MOVE TRN CODE TO PRINT
+         MVC   DA(1),DAY9                   MOVE DAY CODE TO PRINT
+         MVC   CNTPRD(2),PTD9               MOVE PTD CODE TO PRINT
+         MVC   CNTMTD(2),MTD9               MOVE MTD CODE TO PRINT
+         MVI   PRNTCONT,X'41'               MOVE SINGLE SPACE BEFORE
+         BAL   14,U29D1400                  GO PRINT LINE
+         MVC   MESSAGEP(22),=C'ACCUM FOR PRD/MO-TO-DA'
+         MVI   TR,C'8'                      MOVE TRN CODE TO PRINT
+         MVC   CNTPRD(2),COUNT8S            MOVE TOTAL 8 COUNT TO PRINT
+         AP    MTD7(2),COUNT8S              ADD TO MTD COUNT
+         MVC   CNTMTD(2),MTD7                MOVE UPDATED MTD TO PRINT
+         MVI   PRNTCONT,X'41'                MOVE IN SNGL SPACE BEFORE
+         BAL   14,U29D1400                   GO PRINT LINE
+         CLI   PREPROC,X'F0'                 BYPASS 8&9 DIFF CALC
+         BE    U29J2250                      PRELIMINARY BALANCING
+         SP    PTD9,COUNT8S                  CALC DIFFERENCE PTD CNT
+         BE    U29J2120                      IF ZERO DONT PRINT THIS
+         MVI   DIFFSWCH,X'F0'                SET DIFFERENCE SWITCH
+         MVC   CNTPRD(2),PTD9                MOVE DIFFERENCE TO PRINT
+U29J2120 SP    MTD9,MTD7                     CALC DIFFERENCE MTD CNT
+         BE    U29J2160                      IF ZERO DONT PRINT THIS
+         MVI   DIFFSWCH,X'F0'                SET DIFFERENCE SWITCH
+         MVC   CNTMTD(2),MTD9                MOVE DIFF MTD TO PRINT
+U29J2160 CLI   DIFFSWCH,X'F0'                IS THERE ANY DIFFERENCES
+         BNE   U29J2250                      NO BYPASS PRINT OF DIFF.
+         MVC   PRINTLNE(18),=C'*DC*    DIFFERENCE'
+         MVI   DIFFSWCH,X'00'                CLEAR DIFF SWITCH
+         MVI   PRNTCONT,X'01'                SINGLE SPACE AFTER PRINT
+         MVI   DCACTION,X'F0'                SET BAD EOJ SWITCH
+         BAL   14,U29D1400                   GO PRINT LINE
+         SPACE 3
+* INITIALIZE FOR NEW DIVISION
+U29J2250 CLI   SNGLPROC,X'F0'                SHOULD A 7 CARD GO OUT
+         BNE   U29C1000                      GO WRITE 7 CARD TO TAPE
+U29J2270 MVC   MTD7,=P'000'                  ZERO 7 CARD BUFFERS
+         MVI   DAY9,C' '                     INITIALIZE DAY CONT 9 CARD
+         MVC   PTD9,=P'000'                  ZERO 9 CARD BUFFERS
+         MVC   MTD9,=P'000'                  *
+         MVC   COUNT8S,=P'000'               ZERO COUNT OF 8 CARDS
+         MVI   HDRFLAG,X'F0'                 SET HEADER FORCE SWITCH
+         CLI   EOJ,X'F0'
+         BE    U29K0160
+         MVI   INITDIV,X'F0'                 SET NEW CONTROL SWITCHES
+         MVI   INITDAY,X'F0'                 *
+         MVI   INITDET,X'F0'                 *
+         B     U29I0270
+         EJECT
+****** ROUTINE TO ZERO COUNTERS
+* ZERO BUFFER ROUTINE REG 5 IS ZERO AREA
+U29J2420 LA    7,10                          SET LOOP LIMITER
+U29J2430 MVC   0(7,5),=PL7'0'                ZERO 1 PACKED SLOT
+         LA    5,7(5)                        BUMP TO NEXT
+         BCT   7,U29J2430                    CHECK FOR END OF LOOP
+         MVC   0(6,5),=2PL3'0'               ZERO RCD COUNT SLOTS
+         BR    14                            RETURN
+         SPACE 3
+* ROLL B ATCH TOTALS FORWARD
+U29J2500 CLI   PREPROC,X'F0'
+         BE    U29I3100                      GO PULL 8 TOTALS FROM TBL
+U29J2520 LA    6,TOTALS1                     LOAD 6 WITH ADDR.OF COUNTR
+         LA    5,10                          LOAD LOOP LIMITER
+U29J2540 AP    76(7,6),0(7,6)                ADD TOTAL IN TOTAL1 TO
+         LA    6,7(6)                        SLOTS IN TOTAL2
+         BCT   5,U29J2540                    CHECK LOOP DELIMITER
+         AP    76(3,6),0(3,6)                UPDATE CUM RCD CNT DETAIL
+         AP    79(3,6),3(3,6)                UPDATE CUM RCDCNT 8 CARDS
+         CLI   PREPROC,X'F0'                IS THIS PRELIMINARY PROC
+         BNE   U29J0380                     BYPASS INDIV BATCH BALANCE
+         MVC   DA(1),LASTCONT+9              MOVE DAY TO PRINT LINE
+         MVC   MESSAGEP(20),=C'TOTAL BATCH CONTROLS'
+         B     U29J0250                      GO BACK TO MAIN LINE
+         EJECT
+***  END OF JOB ROUTINE
+EOJLATCH MVI   EOJ,X'F0'               SET EXIT TO EOJ SWITCH
+         B     U29B0290       GO PROCESS LAST RECORD
+* WRITE LAST LINE TO REPORT
+U29K0160 MVC   PRINTLNE+56(25),=C'* * * END OF REPORT * * *'
+         BAL   14,U29D0590             GO WRITE LINE
+         CLI   PRINTRPT,X'F0'          ARE WE GOING DIRECTLY TO PRINTER
+U29K0190 BE    U29K0340                NO REPORT TAPE OUT SKIP CLOSE
+* CLOSE REPORT TAPE
+         BAL   14,U29C0410             WRITE LAST BLOCK
+         CLOSE RPTTPE
+U29K0340 CLI   PARAMERR,X'F0'       IS ENTRY TO EOJ FROM PARAMETER ERR
+         BE    U29K0550
+         CLI   TPEOUT,X'00'
+         BE    U29K0440                BYPASS WRITES TO DATA TAPE
+         CLI   CONTROL,X'F0'           IS CONTROL RECORD TO BE WRITTEN
+         BE    U29E1100                GO WRITE CONTROL RECORD
+U29K0380 EQU   *
+* CLOSE DATA TAPE
+U29K0410 EQU   *
+         BAL   14,U29E0760             GO WRITE TRAILERS
+* END OF JOB TYPE OUTS
+U29K0440 CLI   DCACTION,X'F0'          ARE THERE ANY DC MESSAGES
+         BNE   U29K0470                      U2
+         MVC   EOJMESS2,=C'OUT BAL '
+U29K0470 CLI   DATAERR,X'F0'
+         BNE   U29K0500
+         MVC   EOJMESS2+8(11),=C'DATA ERROR '
+U29K0500 CLI   SEQERR,X'F0'            ARE THERE ANY SEQ ERRORS
+         BNE   U29K0530
+         MVC   EOJMESS2+19(13),SORTMESG
+U29K0530 CLC   EOJMESS2+7(10),=10C'*'        ARE THERE ANY ERRORS
+         BE    U29K0570                      NO, BYPASS ERROR TYPEOUT
+U29K0550 MVC   EOJMESS1(4),=C'BAD '
+         OI    BADEOJSW,X'01'          TURN ON BADEOJSW  IF BAD   EOJ.
+         WTO   MF=(E,EOJMES2L)
+U29K0570 WTO   MF=(E,EOJMES1L)
+         OI    CARDCNT+2,X'0F'               SET ZONE TO CHARACTER
+         UNPK  CARDMSG+5(5),CARDCNT
+         WTO   MF=(E,CARDMSGL)
+U29K0580 CLOSE (PRINT,,PUNCHDCB)
+         L     13,SAV13                GET OLD 13
+         TM    BADEOJSW,X'01'          TEST SW. FOR BAD EOJ.
+         BO    BADEOJ                  IF ALL ONES BR TO BADEOJ
+         LM    14,12,12(13)            LOAD REGS
+         SR    15,15                   TO ZERO REG 15 WHEN GOOD EOJ
+         BR    14
+BADEOJ   LM    14,12,12(13)                LOAD REGS.
+         LA    15,16                   SET CON. CODE TO 16 FOR BAD EOJ
+         BR    14
+SNAPDCB  DCB   DDNAME=SNAP,DSORG=PS,RECFM=VBA,MACRF=W,BLKSIZE=882,     X
+               LRECL=125
+         DS    0F
+EOJMES1L DC    AL2(EOJMES1E-*)
+         DC    AL2(0)
+EOJMESS1 DC    C'GOOD EOJ '
+ENDTYPHD DC    CL12' '
+         DS    0F
+EOJMES1E EQU   *
+CARDMSGL DC    AL2(CARDMSGE-*)
+         DC    AL2(0)
+CARDMSG  DC    C'READ       CARDS'
+CARDMSGE EQU   *
+CARDCNT  DC    P'00000'
+         DS    0F
+EOJMES2L DC    AL2(EOJMES2E-*)
+         DC    AL2(0)
+EOJMESS2 DC    CL8'********'                 OUT BAL SLOT
+         DC    CL11'***********'             DATA ERROR SLOT
+         DC    CL13'*************'           SORT REQUIRED
+EOJMES2E EQU   *
+SORTMESG DC    C'SORT REQUIRED'
+         LTORG
+         EJECT
+* ACCUMULATION CODE SLOTS
+         CNOP  0,4                           ALLIGN CODE AREAS
+CODE1    EQU   *
+CODE2    EQU   *+ENDINT-INTACCUM
+CODE3    EQU   CODE2+ENDINT-INTACCUM
+CODE4    EQU   CODE3+ENDINT-INTACCUM
+CODE5    EQU   CODE4+ENDINT-INTACCUM
+CODE6    EQU   CODE5+ENDINT-INTACCUM
+CODE7    EQU   CODE6+ENDINT-INTACCUM
+CODE8    EQU   CODE7+ENDINT-INTACCUM
+CODE9    EQU   CODE8+ENDINT-INTACCUM
+CODE10   EQU   CODE9+ENDINT-INTACCUM
+         ORG   CODE10+ENDINT-INTACCUM
+*  THIS ROUTINE CONVERTS THE JULIAN DATE TO MM/DD/YY
+CONVT    CSECT                     CONVERT  YYDDD TO MM/DD/YY
+         USING *,15
+         STM   14,12,12(13)        SAVE REGISTERS
+         LM    1,2,0(1)            FETCH PARAMETER ADDRESSES
+         MVC   JULDAT+4(4),0(1)    PUT 4 CHAR DATE IN DBL WORD YYDDDS
+         CVB   5,JULDAT            CONV DATE TO BINARY
+         SR    4,4                 CLEAR R4 FOR DIVIDE
+         D     4,=F'1000'          R3=YY R4=DDD
+         L     6,=F'28'            SET R6 FOR FEB 28
+         LR    3,5                     LOAD YEAR IN R3
+         N     5,=F'3'             EXTRACT TWO LOW ORDER BITS OF YR
+         BC    7,NOTLEAP           BR IF ANY BIT IS ON
+         LA    6,1(6)              INC R6 TO FEB 29
+NOTLEAP  L     5,=F'10000'         LOAD R5 WITH JAN 01/00/00
+         LR    7,5                 LOAD R7 WITH MO INCREMENT
+         L     8,=F'31'            LOAD R8 WITH 31 DAY MO
+         L     9,=F'30'            LOAD R9 WITH 30 DAY MO
+         SR    4,8                 CHECK JAN
+         BC    12,A31              BR TO JAN
+         AR    5,7                 INC TO FEB
+         SR    4,6                 CHECK FEB
+         BC    12,AR6              B.FEB
+         AR    5,7                 INC TO MAR
+         SR    4,8                 CHK MAR
+         BC    12,A31              B.MAR
+         AR    5,7                 INC TO APRIL
+         SR    4,9                 CHK APRIL
+         BC    12,A30              B.APR
+         AR    5,7                 INC TO MAY
+         SR    4,8                 CHK MAY
+         BC    12,A31              B.TO MAY
+         AR    5,7                 INC TO JUNE
+         SR    4,9                 CHECK JUNE
+         BC    12,A30              B.JUNE
+         AR    5,7                 INC TO JULY
+         SR    4,8                 CHECK JUL
+         BC    12,A31              B.JULY
+         AR    5,7                 INC TO AUG
+         SR    4,8                 CHECK AUG
+         BC    12,A31              B.AUG
+         AR    5,7                 INC TO SEP
+         SR    4,9                 CHECK SEP
+         BC    12,A30              B.SEP
+         AR    5,7                 INC TO OCT
+         SR    4,8                 CHECK OCT
+         BC    12,A31              B.OCT
+         AR    5,7                 INC TO NOV
+         SR    4,9                 CHECK NOV
+         BC    12,A30              B.NOV
+         AR    5,7                 INC TO DEC
+MODAYR   LR    11,4
+         M     10,=F'100'          SHIFT DAY LEFT TO 00/DD/00
+         LR    4,11
+         AR    4,5                 PUT IN MONTH MM/DD/00
+         AR    4,3                 PUT IN YEAR MM/DD/YY
+         CVD   4,MMDDYYS           CONVERT BIN DATE TO 6 DIGIT PACK DEC
+         MVC   0(4,2),MMDDYYS+4    RETURN DATE TO CALLING PGM
+         LM    14,12,12(13)        RESTORE THE REGS
+         MVI   12(13),X'FF'        SET RETURN INDICATION
+         BR    14                  RETURN
+A31      AR    4,8                 RESET DAY OF 31 DAY MO
+         B     MODAYR
+A30      AR    4,9                 RESET DAY OF 30 DAY MO
+         B     MODAYR
+AR6      AR    4,6                 RESET DAY OF FEB 28 OR 29
+         B     MODAYR
+JULDAT   DC    D'0'
+MMDDYYS  DC    D'0'
+         LTORG
+         DCBD  DSORG=PS,DEVD=DA
+         END   START

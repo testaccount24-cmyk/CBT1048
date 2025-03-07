@@ -1,0 +1,258 @@
+T581P16  START 0
+         SPACE 2
+***********************************************************************
+*        PROGRAM ID :              T581P16                            *
+*        DATE WRITTEN :            JUNE 1974                          *
+*        LOCATION :                EUROPEAN COMPUTER CENTER           *
+*        AUTHOR :                  J. NOLS                            *
+***********************************************************************
+         SPACE 3
+***********************************************************************
+*                                                                     *
+*              PURPOSE                                                *
+*             =========                                               *
+*                                                                     *
+*         TO CREATE RECORDS DESCRIBING THE SECURITY TAPES             *
+*         IN ORDER TO SUPPLY A PULLING LIST.                          *
+*        DDNAMES :   SYSPRINT - ERROR MESSAGES IF ANY.                *
+*                    SYSUT1   - POINTS TO TAPE FILE WHOSE JFCB        *
+*                               IS TO BE ACCESSED                     *
+*                    SYSUT2   - DATA SET TO WHICH HISTORY RECORDS     *
+*                               ARE WRITTEN.                          *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        REGISTERS EQUATES      /  HOUSEKEEPING                       *
+***********************************************************************
+         SPACE 1
+         PGMIN EQUATES=YES,USING=(R13)  ESTABLISH ADDRESSABILITY
+         SPACE 3
+         PRINT NOGEN
+         EJECT
+***********************************************************************
+*                                                                     *
+*     1) READ JFCB OF SYSUT2, MOVE VOLID AND DSNAME TO WORK AREAS OF  *
+*        ENQ/DEQ MACRO, BEFORE EXECUTE ENQ MACRO (REQUEST EXCLUSIVE   *
+*        CONTROL OF THIS DATA SET ). ALSO BEFORE OPEN OF SYSUT2,      *
+*        MODIFY JFCB IN CORE (DISP=SHR IN DISP=MOD ) AND TELL TO      *
+*        OPEN ROUTINE OF USE JFCB IN CORE (TYPE=J).                   *
+*                                                                     *
+*     2) READ JFCB OF SYSUT1, CHECK IF THE DSNAME OF THIS JFCB        *
+*        START WITH 'OFFSITE.' AND IF IS PART OF A GDG. READ THE      *
+*        CATALOG FOR THIS DSNAME BUT FOR GENERATION (-1) AND          *
+*        FOR EACH VOLSER IN THE JFCB , CREATE AN OUTPUT RECORD        *
+*        ON SYSUT2 WITH VOLSER OF EQUIVALENT TAPE IN (-1) GENERATION. *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+         RDJFCB (SYSUT2)                     READ JFCB SYSUT2 FOR
+         MVC   QNAME,=C'MM'        PREFIX QNAME WITH MM
+         MVC   QNAME+2(6),LJFCBVOL REMAINING PORTION EQUALS VOLID
+         MVC   RNAME,LJFCBDSN      MOVE DSNAME INTO RNAME
+         ENQ   (QNAME,RNAME,E,,SYSTEM)
+         OI    LJFCBID2,B'10000000'          MODIFY DISP=SHR IN
+         XI    LJFCBID2,B'01000000'          DISP=MOD
+         OI    LJFCBMAS,B'10000000'
+         OI    LJFCBMAS,B'10000000' SET ON HIGH BIT OF FIELD JFCBMASK+4
+         SPACE 2
+         RDJFCB (SYSUT1)                READ JFCB FOR SYSUT1
+         CLC   JFCBDSNM(8),=C'OFFSITE.' TEST IF DSNAME OF SYSUT1 START-
+         BNE   ERROR1                   NO - ERROR    / WITH 'OFFSITE.'
+         TIME  ,                        REQUEST IPL DATE AND TIME
+         STM   R0,R1,DECIMAL            STORE PACKED DATE AND TIME
+         UNPK  IPLDATE,DECIMAL+5(3)     UNPACK DATE
+         OI    IPLDATE+4,SIGN           FORCE SIGN TO 'F'
+         UNPK  IPLTIME(7),DECIMAL(4)    UNPACK TIME
+         MVC   DSNAME,JFCBDSNM          MOVE DSNAME TO OUTPUT RECORD
+         MVC   VOLSEQTT,JFCBFLSQ   MOVE VOL SEQ TO OUTPUT RECORD
+         MVC   LOCDSN,JFCBDSNM     MOVE DSNAME FROM JFCB TO WK DSN FOR-
+         LA    R5,LOCDSN+9         ADDRESS LOCDSN+9     / LOCATE MACRO
+         LA    R6,27               ZERO AND ADD 27
+LOOP1    CLC   0(2,R5),=C'.G'      TEST IF GDG NAME START A(R5)
+         BNE   NT1                 NO - PREPARE FOR TEST NEXT POSITION
+         CLC   6(3,R5),=C'V00'     CONFIRME IF GDG NAME START A(R5)
+         BE    NT2                 YES - PREPARE WK DSNAME FOR LOCATE-
+NT1      LA    R5,1(R5)            ADD ONE                   /  MACRO
+         BCT   R6,LOOP1            REPEAT 26 TIMES
+         B     ERROR2              ERROR THIS DS IS NOT A GDG
+NT2      MVC   0(9,R5),=C'(-1)     '    REPLACE GDG NAME BY '(-1)'
+         LOCATE VOLIST             READ VOLUME-LIST BLOCK FOR THIS DS
+         LTR   R15,R15             TEST IF RETURN CODE = 0
+         BZ    NT3                 YES - GO TO NEXT TEST
+         LR    R8,R15              SAVE RETURN CODE
+         B     ERROR3              GO TO ERRORS ROUTINE
+NT3      SR    R5,R5               CLEAR
+         IC    R5,JFCBNVOL         LOAD NO OF SERIAL NUMBER FROM JFCB
+         LA    R6,JFCBVOLS         ADDRESS OF FIRST VOL SER IN JFCB
+         LH    R8,LOCAREA          LOAD NO OF SERIAL NUMBER FROM G(-1)
+         CR    R8,R5               TEST IF NO OF SERIAL NUMBER OF GDG-
+         BNE   ERROR4              NO - ERROR /   SYSUT1 = GEN(-1)
+         MVI   SWEND+1,X'F0'       CHANGE SWITCH
+         CH    R5,FIVE             TEST IF NO OF SERIAL NUMBER > FIVE
+         BNH   NT4                 NO - GO TO NEXT TEST
+         MVI   SWEND+1,X'00'       CHANGE SWITCH
+         LR    R7,R5               YES - SAVE VALUE R5
+         SH    R7,FIVE             SUBTRACT FIVE TO VALUE R7
+         LH    R5,FIVE             LOAD FIVE INTO R5
+NT4      OPEN  (SYSUT2,(OUTPUT)),TYPE=J      OPEN SYSUT2 FILE
+         LA    R9,LOCAREA+6        ADDRESS FIRST VOL SER OF GEN(-1)
+         SR    R10,R10             CLEAR
+LOOP2    NOP   RNB
+         MVC   VOLSERTT,0(R6)      MOVE VOL SER FROM JFCB TO RECOUT
+         MVC   VOLSEREQ,0(R9)      MOVE VOL SER FROM VOLIST TO RECOUT
+         PUT   SYSUT2,RECOUT       WRITE RECOUT TO SYSUT2
+         LA    R6,6(R6)            GET ADDRESS NEXT VOL SER IN JFCB
+         LA    R9,12(R9)           GET ADDRESS NEXT VOL SER IN VOLIST
+         LA    R10,1(R10)          ADD ONE
+         CH    R10,TWENTY          TEST IF VALUE R10 = TWENTY (MAX VOL-
+         BNE   NT5                 NO            / SER IN VOLIST)
+         MVI   LOOP2+1,X'F0'       YES - CHANGE SWITCH
+NT5      BCT   R5,LOOP2            REPEAT
+SWEND    NOP   END                 GO TO END
+SWMT5VOL CH    R7,FIVE             TEST REST OF NO.SER.NUB. > FIVE
+         BH    NT6                 YES
+         LR    R5,R7               NO - LOAD REST INTO R5
+         MVI   SWEND+1,X'F0'       CHANGE SWITCH
+         LA    R6,DUMVOL
+         B     LOOP2
+NT6      SH    R7,FIVE             SUBTRACT FIVE TO VALUE R7
+         LH    R5,FIVE             LOAD FIVE INTO R5
+         LA    R6,DUMVOL
+         B     LOOP2
+RNB      SH    R8,TWENTY           SUBTRACT 20 TO NO.SER.NUB. OF VOLIST
+         BZ    ERROR4              GO TO ERROR4 IF VALUE R8 IS = 0
+         MVC   LOCTTR,LOCAREA+252  SAVE TTR FOR READ NEXT BLOCK
+         MVC   LOCVOL,LOCAREA+259
+         LOCATE NVOLIST            READ NEXT VOLUME-LIST
+         LTR   R15,R15             TEST IF RETURN CODE = 0
+         BZ    NT7                 YES
+         LR    R8,R15              SAVE RETURN CODE
+         B     ERROR3              GO TO ERRORS ROUTINE
+NT7      SR    R10,R10             CLEAR
+         MVI   LOOP2+1,X'00'       CHANGE SWITCH
+         LA    R9,LOCAREA+6        ADR FIRST VOL SER IN NVOLIST
+         B     LOOP2
+         EJECT
+***********************************************************************
+*        ERRORS ROUTINE                                               *
+***********************************************************************
+         SPACE 1
+ERROR1   MVC   PRINTOUT+1(L'MSGE1),MSGE1     MOVE MESSAGE ERROR 1
+         B     OPCA
+ERROR2   MVC   PRINTOUT+1(L'MSGE2),MSGE2     MOVE MESSAGE ERROR 2
+         B     OPCA
+ERROR3   MVC   PRINTOUT+1(L'MSGE3),MSGE3     MOVE MESSAGE ERROR 3
+         B     OPCA
+ERROR4   MVC   PRINTOUT+1(L'MSGE4),MSGE4     MOVE MESSAGE ERROR 4
+OPCA     OPEN  (SYSPRINT,(OUTPUT))      OPEN SYSPRINT FILE
+         PUT   SYSPRINT,PRINTOUT        PRINT ERROR MESSAGES
+         CLOSE (SYSPRINT)               CLOSE SYSPRINT FILE
+         ABEND 581,DUMP                 ABEND U0581
+         SPACE 3
+***********************************************************************
+*        CLOSE FILE AND RELEASE EXCLUSIVE CONTROL OF THE FILE         *
+*        OF SYSUT2.                                                   *
+***********************************************************************
+         SPACE 1
+END      CLOSE (SYSUT2)            CLOSE SYSUT2 FILE
+         DEQ   (QNAME,RNAME,,SYSTEM)
+         PGMOUT ,                  END OF PROGRAM
+         EJECT
+***********************************************************************
+*        DATA CONTROL BLOCKS                                          *
+***********************************************************************
+         SPACE 1
+SYSPRINT DCB   DDNAME=SYSPRINT,                                        C
+               DSORG=PS,                                               C
+               RECFM=FM,                                               C
+               LRECL=133,                                              C
+               BLKSIZE=133,                                            C
+               MACRF=PM
+         SPACE 1
+SYSUT1   DCB   DDNAME=SYSUT1,                                          C
+               MACRF=GM,                                               C
+               DSORG=PS,                                               C
+               RECFM=F,                                                C
+               BLKSIZE=140,                                            C
+               EXLST=STRJFCB
+         SPACE 1
+SYSUT2   DCB   DDNAME=SYSUT2,                                          C
+               DSORG=PS,                                               C
+               RECFM=FB,                                               C
+               LRECL=80,                                               C
+               BLKSIZE=1680,                                           C
+               EXLST=STOJFCB,                                          C
+               MACRF=PM
+         SPACE 3
+***********************************************************************
+*        DEFINITION OUTPUT RECORD (SYSUT2) AND OUTPUT PRINT (SYSPRINT)*
+***********************************************************************
+         SPACE 1
+RECOUT   DS    0CL80
+         DC    C'SEC01'            RECORD ID
+DSNAME   DC    CL44' '             DATA SET NAME
+IPLDATE  DS    CL5                 IPL DATE (YYDDD)
+IPLTIME  DS    CL6                 IPL TIME (HHMMSS)
+VOLSERTT DS    CL6                 VOLSER OF THIS TAPE
+VOLSEQTT DS    CL2                 VOL SEQ NO OF THIS TAPE
+VOLSEREQ DS    CL6                 VOLSER OF EQUIVALENT TAPE IN (-1)GEN
+FILLER   DC    CL6' '              SPACES
+         SPACE 1
+PRINTOUT DC    CL133' '
+         EJECT
+***********************************************************************
+*        JOB FILE CONTROL BLOCK  (SYSUT1)                             *
+***********************************************************************
+         SPACE 1
+         DS    0D
+STRJFCB  DC    X'87'               READ JFCB
+         DC    AL3(INFMJFCB)
+         PRINT GEN
+         IEFJFCBN
+         PRINT NOGEN
+         EJECT
+***********************************************************************
+*        JOB FILE CONTROL BLOCK  (SYSUT2)                             *
+***********************************************************************
+         SPACE 1
+         DS    0D
+STOJFCB  DC    X'87'               READ JFCB
+         DC    AL3(LJFCB)
+LJFCB    DS    CL176
+LJFCBDSN EQU   LJFCB
+LJFCBMAS EQU   LJFCB+76
+LJFCBID2 EQU   LJFCB+87
+LJFCBVOL EQU   LJFCB+118
+         EJECT
+***********************************************************************
+*        WORK AREAS                                                   *
+***********************************************************************
+         SPACE 1
+DECIMAL  DS    D
+         SPACE 1
+VOLIST   CAMLST NAME,LOCDSN,,LOCAREA
+LOCDSN   DS    CL44
+LOCAREA  DS    0D
+         DS    CL265
+         SPACE 1
+NVOLIST  CAMLST BLOCK,LOCTTR,LOCVOL,LOCAREA
+LOCTTR   DS    CL3
+LOCVOL   DS    CL6
+         SPACE 1
+QNAME    DS    CL8
+RNAME    DS    CL44
+         SPACE 3
+***********************************************************************
+*        CONSTANTS , EQUATES AND LITTERAL POOL                        *
+***********************************************************************
+         SPACE 1
+MSGE1    DC    C'DSNAME OF SYSUT1 NOT START WITH ''OFFSITE.'''
+MSGE2    DC    C'DATA SET OF SYSUT1 IS NOT A GDG. '
+MSGE3    DC    C'RETURN CODE OF LOCATE MACRO IS NOT = 0 (SEE DUMP R8)'
+MSGE4    DC    C'NO OF SERIAL NUMBER DS SYSUT1 IS NOT = TO GEN(-1)'
+FIVE     DC    H'5'
+TWENTY   DC    H'20'
+DUMVOL   DC    5CL6' '
+SIGN     EQU   X'F0'
+         END

@@ -1,0 +1,158 @@
+         TITLE 'PERIODIC FILE SAMPLE PROGRAM'
+* THIS PROGRAM COPIES APERIODIC SAMPLE OF AN INPUT FILE ONTO
+* AN OUTPUT FILE.  THE SAMPLING RATE IS ENTERED AS A PARM ON
+* THE EXEC CARD.  IF THE PARM FIELD IS OMITTED A TOTAL FILE
+* COPY IS ASSUMED.  IF NO OUTPUT DCB IS SPECIFIED THE INPUT
+* DCB'S LRECL, BLKSIZE, AND RECFM ARE ASSUMED.  IF THE OUTPUT
+* LRECL EXCEEDS THAT OF THE INPUT THE OUTPUT WILL BE PADDED (RIGHT)
+* WITH HEX ZEROS.  IF THE OUTPUT LRECL IS LESS THAN THE INPUT
+* THE OUTPUT WILL BE TRUNCATED AT THE RIGHT.
+*
+B3303    CSECT
+         ENTRY UT466
+UT466    EQU   *
+         SAVE  (14,12),,*               SAVE REGS IN OLD SA
+         BALR  12,0                     LOAD BASE REG
+         USING *,12                     IDENTIFY BASE REG
+         ST    13,SAVE+4                SAVE R13 IN NEW SA
+         LR    11,13                    HOLD OLD SA PTR
+         LA    13,SAVE                  LOAD NES SA PTR
+         ST    13,8(11)                 SET FORWARD SA CHAIN
+         EJECT
+* TEST FOR, DECODE, AND EDIT THE PARM FIELD
+*
+         L     3,0(1)                   R3 POINTS TO PARM
+         LH    4,0(3)                   GET LENGTH FIELD
+         LTR   4,4                      WAS PARM OMITTED
+         BNZ   HAVEPARM                 NO--BRANCH
+* WILL HAVE SKIP COUNT IN REG 4
+         XC    PLINE,PLINE              CLEAR PRINT LINE
+         MVC   PLINE+1(37),=C'NO INPUT PARAMETER--ASSUME TOTAL COPY'
+         BAL   11,PRINT                 PRINT MESSAGE
+         B     CHKDCB                   CONTINUE AT DCB CHECKING
+HAVEPARM LA    3,2(3)                   POINT TO START OF PARM
+         XR    7,7                      CLEAR FOR ACCUMULATION
+LOOP1    M     6,=F'10'                 MULTIPLY PRIVIOUS FOR POSITION
+         CLI   0(3),C'0'                NUMERIC TEST 1ST HALF
+         BNL   GE0                      IF >= 0 THEN BRANCH
+NOTNUM   XC    PLINE,PLINE              CLEAR PRINT LINE
+         MVC   PLINE+1(30),=C'INPUT PARAMETER IS NOT NUMERIC'
+         BAL   11,PRINT                 PRINT MESSAGE
+ABEND    CLOSE SYSPRINT
+         ABEND 1000,DUMP
+GE0      CLI   0(3),C'9'                NUMERIC TEST SECOND HALF
+         BH    NOTNUM                   IF > 9 THEN NOT NUMERIC
+         NI    0(3),X'0F'               STRIP ZONE
+         MVC   WORK01+1(1),0(3)         MOVE TO HOLF WORD FIELD
+         AH    7,WORK01                 ADD IN
+         LA    3,1(3)                   POINT TO NEXT CHAR
+         BCT   4,LOOP1                  GO BACK IF MORE CHARS
+         LTR   7,7                      TEST FOR PARM= 0
+         BZ    NOSUB                    LEAV SKIP AT 0
+         SH    7,=H'1'                  SET SKIP COUNT
+NOSUB    LR    4,7                      PUT SKIP COUNT IN REG 4
+         EJECT
+* CHECK DCB FOR SYSUT2
+*
+CHKDCB   RDJFCB SYSUT2                  GET JFCB FOR SYSUT2
+JFCBOK   MVC   SYSUT2+37(3),=X'000000'  CLEAR EXIT LIST ADDR
+         MVC   SYSUT2+36(1),JFCB+100    MOVE RECFM
+         MVC   SYSUT2+62(2),JFCB+102    MOVE BLKSIZE
+         MVC   SYSUT2+82(2),JFCB+104    MOVE LRECL
+         EJECT
+* OPEN FILES, CONTINUE SYSUT2 FIXUP, GET STORAGE, CLEAR COUNTERS
+*
+         OPEN  (SYSUT1,(INPUT))         OPEN INPUT FILE
+         CLI   SYSUT2+36,X'00'          DO WE HAVE A RECFM
+         BNE   RECFMOK                  YES--BRANCH
+         MVC   SYSUT2+36(1),SYSUT1+36   USE SYSUT1 RECFM
+RECFMOK  CLC   SYSUT2+62(2),=X'0000'    DO WE HAVE A BLKSIZE
+         BNE   BLKSIZOK                 YES--BRANCH
+         MVC   SYSUT2+62(2),SYSUT1+62   USE SYSUT1 BLKSIZE
+BLKSIZOK CLC   SYSUT2+82(2),=X'0000'    DO WE HAVE A LRECL
+         BNE   LRECLOK                  YES--BRANCH
+         MVC   SYSUT2+82(2),SYSUT1+82   USE SYSUT2 LRECL
+LRECLOK  OPEN  (SYSUT2,(OUTPUT))        OPEN OUTPUT FILE
+         CLC   SYSUT2+82(2),SYSUT1+82   NEED LARGEST LRECL
+         BH    BIG2                     SYSUT2 LARGER--BRANCH
+         LH    0,SYSUT1+82              USE SYSUT1 SIZE
+         B     GETMAIN                  BRANCH TO ACQUIRE STORAGE
+BIG2     LH    0,SYSUT2+82              USE SYSUT2 SIZE
+GETMAIN  LR    5,0                      HOLD LENGTH OF STOARGE IN R5
+         GETMAIN R,LV=(0)               GET STORAGE
+         LR    3,1                      ADDR OF STORAGE TO REG 3
+         LR    6,3                      ADDR OF STOARGE TO REG 6
+         AR    6,5                      ENDING ADDR IN REG 6
+         S     6,=F'1'                  ACTUAL ENDING ADDR
+         LD    0,=D'0'                  FLOAT REG = LOW VALUES
+CLEAR    STD   0,0(3)                   CLEAR 8 BYTES
+         LA    3,8(3)                   INCREMENT STORAGE PTR
+         CLR   3,6                      TEST FOR END OF STORAGE
+         BNH   CLEAR                    NOT END CONTINUE CLEARING
+         LR    3,1                      ADDR OF STORAGE TO REG 3
+         ZAP   RIN,=PL2'0'              CLEAR RECORDS IN COUNTER
+         ZAP   ROUT,=PL2'0'             CLEAR RECORDS OUT COUNTER
+         EJECT
+* COPY FILE
+*
+LOOP2    LR    6,4                      PUT SKIP COUNT IN R6
+LOOP3    LTR   6,6                      IS SKIP FINISHED
+         BZ    COPY                     YES BRANCH TO COPY A RECORD
+         GET   SYSUT1,(3)               READ A RECORD
+         AP    RIN,=PL2'1'              INCREMENT RECORDS IN COUNTER
+         S     6,=F'1'                  DECREMENT SKIP COUNT
+         B     LOOP3                    TEST FOR CONTINUE SKIP
+COPY     GET SYSUT1,(3)                 READ A RECORD
+         AP    RIN,=PL2'1'              INCREMENT RECORDS IN COUNTER
+         PUT   SYSUT2,(3)               WRITE A RECORD
+         AP    ROUT,=PL2'1'             INCREMENT RECORDS OUT COUNTER
+         B     LOOP2                    CONTINUE SAMPLING
+         EJECT
+* END OF INPUT HAS BEEN FOUND.  PRINT COUNTS, CLOSE FILES, RETURN.
+*
+ENDJOB   UNPK  PIN,RIN                  UNPACK RECORDS IN COUNTER
+         UNPK  POUT,ROUT                UNPACK RECORDS OUT COUNTER
+         XC    PLINE,PLINE              CLEAR PRINT LIEN
+         MVC   PLINE+1(24),MSG1         PUT MESSAGE IN PRINT LINE
+         MVZ   PLINE+24(1),PLINE+23     FIX LOW DIGIT
+         BAL   11,PRINT                 PRINT MESSAGE
+         MVC   PLINE+1(24),MSG2         PUT MESSAGE IN PRINT LINE
+         MVZ   PLINE+24(1),PLINE+23     FIX LOW DIGIT
+         BAL   11,PRINT                 PRINT MESSAGE
+         CLOSE (SYSPRINT,,SYSUT1,,SYSUT2) CLOSE FILES
+         L     13,SAVE+4                RESTORE REG 13
+         RETURN (14,12),RC=0            RETURN
+         EJECT
+* SUBROUTINE TO OPEN SYSPRINT AND PRINT MESSAGES TO USER
+*
+PRINT    NOP   AFOPEN                   AFTER 1ST TIME DON' OPEN
+         OI    PRINT+1,X'F0'            SET BYPASS BRANCH
+         OPEN  (SYSPRINT,(OUTPUT))      OPEN PRINT FILE
+AFOPEN   PUT   SYSPRINT,PLINE           PRINT A LINE
+         BR    11                       RETURN
+         EJECT
+* CONSTANTS AND WORKING STORAGE SECTION.
+*
+SAVE     DC    18F'0'                   OS SAVE AREA
+PLINE    DS    CL121                    PRINT LINE
+WORK01   DC    H'0'                     WORK FIELD
+EXLIST   DS    0F
+         DC    XL1'87'
+         DC    AL3(JFCB)
+JFCB     DS    CL176
+RIN      DS    D                        COUNTER OF RECORDS READ
+ROUT     DS    D                        COUNTER OF RECORDS WRITTEN
+MSG1     DS    0CL24
+         DC    C'RECORDS READ    '
+PIN      DS    CL8
+MSG2     DS    0CL24
+         DC    C'RECORDS WRITTEN '
+POUT     DS    CL8
+         EJECT
+* FILE DCB SECTION
+*
+SYSPRINT DCB   DDNAME=SYSPRINT,BLKSIZE=121,DSORG=PS,LRECL=121,         *
+               MACRF=(PM),RECFM=FA
+SYSUT1   DCB   DDNAME=SYSUT1,DSORG=PS,MACRF=(GM),EODAD=ENDJOB
+SYSUT2   DCB   DDNAME=SYSUT2,DSORG=PS,MACRF=(PM),EXLST=EXLIST
+         END   B3303

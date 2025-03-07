@@ -1,0 +1,176 @@
+ T116P02: PROC (PARAM) OPTIONS(MAIN);                                      00010
+ /*                                                                        00020
+         READ THE FORMATTED CATALOGUE RECORDS AND SELECT ALL ENTRIES       00030
+          CONTAINING 'LIB' ON THE ASSUMPTION THAT IT DESCRIBES A           00040
+          LIBRARY.  MATCH THESE RECORDS WITH SYS2.TABLIB(TABLE02),         00050
+          AND ADD OWNER, REVALUATION REQUIREMENT, AND ACTION FLAG.         00060
+          IF SUPPRESS FLAG IS ON THEN IGNORE ENTRY UNLESS PARM=ALL         00070
+          WAS SPECIFIED.  PRINT REVALUATION LIBRARY CHECKLIST.             00080
+                                                                     */    00090
+     DCL  INPUT  FILE RECORD SEQUENTIAL, /* REFORMATTED CATALOGUE    */    00100
+          TABLE  FILE RECORD SEQUENTIAL, /* LIBRARY ACTION TABLE     */    00110
+          REPORT FILE RECORD SEQUENTIAL  /* REVALUATION CHECKLIST    */    00120
+                 ENV(F(133,133) CTLASA CONSECUTIVE);                       00130
+0    DCL  1 C_INREC,               /* CATALOGUE RECORD               */    00140
+          3 C_FIL1 CHAR(6),        /*                                */    00150
+          3 C_DSN  CHAR(44),       /* DSNAME                         */    00160
+          3 C_FIL2 CHAR(5),        /*                                */    00170
+          3 C_VOLSER CHAR(6),      /* VOLUME SERIAL NUMBER           */    00180
+          3 C_FIL3 CHAR(39);                                               00190
+0    DCL  1 T_INREC,               /* TABLE RECORD                   */    00200
+          3 T_ID   CHAR(7),        /* RECORD IDENTIFIER ('TABLE02')  */    00210
+          3 T_DSN  CHAR(33),       /* DSNAME                         */    00220
+          3 T_MSG  CHAR(24),       /* MESSAGE / DESCRIPTION          */    00230
+          3 T_FLAG CHAR(1),        /* SUPPRESSION FLAG               */    00240
+          3 T_AUTH CHAR(3),        /* AUTHORISATION / OWNER          */    00250
+          3 T_REQD CHAR(1),        /* REQUIREMENT: Y / N             */    00260
+          3 T_ACTN CHAR(1),        /* ACTION= N(NO) / *(AUTOMATIC)   */    00270
+          3 T_FIL1 CHAR(10);       /*                                */    00280
+0    DCL  1 L_AREA,                /* LINE AREA                      */    00290
+          3 L_SPCE CHAR(1)  INIT(' '),                                     00300
+          3 L_DSN  CHAR(33),       /* LIBRARY NAME                   */    00310
+          3 L_FIL1 CHAR(2)  INIT(' '),                                     00320
+          3 L_MSG  CHAR(24),       /* MESSAGE / DESCRIPTION          */    00330
+          3 L_FIL2 CHAR(2)  INIT(' '),                                     00340
+          3 L_VOL  CHAR(6),        /* VOLUME SERIAL NUMBER           */    00350
+          3 L_FIL3 CHAR(4)  INIT(' '),                                     00360
+          3 L_REQD CHAR(1),        /* REQUIREMENT:  Y / N            */    00370
+          3 L_FIL4 CHAR(5)  INIT(' '),                                     00380
+          3 L_AUTH CHAR(3),        /* AUTHORISATION / OWNER          */    00390
+          3 L_FIL5 CHAR(6)  INIT(' '),                                     00400
+          3 L_ACTN CHAR(1),        /* ACTION:  (NO) / *(AUTOMATIC)   */    00410
+          3 L_FIL6 CHAR(45) INIT(' ');                                     00420
+1    DCL  1 HEAD_1,                /* 1ST HEADING LINE               */    00430
+          3 HD1_FIL1 CHAR(30) INIT('1'),                                   00440
+          3 HD1_FIL2 CHAR(54) INIT('PRODUCTION  LIBRARY  CHECKLIST'),      00450
+          3 HD1_FIL3 CHAR(5)  INIT('PAGE'),                                00460
+          3 HD1_PAGE PIC'99',                                              00470
+          3 HD1_FIL4 CHAR(42) INIT(' '),                                   00480
+0         1 HEAD_2,                                                        00490
+          3 HD2_FIL1 CHAR(30) INIT(' '),                                   00500
+          3 HD2_FIL2 CHAR(103) INIT('FOR  REVALUATION / DEVALUATION'),     00510
+0         1 HEAD_3,                                                        00520
+          3 HD3_FIL1 CHAR(133) INIT('0*---------- LIBRARY -----------*     00530
+  *------ MESSAGE -------*  VOLUME   REQD   AUTH   ACTION'),               00540
+0         1 HEAD_4,                                                        00550
+          3 HD4_FIL1 CHAR(133) INIT(' ');                                  00560
+0    DCL  1 MESSAGES,                                                      00570
+          3 MSG_CONTRLIB CHAR(24) INIT('CONTROL CARD LIBRARY    '),        00580
+          3 MSG_TABLIB   CHAR(24) INIT('TABLE LIBRARY           '),        00590
+          3 MSG_TESTLIB  CHAR(24) INIT('TESTING LIBRARY         '),        00600
+          3 MSG_MACLIB   CHAR(24) INIT('ASSEMBLER MACRO LIBRARY '),        00610
+          3 MSG_PROCLIB  CHAR(24) INIT('PROCEDURE LIBRARY       ');        00620
+0    DCL  ERRMSG1 CHAR(133) INIT('- ENTRY IN CATALOGUE HAD NO MATCHING T   00630
+ ABLE ENTRY');                                                             00640
+     DCL  ERRMSG2 CHAR(133) INIT('  UPDATE SYS2.TABLIB(TABLE02) AND RERU   00650
+ N');                                                                      00660
+     DCL  UNKNOWN CHAR(24) INIT('*** UNKNOWN  LIBRARY ***');               00670
+     DCL PARAM CHAR(100) VARYING;  /* PARM STATEMENT ('ALL' / '')    */    00680
+     DCL PCNT FIXED DEC(3,0) INIT(0); /* PAGE COUNT                  */    00690
+     DCL ERRSW BIT(1) INIT('0');   /* SET ON IF UNMATCHED ENTRY      */    00700
+     DCL IHEDUMP ENTRY(BINARY FIXED(31,0)); /* ABEND LINKAGE         */    00710
+1/*      INITIALISATION                                              */    00720
+0        OPEN FILE(INPUT) INPUT;   /* OPEN FORMATTED CATALOGUE       */    00730
+         ON ENDFILE(INPUT) GO TO END; /* TERMINATE WHEN CATALOGUE EOD*/    00740
+         OPEN FILE(TABLE) INPUT;   /* OPEN TABLE OF DESCRIPTIONS     */    00750
+         ON ENDFILE(TABLE) BEGIN;  /* WHEN TABLE EXHAUSTED ....      */    00760
+               T_DSN = '99999';    /* .... SET TO EBCDIC HIGH VALUES */    00770
+         END;                      /*                                */    00780
+0/*      ESTABLISH HEADING ROUTINE                                   */    00790
+         ON ENDPAGE(REPORT) BEGIN; /* WHEN END-OF-PAGE IS REACHED... */    00800
+               J2 = 0;             /* ZEROISE LINE COUNT             */    00810
+               PCNT = PCNT + 1;    /* INCREMENT PAGE COUNT           */    00820
+               HD1_PAGE = PCNT;    /* SET PAGE COUNT IN HEADING LINE */    00830
+               WRITE FILE(REPORT) FROM(HEAD_1); /* 1ST HEADING LINE  */    00840
+               WRITE FILE(REPORT) FROM(HEAD_2); /* 2ND HEADING LINE  */    00850
+               WRITE FILE(REPORT) FROM(HEAD_3); /* 3RD HEADING LINE  */    00860
+               WRITE FILE(REPORT) FROM(HEAD_4); /* BLANK LINE FOR SPC*/    00870
+         END;                      /* END OF HEADING ROUTINE         */    00880
+         OPEN FILE(REPORT) PAGESIZE(55) OUTPUT; /* OPEN REPORT       */    00890
+         SIGNAL ENDPAGE(REPORT);   /* WRITE REPORT HEADINGS          */    00900
+         READ FILE(TABLE) INTO(T_INREC); /* READ 1ST TABLE ENTRY     */    00910
+         J1 = INDEX(T_DSN,'. ');   /* DETERMINE IF REC IS A ROOT     */    00920
+1/*      MAIN-LINE LOGIC                                             */    00930
+-READC:  READ FILE(INPUT) INTO(C_INREC); /* READ CATALOGUE ENTRY     */    00940
+         I = INDEX(C_DSN,'LIB');   /* DETERMINE OFFSET OF 'LIB'      */    00950
+         IF I = 0                  /* DOES ENTRY CONTAIN 'LIB'       */    00960
+         THEN GO TO READC;         /* GO READ NEXT RECORD IF NOT     */    00970
+0        I = INDEX(C_DSN,'. ');    /* DETERMINE OFFSET OF '. '       */    00980
+         IF I ^= 0                 /* DOES DSN END WITH PERIOD       */    00990
+         THEN GO TO READC;         /* INDEX LEVEL IF YES SO IGNORE   */    01000
+-/*      DETECT & PROCESS INELIGIBLE LIBRARIES                       */    01010
+0        L_ACTN = '-';             /* SHOW NO REVALUATION            */    01020
+         L_AUTH = 'DAM';           /* GIVE MOORCROFT THE BLAME       */    01030
+         L_REQD = 'N';             /* SPECIFY NOT REQUIRED           */    01040
+         L_VOL  = C_VOLSER;        /* SET VOLUME FROM CATALOGUE      */    01050
+         L_DSN  = C_DSN;           /* SET LIBRARY NAME FROM CATALOG  */    01060
+0        L_MSG  = MSG_CONTRLIB;    /* ASSUME IT IS A CONTROL CARD LIB*/    01070
+         IF INDEX(C_DSN,'CONTRLIB') ^= 0 /* TEST FOR CONTROL CARD LIB*/    01080
+         THEN GO TO WRITES;              /* GO WRITE LINE IF YES           01090
+         L_MSG = MSG_TABLIB;             /* ASSUME TABLE LIBRARY     */    01100
+         IF INDEX(C_DSN,'.TABLIB ') ^= 0 /* TEST IF TABLE LIBRARY    */    01110
+         THEN GO TO WRITES;              /* GO WRITE LINE IF YES     */    01120
+         L_MSG = MSG_TESTLIB;            /* ASSUME TEST LIBRARY      */    01130
+         IF INDEX(C_DSN,'.TESTLIB') ^= 0 /* TEST IF TEST LIBRARY     */    01140
+         THEN GO TO WRITES;              /* GO WRITE LINE IF TESTLIB */    01150
+         L_MSG = MSG_MACLIB;             /* ASSUME MACRO LIBRARY     */    01160
+         IF INDEX(C_DSN,'.MACLIB ') ^= 0 /* TEST IF MACRO LIBRARY    */    01170
+         THEN GO TO WRITES;              /* GO WRITE LINE IF YES     */    01180
+         L_MSG = MSG_PROCLIB;            /* ASSUME PROCEDURE LIBRARY */    01190
+         IF INDEX(C_DSN,'.PROCLIB') ^= 0 /* TEST IF PROCLIB          */    01200
+         THEN GO TO WRITES;              /* GO WRITE LINE IF YES     */    01210
+-/*      ASSUME UNKNOWN LIBRARY                                      */    01220
+0        L_ACTN = ' ';             /* BLANK OUT ACTION               */    01230
+         L_AUTH = ' ';             /* BLANK OUT OWNER                */    01240
+         L_REQD = ' ';             /* BLANK OUT REQUIREMENT          */    01250
+         L_MSG  = UNKNOWN;         /* SET UP ERROR MESSAGE           */    01260
+1/*      MATCH CATALOGUE ENTRY AGAINST TABLE                         */    01270
+0MATCH0: IF J1 = 0                 /* DOES TABLE DEFINE ROOT (. )    */    01280
+         THEN GO TO MATCH1;        /* BRANCH IF NOT                  */    01290
+         IF SUBSTR(C_DSN,1,J1) = SUBSTR(T_DSN,1,J1)                        01300
+         THEN GO TO MERGE;         /* GO PROCESS F ROOTS THE SAME    */    01310
+         IF SUBSTR(C_DSN,1,J1) < SUBSTR(T_DSN,1,J1)                        01320
+         THEN DO;                  /* IF TABLE ROOT > CATALOGUE      */    01330
+               ERRSW = '1'B;       /* ... SET ERROR SWITCH           */    01340
+               GO TO WRITE;        /* ... GO WRITE LINE              */    01350
+         END;                      /* ... END OF ROUTINE             */    01360
+         GO TO MATCH3;             /* GO READ NEXT TABLE ENTRY       */    01370
+0MATCH1: IF C_DSN ^= T_DSN         /* DOES TABLE MATCH CATALOGUE     */    01380
+         THEN GO TO MATCH2;        /* BRANCH IF NOT                  */    01390
+0MERGE:  L_ACTN = T_ACTN;          /* SET ACTION                     */    01400
+         L_AUTH = T_AUTH;          /* SET OWNER                      */    01410
+         L_REQD = T_REQD;          /* SET REQUIREMENT                */    01420
+         L_MSG  = T_MSG;           /* SET COMMENTS / DESCRIPTION     */    01430
+         IF T_FLAG = 'S'           /* IS SUPPRESS FLAG ON            */    01440
+         THEN GO TO WRITES;        /* IF YES GO TEST FOR PARM=ALL    */    01450
+         ELSE GO TO WRITE;         /* GO WRITE LINE                  */    01460
+0MATCH2: IF T_DSN > C_DSN          /* IF TABLE > CATALOGUE ...       */    01470
+         THEN DO;                  /* ... THEN ...                   */    01480
+               ERRSW = '1'B;       /* ... SET ERROR FLAG             */    01490
+               GO TO WRITE;        /* ... GO WRITE LINE              */    01500
+         END;                      /* ... END OF ROUTINE             */    01510
+ MATCH3: READ FILE(TABLE) INTO(T_INREC); /* READ TABLE ENTRY         */    01520
+         J1 = INDEX(T_DSN,'. ');   /* DETERMINE IF TABLE DEFINES ROOT*/    01530
+         GO TO MATCH0;             /* LOOP BACK TO COMPARE WITH CAT  */    01540
+1/*      OUTPUT ROUTINES                                             */    01550
+-/*      DETERMINE IF PARM=ALL SPECIFIED                             */    01560
+-WRITES: IF PARAM = 'ALL'          /* ARE ALL CATALOG LIBS TO BE LSTD*/    01570
+         THEN GO TO WRITE;         /* GO WRITE LINE IF YES           */    01580
+         GO TO READC;              /* GO GET NEXT RECORD IF NOT      */    01590
+-/*      WRITE DETAIL LINE OF REPORT                                 */    01600
+0WRITE:  WRITE FILE(REPORT) FROM(L_AREA); /* WRITE DETAIL LINE       */    01610
+         J2 = J2 + 1;              /* INCREMENT LINE COUNT           */    01620
+         IF J2 > 55 SIGNAL ENDPAGE(REPORT); /* PRINT HEADINGS IF EOP */    01630
+         GO TO READC;              /* GO GET NEXT CATALOG RECORD     */    01640
+-/*      TERMINATION ROUTINE                                         */    01650
+-END:    CLOSE FILE(INPUT);        /* CLOSE INPUT                    */    01660
+         CLOSE FILE(TABLE);        /* CLOSE TABLE                    */    01670
+         IF ERRSW                  /* IF UNMATCHED LIBRARY WAS FOUND */    01680
+         THEN DO;                  /* ... THEN ...                   */    01690
+               WRITE FILE(REPORT) FROM(ERRMSG1); /* WRITE 1ST ERROR  */    01700
+               WRITE FILE(REPORT) FROM(ERRMSG2); /* WRITE 2ND ERROR  */    01710
+               WRITE FILE(REPORT) FROM(HEAD_4);  /* BLANK LINE       */    01720
+               CALL IHEDUMP(16);                 /* ABEND WITH U016  */    01730
+         END;                      /* END OF ERROR ROUTINE           */    01740
+         CLOSE FILE(REPORT);       /* CLOSE REPORT                   */    01750
+         END;                      /* END OF PROGRAM                 */    01760

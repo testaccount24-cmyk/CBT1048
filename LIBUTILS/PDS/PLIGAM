@@ -1,0 +1,302 @@
+*
+*
+*        PGMID:     'PLIGAM'
+*        AUTHOR:    E.M. DUPRE
+*
+*        DATE:      07-18-72
+*
+*        REMARKS:   PLIGAM- AN ASSEMBLER UTILITY FOR INTERFACING
+*                   NON-PL/I PROGRAMS OR ROUTINES WITH PL/I PROGRAMS.
+*
+*                   THE PURPOSE OF THIS UTILITY IS TO RESOLVE
+*                   DIFFERENCES BETWEEN PL/I ARGUMENT PASSING AND THAT
+*                   OF ASSEMBLER OR COBOL AND TO ESTABLISH THE
+*                   ENVIRONMENT OF THE LANGUAGE TO WHICH PL/I IS TO
+*                   GIVE CONTROL. THE MAIN DIFFERENCE BETWEEN PL/I
+*                   ARGUMENT PASSING AND THAT OF OTHER LANGUAGES IS
+*                   THAT THE ADDRESSES IN THE LIST ADDRESSED BY GENERAL
+*                   REGISTER 1 DO NOT NECESSARILY POINT TO THE DATA
+*                   ITEMS THAT EACH REPRESENT. THE LIST PASSED BY THE
+*                   PL/I MODULE IS THE SAME AS THAT OF OTHER LANGUAGES
+*                   ONLY FOR ARITHMETIC ELEMENT DATA ITEMS. IN ALL
+*                   OTHER CASES, THE ADDRESS IN THE LIST POINTS TO A
+*                   DOPE VECTOR. *** PLIGAM, HOWEVER, IS WRITTEN ONLY
+*                   TO RECOGNIZE EACH ADDRESS IN THE PL/I PROGRAM
+*                   PARAMETER LIST AS A DOPE VECTOR ***. PLIGAM WILL
+*                   CREATE A NEW PARAMETER LIST FOR THE CALLED NON-PL/I
+*                   PROGRAM AND WILL PLACE IN GENERAL REGISTER 1 THE
+*                   ADDRESS OF THE FIRST ADDRESS CONSTANT IN PLIGAM'S
+*                   PARAMETER LIST. PLIGAM WILL SAVE THE PL/I PROGRAM'S
+*                   ENVIRONMENT AND WILL ESTABLISH THE ENVIRONMENT OF
+*                   THE LANGUAGE TO WHICH PLIGAM IS TO GIVE CONTROL.
+*                   ALL INVOCATIONS OF NON-PL/I PROGRAMS ARE INTERFACED
+*                   BY PLIGAM. PLIGAM IS DESIGNED TO HANDLE A MAXIMUM
+*                   OF TWENTY (20) ARGUMENTS AND ALLOW A MAXIMUM OF
+*                   FIVE (5) NON-PL/I PROGRAMS IN MAIN STORAGE AT ONCE.
+*
+*        FORMAT:    CALL PLIGAM(ENTRYNME,OPCODE,ARG1,...ARG20);
+*
+*                   ENTRYNME--THE DATA NAME OF THE FIELD CONTAINING
+*                             THE ENTRY NAME OF THE MODULE TO WHICH
+*                             CONTROL IS TO BE PASSED OR THE NAME OF
+*                             THE MODULE TO BE DELETED FROM MAIN
+*                             THE MODULE TO BE DELETED FROM MAIN
+*                             STORAGE.
+*
+*                   OPCODE----THE DATA NAME OF THE FIELD CONTAINING
+*                             THE OPERATION DESIRED.
+*
+*                        'PAS'-----PASS CONTROL TO THE MODULE WHOSE
+*                                  ENTRY POINT NAME CORRESPONDS TO THE
+*                                  NAME WITHIN ENTRYNME.
+*
+*                        'DEL'-----DELETE THE MODULE WHOSE ENTRY POINT
+*                                  NAME CORRESPONDS TO THE NAME WITHIN
+*                                  ENTRYNME.
+*
+*                        ARG1,...ARG20--THE PARAMETERS TO BE PASSED
+*                                       TO THE CALLED MODULE.
+*
+PLIGAMO  CSECT                     *                              *
+PLIGAM   EQU   *                       $                        $
+         ENTRY PLIGAM                  *ESTABLISH PLIGAM ENTRY*
+         BC    R15,12(R15)             *POINT AND ESTABLISH   *
+         DC    AL1(7)                  *ADDRESSABILITY        *
+         DC    C'PLIGAMO'            *                          *
+         USING PLIGAM,15           *                             *
+         STM   R14,R11,12(R13)
+*
+*                   TO INCORPORATE A NON-PL/I ROUTINE INTO A PL/I
+*                   PROGRAM,A DYNAMIC STORAGE AREA (DSA) MUST BE
+*                   OBTAINED, PROPER FLAGS WITHIN THE DSA MUST BE
+*                   SET, AND A PSEUDO-REGISTER FOR THE ROUTINE MUST
+*                   BE PROVIDED. THE DSA FOR PLIGAM MUST BE STORED
+*                   IN THE PSEUDO-REGISTER BY PLIGAM. THE ROUTINE
+*                   NAME (I.E. CSECT NAME) SHOULD BE SEVEN CHARACTERS
+*                   LONG, IN ACCORDANCE WITH THE NAMING CONVENTIONS
+*                   FOR PSEUDO-REGISTERS. THE FOLLOWING CODE WILL
+*                   OBTAIN THE DSA FOR PLIGAM.
+*
+         L     R15,=V(IHESADA)     LOAD R15 WITH PL/I GET DSA MODULE
+         LA    R0,100              PLACE DSA MINIMUM LENGTH IN R0
+         BALR  R14,R15             GET NEW DSA AND CHAIN TO PREVIOUS
+         MVI   0(R13),X'80'        DSA'S; X'80' USED BY IHESAFA IN
+*                                  RETURNING CONTROL BACK TO PL/I
+*                                  PROGRAM
+*
+*                   ON RETURN FROM IHESADA (GET DSA MODULE), GENERAL
+*                   REGISTER 13 WILL CONTAIN THE ADDRESS OF PLIGAM'S
+*                   DSA. THE REASON FOR USING IHESADA IS TO CHAIN THE
+*                   NEW DSA TO THE OTHER DSA'S AND THE PSEUDO-REGISTER
+*                   VECTOR (PRV) IN THE STANDARD PL/I WAY. THE FLAG
+*                   BYTE (X'80) WILL BE USED BY IHESAFA IN RETURNING
+*                   CONTROL.
+*
+*                   TO REQUEST A PSEUDO-REGISTER FOR PLIGAM, APPEND
+*                   A 'B' TO THE CSECT NAME AS AN EIGHTH CHARACTER
+*                   AND USE THE RESULT AS THE LABEL OF A DEFINE
+*                   EXTERNAL DUMMY SECTION (DXD).
+*
+PLIGAMOB DXD   A
+*
+*                   STORE THE DSA FOR PLIGAM IN THE PSEUDO-REGISTER R12
+*
+         ST    R13,0(R12)
+*
+*                   SET PLIGAM'S LOCATION COUNTER BACK BY 2
+*
+         ORG   *-2
+*
+*                   RESERVE STORAGE FOR THE OFFSET OF THE EXTERNAL
+*                   DUMMY SECTION (PLIGAMOB)
+*
+         DC    QL2(PLIGAMOB)
+         DROP  R15       DROR REGISTER 15 AS A BASE REGISTER
+         BALR  R11,0     ESTABLISH A NEW BASE REGISTER
+         USING *,R11
+*
+         ST    R1,SVERG1      SAVE PL/I'S PARAMETER LIST POINTER
+*
+*                   THE FOLLOWING CODE WILL CREATE A NEW PARAMETER
+*                   LIST FOR THE ARGUMENTS PASSED BY A PL/I PROGRAM.
+*                   REFER TO 'REMARKS' FOR AN EXPLANATION OF THE
+*                   PARAMETER FORMAT EXPECTED.
+*
+         L     R2,0(R1)  GET DOPE VECTOR ADDRESS FOR ENTRYNME
+         L     R2,0(R2)  GET THE ADDRESS OF ENTRYNME FROM DOPE VECTOR
+         MVC   ENTRYNME(8),0(R2)   MOVE THE ENTRYNME PARAMETER
+*                                  TO PLIGAM'S ENTRYNME FIELD
+         L     R2,4(R1)  GET DOPE VECTOR ADDRESS FOR OPCODE
+         L     R2,0(R2)  GET THE ADDRESS OF OPCODE FROM DOPE VECTOR
+*
+         CLC   0(3,R2),=C'DEL'     IS THE OPERATION A DELETE REQUEST?
+         BE    DELETE              YES--
+         CLC   0(3,R2),=C'PAS'     IS THE OPERATION A TRANSFER CONTROL
+         BE    GETARG              REQUEST?  YES--
+*
+         MVC   WTOERR1+53(3),0(R2) MOVE INVALID OPCODE TO WTO
+WTOERR1  WTO   'INVALID OPERATION PASSED TO PLIGAM-OPCODE IS XXX -PLIGAC
+               M'        ISSUE ERROR MESSAGE
+*
+ABENDMAC ABEND 591,DUMP USER 591 ABEND  FOR ANY PLIGAM ERROR CONDITIONS
+*
+GETARG   LA    R3,PARMLIST     POINT TO NEW PARAMETER LIST
+         TM    4(R1),X'80'     CHECK TO DETERMINE IF ARGUMENTS ARE
+*                              TO BE PASSED
+         BO    CLOADLST        NO PARMETER LIST IS REQUIRED
+         LA    R1,8(R1)        POINT TO THE FIRST ARGUMENT WITHIN
+*                              PL/I'S PARAMETER LIST
+BDNWPARM L     R2,0(R1)        GET THE DOPE VECTOR ADDRESS OF THE
+*                              CURRENT PARAMETER WITHIN PL/I'S
+*                              PARAMETER LIST
+         MVC   0(4,R3),0(R2)   PLACE THE ADDRESS OF THE CURRENT
+*                              PARAMETER WITHIN THE NEW PARAMETER
+*                              LIST
+         TM    0(R1),X'80'     IS THIS THE LAST PARAMETER TO BE PASSED?
+         BO    LSTPARM         YES--
+         LA    R1,4(R1)        POINT TO NEXT PARAMETER ADDRESS IN PL/I
+*                              PARAMETER LIST
+         LA    R3,4(R3)        POINT TO NEXT PARAMETER ADDRESS IN NEW
+*                              PARAMETER LIST
+         TM    0(R3),X'FF'     IS PARMLIST FULL? (MAX IS 20)
+         BNO   BDNWPARM        NO-GO HANDLE NEXT PARAMETER TO BE PASSED
+*                              YES-ISSUE ERROR MESSAGE AND ABEND
+WTOERR2  WTO   'PLIGAM--ONLY 20 ARGUMENTS ALLOWED IN CALL--PLIGAM'
+         BAL   R4,ABENDMAC
+*
+*
+LSTPARM  OI    0(R3),X'80'     INDICATE THAT THIS IS THE LAST PARAMETER
+*                              ADDRESS TO BE PASSED
+*
+*                   THE FOLLOWING CODE WILL DETERMINE IF THE DESIRED
+*                   LOAD MODULE EXISTS IN MAIN STORAGE CURRENTLY. IF
+*                   THE MODULE EXISTS IN MAIN STORAGE, THE ENTRY
+*                   POINT ADDRESS IS OBTAINED FROM PLIGAM'S LOAD
+*                   LIST AND THE DESIRED MODULE IS GIVEN CONTROL.
+*                   IF THE MODULE DOES NOT EXIST IN MAIN STORAGE,
+*                   A LOAD MACRO IS ISSUED AND THE MAIN STORAGE
+*                   ADDRESS OF THE MODULE'S ENTRY POINT IS PLACED
+*                   IN PLIGAM'S LOAD LIST. THE DESIRED LOAD MODULE
+*                   IS GIVEN CONTROL.
+*
+CLOADLST LA    R2,LOADLIST    POINT TO PLIGAM'S LOAD LIST
+SRCHLST  TM    0(R2),X'80'    TEST FOR UNSUSED LOAD LIST ENTRY
+         BO    LOAD           GO LOAD DESIRED MODULE
+         CLC   ENTRYNME(8),4(R2)   DOES LOAD MODULE EXIST IN LOAD LIST?
+         BE    LOADCONT            YES--BYPASS LOAD MACRO
+         LA    R2,12(R2)      POINT TO NEXT LOAD LIST ENTRY
+         TM    0(R2),X'FF'    ARE ALL ENTRIES FULL?
+         BNO   SRCHLST        NO--CONTINUE LOAD LIST SEARCH
+*                             YES--ISSUE ERROR MESSAGE AND ABEND
+WTOERR3  WTO   'PLIGAM--ONLY 5 NON-PL/I PROGRAMS ALLOWED--PLIGAM'
+         BAL   R4,ABENDMAC
+*
+LOAD     LOAD  EPLOC=ENTRYNME      ISSUE LOAD MACRO FOR LOAD MODULE
+*                                  IN ENTRYNME
+         ST    R0,0(R2)             STORE THE MAIN STORAGE ADDRESS
+*                                  OF THE LOAD MODULE IN THE LOAD LIST
+         NI    0(R2),X'7F'          TURN OFF THE HIGH ORDER BIT OF
+*                                  THE CURRENT LOAD LIST ENTRY
+         MVC   4(8,R2),ENTRYNME    MOVE THE MODULES ENTRY POINT NAME
+*                                  TO THE LOAD LIST
+         LA    R3,12(R2)           POINT TO THE NEXT LOAD LIST ENTRY
+         TM    0(R3),X'FF'         ARE ALL ENTRIS FULL?
+         BO    LOADCONT            YES-BYPASS SETTING UNSUSED LOAD LIST
+*                                      ENTRY INDICATOR
+         OI    0(R3),X'80'         SET UNUSED LOAD LIST ENTRY INDICATOR
+*
+LOADCONT LA    R1,PARMLIST    POINT TO THE NEW PARAMETER LIST
+         CLC   4(5,R2),=C'UT001'   * PL/1 USAGE OF THE UT001 TABLE    *
+         BE    RESETGR1            * BUILD ROUTINE REQUIRES THE       *
+         CLC   4(5,R2),=C'UTXX1'   * PARMETER LIST TO BE CONSTRUCTED  *
+         BNE   SETENTRY            * WITHIN A PL/1 STRUCTURE.         *
+RESETGR1 L     R1,0(R1)            *                                  *
+SETENTRY L     R15,0(R2)      PLACE ADDR OF ENTRY POINT IN GR15       *
+         STM   R12,R13,PL1SAVE     SAVE PL/I REGISTERS
+         LA    R13,STDSAVE    CREARE A STANDARD OS SAVE AREA
+         BALR  R14,R15        PASS CONTROL TO DESIRED MODULE
+*
+RETURN   LM    R12,R13,PL1SAVE     RESTORE PL/I REGISTERS
+         L     R15,=V(IHESAFA)     FREE DSA AND RETURN TO PL/I
+         BR    R15                 PROGRAM
+*
+*                   THE FOLLOWING CODE ON A DELETE REQUEST VERIFIES
+*                   THAT THE LOAD MODULE TO BE DELETED EXISTS IN
+*                   THE LOAD LIST OF PLIGAM. IF THE LOAD MODULE DOES
+*                   NOT EXIST, AN ERROR MESSAGE IS ISSUED AND THE
+*                   PROGRAM IS TERMINATED.
+*
+DELETE   LA    R2,LOADLIST    POINT TO PLIGAM'S LOAD LIST
+SRCHLIST TM    0(R2),X'80'    IS THIS ENTRY UNUSED?
+         BO    DELERROR       YES--LOAD MODULE DOES NOT EXIST
+         TM    0(R2),X'FF'    HAVE ALL ENTRIES BEEN CHECKED?
+         BO    DELERROR       YES--LOAD NODULE DOES NOT EXIST
+         CLC   ENTRYNME(8),4(R2)   DOES LOAD MODULE EXIST?
+         BE    DELCONT             YES--
+         LA    R2,12(R2)           NO---POINT TO NEXT LOAD LIST ENRTY
+         B     SRCHLIST                 CONTINUE LOAD LIST SEARCH
+*
+DELERROR WTO   'PLIGAM--LOAD MODULE TO BE DELETED IS NOT IN STORAGE'
+         BAL   R4,ABENDMAC
+*
+DELCONT  DELETE EPLOC=ENTRYNME
+         LTR   R15,R15        TEST FOR SUCCESSFUL DELETE
+         BNZ   DELERROR
+*
+         XC    0(12,R2),0(R2)      CLEAR DELETED LOAD MODULE FROM LIST
+         OI    0(R2),X'80'         SET UNUSED LOAD LIST INDICATOR ON
+ULOADLST TM    12(R2),X'FF'        IS CURRENT ENTRY THE LAST ENTRY?
+         BO    RETURN              YES--
+         MVC   0(12,R2),12(R2)     NO---REPLACE CURRENT ENTRY WITH NEXT
+         LA    R2,12(R2)           POINT TO NEXT ENTRY
+         TM    0(R2),X'80'         IS THE ENTRY UNUSED?
+         BNO   ULOADLST            NO---UPDATE LOAD LIST
+         B     RETURN              YES--GO BACK TO PL/I PROGRAM
+*
+*                   THE FOLLOWING IS PLIGAM'S LOAD LIST
+*                   FORMAT:   5 ENTRIES--12 BYTES PER ENTRY
+*                           BYTE 1INDICATOR BYTE
+*                                  X'80' UNUSED ENTRY
+*                                  X'FF' BYTE BEYOND LAST ENTRY
+*                           BYTES 2-4   ENTRY POINT ADDRESS IN
+*                                       MAIN STORAGE
+*                           BYTES 5-12  ENTRY POINT NAME
+*
+         DC    C'**** PLIGAM LOAD LIST ***'
+         DS    0F
+LOADLIST DS    0CL60
+         DC    XL1'80'
+         DC    59XL1'00'
+         DC    XL1'FF'
+*
+         DC    C'**** PL/I PARAMETER LIST POINTER ****'
+SVERG1  DC     F'0'
+         DC    C'**** ENTRY NAME FIELD PASSED BY PL/I PROGRAM ****'
+ENTRYNME DC    CL8' '
+         DC    C'**** PLIGAM PARAMETER LIST ****'
+PARMLIST DC    20F'0'
+         DC    XL1'FF'   PARMLIST INDICATOR FOR UPPER BOUND
+         DC    C'**** PL/I REGISTERS R12-R13 ****'
+PL1SAVE  DC    2F'0'
+         DC    C'**** NON-PL/I PROGRAM SAVEAREA'
+STDSAVE  DC    18F'0'
+*
+*                   DEFINITION OF EQUATES USED WITHIN PLIGAM
+*
+R0       EQU   0
+R1       EQU   1
+R2       EQU   2
+R3       EQU   3
+R4       EQU   4
+R5       EQU   5
+R6       EQU   6
+R7       EQU   7
+R8       EQU   8
+R9       EQU   9
+R10      EQU   10
+R11      EQU   11
+R12      EQU   12
+R13      EQU   13
+R14      EQU   14
+R15      EQU   15
+         END   PLIGAMO

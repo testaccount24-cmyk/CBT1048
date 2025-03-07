@@ -1,0 +1,783 @@
+//AUXCMM07 JOB (1586,5),'** FOR J. NOLS **',CLASS=N
+//STEP01   EXEC   GENASMOD,COPT='NOALGN'
+         MACRO
+&LABEL   TEXT  &LENGTH=70
+.**********************************************************************
+.*                                                                    *
+.*       THIS MACRO IS UNIQUE TO THIS MODULE. ITS PURPOSE IS TO       *
+.*       BUILD A TABLE OF TEXT LINES WHICH CAN THEN BE OUTPUT TO THE  *
+.*       CONSOLE. EACH LINE IS CODED AS A POSITIONAL OPERAND OF THE   *
+.*       MACRO STATEMENT. AT THE BEGGINING OF THE TABLE, THREE        *
+.*       FULLWORDS ARE DEFINED TO CONTAIN THE LENGTH OF EACH LINE, THE*
+.*       ADDRESS OF THE LAST BYTE OF TEXT, AND THE ADDRESS OF THE     *
+.*       FIRST BYTE OF TEXT RESPECTIVELY. THESE CAN BE LOADED AND USED*
+.*       IN A BXLE INSTRUCTION TO PROCESS THE TEXT.                   *
+.*                                                                    *
+.**********************************************************************
+.*
+         LCLA  &INDX               INDEX FOR &&SYSLIST
+         CNOP  2,4                 FULLWORD ALIGNMENT
+&LABEL   BALR  1,14                LOAD ADDRESS OF CNTRL REGISTERS
+         DC    A(&LENGTH,IHB&SYSNDX.Z,IHB&SYSNDX.A) BXLE CONTROL DATA
+IHB&SYSNDX.A  EQU  *               START OF OUTPUT TEXT
+&INDX    SETA  1                   SET INDEX TO FIRST OPERAND
+.LOOP    AIF   (&INDX GT N'&SYSLIST).ENDTEXT
+         DC    CL&LENGTH&SYSLIST(&INDX)
+&INDX    SETA  &INDX+1             STEP TO NEXT OPERAND
+         AGO   .LOOP               LOOP FOR ALL OPERANDS CODED
+.ENDTEXT ANOP
+IHB&SYSNDX.Z EQU  *-1              ADDRESS OF LAST BYTE OF OUTPUT
+         MEND
+         TITLE 'MVS OPERATOR COMMAND EXPLANATION ROUTINE'
+***********************************************************************
+*                      A U X C M M 0 7                                *
+*                                                                     *
+*                                                                     *
+*            THIS MODULE IS THE PROCESSOR FOR THE MVS COMMAND WHICH   *
+*        ALLOWS THE OPERATOR TO FIND OUT WHAT THE VARIOUS MVS         *
+*        DO AND WHAT THEIR OPERANDS ARE.
+*            IF THE OPERAND 'ALL' IS ENTERED, A LIST OF ALL MVS       *
+*        COMMANDS IS OUTPUT ALONG WITH A BRIEF EXPLANATION OF THEIR   *
+*        PURPOSE. IF AN INDIVIDUAL COMMAND IS ENTERED AS THE OPERAND  *
+*        OF THE MVS COMMAND, DETAILS ARE OUTPUT OF THAT COMMAND AND   *
+*        ITS OPERANDS.                                                *
+*            THE MODULE IS TABLE DRIVEN, AND OUTPUTS THE CONTENTS OF  *
+*        A GIVEN TABLE ACCORDING TO THE INPUT OUTLINED ABOVE.         *
+*                                                                     *
+*                                                                     *
+*        ATTRIBUTES. REENTRANT,REUSABLE AUTHORISED.                   *
+*                                                                     *
+*                                                                     *
+*        REGISTER USAGE.                                              *
+*                                                                     *
+*        REG0  PARAMETER REGISTER. WORK REGISTER                      *
+*        REG1  PARAMETER REGISTER. WORK REGISTER                      *
+*        REG2  ADDRESS OF EXTENDED SAVE AREA OF SVRB FOR SVC 34       *
+*        REG3  ADDRESS CURRENT ENTRY OF COMMAND TABLE                 *
+*        REG4  LENGTH CURRENT COMMAND TABLE ENTRY                     *
+*        REG5  END ADDRESS-1 OF COMMAND TABLE (FOR BXLE)              *
+*        REG6  LENGTH OF NEXT LINE OF OUTPUT TEXT                     *
+*        REG7  ADDRESS OF END OF CURRENT BLOCK OF OUTPUT              *
+*        REG8  ADDRESS OF NEXT LINE OF OUTPUT TEXT                    *
+*        REG9  ADDRESS OF LAST ELEMENT ON OUTPUT CHAIN                *
+*        REG10 LENGTH DESCRIPTIVE TEXT MINUS ONE                      *
+*        REG11 INTERNAL LINK REGISTER                                 *
+*        REG12 BASE REGISTER                                          *
+*        REG13 ADDRESS PROGRAM REGISTER SAVE AREA AND WORK AREA       *
+*        REG14 LINK REGISTER, WORK REGISTER                           *
+*        REG15 LINK REGISTER, WORK REGISTER                           *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        EQUATES USED IN THIS MODULE                                  *
+***********************************************************************
+         SPACE 2
+LASTMSG  EQU   X'10'               RELATES TO WTO PARM LIST. LAST MSG
+         EJECT
+***********************************************************************
+*        DSECTS USED IN THIS MODULE                                   *
+***********************************************************************
+         SPACE 2
+CMDTAB   DSECT ,                   OPERAND TABLE FORMAT
+         COMMAND DSECT
+CMDENLEN EQU   *-CMDTAB            LENGTH OF A TABLE ENTRY
+         SPACE 2
+XSA      DSECT ,                   FORMAT OF EXTENDED SAVE AREA
+XSAP     DS    F                   PTR TO XCTL NAME
+XSAD     DS    F                   DCB POINTER
+XSAX     DS    D                   XCTL NAME
+XSAE     DS    0C                  ERROR CODE FOR IEE0503D
+XSAR     DS    F                   ADDRESS OF PARM LIST
+XSAN     DS    0C                  VERB INDEX
+XSAL     DS    F                   PTR TO LIST POSITION
+XSAVERB  DS    D                   VERB ENTERED BY OPERATOR
+XSAS     DS    D                   TEMPORARY SAVE AREA
+XSAU     DS    C                   UCM ENTRYINDICATOR
+         DS    C                   RESERVED
+XSAJ     DS    H                   TJID ENTRY INDICATOR
+         SPACE 2
+WKAREA   DSECT ,                   INTERNAL WORK AREA
+         DS    18F                 REGISTER SAVE AREA
+CHAINHDR DS    F                   ADDRESS OF OUTPUT ELEMENT CHAIN
+CHAIN    DS    24F                 SCAN DESCRIPTOR BLOCKS
+MSGAREA  DS    0CL70               PREPARATION AREA FOR OUTPUT
+MSGLEN   EQU   L'MSGAREA           LENGTH FOR LOADMSG MACRO
+CLRLINE  DS    0CL70               REFERENCE FOR CLEARING OUT AREA
+         DS    CL8                 COMMAND NAME
+MSGSEP   DS    C                   SEPARATING CHARACTER
+MSGTEXT  DS    CL61                DESCRIPTION OF COMMAND
+WKLEN    EQU   *-MSGAREA           LENGTH OF AREA FOR ZCSECT
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING                                   *
+***********************************************************************
+         SPACE 2
+AUXCMM07 ZCSECT GETMAIN=1,WKLEN=WKLEN
+         USING WKAREA,REG13        ADDRESSABILITY FOR WORK AREA
+         SPACE 2
+         EJECT
+***********************************************************************
+*        ANALYSE INPUT PARAMETERS & DETERMINE LENGTH                  *
+***********************************************************************
+         SPACE 2
+         USING XSA,REG2            ADDRESSABILITY FOR EXTENDED S/A
+         L     REG8,XSAL           LOAD ADDRESS INPUT PARMS
+         SCAN  DATA=(REG8),END=' ',DELIM=(',','='),RETAREA=CHAIN
+         L     REG5,CHAIN          LOAD ADDRESS FIRST DESCR BLK
+         LTR   REG5,REG5           TEST FOR PRESCENCE OPERANDS
+         LA    REG14,EXITPGM       PREPARE RETURN REGISTER FOR AUXCMMZZ
+         BZ    AUXCMMZZ            NONE. ASSUME HE MEANT TO ENTER A '?'
+         IC    REG7,4(REG5)        LOAD LENGTH FIRST OPERAND
+         BCTR  REG7,0              SUBTRACT 1 FROM LENGTH
+         L     REG9,4(REG5)        LOAD ADDRESS OPERAND
+         EJECT
+***********************************************************************
+*        SCAN THE OPERAND TABLE FOR A VALID OPERAND                   *
+***********************************************************************
+         SPACE 2
+         LA    REG3,CMDTABLE       LOAD START ADDRESS OF OPERAND TABLE
+         LA    REG5,CMDTBEND-1     LOAD END ADDRESS OF OPERAND TABLE
+         XR    REG6,REG6           CLEAR REGISTER 6
+         XR    REG10,REG10         CLEAR REGISTER 10
+         USING CMDTAB,REG3         ADDRESSABILITY FOR EACH ENTRY IN TAB
+         SPACE 2
+LOOP     IC    REG6,CMDLEN         LOAD LENGTH-1 OF OPERAND
+         CR    REG7,REG6           COMPARE LENGTHS OF VERBS
+         BNE   LOOPEXIT            NOT SAME. NO FURTHER TESTS
+         EX    REG6,CMDCLC         COMPARE OPERAND WITH TABLE ENTRY
+         BE    VALCMD              OPERAND FOUND. GO PROCESS.
+LOOPEXIT IC    REG10,CMDTXLEN(REG6) LOAD LENGTH OF TEXT
+         LA    REG4,CMDENLEN(REG6,REG10) LOAD LENGTH THIS ENTRY
+         BXLE  REG3,REG4,LOOP      LOOP TO END OF TABLE
+         B     INVALCMD            OPERAND NOT FOUND - INVALID
+         SPACE 2
+CMDCLC   CLC   0(0,REG9),CMDNAME  COMPARE OPERATOR ENTRY & VALID CMD
+         EJECT
+***********************************************************************
+*        THE COMMAND IS NOT VALID                                     *
+***********************************************************************
+         SPACE 2
+INVALCMD DS    0H
+         LA    REG15,4             LOAD INVALID CODE
+         B     EXITPGM             RETURN TO CALLER
+         SPACE 2
+***********************************************************************
+*        THE COMMAND IS VALID. LOAD REGISTERS & CALL PROCESSOR        *
+***********************************************************************
+         SPACE 2
+VALCMD   DS    0H
+         LA    REG9,CHAINHDR       LOAD ADDRESS OF OUTPUT CHAIN ANCHOR
+         L     REG15,CMDPRCAD(REG6) LOAD ADDRESS OF PROCESSOR
+         BALR  REG14,REG15         LINK TO THE ROUTINE
+         LM    REG6,REG8,0(REG1)   LOAD UP THE CONTROL REGISTERS
+         BAL   REG11,LOADTEXT      CONVERT IT TO OUTPUT ELEMENTS
+         B     DOOUTPUT            OUTPUT THE PREPARED DATA
+         EJECT
+***********************************************************************
+*        COMMON PROGRAM EXIT                                          *
+***********************************************************************
+         SPACE 2
+EXITPGM  DS    0H
+         ZRETURN RC=(15)
+         EJECT
+***********************************************************************
+*                                                                     *
+*        AUXCMMZZ IS THE QUERY ROUTINE FOR MONSANTO OPERATOR          *
+*        COMMANDS. IF A '?' IS ENTERED INTO THE CONSOLE, THIS         *
+*        ROUTINE IS INVOKED TO LIST OF ALL THE OPERANDS AVAILABLE     *
+*        TO THE OPERATOR AND THEIR FUNCTION.                          *
+*                                                                     *
+***********************************************************************
+         SPACE 2
+AUXCMMZZ TEXT  'MVS COMMAND- OPERAND SUMMARY',                         X
+               'TO FIND OUT ABOUT THE MVS COMMANDS, ENTER',            X
+               '''MVS ALL'' FOR A COMPLETE LIST OF ALL THE',           X
+               'COMMANDS AVAILABLE AND THEIR FUNCTION.   ',            X
+               'TO FIND OUT ABOUT THE OPERANDS OF A      ',            X
+               'SPECIFIC COMMAND, ENTER ''MVS XXX'', WHERE',           X
+               'XXX IS THE LONG OR SHORT NAME OF THE     ',            X
+               'COMMAND YOU WANT.'
+         EJECT
+***********************************************************************
+*        THIS ROUTINE CONVERTS A TEXT BLOCK INTO AN OUTPUT CHAIN      *
+***********************************************************************
+         SPACE 2
+LOADTEXT DS    0H
+         LR    REG10,REG6          LOAD LENGTH REGISTER FOR LINE 1
+         C     REG6,=F'37'         COMPARE WITH MAX LENGTH FOR C-LINE
+         BNH   LOADSTRT            OK. LEAVE LENGTH ALONE
+         LA    REG10,37            SET MAXIMUM LENGTH FOR C-LINE
+LOADSTRT LOADMSG DATA=(REG8),LENGTH=(REG10),TYPE=C
+         ST    REG1,0(REG9)        CHAIN THIS ELEMENT TO OTHERS
+         LR    REG9,REG1           SAVE ADDRESS OF LAST ELEMENT
+         BXLE  REG8,REG6,LOADLOOP  STEP TO NEXT TEXT BLOCK
+         B     LOADEXIT            BXLE NOT TAKEN. LEAVE THIS ROUTINE
+LOADLOOP LOADMSG DATA=(REG8),LENGTH=(REG6),TYPE=D
+         ST    REG1,0(REG9)        CHAIN THIS ELEMENT ONTO OTHERS
+         LR    REG9,REG1           SAVE ADDRESS OF LAST ELEMENT
+         BXLE  REG8,REG6,LOADLOOP  LOOP FOR ALL TEXT PROVIDED
+LOADEXIT BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        THE OUTPUT IS PREPARED. CALL THE WTO ROUTINE                 *
+***********************************************************************
+         SPACE 2
+DOOUTPUT DS    0H
+         LH    REG15,8(REG9)       LOAD LENGTH OF WTO TEXT
+         LA    REG15,8(REG15,REG9) LOAD ADDRESS OF DESCR CODES ETC
+         OI    4(REG15),LASTMSG    ENSURE THAT LAST LINE FLAG IS ON
+         OUTPUT CHAINHDR           INVOKE THE WTO PROCESSOR
+         B     EXITPGM             RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        TABLE OF VALID OPERANDS                                      *
+***********************************************************************
+         SPACE 2
+CMDTABLE DS    0D
+         COMMAND ALL,ALL,ADCON=A
+         COMMAND ?,AUXCMMZZ,ADCON=A
+         COMMAND C,CANCEL,ADCON=A
+         COMMAND CANCEL,CANCEL,ADCON=A
+         COMMAND CD,CHNGDUMP,ADCON=A
+         COMMAND CHNGDUMP,CHNGDUMP,ADCON=A
+         COMMAND CONTROL,CONTROL,ADCON=A
+         COMMAND K,CONTROL,ADCON=A
+         COMMAND DISPLAY,DISPLAY,ADCON=A
+         COMMAND D,DISPLAY,ADCON=A
+         COMMAND DUMP,DUMP,ADCON=A
+         COMMAND HALT,HALT,ADCON=A
+         COMMAND Z,HALT,ADCON=A
+         COMMAND HOLD,HOLD,ADCON=A
+         COMMAND H,HOLD,ADCON=A
+         COMMAND LOG,LOG,ADCON=A
+         COMMAND L,LOG,ADCON=A
+         COMMAND MODE,MODE,ADCON=A
+         COMMAND MONITOR,MONITOR,ADCON=A
+         COMMAND MN,MONITOR,ADCON=A
+         COMMAND MOUNT,MOUNT,ADCON=A
+         COMMAND M,MOUNT,ADCON=A
+         COMMAND MODIFY,MODIFY,ADCON=A
+         COMMAND F,MODIFY,ADCON=A
+         COMMAND MSGRT,MSGRT,ADCON=A
+         COMMAND MR,MSGRT,ADCON=A
+         COMMAND QUIESCE,QUIESCE,ADCON=A
+         COMMAND REPLY,REPLY,ADCON=A
+         COMMAND R,REPLY,ADCON=A
+         COMMAND RESET,RESET,ADCON=A
+         COMMAND E,RESET,ADCON=A
+         COMMAND RELEASE,RELEASE,ADCON=A
+         COMMAND A,RELEASE,ADCON=A
+         COMMAND SEND,SEND,ADCON=A
+         COMMAND SE,SEND,ADCON=A
+*        COMMAND SET,SET,ADCON=A
+*        COMMAND T,SET,ADCON=A
+*        COMMAND START,START,ADCON=A
+*        COMMAND S,START,ADCON=A
+*        COMMAND STOP,STOP,ADCON=A
+*        COMMAND P,STOP,ADCON=A
+*        COMMAND STOPMN,STOPMN,ADCON=A
+*        COMMAND PM,STOPMN,ADCON=A
+*        COMMAND STOPTR,STOPTR,ADCON=A
+*        COMMAND PT,STOPTR,ADCON=A
+*        COMMAND SWAP,SWAP,ADCON=A
+*        COMMAND G,SWAP,ADCON=A
+*        COMMAND SWITCH,SWITCH,ADCON=A
+*        COMMAND I,SWITCH,ADCON=A
+*        COMMAND TRACE,TRACE,ADCON=A
+*        COMMAND TRACK,TRACK,ADCON=A
+*        COMMAND TR,TRACK,ADCON=A
+*        COMMAND UNLOAD,UNLOAD,ADCON=A
+*        COMMAND U,UNLOAD,ADCON=A
+*        COMMAND VARY,VARY,ADCON=A
+*        COMMAND V,VARY,ADCON=A
+*        COMMAND WRITELOG,WRITELOG,ADCON=A
+*        COMMAND W,WRITELOG,ADCON=A
+CMDTBEND EQU   *                   END OF COMMAND TABLE
+         EJECT
+         LTORG
+         EJECT
+***********************************************************************
+*        INDIVIDUAL OUT PROCESSORS                                    *
+***********************************************************************
+         SPACE 2
+***********************************************************************
+*                                                                     *
+*            THE FOLLOWING ROUTINES ARE INVOKED WHEN THE OPERATOR     *
+*        ENTERS AN OPERAND OTHER THAN NULL OR QUERY. EACH ROUTINE     *
+*        HANDLES A UNIQUE OPERAND (COMMAND) AND PRODUCES ALL THE      *
+*        REQUISITE OUTPUT.                                            *
+*            THE TEXT FOR A PARTICULAR COMMAND IS BUILT BY THE        *
+*        TEXT MACRO IN THE FORM OF A TABLE WHICH IS PASSED TO THE     *
+*        LOADTEXT ROUTINE FOR CONVERSION TO A CHAIN OF OUTPUT         *
+*        ELEMENTS. THESE ELEMENTS ARE THEN WRITTEN TO THE CONSOLE     *
+*        BY AUXCMM00.                                                 *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         PRINT NOGEN
+         EJECT
+***********************************************************************
+*        A L L : LIST ALL MVS COMMANDS                                *
+***********************************************************************
+         SPACE 2
+ALL      TEXT  'MVS COMMAND SUMMARY',                                  X
+               'THE FOLLOWING IS A LIST OF MVS COMMANDS AND THEIR FUNCTI
+               IONS',                                                  X
+               'CANCEL (C)        TERMINATE EXECUTION OF A JOB',       X
+               'CHNGDUMP (CD)     ALTER THE CONTENTS OF DUMPS',        X
+               'CONTROL (K)       CONTROL THE USE OF A CRT CONSOLE',   X
+               'DISPLAY (D)       EXAMINE THE STATUS OF THE SYSTEM',   X
+               'DUMP (DUMP)       CAUSE A DUMP OF STORAGE TO DISK',    X
+               'HALT (Z)          STOP EXECUTION OF THE SYSTEM',       X
+               'HOLD (H)          SUSPEND TRANSMISSION TO A STATION',  X
+               'LOG (L)           ENTER COMMENTS INTO SYSTEM LOG',     X
+               'MODE (MODE)       CONTROL USE OF SYS1.LOGREC',         X
+               'MODIFY (F)        CHANGE CHARACTERISTICS OF A JOB',    X
+               'MONITOR (MN)      START CONTINOUS DISPLAY STATUS INFO',X
+               'MOUNT (M)         MOUNT A SPECIFIC VOLUME ON A DRIVE', X
+               'MSGRT (MR)         ESTABLISH MESSAGE ROUTE DEFAULTS',  X
+               'QUIESCE (QUIESCE) PUT SYSTEM INTO MANUAL MODE',        X
+               'REPLY (R)         ENTER A RESPONSE TO A MESSAGE',      X
+               'RESET (E)          CHANGE PERFORMANCE GROUP OF A JOB', X
+               'RELEASE (A)       FREE A TP STATION THAT WAS HELD',    X
+               'SEND (SE)         COMMUNICATE WITH OTHER OPERATORS',   X
+               'SET (T)            CHANGE LOCAL TIME AND DATE',        X
+               'START (S)          START A JOB FROM THE CONSOLE',      X
+               'STOP (P)           TERMINATE A STARTED TASK',          X
+               'STOPMN (PM)        STOP CONTINUOUS DISPLAY OF STATUS', X
+               'STOPTR (PT)        STOP TRACKING OF SYSTEM STATUS',    X
+               'SWAP (G)          MOVE A VOL FROM ONE UNIT TO ANOTHER',X
+               'SWITCH (I)         SWITCH SMF DATA SETS',              X
+               'TRACE (TRACE)      START OR STOP TRACE OF SYSTEM',     X
+               'TRACK (TR)         START CONTINUOUS DISPLAY OF WORK',  X
+               'UNLOAD (U)         UNLOAD A VOLUME FROM A UNIT',       X
+               'VARY (V)          ALTER THE STATUS OF DEVICES',        X
+               'WRITELOG (W)       CONTROL USE OF THE SYSTEM LOG'
+         EJECT
+***********************************************************************
+*        C A N C E L                                                  *
+***********************************************************************
+         SPACE 2
+CANCEL   TEXT  'MVS COMMAND -''CANCEL'' OR ''C''',                     X
+               'THIS COMMAND IS USED TO TERMINATE EXECUTION OF A JOB', X
+               'EXECUTING IN THE SYSTEM OR TO HALT PROCESSING ON AN',  X
+               'EXTERNAL WRITER (O.S. WRITER). OPERANDS ARE:-',        X
+               'CANCEL JOBNAME,    THE NAME OF THE JOB',               X
+               '       DUMP        IF A DUMP OF THE JOB IS NEEDED',    X
+               ' ',                                                    X
+               'IF THE JOBNAME IS A DEVICE NAME (E.G. 00E), THEN',     X
+               'PROCESSING ON THAT DEVICE IS TERMINATED.'
+         EJECT
+***********************************************************************
+*        C H N G D U M P                                              *
+***********************************************************************
+         SPACE 2
+CHNGDUMP TEXT  'MVS COMMAND ''CHNGDUMP'' OR ''CD''.',                  X
+               'THIS COMMAND IS USED TO ALTER THE FORMAT AND CONTENTS',X
+               'OF THE SYSUDUMP, SYSABEND, AND SDUMP DATA SETS. IT',   X
+               'SHOULD BE USED WITH EXTREME CARE AS MISUSE COULD',     X
+               'CAUSE THE LOSS OF IMPORTANT DUMP OUTPUT.',             X
+               'THE OPERANDS ARE:-',                                   X
+               ' ',                                                    X
+               'SET,               SET NEW DUMP OPTIONS',              X
+               'DELETE,            DELETE EXISTING DUMP OPTIONS',      X
+               '     SYSUDUMP,     THIS AFFECTS SYSUDUMP OUTPUT',      X
+               '     SYSABEND,     THIS AFFECTS SYSABEND OUTPUT',      X
+               '        SDATA=(N,N...) SPECIFY SYSTEM DATA OPTIONS',   X
+               '        PDATA=(N,N...) SPECIFY PROBLEM DATA OPTIONS',  X
+               ' ',                                                    X
+               'SDATA OPTIONS RELATE TO SYSTEM CONTROL BLOCKS:-',      X
+               '    ALLSDATA       ALL SYSTEM (NUCLEUS,SQA,..ETC)',    X
+               '    NUC            PRINT THE NUCLEUS',                 X
+               '    SQA            PRINT THE SYSTEM QUEUE AREA',       X
+               '    LSQA           PRINT LOCAL SYSTEM QUEUE AREA',     X
+               '    SWA            PRINT THE SCHEDULER WORK AREA',     X
+               '    CB             FORMAT THE MAJOR CONTROL BLOCKS',   X
+               '    ENQ            FORMAT THE QCB CHAINS',             X
+               '    TRT            PRINT THE SYSTEM TRACE TABLE',      X
+               'PDATA OPTIONS RELATE TO A PARTICULAR ADDRESS SPACE:-', X
+               '    ALLPDATA       ALL THE FOLLOWING OPTIONS',         X
+               '    PSW            THE PSW AT TIME OF ABEND',          X
+               '    REGS           THE REGISTER CONTENTS',             X
+               '    SA OR SAH      SAVE AREA CONTENTS',                X
+               '    JPA            CONTENTS OF JOB PACK QUEUE',        X
+               '    LPA            ACTIVE LINK PACK AREA MODULES',     X
+               '    ALLPA          ALL ACTIVE MODULES IN USE',         X
+               '    SPLS           CONTENTS OF USER SUBPOOLS'
+         EJECT
+***********************************************************************
+*        C O N T R O L                                                *
+***********************************************************************
+         SPACE 2
+CONTROL  TEXT  'MVS COMMAND ''CONTROL'' OR ''K''',                     X
+               'THE K COMMAND IS USED TO CONTROL THE USE OF A DISPLAY',X
+               'CONSOLE AND ITS OPERANDS CAN ALTER THE SCREEN FORMAT', X
+               'AS WELL AS SETTING PROGRAM FUNCTION KEYS AND DELETING',X
+               'MESSAGES FROM THE DISPLAY.',                           X
+               'IT HAS MANY OPERANDS, BUT MOST OF THEM ARE EASY TO',   X
+               'USE ONCE THEIR PURPOSE IS UNDERSTOOD. GENERALLY:',     X
+               ' ',                                                    X
+               'K E,.... COMMANDS CONTROL THE DELETION OF MESSAGES',   X
+               'K D,.... COMMANDS CONTROL DISPLAY AREAS',              X
+               'K S,.... COMMANDS CONTROL THE OPERATION OF THE SCREEN',X
+               'K N,.... COMMANDS CONTROL THE PROGRAM FUNCTION KEYS.', X
+               ' ',                                                    X
+               'THE K COMMAND IS SELF DOCUMENTING AND MORE',           X
+               'INFORMATION CAN BE OBTAINED BY ENTERING ''D C,K''',    X
+               'ALTERNATELY, PRESS THE LIGHT PEN ON ANY PART OF THE',  X
+               '''D C,K'' YOU WILL FIND BELOW THIS MESSAGE.',          X
+               '(ASSUMING YOU ARE AT A GRAPHICS CONSOLE).',            X
+               '                               X',                     X
+               '                             XXXXX',                   X
+               '                              XXX',                    X
+               '                               X'
+         EJECT
+***********************************************************************
+*        D I S P L A Y                                                *
+***********************************************************************
+         SPACE 2
+DISPLAY  TEXT  'MVS COMMAND ''DISPLAY'' OR ''D''',                     X
+               'THE DISPLAY COMMAND IS USED TO LIST INFORMATION ON',   X
+               'THE STATUS OF ACTIVE JOBS, I/O DEVICES, CONSOLES,',    X
+               'TELEPROCESSING LINES, AND THE SYSTEM CONFIGURATION.',  X
+               'TO DISPLAY THE STATUS OF I/O DEVICES, OPERANDS ARE:-', X
+               'D U,           -DISPLAY STATUS OF:-',                  X
+               '    TP,                   -TELEPROCESSING LINES',      X
+               '    GRAPHIC,              -GRAPHICS DEVICES (SCREENS)',X
+               '    TAPE,                 -TAPE DEVICES',              X
+               '    DASD,                 -DIRECT ACCESS DEVICES',     X
+               '    UR,                   -UNIT RECORD (00C,00E ETC)', X
+               '       ONLINE,            -ONLY THOSE UNITS ONLINE',   X
+               '       OFFLINE,           -ONLY THOSE UNITS OFFLINE',  X
+               '              CUU,        -START LIST FROM THIS UNIT', X
+               '                  NNN,    -LIST NNN UNITS ONLY',       X
+               'TO LIST THE STATUS OF ACTIVE JOBS OPERANDS ARE:-',     X
+               'D A,           -DISPLAY ACTIVE WORK.',                 X
+               '  J,           -DISPLAY NUMBER OF JOBS AND INITIATORS',X
+               '  TS,          -DISPLAY NUMBER OF TSO USERS',          X
+               '  R,           -DISPLAY OUTSTANDING REPLY IDS',        X
+               '    L                     -LIST THE JOBS/TSO/REPLIES', X
+               'TO LIST THE PROGRAM FUNCTION KEY SETTINGS, ENTER:-',   X
+               'D PFK                       ',                         X
+               'TO FIND OUT THE TIME AND DATE SET IN THE MACHINE:-',   X
+               'D T                         ',                         X
+               'TO LIST THE SYSTEM CONSOLES AND THEIR STATUS, ENTER:-',X
+               'D CONSOLES                -OR',                        X
+               'D C                         '
+         EJECT
+***********************************************************************
+*        D U M P                                                      *
+***********************************************************************
+         SPACE 2
+DUMP     TEXT  'MVS COMMAND ''DUMP''',                                 X
+               'THE DUMP COMMAND IS USED TO TAKE A FULL DUMP OF THE',  X
+               'SYSTEM OR PART OF THE SYSTEM WITHOUT HAVING TO RE-IPL',X
+               'THE SYSTEM AFTERWARDS. IT CAN BE USED WHEN THERE IS',  X
+               'OBVIOUSLY SOMETHING WRONG BUT THE SYSTEM IS NOT IN A', X
+               'COMPLETELY DISABLED STATE. (IT HAS TO BE WORKING TO',  X
+               'SOME EXTENT TO RESPOND TO THE DUMP COMMAND.',          X
+               'TO CAUSE A DUMP, ENTER:-',                             X
+               ' ',                                                    X
+               'DUMP COMM=(..SOME MEANINGFUL REASON FOR THE DUMP...)', X
+               ' ',                                                    X
+               'THE DUMP ROUTINE WILL THEN ASK YOU FOR THE DUMP',      X
+               'OPTIONS- SEE BELOW. IF THE RESPONSE IS:-',             X
+               '''SYSTEM UNABLE TO DUMP''',                            X
+               'THEN THERE IS NO FREE DUMP DATA SET. ENTER:-',         X
+               '''S CLRDMP'' TO FREE UP A SUITABLE DATA SET.',         X
+               'THEN TRY THE DUMP COMMAND AGAIN',                      X
+               '   ',                                                  X
+               'IN RESPONSE TO THE MESSAGE- ENTER DUMP OPTIONS :-',    X
+               'R NN,''JOBNAME=XXXXXXXX'' OR-',                        X
+               'R NN,''ASID=NN'' OR-',                                 X
+               'R NN,'''' TO DUMP MASTER SCHEDULER'
+         EJECT
+***********************************************************************
+*        H A L T                                                      *
+***********************************************************************
+         SPACE 2
+HALT     TEXT  'MVS COMMAND ''HALT'' OR ''Z''',                        X
+               'THE HALT COMMAND IS USED TO CLOSE DOWN EITHER THE',    X
+               'SYSTEM OR A TELEPROCESSING NETWORK. IF THE SYSTEM IS', X
+               'CLOSING DOWN, THEN THIS COMMAND WRITES OUT RECORDS TO',X
+               'LOGREC. IF A TP NETWORK IS CLOSING DOWN, MESSAGES',    X
+               'ALREADY IN THE SYSTEM ARE PROCESSED ACCORDING TO THE', X
+               'OPTIONS SELECTED. OPERANDS ARE:-',                     X
+               'Z EOD          CLOSE DOWN THE SYSTEM',                 X
+               'Z TP,          CLOSE DOWN THE TP NETWORK',             X
+               '     FLUSH     MESSAGES ALREADY RECEIVED ARE SENT',    X
+               '     QUICK     MESSAGE QUEUES ARE NOT FLUSHED.'
+         EJECT
+***********************************************************************
+*        H O L D                                                      *
+***********************************************************************
+         SPACE 2
+HOLD     TEXT  'MVS COMMAND ''HOLD'' OR ''H''',                        X
+               'THIS COMMAND IS USED TO SUSPEND TRANSMISSION TO A',    X
+               'TELEPROCESSING STATION LOGGED ON TO A TCAM SYSTEM.',   X
+               'IT IS NOT EFFECTIVE FOR HASP LINES.',                  X
+               'THE COMMAND HAS ONLY ONE OPERAND:-',                   X
+               'HOLD TP=XXX  (XXX IS STATION NAME).'
+         EJECT
+***********************************************************************
+*        L O G                                                        *
+***********************************************************************
+         SPACE 2
+LOG      TEXT  'MVS COMMAND ''LOG'' OR ''L''',                         X
+               'THE LOG COMMAND IS USED TO ENTER COMMENTS AND REMARKS',X
+               'INTO THE SYSTEM LOG DATA SET. IT CAN BE USED TO',      X
+               'RECORD THE OCCURRENCE OF SYSTEM MALFUNCTIONS OR',      X
+               'UNUSUAL SITUATIONS IN LIVE WORK ETC. FORMAT IS:-',     X
+               '                   ',                                  X
+               'LOG ''.....SUITABLE TEXT, MAX 126 CHARACTERS..'''
+         EJECT
+***********************************************************************
+*        M O D E                                                      *
+***********************************************************************
+         SPACE 2
+MODE     TEXT  'MVS COMMAND ''MODE''',                                 X
+               'THIS COMMAND ALLOWS YOU TO SPECIFY HOW THE SYSTEM IS', X
+               'TO RECORD DEGRADATION AND SYSTEM RECOVERY MACHINE',    X
+               'CHECKS. THE SYSTEM WILL RECORD A CERTAIN NUMBER OF',   X
+               'OCCURRENCES OF EACH TYPE BEFORE ISSUING A MESSAGE TO', X
+               'THE CONSOLE. AFTER THIS MESSAGE IS ISSUED, NO MORE',   X
+               'RECORDING WILL NORMALLY BE DONE (QUIET MODE). IN A',   X
+               'MULTIPROCESSING ENVIRONMENT, THESE PARAMETERS MAY BE', X
+               'SET FOR JUST ONE OR ALL CPU''S.     ',                 X
+               'OPERAND FORMATS ARE:-               ',                 X
+               'MODE STATUS    LIST CURRENT MODE SETTINGS',            X
+               '     DG,       DEGRADATION MACHINE CHECKS AFFECTED',   X
+               '     SR,       SYSTEM RECOVERY M/C CHECKS AFFECTED',   X
+               '        CPU=ALL,      ALL CPUS ARE AFFECTED',          X
+               '        CPU=0, OR 1,     ONLY CPU0 OR CPU1 AFFECTED',  X
+               '                RECORD=      NO OF M/C CHKS RECORDED', X
+               '                            BEFORE QUIET MODE ENTERED',X
+               '                             (A NUMBER OR ''ALL'')',   X
+               '                QUIET       NO DG OR SR INTERRUPTS',   X
+               '                            ARE ALLOWED OR RECORDED'
+         EJECT
+***********************************************************************
+*        M O N I T O R                                                *
+***********************************************************************
+         SPACE 2
+MONITOR  TEXT  'MVS COMMAND ''MONITOR'' OR ''MN''',                    X
+               'THE MONITOR COMMAND IS LARGELY REDUNDANT IN A SYSTEM', X
+               'WITH JES OR HASP SINCE ITS FUNCTION OF GIVING A',      X
+               'CONTINUOUS DISPLAY OF JOBS STARTING AND STOPPING IS',  X
+               'TAKEN OVER BY HASP OR JES ITSELF.THE COMMAND CAN',     X
+               'BE USED HOWEVER TO DISPLAY THE STATUS OF DIRECT',      X
+               'ACCESS DISK SPACE AS JOBS ALLOCATE AND FREE FILES. IT',X
+               'MUST BE REMEMBERED THAT, IN THIS FORM, THE COMMAND',   X
+               'WILL TEND TO FLOOD THE SCREEN WITH INFORMATION WHICH', X
+               'IS NOT ALWAYS USEFUL.  OPERAND FORMATS ARE:-',         X
+               '                                    ',                 X
+               'MN DSNAME          ADDS THE DSNAME TO MOUNT MESSAGES', X
+               '   SPACE           REMAINING SPACE IS ADDED TO DIS-',  X
+               '                   MOUNT MESSAGES   ',                 X
+               '   STATUS          ALL DSNAMES AND VOLUMES ARE TO BE', X
+               '                   DISPLAYED WHEN A JOB STEP ENDS',    X
+               '   JOBNAMES,       MONITOR JOBS STARTING AND STOPPING',X
+               '   SESS,           MONITOR TSO SESSIONS LOGON/OFF',    X
+               '        T              GIVE THE TIME AND DATE'
+         EJECT
+***********************************************************************
+*        MOUNT                                                        *
+***********************************************************************
+         SPACE 2
+MOUNT    TEXT 'MVS COMMAND ''MOUNT'' OR ''M''',                        X
+               'THIS COMMAND IS USED TO IDENTIFY A PARTICULAR PACK TO',X
+               'THE SYSTEM AS HAVING SPECIAL ATTRIBUTES OR',           X
+               'REQUIREMENTS. I.E. THE PACK IS NOT TO BE UNLOADED,',   X
+               '(RESERVED), IT IS ONLY TO BE USED BY JOBS WHICH ASK',  X
+               'FOR IT IN THE JCL, (PRIVATE), IT IS AVAILABLE FOR USE',X
+               'BY ANYBODY FOR WORK FILES ETC, (PUBLIC), OR IT IS',    X
+               'AVAILABLE FOR PERMANENT FILES (STORAGE). OPERANDS ARE',X
+               'M XXX,                       ADDRESS OF UNIT FOR VOL', X
+               '      VOL=(NL,               VOLUME HAS NO LABELS',    X
+               '           SL,               VOL HAS STANDARD LABELS', X
+               '           AL,               VOL HAS AMERICAN LABELS', X
+               '              XXXXXX),       SERIAL NUMBER OF VOLUME', X
+               '                      USE=  ',   ATTRIBUTE OF VOLUME   X
+               '                          PRIVATE',                    X
+               '                          PUBLIC',                     X
+               '                          STORAGE',                    X
+               'THE COMMAND CAN BE ISSUED BEFORE OR AFTER THE VOLUME', X
+               'IS LOADED ON THE DRIVE.     '
+         EJECT
+***********************************************************************
+*        MODIFY                                                       *
+***********************************************************************
+         SPACE 2
+MODIFY   TEXT 'MVS COMMAND ''MODIFY'' OR ''F''',                       X
+               'THIS COMMAND HAS LITTLE USE IN MVS. ITS PRIMARY',      X
+               'PURPOSE IS TO CONTROL THE OPERATION OF AN ORDINARY',   X
+               '(OS) WRITER. IT CAN ALSO BE USED TO SEND CONTROL',     X
+               'INFORMATION TO A PROBLEM PROGRAM IF THAT PROGRAM',     X
+               'IS PROGRAMMED TO ACCEPT IT. ',                         X
+               'THE OPERANDS OF THIS COMMAND ARE:-',                   X
+               'MODIFY XXXXXXXX.            ',     NAME OF JOB/WRITER  X
+               '                ZZZZZZZZ,   ',     STEP/DEVICE NAME    X
+               '                        OPERANDS DEFINED BY THE',      X
+               '                         PROGRAMMER.',                 X
+               'NOTE: THERE ARE A NUMBER OF OPERANDS WHICH RELATE TO', X
+               'THE EXECUTION OF TCAM, BUT THESE ARE VERY SPECIALISED',X
+               'AND SHOULD ONLY BE USED BY A TCAM PROGRAMMER.'
+         EJECT
+***********************************************************************
+*        MSGRT                                                        *
+***********************************************************************
+         SPACE 2
+MSGRT    TEXT  'MVS COMMAND MSGRT OR MR     ',                         X
+               'THIS COMMAND IS USED TO CAUSE CERTAIN TYPES OF OUTPUT',X
+               'TO BE SENT TO DIFFERENT CONSOLES AND DIFFERENT AREAS', X
+               'OF DISPLAY CONSOLES.        ',                         X
+               'OPERANDS OF THE COMMAND ARE:',                         X
+               'MR D=(A,            ''D A'' COMMANDS ARE ROUTED',      X
+               '      C,            ''D C'' COMMANDS ARE ROUTED',      X
+               '      M,            ''D M'' COMMANDS ARE ROUTED',      X
+               '      R,            ''D R'' COMMANDS ARE ROUTED',      X
+               '      U),           ''D U'' COMMANDS ARE ROUTED',      X
+               '                    ANY COMBINATION OF THE ABOVE MAY', X
+               '                    BE ENTERED. (IN BRACKETS)',        X
+               '   TR=A,            TRACK DISPLAYS ARE ROUTED',        X
+               '   K,               EFFECT OF ''K'' COMMANDS CHGD',    X
+               '        L=A    OR        CONSOLE ADDRESS TO WHICH THE',X
+               '        L=CC   OR        OUTPUT IS TO BE ROUTED',      X
+               '        L=CCA      WHERE ''A'' IS THE DISPLAY AREA ID',X
+               '                    AND ''CC'' IS THE CONSOLE ID.',    X
+               '   NONE            DELETES ALL CURRENT ROUTINGS',      X
+               '   REF             LISTS THE CURRENT ROUTINGS',        X
+               '   CONT            CAUSES ANY UNDISPLAYED ROUTINGS',   X
+               '                   TO BE OUTPUT WHEN AN ''MR REF''',   X
+               '                   HAS BEEN ISSUED, BUT RAN OUT OF',   X
+               '                   SPACE ON THE SCREEN.'
+         EJECT
+***********************************************************************
+*        QUIESCE                                                      *
+***********************************************************************
+         SPACE 2
+QUIESCE  TEXT  'MVS COMMAND QUIESCE         ',                         X
+               'THE QUIESCE COMMAND IS USED TO STOP EXECUTION OF THE', X
+               'WHOLE SYSTEM WITHOUT AFFECTING JOB STEP TIMINGS ETC.', X
+               'ONCE THE COMMAND HAS BEEN ISSUED, THE SYSTEM WILL',    X
+               'ENTER A WAIT STATE UNTIL THE RESTART KEY IS PRESSED.', X
+               '  WHEN THIS HAPPENS, ALL WORK IN THE SYSTEM IS AUTO-', X
+               'MATICALLY RESTARTED AND EXECUTION CONTINUES AS BEFORE',X
+               'THE COMMAND WAS ISSUED.     ',                         X
+               'THERE ARE NO OPERANDS. SIMPLY ENTER:',                 X
+               'QUIESCE                     '
+         EJECT
+***********************************************************************
+*        REPLY                                                        *
+***********************************************************************
+         SPACE 2
+REPLY    TEXT  'MVS COMMAND ''REPLY'' OR ''R''',                       X
+               'THIS COMMAND IS USED TO ENTER INFORMATION INTO THE',   X
+               'SYSTEM IN RESPONSE TO A PRIOR REQUEST FOR SUCH DATA.', X
+               'WHEN THE SYSTEM NEEDS AN OPERATOR RESPONSE, THE TEXT', X
+               'OF THE MESSAGE ASKING FOR SUCH ACTION CONTAINS A ONE', X
+               'OR TWO DIGIT REPLY IDENTIFIER. THE IDENTIFIER IS USED',X
+               'TO ASSOCIATE A PARTICULAR RESPONSE WITH A SPECIFIC',   X
+               'REQUEST FOR DATA. THE MESSAGE TEXT WILL NORMALLY',     X
+               'EXPLAIN WHAT RESPONSES ARE REQUIRED. THE REPLY CAN BE',X
+               'ENTERED IN ANY OF SEVERAL FORMS LISTED BELOW. NOTE',   X
+               'THAT WHEN DATA IS ENTERED BETWEEN QUOTES. THE SYSTEM', X
+               'DOES NOT CONVERT IT TO UPPER CASE BEFORE PROCESSING',  X
+               'IT.     FORMS ACCEPTED ARE: ',                         X
+               'REPLY NN,''XXXXXX''        STANDARD LONG FORM',        X
+               'REPLY NN,XXXXXX            NO QUOTES',                 X
+               'REPLY N,XXXXXX             ONE DIGIT NUMBER',          X
+               'R NN,''XXXXXX''            STANDARD FORM',             X
+               'R NN,XXXXXX                NO QUOTES',                 X
+               'R N,XXXXXX                 ONE DIGIT NUMBER',          X
+               'NN,''XXXXXX''              ''R'' OMMITTED ALTOGETHER', X
+               'NN,XXXXXX                  NO QUOTES',                 X
+               'N,XXXXXX                   ONE DIGIT NUMBER',          X
+               'NNXXXXXX                   COMMA OMMITED, NO QUOTES',  X
+               'NXXXXXX                    ONE DIGIT (FIRST ''X''',    X
+               '                           MUST NOT BE A NUMBER)',     X
+               'IN ALL THE ABOVE CASES, ''NN'' OR ''N'' REPRESENTS',   X
+               'THE REPLY ID AND ''XXXXXX'' REPRESENTS THE DATA TO',   X
+               'BE ENTERED INTO THE SYSTEM. '
+         EJECT
+***********************************************************************
+*        RESET                                                        *
+***********************************************************************
+         SPACE 2
+RESET    TEXT  'MVS COMMAND ''RESET'' OR ''E''',                       X
+               'THIS COMMAND CAUSES A SPECIFIED JOB TO BE CHANGED',    X
+               'FROM ONE PERFORMANCE GROUP TO ANOTHER FOR THE CURRENT',X
+               'AND ALL SUBSEQUENT STEPS. A PERFORMANCE GROUP IS A',   X
+               'SET OF WORK WHICH IS ALLOWED TO USE A PRE-DETERMINED', X
+               'AMOUNT OF THE SYSTEM''S RESOURCES IN A GIVEN PERIOD',  X
+               'OF TIME. ALTERING THE PERFORMANCE GROUP OF A JOB WILL',X
+               'MAKE THAT JOB RUN MORE SLOWLY OR MORE QUICKLY',        X
+               'DEPENDING ON WHETHER THE NEW PERFORMANCE GROUP IS',    X
+               'ALLOWED TO USE MORE OR LESS OF THE RESOUCES.',         X
+               '  SINCE IMMPROPER USE OF THIS COMMAND COULD SERIOUSLY',X
+               'IMPAIR THE EFFICIENT RUNNING OF THE MACHINE, IT',      X
+               'SHOULD ONLY BE USED UNDER THE DIRECTION OF A SYSTEM',  X
+               'PROGRAMMER.      OPERANDS ARE:',                       X
+               'RESET JOBNAME,             THE NAME OF THE JOB',       X
+               '              PERFORM=NN   THE NEW PERFORMANCE GROUP'
+         EJECT
+***********************************************************************
+*        RELEASE                                                      *
+***********************************************************************
+         SPACE 2
+RELEASE  TEXT  'MVS COMMAND ''RELEASE'' OR ''A''',                     X
+               'THIS IS A TELEPROCESSING COMMAND TO CAUSE A',          X
+               'PREVIOUSLY SUSPEND TRANSMISSION LINE (SEE THE MVS',    X
+               '''HOLD'' COMMAND) TO RESUME NORMAL OPERATION.',        X
+               'IT DOES NOT WORK FOR HASP/JES LINES.',                 X
+               'COMMAND FORMAT IS :         ',                         X
+               'RELEASE TP=STATION NAME     '
+         EJECT
+***********************************************************************
+*        SEND                                                         *
+***********************************************************************
+         SPACE 2
+SEND     TEXT  'MVS COMMAND ''SEND'' OR ''SE''                  ',     X
+               'THE SEND COMMAND CAN BE USED TO SEND MESSAGES TO',     X
+               'OTHER OPERATORS OF THE SYSTEM, TO TSO USERS LOGGED',   X
+               'ON TO THE SYSTEM OR TO A SPECIAL FILE (BROADCAST',     X
+               'FILE) TO BE SAVED AND ISSUED AT A LATER TIME.   ',     X
+               'TO SEND MESSAGES TO OTHER OPERATORS, ENTER:     ',     X
+               'SE ''MSG'',                 THE DATA YOU WISH TO SEND',X
+               '   MSGNO,                   A PRE-DEFINED MESSAGE',    X
+               '           OPERATOR=NN      ROUTE CODE OF RECEIVER',   X
+               '           CN=NN            CONSOLE NO. OF RECEIVER',  X
+               '           BRDCST           SEND MSG TO ALL CONSOLES', X
+               'TO SEND MESSAGES TO TSO USERS, ENTER:           ',     X
+               'SE ''MSG'',                 THE DATA YOU WISH TO SEND',X
+               '   MSGNO,                   A PREDEFINED MESSAGE',     X
+               '           USER=(N1,N2..),  NAMES OF THE TSO USERS',   X
+               '           ALL,             SEND TO ALL TSO USERS',    X
+               '                          LOGON   WHEN THEY LOG ON',   X
+               '                          NOW     IMMEDIATELY   ',     X
+               '                          SAVE    KEEP A COPY OF THE', X
+               '                                  MESSAGE IN THE',     X
+               '                                  BROADCAST FILE TO',  X
+               '                                  BE ISSUED LATER',    X
+               'NOTE: WHEN THE SAVE OPTION ABOVE IS USED, THE MESSAGE',X
+               'IS ASSIGNED A NUMBER WHICH IS OUTPUT ON THE CONSOLE.', X
+               'THIS NUMBER CAN BE USED IN THE ABOVE COMMAND INSTEAD', X
+               'OF THE RE-ENTERING THE WHOLE THING AGAIN. TO REMOVE',  X
+               'SUCH A PREDEFINED MESSAGE, ENTER:               ',     X
+               'SE MSGNO,DELETE    WHERE MSGNO IS THE NUMBER OF THE',  X
+               '                   MESSAGE ASSIGNED WHEN IT WAS ',     X
+               '                   ''SAVED'' IN THE BROADCAST FILE.'
+         EJECT
+         END
+//LKED.SYSIN   DD   *
+ SETCODE AC(1)
+ NAME AUXCMM07(R)
+ INCLUDE MLPALIB(AUXCOMM)
+ INCLUDE MLPALIB(AUXCMM07)
+ ENTRY AUXCOMM
+ ALIAS AUXCMM06
+ ALIAS AUXCMM10
+ SETCODE AC(1)
+ NAME AUXCOMM(R)
+/*

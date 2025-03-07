@@ -1,0 +1,398 @@
+//JEAMNITR JOB (1330,5),'PAGE MONITOR',CLASS=N,NOTIFY=JEA,
+// COND=(0,NE),MSGCLASS=T
+//STEP01   EXEC   ASMFCL,L=H,LOPT=RENT,PRINT='*'
+***********************************************************************
+*                    M O N I T O R 1                                  *
+*                                                                     *
+*        THIS ROUTINE IS DESIGNED TO PROVIDE TRACE DATA FOR ALL       *
+*        PAGING ACTIVITY IN THE SYSTEM. IT IS IN TWO BASIC PARTS OF   *
+*        WHICH THIS IS THE FIRST.                                     *
+*          THIS IS THE MAIN INITIALISATION, OPERATOR INTERFACE AND    *
+*        CONTROL ROUTINE. IT HAS FOUR  BASIC FUNCTIONS:               *
+*                                                                     *
+*        1) INITIALISE ALL THE BUFFER STACKS AND CONTROL AREAS FOR    *
+*           SUCCESSFUL COLLECTION AND OUTPUT OF TRACE DATA.           *
+*        2) LOCATE AND MODIFY THE SRM'S ROUTINE CONTROL BLOCK SO      *
+*           THAT EACH PAGING IO REQUEST WILL PASS THROUGH THE DATA    *
+*           COLLECTION ROUTINE.                                       *
+*        3) PERIODICALLY EXAMINE THE BUFFER QUEUES FOR RETURNED DATA  *
+*           AND WRITE TEH OUT TO THE CONTROL FILE.                    *
+*        4) INTERFACE WITH THE SYSTEM OPERATOR TO ALLOW TERMINATION   *
+*           OF THE ROUTINE WHEN NECCESSARY. AN ESTAE IS ALSO          *
+*           PROVIDED TO CLEAR UP IN CASE OF AN ABEND.                 *
+*                                                                     *
+*        ATTRIBUTES. REENTRANT, REUSABLE, SUPERVISOR MODE.            *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING                                   *
+***********************************************************************
+         SPACE 2
+MONITOR1 ZCSECT GETMAIN=1
+         USING PSA,0               SHOW PSA AT LOCATION 0
+         USING CVTMAP,REG1         BASIC ADDRESSABILITY FOR CVT
+         USING PVT,REG8            ADDRESSABILITY FOR PVT
+         EJECT
+***********************************************************************
+*        SET UP THE ENVIRONMENT TO EXECUTE                            *
+***********************************************************************
+         SPACE 2
+         MODESET MODE=SUP,KEY=ZERO GET INTO SUPERVISOR MODE
+         ESTAE STAEXIT             SET UP TRAP FOR ABENDS
+         EJECT
+***********************************************************************
+*        SET UP A GLOBALLY ADDRESSABLE AREA OF CORE
+***********************************************************************
+         SPACE 2
+         GETMAIN R,LV=WORKLEN,SP=245 GETMAIN GLOBAL ADDRESSABLE CORE
+         LR    REG10,REG1          LOAD BASE REGISTER
+         LA    REG11,WORKLEN       LENGTH OF THE AREA
+         LA    REG8,WORKAREA       ADDRESS OF CONSTANT AREA
+         LR    REG9,REG11          GET SECOND LENGTH
+         MVCL  REG10,REG8          COPY CONSTANTS AND CODE TO SQA
+         LR    REG10,REG1          REFRESH START ADDRESS
+         USING WORKAREA,REG10      AND SET NEW ADDRESSABILITY
+         EJECT
+***********************************************************************
+*        INITIALISE THE OPERATOR COMMUNICATIONS
+***********************************************************************
+         SPACE 2
+         XC    EXTRLIST(12),EXTRLIST CLEAR THE EXTRACT PARAMTERS
+         EXTRACT CMNDAREA,FIELDS=COMM,MF=(E,EXTRLIST) GET COMM AREA
+         LA    REG15,CHECBP-CHPTR LOAD OFFSET TO COMM AREA IN CSCB
+         L     REG1,CMNDAREA       LOAD ADDRESS OF COMM AREA
+         SR    REG1,REG15          AND GET START ADDRESS OF CSCB
+         DROP  REG1                RELEASE REGISTER 1
+         USING CSCB,REG1           ADDRESSABILITY FOR IT
+         NI    CHACT,255-CHCL      STOP OPERATOR CANCELLING ME
+         L     REG4,CMNDAREA       LOAD ADDRESS OF CMND AREA AGAIN
+         LA    REG11,4(REG4)       LOAD ADDRESS OF CIB POINTER
+         QEDIT ORIGIN=(11)         FREE THE INPUT CIB
+         QEDIT ORIGIN=(11),CIBCTR=15 AND SPECIFY A CIB MAXIMUM
+         MVC   WAITLIST,0(REG4)    AND MOVE ADDRESS OF ECB
+         DROP  REG1                RELEASE REGISTER 1
+         EJECT
+***********************************************************************
+*        INITIALISE THE TRACE DATA FILE READY TO RECEIVE DATA
+***********************************************************************
+         SPACE 2
+         LA    REG2,TRACE          GET THE ADDRESS OF IT
+         OPEN  ((2),OUTPUT),MF=(E,OPENLIST) AND OPEN THE FILE
+         TM    TRACE+48,X'10'      WAS OPEN SUCCESSFUL ?
+         BO    GOODOPEN            YES. CARRY ON
+         ABEND 1,DUMP,STEP         NO. GET OUT QUICK
+GOODOPEN EQU   *
+         EJECT
+***********************************************************************
+*        INITIALISE THE FREE AND FULL BUFFER STACKS
+***********************************************************************
+         SPACE 2
+         LA    REG2,DATALEN        LENGTH OF DATA TO BE WRITTEN
+         MH    REG2,BLKCOUNT       ALLOW FOR THAT MANY BLOCKS
+         LA    REG2,7(REG2)        MAKE SURE THAT THIS IS A DOUBLEWD
+         N     REG2,STRIPBIT       QUANTITY WE GETMAIN
+         GETMAIN R,LV=(2),SP=245   GETMAIN SOME FIXED STORAGE
+         STM   REG1,REG2,STACKREG  SAVE ADDRESS AND LENGTH FOR FREE
+         LA    REG3,0(REG2,REG1)   ADDRESS OF END OF BLOCK AREA
+         BCTR  REG3,0              SUBTRACT 1 FOR BXLE INDEXING
+         LA    REG2,DATALEN        LENGTH OF A BLOCK
+         LA    REG4,STACKHDR       INITIALISE TOP OF STACK HEADER
+INITLOOP EQU   *
+         ST    REG1,0(REG4)        SET DOWN CHAIN TO NEXT BLOCK
+         LR    REG4,REG1           SAVE ADDRESS OF LAST BUFFER
+         BXLE  REG1,REG2,INITLOOP  GET ADDRESS OF NEXT BLOCK
+         XC    0(4,REG4),0(REG4)   MAKE SURE LAST BLOCK IS ZERO'D
+         EJECT
+***********************************************************************
+*        INITIALISE THE DATA COLLECTION ROUTINE
+***********************************************************************
+         SPACE 2
+MAIN     DS    0H
+         USING CVTMAP,REG1         ADDRESSABILITY FOR CVT
+         L     REG1,FLCCVT         LOAD ADDRESS OF CVT
+         L     REG8,CVTPVTP        LOAD ADDRESS OF PVT
+         LA    REG15,MONITORA      ADDRESS OF MONITORA
+         ST    REG15,HOOKADDR      SET UP THE HOOK CODE
+         L     REG14,PVTPAGIO      LOAD ADDRESS OF ASM ROUTINED
+         ST    REG14,ILRSAVE       SAVE THAT ADDRESS
+         MVC   4(HOOKEND-HOOKCODE,REG14),HOOKCODE  THIS ROUTINE
+         NI    1(REG14),X'0F'      MAKE BRANCH A 'NOP'   ROUTINE
+         LA    REG15,MONITORB      ADDRESS OF MONITORB
+         ST    REG15,HOOKADDR      SET UP THE HOOK CODE
+         L     REG14,PVTPIOP       LOAD ADDRESS OF ASM ROUTINED
+         S     REG14,PIOPOFFS      GO BACK TO START
+         ST    REG14,ILRSAVE2      SAVE THAT ADDRESS
+         MVC   4(HOOKEND-HOOKCODE,REG14),HOOKCODE  THIS ROUTINE
+         NI    1(REG14),X'0F'      MAKE BRANCH A 'NOP'   ROUTINE
+         EJECT
+***********************************************************************
+*        WAIT FOR: A) BUFFERS TO WRITE, B) STOP COMMAND               *
+***********************************************************************
+         SPACE 2
+         LA    REG0,STIMECB        ADDRESS OF STIMER ECB
+         ST    REG0,WAITLIST+4     STORE INTO ECB LIST
+         MVI   WAITLIST+4,X'80'    TURN ON END OF LIST INDICATOR
+STIMER   MVI   STIMECB,0           RESET STIMER ECB
+         STIMER REAL,STIMEXIT,BINTVL=WAITTIME WAIT FOR NEXT SCAN
+STIMWAIT WAIT  1,ECBLIST=WAITLIST  WAIT FOR STIMER OR MODIFY
+         TM    STIMECB,X'40'       NORMAL ELAPSED INTERVAL ?
+         BO    WRITLOOP            YES. GO PROCESS IT
+         EJECT
+***********************************************************************
+*        CHECK FOR INPUT COMMANDS TO THIS ROUTINE                     *
+***********************************************************************
+         SPACE 2
+         L     REG4,CMNDAREA       LOAD ADDRESS OF COMMUNICATIONS AREA
+         L     REG8,4(REG4)        LOAD ADDRESS OF CIB
+         CLI   4(REG8),X'40'       STOP COMMAND BEEN ISSUED ?
+         BE    STOPTRAC            YES. GO TERMINATE TRACE
+         LA    REG4,4(REG4)        ADDRESS OF CIB CHAIN ORIGIN
+         QEDIT ORIGIN=(4)          FREE UP THE CHAIN
+         B     STIMER              RETURN TO WAIT LOOP
+         EJECT
+***********************************************************************
+*        WRITE OUT THE TRACE DATA TO TRACE FILE                       *
+***********************************************************************
+         SPACE 2
+WRITLOOP DS    0H
+         L     REG3,STACKHDR+4     ADDRESS OF TOP OF STACK
+         LTR   REG3,REG3           ANY/ANY MORE DATA TO WRITE
+         BZ    WRITEDON            NO. TERMINATE THE WRITE OPERATIONS
+         L     REG4,0(REG3)        ADDRESS OF NEXT BUFFER
+         CS    REG3,REG4,STACKHDR+4 REMOVE THE BUFFER FROM STACK
+         BNE   *-8                 FAILED. TRY AGAIN
+         LA    REG1,DATALEN        GET LENGTH OF A RECORD
+         SLL   REG1,16             PUT IN TOP HALFWORD
+         ST    REG1,0(REG3)        AND USE IT AS RDW FOR VB
+         PUT   TRACE,(3)           WRITE OUT THE DATA
+         L     REG4,STACKHDR       LOAD ADDRESS OF FREE STACK
+         ST    REG4,0(REG3)        CHAIN FREE STACK TO THIS ENTRY
+         CS    REG4,REG3,STACKHDR  AND UPDATE THE FREE STACK
+         BNE   *-8                 FAILED. TRY AGAIN
+         B     WRITLOOP            AND PROCESS ALL BUFFERS
+WRITEDON EQU   *
+         B     STIMER              GO WAIT AGAIN
+         EJECT
+***********************************************************************
+*        COMMON PROGRAM EXIT ROUTINES                                 *
+***********************************************************************
+         SPACE 2
+STOPTRAC DS    0H
+         DROP  REG1                RELEASE REGISTER 1
+         USING CVTMAP,REG1         ADDRESSABILITY FOR CVT
+         L     REG1,FLCCVT         LOAD ADDRESS OF CVT
+         L     REG8,CVTPVTP        LOAD ADDRESS OF PVT
+         L     REG14,PVTPAGIO      LOAD ADDRESS OF TRACED ROUTINE
+         OI    1(REG14),X'F0'      TURN ON BRANCH AGAIN
+         L     REG14,PVTPIOP       LOAD ADDRESS OF TRACED ROUTINE
+         S     REG14,PIOPOFFS      GO BACK TO START OF IT
+         OI    1(REG14),X'F0'      TURN ON BRANCH AGAIN
+         LA    REG2,TRACE          LOAD ADDRESS OF THE DCB
+         CLOSE ((2)),MF=(E,CLOSLIST) CLOSE THE TRACE FILE
+         LM    REG2,REG3,STACKREG  ADDRESS AND LENGTH OF STACK
+         FREEMAIN R,LV=(3),A=(2),SP=245 FREE UP THE STACK
+         FREEMAIN R,LV=WORKLEN,A=(10),SP=245 FREE THE COPIED DATA
+         ZRETURN
+         EJECT
+***********************************************************************
+*        STIMER EXIT TO POST WAIT ECB                                 *
+***********************************************************************
+         SPACE 2
+STIMEXIT DS    0H                  ASSUME REG10 STILL = WORKAREA ADDR
+         PUSH  USING               SAVE ADDRESSABILITY
+         USING *,REG12             SET TEMPORARY ADDRESSABILITY
+         LR    REG12,REG15         SET UP THAT BASE REGISTER
+         POST  STIMECB             POST THE WAIT ECB
+         BR    REG14               RETURN TO CALLER
+         POP   USING
+         EJECT
+***********************************************************************
+*        THIS IS THE ESTAE EXIT ROUTINE FOR ABENDS                    *
+***********************************************************************
+         SPACE 2
+STAEXIT  DS    0H                  ASSUME REG10 STILL = WORKAREA ADDR
+         PUSH USING                SAVE OLD ADDRESSABILITY
+         BALR  REG12,0             GET BASIC ADDRESSABILITY
+         USING *,REG12             SET BASE ADDRESS REGISTER
+         USING CVTMAP,REG1         ADDRESSABILITY FOR CVT
+         L     REG1,FLCCVT         LOAD ADDRESS OF CVT
+         L     REG8,CVTPVTP        LOAD ADDRESS OF PVT
+         L     REG9,PVTPAGIO       LOAD ADDRESS PAGE ROUTINE
+         OI    1(REG9),X'F0'       TURN ON BRANCH AGAIN
+         L     REG9,PVTPIOP        LOAD ADDRESS PAGE ROUTINE
+         S     REG9,PIOPOFFS       GO BACK TO START OF IT
+         OI    1(REG9),X'F0'       TURN ON BRANCH AGAIN
+EXITSTAE XR    REG15,REG15         SIGNAL ABEND TO CONTINUE
+         BR    REG14               RETURN TO CALLER
+         POP   USING               RESTORE OLD ADDRESSABILITY
+         EJECT
+***********************************************************************
+*        ODD LITERALS AND CONSTANTS                                   *
+***********************************************************************
+         SPACE 2
+PIOPOFFS DC    F'26'               DIFF. BETWEEN PVT ADDR AND REAL ADDR
+STRIPBIT DC    F'-8'               AND MASK TO STRIP LAST 3 BITS
+WAITTIME DC    F'300'              THREE SECONDS BETWEEN WRITES
+BLKCOUNT DC    H'600'              SIZE OF BUFFER POOL
+         LTORG
+         EJECT
+***********************************************************************
+*               MONITORA AND MONITORB.                                *
+*                                                                     *
+*        THESE ARE THE DATA COLLECTION ROUTINES WHICH ARE COPIED      *
+*        TO NON-PAGEABLE STORAGE BEFORE USE. MONITORA COLLECTS DATA   *
+*        ABOUT STARTING PAGE I/O WHILST MONITORB COLLECTS DATA FOR    *
+*        TERMINATING I/O.                                             *
+*            THE ROUTINES ARE 'PLUGGED IN' BY TAKING THE ADDRESSES    *
+*        OF TWO ASM ROUTINES OUT OF THE PVT AND SUBSTITUTING THE      *
+*        ADDRESSES OF THE MONITOR ROUTINES. THE ASM ROUTINES,         *
+*        (ILRPAGIO AND IEAVPIOP), ARE THEN INVOKED DIRECTLY BY THE    *
+*        APPROPRIATE MONITOR ROUTINE ONCE IT HAS COLLECTED ALL THE    *
+*        RELEVANT DATA.                                               *
+*            ON ENTRY TO EACH MONITOR, REGISTER ONE ADDRESSES A CHAIN *
+*        OF PCB/AIA'S WHICH, ALONG WITH THE TIME, THE JOBNAME, AND    *
+*        A COPY OF THE XPTE ARE LOADED INTO A FREE BUFFER AND PUT     *
+*        ON ANOTHER QUEUE FOR THE CONTROL ROUTINE TO PICK UP AND      *
+*        WRITE TO THE TRACE FILE.                                     *
+*            THE REGISTERS COMING INTO THE MONITORS ARE SAVED IN A    *
+*        SINGLE REGISTER SAVE AREA WITHIN THE ATTACHED WORK AREA.     *
+*        THE USE OF THIS SAVE AREA IS PROTECTED BY A GLOBAL LOCK      *
+*        WHICH PREVENTS CORRUPTION OF THE REGISTERS.                  *
+*            SINCE THE ENTRY CONDITIONS AND DATA COLLECTION CRITERIA  *
+*        FOR THE TWO ROUTINES ARE ALMOST IDENTICAL, THEY ARE IN FACT  *
+*        CODED AS ONE ROUTINE WITH TWO ENTRY POINTS. THIS SAVES ON    *
+*        FIXED SQA STORAGE.                                           *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        THIS IS THE DATA COLLECTION ROUTINE.                         *
+*        IT IS ENTERED FROM ASM IN A DISABLED STATE, MAYBE SALLOC,    *
+*        SUPERVISOR MODE AND REG1 ==> AIA.                            *
+***********************************************************************
+         SPACE 2
+WORKAREA DS    0D                  AREA COPIED TO SQA
+MONITORA DS    0H
+         PUSH  USING               SAVE OLD ADDRESSABILITY
+         USING *,REG15             INITIAL ENTRY POINT ADDRESSABILITY
+         STM   REG0,REG15,STATSAVE SAVE ALL INCOMING REGISTERS
+         L     REG11,ILRSAVE       ADDRESS OF REAL ENTRY POINT
+         LA    REG10,0             SHOW THAT XPTE IS ADDRESSABLE
+         LA    REG9,FLAGSTRT       SHOW THAT THIS IS ILRPAGIO
+         B     START               AND GO CONTINUE
+MONITORB DS    0H
+         PUSH  USING               SAVE OLD ADDRESSABILITY
+         USING *,REG15             INITIAL ENTRY POINT ADDRESSABILITY
+         STM   REG0,REG15,STATSAVE SAVE ALL INCOMING REGISTERS
+         L     REG11,ILRSAVE2      ADDRESS OF REAL ENTRY POINT
+         LA    REG10,4             SHOW THAT XPTE IS NOT ADDRESSABLE
+         LA    REG9,FLAGSTOP       SHOW THAT THIS IS IEAVPIOP
+         B     START               AND GO CONTINUE
+START    DS    0H
+         DROP  REG15               RELEASE INITIAL ADDRESSABILITY
+         BALR  REG12,0             SET UP NEW BASE REGISTER
+         USING *,REG12             TEMPORARY ADDRESSABILITY FOR STATIST
+AIALOOP  EQU   *
+         L     REG4,STACKHDR       ADDRESS OF FREE QUEUE
+         LTR   REG4,REG4           ANY FREE ELEMENTS ?
+         BZ    BADEXIT             NO. WE ARE LOSING DATA
+         L     REG6,0(REG4)        ADDRESS OF 2ND ENTRY ON FREE QUEUE
+         CS    REG4,REG6,STACKHDR  ATTEMPT TO UPDATE AND TAKE OFF A BLK
+         BNE   *-8                 FAILED. GO TRY AGAIN
+         USING DATABLOK,REG4       ADDRESSABILITY FOR DATA BLOCK
+         STC   REG9,DATAFLAG       SET UP THE TRACE FLAG FOR START/STOP
+         STCK  DATACLOK            SAVE THE TIME OF DAY IN TRACE REC.
+         SL    REG1,PCBLEN         GO BACK TO START OF PCB
+         MVC   DATAPCB,0(REG1)     GET A COPY OF PCB
+         XC    DATAXPTE,DATAXPTE   CLEAR XPTE COPY AREA
+         LTR   REG10,REG10         IS XPTE ADDRESSABLE ?
+         BNZ   NOXPTE              NO. DO NOT TRY TO COPY IT
+         L     REG7,16(REG1)       ADDRESS OF XPTE
+         MVC   DATAXPTE,0(REG7)    TAKE A COPY OF IT
+NOXPTE   EQU   *
+         L     REG7,32(REG1)       LOAD ADDRESS OF THE ASCB
+         USING ASCB,REG7           ADDRESSABILITY FOR IT
+         L     REG8,ASCBJBNI       GET ADDRESS OF JOBNAME FIELD
+         LTR   REG8,REG8           DOES ONE EXIST ?
+         BNZ   *+8                 YES
+         L     REG8,ASCBJBNS       NO. TAKE THE OTHER ONE
+         MVC   DATAJOBN,0(REG8)    TAKE THE NAME OF THE JOB
+         DROP  REG4,REG8           RELEASE ADDRESSABILITY
+         L     REG5,STACKHDR+4     ADDRESS OF THE LOADED BUFFER QUEUE
+         ST    REG5,0(REG4)        PUT FREE QUEUE ON THIS BUFFER
+         CS    REG5,REG4,STACKHDR+4 ATTEMPT TO ADD BLOCK TO QUEUE
+         BNE   *-8                 FAILED. GO TRY AGAIN.
+         AL    REG1,PCBLEN         GET BACK TO AIA
+         L     REG1,12(REG1)       ADDRESS OF NEXT IN CHAIN
+         LTR   REG1,REG1           ANY MORE AIA'S ON THE CHAIN
+         BNZ   AIALOOP             YES. GO PROCESS THEM
+BADEXIT  EQU   *
+         XR    REG15,REG15         CLEAR WORK REGISTER
+         IC    REG15,3(REG11)      ORIGINAL OFFSET IN ROUTINE
+         ALR   REG15,REG11         GET REAL START POINT
+         LM    REG0,REG14,STATSAVE RELOAD REGISTERS
+         BR    REG15               RETURN TO CALLER
+         POP   USING               RESTORE ADDRESSABILITY
+         EJECT
+***********************************************************************
+*        WORK AREAS GETMAINED ADJACENT TO COLLECT ROUTINE             *
+***********************************************************************
+         SPACE 2
+STATSAVE DS    18F                 SAVE AREA FOR RSM'S REGISTERS
+WAITLIST DS    2F                  WAIT ECB LIST
+STACKHDR DS    2F                  BUFFER STACK HEADERS
+STACKREG DS    2F                  ADDRESS AND LENGTH STACK STORAGE
+STIMECB  DS    F                   STIMER WAIT ECB
+ILRSAVE  DS    F                   SAVE AREA FOR ASM ROUTINE EP ADDRESS
+ILRSAVE2 DS    F                   SAVE AREA FOR ASM ROUTINE EP ADDRESS
+CMNDAREA DS    F                   ADDRESS OF CSCB COMM AREA
+EXTRLIST DS    3F                  EXTRACT PARAMETER LIST
+OPENLIST OPEN  (0,OUTPUT),MF=L     OPEN PARAMETER AREA
+CLOSLIST CLOSE (0),MF=L            CLOSE PARAMETER AREA
+HOOKCODE DS    0F
+         BAL   REG15,12(REG15)     LOAD ADDRESS OF TRACE ROUTINE ADDR
+HOOKADDR DS    F                   ADDRESS OF TRACE ROUTINE
+         L     REG15,0(REG15)     LOAD THE ADDRESS
+         BR    REG15               GO TO TRACE ROUTINE
+HOOKEND  EQU   *
+TRACE    DCB   DDNAME=SYSTRACE,DSORG=PS,MACRF=PM,LRECL=DATALEN,        X
+               RECFM=VB,BLKSIZE=13028
+PCBLEN   DC    F'36'               LENGTH OF THE PCB
+         DS    0D                  MAKE SURE OF ALIGNMENT
+WORKLEN  EQU   *-WORKAREA          LENGTH FOR GETMAIN
+         POP   USING               RESTORE OLD ADDRESSABILITY
+         EJECT
+***********************************************************************
+*        DSECTS USED IN THIS MODULE                                   *
+***********************************************************************
+         SPACE 2
+DATABLOK DSECT ,                   IMAGE OF DATA PASSED TO TRACE
+DATACHN  DS    F                   CHAINING FIELDS
+DATACLOK DS    2F                  TOD CLOCK VALUE
+DATAJOBN DS    CL8                 NAME OF THE JOB/TSO/STC
+DATAPCB  DS    CL36                IMAGE OF THE PCB
+DATAXPTE DS    CL12                IMAGE OF THE XPTE
+DATAMICS DS    2F                  ELAPSED TIME FOR PAGE IO TO COMPLETE
+DATAFLAG DS    X                   FLAGS FOR TRACE RECORD
+FLAGSTRT EQU   X'80'               THIS IS THE START OF A PAGE IO
+FLAGSTOP EQU   X'40'               THIS IS THE END OF A PAGE IO
+DATAFREE DS    XL3                 SPARE FOR EXPANSION
+DATALEN  EQU   *-DATABLOK          LENGTH OF THE DATA
+         PRINT NOGEN
+         IHAPSA
+         IHAPVT
+         IHAASCB
+CVTDSECT DSECT
+         CVT
+CSCB     DSECT
+         IEECHAIN
+         PRINT GEN
+         EJECT
+         END
+//LKED.SYSLMOD DD DSN=SYS2.TESTLIB,DISP=SHR
+ SETCODE AC(1)
+ NAME MONITOR1(R)
+/*

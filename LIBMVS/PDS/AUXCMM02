@@ -1,0 +1,489 @@
+//AUXCMM02 JOB (1586,5),'** FOR J. NOLS **',CLASS=N
+//STEP01       EXEC GENASMOD
+***********************************************************************
+*                    A U X C M M 0 2                                  *
+*                                                                     *
+*        THIS ROUTINE HANDLES THE OPERATOR COMMAND #D NQ,....         *
+*        IT IS INVOKED DIRECTLY BY THE COMMAND PROCESSOR AUXCMM01     *
+*        TO WHICH IT RETURNS CONTROL WITH A CODE IN REG15 TO          *
+*        INDICATE WHETHER PROCESSING PROCEEDED NORMALLY OR NOT.       *
+*            THE MODULE SCANS THE QCB CHAIN BY INVOKING THE           *
+*        UTILITY MODULE 'TESTENQ' PASSING A DATA SET NAME AS INPUT.   *
+*        TESTENQ RETURNS, IN REG 1, THE ADDRESS OF THE CHAIN OF       *
+*        Q ELEMENTS FOR THAT DATA SET NAME. FROM THESE THE ASID OF    *
+*        JOBS USING THE FILE CAN BE ASSERTAINED AND THEIR NAMES       *
+*        PRINTED. IN THE ABSENCE OF ANY ENQUEUED USERS, A SUITABLE    *
+*        MESSAGE IS OUTPUT.                                           *
+*            IF THE INPUT DATA SET NAME IS AN ASTERISK, THEN ALL      *
+*        DATA SET QCB'S ARE SCANNED AND THOSE WHICH HAVE ANY          *
+*        APPARENT CONFLICT ARE REPORTED ON.                           *
+*                                                                     *
+*        ATTRIBUTES. REENTRANT, REUSABLE, SUPERVISOR MODE.            *
+*                                                                     *
+*        REGISTER USAGE                                               *
+*        REG0  PARAMETER REGISTER, WORK REGISTER                      *
+*        REG1  PARAMETER REGISTER, WORK REGISTER                      *
+*        REG2  WORK REGISTER                                          *
+*        REG3  ADDRESS OF INTERNAL WORK AREA                          *
+*        REG4  ADDRESS SCAN DESCR BLK FOR CURRENT OPERAND             *
+*        REG5  LENGTH CURRENT OPERAND                                 *
+*        REG6  ADDRESS CURRENT OPERAND                                *
+*        REG7  ADDRESS CURRENT ELEMENT OUTPUT CHAIN                   *
+*        REG8  ADDRESS CURRENT QEL                                    *
+*        REG9  ADDRESS CURRENT MINOR QCB                              *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        DSECTS USED IN THIS MODULE                                   *
+***********************************************************************
+         SPACE 2
+WKAREA   DSECT ,                   INTERNAL WORK AREA
+GETMNLEN DS    F                   SAVED DETAILS FOR FREEMAIN
+CHAINHDR DS    F                   ADDRESS FIRST OUTPUT ELEMENT
+DUMMYBLK DS    F                   DUMMY SCAN DESCR BLOCK
+SAVER111 DS    F                   SAVE AREA FOR LINK REGISTER
+SAVER112 DS    F                   SAVE AREA FOR LINK REGISTER
+STATFLAG DS    X                   FLAG FOR TESTING ENQ STATUS
+CID      DS    X                   ID OF CONSOLE ISSUING COMMAND
+MSGTEXT  DS    0CL70               SPACE FOR OUTPUT MESSAGES
+CLRLINE  DS    0CL70               USED TO CLEAR ALL BUT MOD ID
+NQTEXT   DS    0CL16               NO ENQ MESSAGE TEXT
+ENQTEXT  DS    0CL20               NORMAL TEXT OUTPUT
+JOBNTEXT DS    0CL8                JOBNAME TEXT
+JOBNAME  DS    CL8                 NAME OF JOB ENQ'D
+         DS    CL2                 PADDING
+TYPETEXT DS    0CL8                TEXT FOR ENQ STATUS
+TYPE     DS    CL8                 TYPE OF ENQ
+         DS    CL2                 PADDING
+DSNAMENQ DS    0CL44               DSNAME FOR NO ENQ
+DSNAME   DS    0CL44               DATA SET NAME
+JOBSTTXT DS    0CL10               TEXT FOR JOB STATUS
+JOBSTAT  DS    CL10                JOB STATUS
+PAD2     DS    CL40                PADDING
+WKRNAME  DS    CL45                TEMP AREA FOR DSNAME
+WKARELEN EQU   *-WKAREA            LENGTH FOR GETMAIN
+         SPACE 2
+XSA      DSECT ,                   FORMAT OF EXTENDED SAVE AREA
+XSAP     DS    F                   PTR TO XCTL NAME
+XSAD     DS    F                   DCB POINTER
+XSAX     DS    D                   XCTL NAME
+XSAE     DS    0C                  ERROR CODE FOR IEE0503D
+XSAR     DS    F                   ADDRESS OF PARM LIST
+XSAN     DS    0C                  VERB INDEX
+XSAL     DS    F                   PTR TO LIST POSITION
+XSAVERB  DS    D                   VERB ENTERED BY OPERATOR
+XSAS     DS    D                   TEMPORARY SAVE AREA
+XSAU     DS    C                   UCM ENTRYINDICATOR
+         DS    C                   RESERVED
+XSAJ     DS    H                   TJID ENTRY INDICATOR
+         SPACE 2
+QEL      DSECT
+QELNQEL  DS    A
+QELPQEL  DS    A
+QELTCB   DS    A
+QELFLGS  DS    X
+QELSHARE EQU   X'80'               IF ON - 'SHR', OFF - 'EXCL'
+QELMC    EQU   X'40'               MUST COMPLETE MODE
+QELLFLGS DS    X                   MISCELLANEOUS
+QELASID  DS    H                   ADDRESS SPACE ID
+QELSVRB  DS    A                   ADDRESS OF SVRB
+QELCNT   DS    H                   COUNT OF ACTIVE QELS
+QELWCNT  DS    H                   COUNT OF WAITING QELS
+         SPACE 2
+MINQCB   DSECT ,                   MINOR QCB
+QCBNMIN  DS    F                   ADDRESS NEXT MIN QCB
+QCBPMIN  DS    F                   ADDRESS OF PREVIOUS MINOR QCB
+QCBFQEL  DS    F                   ADDRESS OF FIRST QEL
+QCBLQEL  DS    F                   ADDRESS OF LAST QEL
+QCBRLEN  DS    X                   LENGTH OF MINOR NAME
+QCBMNFLG DS    X                   FLAG BYTE
+QCBASCB  DS    XL2                 ASID FOR STEP REQUEST
+QCBRNAME DS    X                   MINOR NAME
+         EJECT
+***********************************************************************
+*        EQUATES USED IN THE MODULE                                   *
+***********************************************************************
+         SPACE 2
+CVTASVT  EQU   X'22C'              OFFSET TO ASVT ADDRESS IN CVT
+ASVTENTY EQU   X'210'              OFFSET TO ASID ENTRIES IN ASVT
+ASCBCSCB EQU   X'38'               OFFSET TO CSCB IN ASCB
+ASCBJBNI EQU   X'AC'               OFFSET TO JOBNAME FIELD IN ASCB
+ASCBJBNS EQU   X'B0'               OFFSET TO SYSTEM JOBNAME
+ASCBRCTF EQU   X'66'               OFFSET TO RCT FLAGS IN ASCB
+ASCBFLG1 EQU   X'67'               OFFSET TO ASCB FLAGS 1
+*
+*        THE FOLLOWING RELATE TO ASCBRCTF (JOB STSTUS)
+*
+ASCBTMNO EQU   X'80'               MEMORY IS QUIESCED
+ASCBOUT  EQU   X'04'               MEMORY IS SWAPPED OUT
+ASCBTMLW EQU   X'02'               MEMORY IS IN A LONG WAIT
+*
+*        THE FOLLOWING RELATE TO ASCBFLG1 (JOB STATUS)
+*
+ASCBTERM EQU   X'10'               MEMORY IS TERMINATING NORMALLY
+ASCBABNT EQU   X'08'               MEMORY IS TERMINATING ABNORMALLY
+ASCBSTND EQU   X'04'               TCB'S ARE  NON-DISPATCHABLE
+*
+*        THE FOLLOWING RELATE TO FLAG STATFLAG
+*
+PRIOREXC EQU   X'80'               INDICATES PRIOR EXCL ENQ DETECTED
+PRIORSHR EQU   X'40'               INDICATES PRIOR SHR ENQ DETECTED
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING                                   *
+***********************************************************************
+         SPACE 2
+AUXCMM02 ZCSECT GETMAIN=1
+         LR    REG4,REG1           LOAD ADDRESS SCAN DESCR BLK CHAIN
+         EJECT
+***********************************************************************
+*        GETMAIN CORE FOR WORK AREA                                   *
+***********************************************************************
+         SPACE 2
+         USING WKAREA,REG3
+         USING QEL,REG8
+         LA    REG0,WKARELEN       LOAD LENGTH FOR GETMAIN
+         O     REG0,SUBPOOL        LOAD SUBPOOL ID
+         GETMAIN R,LV=(0)          GETMAIN THE CORE
+         LR    REG3,REG1           LOAD BASE ADDRESS
+         ST    REG0,GETMNLEN       SAVE DETAILS FOR FREEMAIN
+         USING XSA,REG2            ADDRESSABILITY FOR EXTENDED S/A
+         MVC   CID,XSAU            SAVE CONSOLE ID FOR RESPONSE
+         EJECT
+***********************************************************************
+*        ANALYSE INPUT PARMS & TEST VALIDITY                          *
+***********************************************************************
+         SPACE 2
+         LTR   REG4,REG4           TEST FOR PRESCENCE OF OPERANDS
+         BZ    ERROR               OMMITTED. NO GOOD
+         XR    REG5,REG5           CLEAR REGISTER 5
+         IC    REG5,4(REG4)        LOAD LENGTH OPERAND
+         L     REG6,4(REG4)        LOAD ADDRESS OPERAND
+         C     REG5,ONE            TEST FOR 1 BYTE OPERAND
+         BNE   NXTTEST             NO. CANNOT BE QUERY
+         CLI   0(REG6),C'?'        IS THIS A REQUEST FOR INFORMATION
+         BE    AUXCMMZZ            YES. GO SUPPLY DETAILS
+NXTTEST  EX    REG5,DSNCLC         TEST FOR 'DSN='
+         BNE   ERROR               PARAMETERS INVALID
+         L     REG4,0(REG4)        LOCATE NEXT PARAMETER
+         LTR   REG4,REG4           TEST FOR PRESCENCE
+         BZ    ERROR               NONE CODED. ERROR
+         CLI   4(REG4),X'00'       TEST FOR NULL DATA SET NAME
+         BE    ERROR               INVALID SPECIFICATION
+         B     TESTFUNC            BRANCH TO NEXT ROUTINE
+         SPACE 2
+DSNCLC   CLC   0(0,REG6),DSNLIT    TEST FOR DSN= OPERAND
+DSNLIT   DC    C'DSN='
+         EJECT
+***********************************************************************
+*        TEST FOR SPECIAL FUNCTION REQUESTED                          *
+***********************************************************************
+         SPACE 2
+TESTFUNC DS    0H
+         XR    REG5,REG5           CLEAR LENGTH REGISTER
+         IC    REG5,4(REG4)        LOAD LENGTH OF OPERAND
+         L     REG6,4(REG4)        LOAD ADDRESS OF OPERAND
+         C     REG5,ONE            TEST FOR 1 BYTE OPERAND
+         BNE   LOCQEL              ASSUME NORMAL REQUEST
+         CLI   0(REG6),C'*'        TEST FOR SPECIAL ENQ REQUEST
+         BE    GENINFO             YES. BRANCH TO GENERAL INFO ROUT.
+         B     LOCQEL              BRANCH TO NEXT ROUTINE
+         SPACE 2
+ONE      DC    F'1'                USED TO TEST OPERAND LENGTHS
+         EJECT
+***********************************************************************
+*        PARAMETERS ARE VALID. LOCATE QEL CHAIN                       *
+***********************************************************************
+         SPACE 2
+LOCQEL   LA    REG1,4(REG4)        LOAD PARAMETER REGISTER
+         CALL  TESTENQ
+         LTR   REG1,REG1           TEST RETURN FROM TESTENQ
+         BZ    NOENQMSG            NO-ONE ENQ'D ON THIS D/S
+         LR    REG8,REG1           LOAD ADDRESS FIRST QEL
+         LA    REG7,CHAINHDR       INITIALISE OUTPUT CHAIN
+         BAL   REG11,HEADER        GO PROCESS ALL QELS
+         B     MSGOUT              GO HAVE OUTPUT WRITTEN TO CONSOLE
+         EJECT
+***********************************************************************
+*        QELS EXIST. FORMAT TITLE LINES OF OUTPUT                     *
+***********************************************************************
+         SPACE 2
+HEADER   DS    0H
+         ST    REG11,SAVER111      SAVE LINK REGISTER
+         XC    CLRLINE,CLRLINE     CLEAR THE OUTPUT AREA
+         XR    REG5,REG5           CLEAR LENGTH REGISTER
+         IC    REG5,4(REG4)        LOAD LENGTH DSNAME
+         L     REG6,4(REG4)        LOAD ADDRESS DSNAME
+         BCT   REG5,*+10           SUBTRACT 1 FROM LENGTH
+         MVC   DSNAME(0),0(REG6)   MOVE DSNAME TO OUTPUT AREA
+         EX    REG5,*-6            EXECUTE THE MOVE
+         MVC   ENQTEXT(L'ENQHDR),ENQHDR MOVE HEADING NAME TO OUTPUT
+         LOADMSG DATA=MSGTEXT,LENGTH=70,TYPE=D
+         ST    REG1,0(REG7)        CHAIN THIS ONTO OTHER ELEMENTS
+         LR    REG7,REG1           SAVE ADDRESS FIRST OUTPUT ELEMENT
+         XC    CLRLINE,CLRLINE     CLEAR MOST OF BUFFER
+         MVC   JOBNTEXT,JOBNLIT    JOBNAME LITERAL
+         MVC   TYPETEXT,TYPELIT    TYPR LITERAL
+         MVC   JOBSTTXT,JOBSTLIT   JOB STATUS LITERAL
+         LOADMSG DATA=MSGTEXT,LENGTH=50,TYPE=D
+         ST    REG1,0(REG7)        CHAIN THIS ELEMENT TO LAST ONE
+         LR    REG7,REG1           LOAD UP THIS AS THE LAST ONE
+         B     LOOP                GO FORMAT QEL'S
+         SPACE 2
+JOBNLIT  DC    C'JOBNAME '
+TYPELIT  DC    CL8'ENQ TYPE'
+JOBSTLIT DC    CL10'JOB STATUS'
+ENQHDR   DC    C'ENQ STATUS OF :- '
+         EJECT
+***********************************************************************
+*        LOOP ROUND ALL QELS & PRINT NAME OF EACH JOB                 *
+***********************************************************************
+         SPACE 2
+LOOP     BAL   REG11,QELMSG        GO FORMAT DETAILS
+         L     REG8,QELNQEL        LOAD ADDRESS NEXT QEL
+         LTR   REG8,REG8           TEST FOR PRESCENCE ANOTHER QEL
+         BNZ   LOOP                LOOP ROUND ALL QELS
+         L     REG11,SAVER111      RELOAD LINK REGISTER
+         BR    REG11               RETURN TO CALLER
+         SPACE 2
+         EJECT
+***********************************************************************
+*        LOCATE ADDRESS SPACE ID & FIND JOBNAME                       *
+***********************************************************************
+         SPACE 2
+QELMSG   DS    0H
+         XC    CLRLINE,CLRLINE     CLEAR MOST OF OUTPUT AREA
+         LH    REG2,QELASID        LOAD ADDRESS SPACE ID
+         BCTR  REG2,0              SUBTRACT 1 FOR OFFSET
+         SLL   REG2,2              MULTIPLY BY FOUR FOR INDEXING
+         L     REG1,16             LOAD ADDRESS OF CVT
+         L     REG1,CVTASVT(REG1)  LOAD ADDRESS A.S. VECTOR TABLE
+         L     REG2,ASVTENTY(REG2,REG1) LOAD ADDRESS OF ASCB
+         L     REG1,ASCBJBNI(REG2) LOAD ADDRESS JOBNAME FIELDN
+         LTR   REG1,REG1           TEST FOR PRESCENCE NAME POINTER
+         BNZ   MOVEIT              O.K. USE THIS ADDRESS
+         L     REG1,ASCBJBNS(REG2) LOAD SYSTEM JOBNAME
+MOVEIT   MVC   JOBNAME,0(REG1)     MOVE JOB NAME TO OUTPUT
+         EJECT
+***********************************************************************
+*        TEST THE STATUS OF THE QEL & REPORT                          *
+***********************************************************************
+         SPACE 2
+         MVC   TYPE,EXCLUSVE       ASSUME ENQ IS EXCLUSIVE
+         TM    QELFLGS,QELSHARE    TEST FOR SHARED REQUEST
+         BZ    TESTMC
+         MVC   TYPE,SHARED         MOVE IN SHARED TEXT
+TESTMC   TM    QELFLGS,QELMC       TEXT FOR SET MUST COMPLETE
+         BZ    TESTJOB             NO. GO TO NEXT ROUTINE
+         MVC   TYPE,MUSTCMPL       MOVE SUITABLE TEXT IN
+         B     TESTJOB             BRANCH TO NEXT ROUTINE
+         SPACE 2
+EXCLUSVE DC    CL8'EXCL'           TEXT FOR EXCLUSIVE ENQ
+SHARED   DC    CL8'SHR'            TEXT FOR SHARED ENQ
+MUSTCMPL DC    CL8'MC'             TEXT FOR SET MUST COMPLETE
+         EJECT
+***********************************************************************
+*        ANALYSE THE STATUS OF THE JOB & REPORT                       *
+***********************************************************************
+         SPACE 2
+TESTJOB  DS    0H
+         LA    REG1,SWAPOUT        ASSUME JOB IS OUT
+         TM    ASCBRCTF(REG2),ASCBOUT TEST FOR SWAP OUT
+         BO    MOVEITIN            MOVE DATA TO OUTPUT AREA
+         LA    REG1,LONGWAIT       ASSUME JOB IS IN LONG WAIT
+         TM    ASCBRCTF(REG2),ASCBTMLW TEST FOR LONG WAIT STATUS
+         BO    MOVEITIN            MOVE DATA TO OUTPUT AREA
+         LA    REG1,QUIESCE        ASSUME JOB IS QUIESCED
+         TM    ASCBRCTF(REG2),ASCBTMNO TEST FOR JOB QUIESCED
+         BO    MOVEITIN            MOVE DATA TO OUTPUT AREA
+         LA    REG1,NONDISP        ASSUME JOB IS NON DISPATCHABLE
+         TM    ASCBFLG1(REG2),ASCBSTND TEST FOR NON-DISPATCHABLE TCBS
+         BO    MOVEITIN            MOVE DATA TO OUTPUT AREA
+         LA    REG1,NORMTERM       ASSUME JOB IS TERM. NORMALLY
+         TM    ASCBFLG1(REG2),ASCBTERM TEST FOR NORMAL TERMINATION
+         BO    MOVEITIN            MOVE DATA TO OUTPUT AREA
+         LA    REG1,ABNTERM        ASSUME JOB IS ABENDING
+         TM    ASCBFLG1(REG2),ASCBABNT TEST FOR ABENDING
+         BO    MOVEITIN            MOVE DATA TO OUTPUT AREA
+         LA    REG1,RUNNING        ASSUME EVERYTHING OK
+MOVEITIN MVC   JOBSTAT,0(REG1)     MOVE RIGHT TEXT TO OUTPUT
+         B     LOADIT              BRANCH TO NEXT ROUTINE
+         SPACE 2
+QUIESCE  DC    CL10'QUIESCED'
+LONGWAIT DC    CL10'LONG WAIT'
+SWAPOUT  DC    CL10'SWAP OUT'
+NONDISP  DC    CL10'NONDISP''BLE'
+NORMTERM DC    CL10'TERMIN''ING'
+ABNTERM  DC    CL10'ABENDING'
+RUNNING  DC    CL10'EXECUTING'
+         EJECT
+***********************************************************************
+*        DETAILS ARE READY. LOAD INTO A SUITABLE BUFFER               *
+***********************************************************************
+         SPACE 2
+LOADIT   DS    0H
+         LOADMSG DATA=MSGTEXT,LENGTH=50,TYPE=D
+         ST    REG1,0(REG7)        CHAIN THIS ELEMENT TO LAST ONE
+         LR    REG7,REG1           MAKE THIS THE LAST ENTRY
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        ALL OUTPUT IS PREPARED. WRITE TO CONSOLE                     *
+***********************************************************************
+         SPACE 2
+MSGOUT   DS    0H
+         LH    REG15,8(REG7)       RELOAD LENGTH OF LAST OUTPUT FIELD
+         LA    REG15,8(REG15,REG7) LOAD ADDRESS OF DESCR CODES
+         OI    0(REG15),X'10'      ENSURE LAST MESSAGE FLAG IS ON
+         OUTPUT CHAINHDR,UCMID=CID INVOKE OUTPUT PROCESSOR
+         B     EXITPGM             RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        COMMON PROGRAM EXIT ROUTINES                                 *
+***********************************************************************
+         SPACE 2
+ERROR    DS    0H
+         LA    REG15,4             SIGNAL INVALID OPERAND
+         B     ZRETURN
+         SPACE 2
+EXITPGM  DS    0H
+         LA    REG15,0             SIGNAL GOOD RETURN
+         SPACE 2
+ZRETURN  LR    REG11,REG15         SAVE RETURN CODE
+         L     REG0,GETMNLEN       LOAD DETAILS FOR FREEMAIN
+         LR    REG1,REG3           LOAD START ADDRESS FOR FREEMAIN
+         FREEMAIN R,LV=(0),A=(1)   FREE UP THE WORK AREA
+         LR    REG15,REG11         RETSORE THE RETURN CODE
+         ZRETURN RC=(15)
+         EJECT
+***********************************************************************
+*        NO USERS ENQ'D. RETURN SUITABLE MESSAGE                      *
+***********************************************************************
+         SPACE 2
+NOENQMSG DS    0H
+         XC    MSGTEXT,MSGTEXT     CLEAR OUTPUT BUFFER
+         XR    REG5,REG5           CLEAR LENGTH REGISTER
+         IC    REG5,4(REG4)        LOAD LENGTH OF DSNAME
+         L     REG6,4(REG4)        LOAD ADDRESS DSNAME
+         BCT   REG5,*+10           SUBTRACT 1 FOR EXECUTABLE LENGTH
+         MVC   DSNAMENQ(0),0(REG6) MOVE DSNAME TO TEXT BUFFER
+         EX    REG5,*-6            EXECUTE THE MOVE
+         MVC   NQTEXT(L'NQMSGTXT),NQMSGTXT MOVE TEXT INFORMATION IN
+         LOADMSG DATA=MSGTEXT,LENGTH=70,TYPE=E
+         ST    REG1,CHAINHDR       SAVE ADDRESS OUTPUT ELEMENT
+         LR    REG7,REG1           LOAD ADDRESS OF LAST ELEMENT
+         B     MSGOUT              GO PRINT OUTPUT LINE
+         SPACE 2
+NQMSGTXT DC    C'NO ENQ''D USERS FOR: '
+         EJECT
+***********************************************************************
+*        THIS IS THE QUERY RESPONSE ROUTINE                           *
+***********************************************************************
+         SPACE 2
+AUXCMMZZ DS    0H
+         LOADMSG DATA=LINE1,LENGTH=LINE1LEN,TYPE=D
+         ST    REG1,CHAINHDR       USE THIS ENTRY TO START OUTPUT CHAIN
+         LR    REG7,REG1           MAKE THIS THE LAST ENTRY FOR CHAIN
+         LOADMSG DATA=LINE2,LENGTH=LINE2LEN,TYPE=E
+         ST    REG1,0(REG7)        CHAIN THIS TO PREVIOUS ENTRY
+         LR    REG7,REG1           LOAD ADDRESS OF LAST OUTPUT ELEMENT
+         B     MSGOUT              GO HAVE LINES OUTPUT
+         SPACE 2
+LINE1    DC    C'DD NQ,-   ENTER ''DSN=NN...NN'' TO LIST USERS OF FILE'
+LINE1LEN EQU   L'LINE1
+LINE2    DC    C'DD NQ,-   ENTER ''DSN=*'' FOR GENERAL STATUS REPORT'
+LINE2LEN EQU   L'LINE2
+         EJECT
+***********************************************************************
+*        GENERAL REPORT REQUESTED. LIST ALL PROBLEM FILES             *
+***********************************************************************
+         SPACE 2
+GENINFO  DS    0H
+         LOADMSG DATA=GENLINE1,LENGTH=LENGEN1,TYPE=C
+         ST    REG1,CHAINHDR       MAKE THIS START OUTPUT CHAIN
+         LR    REG7,REG1           MAKE IT ALSO LAST ENTRY ON CHAIN
+         LA    REG1,4(REG4)        LOAD PARAMETER RGISTER
+         CALL  TESTENQ
+         LTR   REG1,REG1           TEST FOR MIN QCB'S PRESENT
+         BZ    ERROR               SHOULD NOT HAPPEN
+         LR    REG9,REG1           LOAD BASE ADDRESS MIN QCB'S
+         USING MINQCB,REG9         GET ADDRESSABILITY
+LOOPQCB  BAL   REG11,TESTQELS      TEST FOR WAITING USERS
+         L     REG9,QCBNMIN        LOAD ADDRESS NEXT MIN QCB
+         LTR   REG9,REG9           ANY MORE TO BE HAD
+         BNZ   LOOPQCB             YES. GO PROCESS THEM
+         C     REG7,CHAINHDR       ANYTHING BEEN ADDED TO OUTPUT CHAIN
+         BNE   MSGOUT              YES. GO OUTPUT IT
+         LOADMSG DATA=GENLINE2,LENGTH=LENGEN2,TYPE=E
+         ST    REG1,0(REG7)        CHAIN THIS ELEMENT TO OUTPUT Q
+         LR    REG7,REG1           LOAD ADDRESS OF LAST OUTPUT ELEMENT
+         B     MSGOUT              GO HAVE OUTPUT DONE
+         SPACE 2
+GENLINE1 DC    C'GENERAL D/S STATUS REPORT'
+LENGEN1  EQU   L'GENLINE1
+GENLINE2 DC    C'NO UNUSUAL ENQ SITUATIONS FOUND'
+LENGEN2  EQU   L'GENLINE2
+         EJECT
+***********************************************************************
+*        EXAMINE THE QELS FOR WAITING JOBS                            *
+***********************************************************************
+         SPACE 2
+TESTQELS DS    0H
+         ST    REG11,SAVER112      SAVE LINK REGISTER
+         XC    STATFLAG,STATFLAG   CLEAR LOGIC FLAG
+         LA    REG8,QCBFQEL        LOAD ADDRESS FIRST QEL
+LOOPQELS L     REG8,QELNQEL        LOAD ADDRESS NEXT QEL
+         LTR   REG8,REG8           TEST FOR ANY MORE QELS
+         BZ    ENDQELS             NO MORE TO LOOK AT
+         TM    QELFLGS,QELSHARE    IS THIS A SHARE REQUEST
+         BNO   SETOLD              NO. GO PROCESS AS OLD REQUEST
+         TM    STATFLAG,PRIOREXC   IS THERE A PRIOR EXCL ENQ ?
+         BO    QELWAIT             YES. THIS REQUEST MUST BE WAITING
+         OI    STATFLAG,PRIORSHR   SIGNAL THIS SHARED REQUEST
+         B     LOOPQELS            LOOP FOR NEXT QEL
+SETOLD   TM    STATFLAG,PRIOREXC+PRIORSHR ANYTHING BEFORE US ON Q ?
+         BNZ   QELWAIT             YES. THEN WE MUST BE WAITING
+         OI    STATFLAG,PRIOREXC   SIGNAL THIS EXCL ENQ
+         B     LOOPQELS            LOOP FOR NEXT QEL
+         SPACE 2
+QELWAIT  L     REG8,QCBFQEL        RELOAD FIRST QEL
+         LA    REG15,WKRNAME       LOAD ADDRESS OF DSNAME
+         ST    REG15,DUMMYBLK      SIMULATE SCAN DESCR. BLK
+         XR    REG15,REG15         CLEAR WORK REGISTER
+         IC    REG15,QCBRLEN       LOAD LENGTH OF DSNAME
+         STC   REG15,DUMMYBLK      SAVE LENGTH OF NAME
+         BCTR  REG15,0             SUBTRACT 1 FOR EXECUTE
+         EX    REG15,MVCRNAME      MOVE DSNAME TO WORK AREA
+         LA    REG15,WKRNAME+1(REG15) LOAD ADDRESS OF END OF NAME
+         MVI   0(REG15),C' '       SET DELIMITER FER TESTENQ
+         LA    REG4,DUMMYBLK-4     SIMULATE SCAN DESCR BLK ADDRESS
+         BAL   REG11,HEADER        INVOKE DSNAME PART OF MODULE
+         SPACE 2
+ENDQELS  L     REG11,SAVER112      RELOAD LINK REGISTER
+         BR    REG11               RETURN TO CALLER
+         SPACE 2
+MVCRNAME MVC   WKRNAME(0),QCBRNAME MOVE DATA SET NAME TO WORK AREA
+         EJECT
+AUXCMM00 DS    V(AUXCMM00)         ADDRESS OF OUTPUT PROCESSOR
+SUBPOOL  DS    0F                  USED TO LOAD SUBPOOL ID IN REG 0
+         DC    AL1(0)            SUBPOOL ID
+         DC    AL3(0)              PADDING
+         END
+//LKED.SYSIN   DD   *
+ SETCODE AC(1)
+ NAME AUXCMM02(R)
+ INCLUDE MLPALIB(AUXCOMM)
+ INCLUDE MLPALIB(AUXCMM02)
+ INCLUDE LINKLIB2(TESTENQ)
+ ENTRY AUXCOMM
+ ALIAS AUXCMM06
+ ALIAS AUXCMM10
+ SETCODE AC(1)
+ NAME AUXCOMM(R)
+/*
+//LINKLIB2     DD   DSN=SYS1.LINKLIB2,DISP=SHR

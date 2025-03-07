@@ -1,0 +1,208 @@
+HSDL     TITLE 'DELETE HISTORY CARDS'
+*
+* NOTE THAT MACROS - INITIAL,CLRM,OSEOJ - AND FAIR CALL MODULE  SPFAIRCR
+* ARE REQUIRED, AND THAT 370 INSTRUCTION MVCL IS USED. THE FIRST FOUR MA
+* BE OBTAINED FROM THE SAME PLACE AS THIS PROGRAM.  MVCL, IF UNAVAILABLE
+* SHOULD BE SIMULATED BY USING AN MVC LOOP.
+*
+SPHISTDL INITIAL
+         OPEN  (CARD,,PRINT,(OUTPUT),PUNCH,(OUTPUT))
+         BAL   12,PUTPR
+         CLRM  ARGS
+         LOAD   EP=SPFAIRCR
+         ST    0,ADFAIR
+         L    15,ADFAIR
+         CALL  (15),(0,ARG1,ARG2),VL
+         CLI   ARG2,C'0'
+         BE    GETMODA
+         ABEND   111
+GETMODA  L    11,NXTLINE
+        MVI   0(11),X'8B'
+         BAL   9,HDGA
+GETMOD   GET   CARD
+         LM    4,7,WORKB
+         MVCL  4,6
+         LR    4,1
+         USING CARDIN,4
+         CLI   CCOMA,C','
+         BNE   CARDNG
+         CLI   CCOMB,C','
+         BNE   CARDNG
+         CLRM  (TRTBL,TRTBLA,TRTBLJ,TRTBLS,TRTBLBLK,TRTBLNBR)
+         TRT   CNAME,TRTBL
+         BNZ   CARDNG
+         MVI   TRTBLNBR,X'40'
+         MVC   TRTBLNBR+1(L'TRTBLNBR-1),TRTBLNBR
+         TRT   CPSWD,TRTBL
+         BNZ   CARDNG
+         CLRM  (TRTBL,TRTBLBLK,TRTBL0)
+     TRT   CCODE,TRTBL
+         BNZ   CARDNG
+         CLRM  ARGS
+         MVC   ARG1(8),CNAME
+         L    15,ADFAIR
+         CALL  (15),(1,ARG1,ARG2,ARG3),VL
+         CLI   ARG2,C'1'
+         BE    NOMOD
+         BL    MODOK
+         ABEND 222
+ADFAIR   DC    F'0'
+EOFCARD   L     15,ADFAIR
+         CALL  (15),(4)     4-CLOSE
+         DELETE  EP=SPFAIRCR
+         CLRM  TRTBL
+         MVC   TRTBL(4),=C'-END'
+         LA    7,TRTBL
+         LR    0,7
+         BAL   12,PUTPCH
+         CLOSE (CARD,,PUNCH,,PRINT)
+         OSEOJ
+CARDNG   L     11,NXTLINE
+         MVC   82(10,11),=C'CARD ERROR'
+CARD8080 MVC   1(80,11),CARDIN
+         LA    9,GETMODA
+         B     MVI9
+NOMOD    MVC   82(16,11),=C'MODULE NOT FOUND'
+         B     CARD8080
+MODOK    CLC   PSWD,CPSWD            SAME PASSWORD?
+         BE    MODOK2                   YES - CONTINUE
+         MVC   82(14,11),=C'PASSWORD ERROR'   NOTIFY SUBMITTOR
+         B     CARD8080
+MODOK2   EQU   *
+         MVC 1(8,11),ARG1
+         MVC   12(9,11),PGMR
+         MVC   23(6,11),DTADD
+         MVC   30(10,11),DTUPDT
+SPACE2   MVI   0(11),9
+FRSTME   NOP   NXTIME
+         OI    FRSTME+1,240
+         CLRM  TRTBL
+         LA    7,TRTBL
+         MVC   TRTBL(L'OPTCD),OPTCD
+         LR    0,7
+         BAL   12,PUTPCH
+NXTIME   LA    7,TRTBL
+         CLRM   TRTBL
+         MVC   TRTBL(4),=C'-SEL'
+         MVC   TRTBL+5(8),ARG1
+         LA    8,TRTBL+12
+CLIBLANK CLI 0(8),64
+         BNE   INSCOMMA
+         BCT   8,CLIBLANK
+         ABEND   888
+PUTPCH   PUT   PUNCH
+         BR    12
+INSCOMMA MVI   1(8),C','
+         MVC   2(4,8),PSWD
+         MVI   6(8),64
+         LR    0,7
+         BAL   12,PUTPCH
+         MVC   TRTBL(L'HISTD),HISTD
+         LR    0,7
+         BAL   12,PUTPCH
+         LA    9,BUILDTBL
+         BCT   10,PUT
+         B     HDG
+BUILDTBL LA    5,WORKA
+         LA    6,CCODE
+COMP     MVC   0(1,5),0(6)
+         LA    5,81(5)
+         LA    6,1(6)
+         CLI   0(6),64
+         BNE   COMP
+         LA    5,WORKA
+HISTCALL  L     15,ADFAIR
+         CALL  (15),(3,ARG3,ARG2),VL
+         CLI   ARG2,C'1'
+         BL    HISTOK
+         BE    FINHIS
+         ABEND  444
+FINHIS   MVI   0(5),64         SET NEXT FLAG TO BLANK
+         LA    5,WORKA         RESET POINTER
+COMPHIST CLC   0(20,5),1(5)
+         BE    ENDMOD
+         TM    0(5),1
+         BO    DEL
+         LA    0,1(5)
+         PUT   PUNCH
+DEL      LA    5,81(5)
+         B     COMPHIST
+ENDMOD   CLRM  TRTBL
+         MVC   TRTBL(L'EMOD),EMOD
+         LA    0,TRTBL
+         BAL   12,PUTPCH
+         B     GETMODA
+HISTOK   MVC   1(80,5),ARG3
+         MVC   1(4,5),=C'-HST'
+         CLI   75(5),C'/'          IF 73-80  CONTAINS A DATE,
+         BNE   MOVEDATE             LEAVE IT AS IS. OTHERWISE
+         CLI   78(5),C'/'           MOVE THE DATE STORED WITH
+         BE    HISTOK2              THE RECORD TO 73-80.    *
+MOVEDATE MVC   73(8,5),ARG3+80      *                       *
+* THERE IS A BUG IN FAIR IF MONTHS OVER 07 PRINT INCORRECTLY.
+HISTOK2  L    11,NXTLINE
+         MVC   20(88,11),ARG3
+         TM    0(5),1
+         BZ    RETAIN
+         MVC   110(6,11),=C'DELETE'
+         B    HISTOK3
+RETAIN   MVC   118(6,11),=C'RETAIN'
+HISTOK3  LA    5,81(5)
+         LA    9,HISTCALL
+MVI9     MVI   0(11),9
+         BCT   10,PUT
+HDG      MVI 0(11),X'89'
+HDGA     BAL 12,PUTPR
+         MVC   1(132,11),HEADING
+         LA    10,56
+         MVI   0(11),17
+PUT   BAL   12,PUTPR
+         BR    9
+PUTPR    PUT PRINT
+         ST  1,NXTLINE
+         LR    11,1
+         MVI   0(11),64
+         MVC   1(132,11),0(11)
+         BR  12
+ARGS   DS    0CL117
+ARG1   DS    CL16       1 FOR OPN,MOD
+ARG2   DS    CL1
+ARG3   DS   0CL100      3 FOR MOD,1 FOR RCD,HST
+PSWD   DS    CL4
+DTADD  DS    CL6
+DTUPDT DS    CL10
+NOCRD  DS    PL3
+PGMR   DS    CL15
+PROC   DS    CL8
+DESC   DS    CL30
+       DS    CL24
+HEADING DC     CL132'MODULE     PGMR        ADDED  UPDATED '
+EMOD     DC    C'-EMOD'
+HISTD    DC    CL20'-HSTD'
+OPTCD  DC  C'-OPT NOLIST,NOEXEC,NORESEQ   '
+WORKB    DC    A(WORKA)
+         DC    A(100*81)
+         DC    A(0)
+         DC    AL1(64),AL3(0)
+NXTLINE DS   F
+PRINT  DCB   DDNAME=SYSPRINT,DSORG=PS,MACRF=PL,                        .
+               LRECL=133,RECFM=FBM
+PUNCH    DCB   DDNAME=OSJOB,DSORG=PS,MACRF=PM,                         .
+               LRECL=80,RECFM=FB
+CARD     DCB   DDNAME=SYSIN,DSORG=PS,MACRF=GL,EODAD=EOFCARD
+TRTBL    DS    0CL256,CL64
+TRTBLBLK DS    XL1,CL128
+TRTBLA   DS    XL9,CL7
+TRTBLJ   DS    XL9,CL8
+TRTBLS   DS    XL8,CL6
+TRTBLNBR DS 0XL10
+TRTBL0   DS    XL2,CL14
+         LTORG
+WORKA DS 100CL81
+CARDIN     DSECT
+CNAME    DS    CL8
+CCOMA    DS    C
+CPSWD    DS    CL4
+CCOMB    DS    C
+CCODE    DS    CL66
+         END   SPHISTDL

@@ -1,0 +1,375 @@
+         TITLE 'PARROTA - INITIALISATION PROCESSING'                    A 000100
+         MACRO                                                          A 000200
+         $CB   &PRINT=OFF                                               A 000300
+         PUSH  PRINT                                                    A 000400
+         PRINT &PRINT                                                   A 000500
+               EJECT                                                    A 000600
+         CBPREFIX ,                CONTROL BLOCK PREFIX                 A 000700
+               EJECT                                                    A 000800
+         CCB   ,                   CENTRAL CONTROL BLOCK                A 000900
+               EJECT                                                    A 001000
+         DCBD  DSORG=(IS,PS)       DCB DSECT                            A 001100
+               EJECT                                                    A 001200
+         EQUATES ,                 GENERATE STANDARD EQUATES            A 001300
+               EJECT                                                    A 001400
+         HDG   ,                   HEADING LINE STORAGE AREA            A 001500
+               EJECT                                                    A 001600
+         IHACDE ,                  CONTENTS DIRECTORY ELEMENT           A 001700
+               EJECT                                                    A 001800
+         IHARB ,                   REQUEST BLOCK                        A 001900
+               EJECT                                                    A 002000
+JCT      DSECT                                                          A 002100
+         DS    4F                  JCT PREFIX NOT MAPPED BY IBM         A 002200
+         IEFAJCTB ,                JOB CONTROL TABLE                    A 002300
+               EJECT                                                    A 002400
+         IEZJSCB ,                 JOB STEP CONTROL BLOCK               A 002500
+               EJECT                                                    A 002600
+         IKJTCB ,                  TASK CONTROL TABLE                   A 002700
+               EJECT                                                    A 002800
+         OCB   ,                   OUTPUT CONTROL BLOCK                 A 002900
+         POP   PRINT                                                    A 003000
+         MEND                                                           A 003100
+         SPACE 5                                                        A 003200
+PARROTA  CSECT                                                          A 003300
+         $CB   ,                   GENERATE DSCETS                      A 003400
+         SPACE 1                                                        A 003500
+     SCSECT A                                                           A 003600
+         SPACE 1                                                        A 003700
+         ENTRY PARENDA             END OF CSECT                         A 003800
+         ENTRY INITPH1             1ST PHASE OF INITIALISATION          A 003900
+         ENTRY INITPH2             2ND PHASE OF INITIALISATION          A 004000
+         TITLE 'PARROTA - 1ST PHASE OF INITIALISATION'                  A 004100
+*********************************************************************** A 004200
+*        1ST PHASE OF INITIALISATION - MAIN-LINE                      * A 004300
+*********************************************************************** A 004400
+         SPACE 1                                                        A 004500
+INITPH1  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              A 004600
+         L     R15,16              GET ADDRESS OF CVT                   A 004700
+         MVC   $OSLEVEL,CVTDCB(R15) GET OPERATING SYSTEM LEVEL FLAG     A 004800
+         CBAL  R4,FINDCBS          LOCATE & PRESERVE MVS C/B ADDRESSES  A 004900
+         CBAL  R4,TESTPRD          DETERMINE IF THIS IS A PRODUCTION JO A 005000
+         CBAL  R4,GETDATE          DETERMINE IPL DATE FPR REPORTS       A 005100
+         CBAL  R4,DDFIND           DETERMINE WHICH DD STATEMENTS ARE P  A 005200
+         CBAL  R4,OPENSY           OPEN SYSPRINT ( IFAVAILABLE )        A 005300
+         CBAL  R4,DDTELL           TELL OF DD STATEMENTS PRESENT        A 005400
+         CBAL  R4,PARMINT          INITIALISE PARM FIELD PROCESSING     A 005500
+        SUBOUT RESTORE=R4          RETORE AND RETUTN TO CALLER          A 005600
+         EJECT                                                          A 005700
+*********************************************************************** A 005800
+*        LOCATE AND PRESERVE MVS CONTROL BLOCK ADDRESSES              * A 005900
+*********************************************************************** A 006000
+         SPACE 1                                                        A 006100
+FINDCBS  SUBIN ,                   ENETR ROUTINE                        A 006200
+         L     R15,16              GET ADDRESS OF CVT                   A 006300
+         L     R15,0(,R15)         GET ADDRESS OF TCBWORD               A 006400
+         L     R15,4(,R15)         GET ADDRESS OF OLD ( MY ) TCB        A 006500
+         LA    R15,0(,R15)         PURIFY TCB ADDRESS JUST IN CASE      A 006600
+         S     R15,=A(TCBPXLEN)    DETERMINE ADDRESS OF TCB PREFIX      A 006700
+         USING TCBFIX,R15          ESTABLISH TCB ADDRESSABILITY         A 006800
+         L     R15,TCBJSTCB        PLAY SAFE & ENSURE IT IS JOBSTEP TCB A 006900
+         ST    R15,$TCBADDR        PRESERVE JOBSTEP TCB ADDRESS IN CCB  A 007000
+         S     R15,=A(TCBPXLEN)    DETERMINE ADDRESS OF TCB PREFIX      A 007100
+         LTA   R15,TCBJPQ          GET ADDRESS OF 1ST CDE               A 007200
+         DROP  R15                 DROP TCB ADDRESSABILITY              A 007300
+         B     *+8                 BYPASS FORWARD CHAINING              A 007400
+         USING CDENTRY,R15         ESTABLISH CDE ADDRESSABILITY         A 007500
+FINDCBS1 LTA   R15,CDCHAIN,FINDCBSX GET ADDRESS OF NEXT CDE             A 007600
+         CLC   CDNAME(6),=C'PARROT' IS THIS OUR CDE                     A 007700
+         BNE   FINDCBS1            GET NEXT CDE IF NOT                  A 007800
+         TM    CDATTR,CDMIN        IS THIS A MINOT CDE                  A 007900
+         BZ    *+8                 BR IF NOT A MINOT CDE                A 008000
+         L     R15,CDXLMJP         GET THE ADDRESS OF THE MAJOR CDE     A 008100
+         ST    R15,$CDEADDR        PRESERVE ADDRESS OF PARROT'S CDE     A 008200
+         L     R15,CDRRBP          GET THE ADDRESS OF PARROT'S RB       A 008300
+         DROP  R15                 DROP CDE ADDRESSABILITY              A 008400
+         ST    R15,$RBADDR         PRESERVE THE RB ADDRESS              A 008500
+FINDCBSX SUBOUT ,                  RETURN TO CALLER                     A 008600
+         EJECT                                                          A 008700
+*********************************************************************** A 008800
+*        DETERMINE IF THIS IS A PRODUCTION JOB                        * A 008900
+*********************************************************************** A 009000
+         SPACE 1                                                        A 009100
+*        OUR SYSTEM HAS BEEN MODIFIED IN ABEND PROCESSING IN ORDER TO   A 009200
+*         ISSUE WTOR'S IN THE EVENT OF A PRODUCTION JOB ABENDING, IN    A 009300
+*         ORDER TO ENSURE THAT PRODUCTION JOBS CANNOT ABEND UNNOTICED.  A 009400
+*         THIS ROUTINE DETERMINES - FROM THE JOB'S ACCOUNTING DATA -    A 009500
+*         WHETHER IT IS A PRODUCTION JOB, AND IF IT IS IT FORCES        A 009600
+*         PARM=ADUMP PROCESSING, THUS FORCING FULL DUMPS FOR ALL USER   A 009700
+*         ABEND CODES, AND THUS ENSURING THAT WE REACH THE WTORS IN     A 009800
+*         OUR MODIFIED ABEND PROCESSING.                                A 009900
+         SPACE 1                                                        A 010000
+         USING JCT,R3              ESTABLISH JCT ADDRESSABILITY         A 010100
+TESTPRD  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              A 010200
+         CBAL  R4,FINDJCT          GET ADDRESS OF JCT IN REGISTER 3     A 010300
+         B     TESTPRDX   **TEMP** GO TO EXIT UNTIL PROBLEMS SOLVED     A 010400
+         CLI   ACTJNFLD,2          ARE THERE AT LEAST 2 ACCTG SUBPARMS  A 010500
+         BL    TESTPRDX            EXIT IF NOT                          A 010600
+         XR    R15,R15             CLEAR WORK REGISTER                  A 010700
+         IC    R15,ACTJNFLD+1      GET LENGTH OF 1ST SUB-PARM           A 010800
+         LA    R14,ACTJNFLD+2(R15) POINT R14 AT LENGTH OF 2ND SUBPARM   A 010900
+         ICM   R15,1,0(R14)        LOAD LGTH OF 2ND PARM                A 011000
+         BZ    TESTPRDX            EXIT IF LGTH IS ZERO                 A 011100
+         BCTR  R15,0               DECREMENT LENGTH FOR EXECUTES        A 011200
+         LA    R14,1(,R14)         INCREMENT TO START OF 2ND SUBPARM    A 011300
+         CBAL  R4,NUMERIC          ENSURE THAT PARM IS NUMERIC          A 011400
+         BNE   TESTPRDX            EXIT IF NOT NUMERIC                  A 011500
+         LA    R1,NUMCODES         LOAD NUMBER OF CODES TO TEST         A 011600
+         LA    R2,CODETABL         LOAD ADDRESS OF TABLE OF CODES       A 011700
+         CP    $PVALUE,0(L'CODENTRY,R2) COMPARE WITH TABLE              A 011800
+         BE    *+16                BR IF MATCH ( PRODUCTION JOB )       A 011900
+         LA    R2,L'CODENTRY(,R2)  INCREMENT TO NEXT TABLE ENTRY        A 012000
+         BCT   R1,*-14             LOOP BACK IF ANY LEFT                A 012100
+         B     TESTPRDX            EXIT IF NO MATCH ( NOT PRODUCTION )  A 012200
+         OI    $ABNDCDE,FULLDUMP   FLAG TO PRODUCE FULL DUMPS ALWAYS    A 012300
+         OI    $STATUS,STATPROD    FLAG THAT JOB IS PRODUCTION          A 012400
+TESTPRDX SUBOUT RESTORE=R4          RESRTORE AND RETURN                 A 012500
+         DROP  R3                  DROP JCT ADDRESSABILITY              A 012600
+         EJECT                                                          A 012700
+*********************************************************************** A 012800
+*        GET THE ADDRESS OF THE ACCOUNTING CONTROL TABLE IN THE JCT   * A 012900
+*********************************************************************** A 013000
+         SPACE 1                                                        A 013100
+FINDJCT  SUBIN ,                   ENTER ROUTINE                        A 013200
+         L     R15,16              GET ADDRESS OF CVT                   A 013300
+         L     R15,0(R15)          GET ADDRESS OF TCBWORD               A 013400
+         L     R15,4(R15)          GET ADDRESS OF OLD ( MY ) TCB        A 013500
+         ST    R15,ADDRTCB         PRESERVE TCB ADDRESS FOR DEBUGGING   A 013600
+         USING TCB,R15             ESTABLISH TCB ADDRESSABILITY         A 013700
+         L     R15,TCBJSCB         GET ADDRESS OF JSCB                  A 013800
+         ST    R15,ADDRJSCB        PRESERVE JSCB ADDRESS FOR DEBUGGING  A 013900
+         DROP  R15                 DROP TCB ADDRESSABILITY              A 014000
+         USING IEZJSCB,R15         ESTABLISH JSCB ADDRESSABILITY        A 014100
+         L     R3,JSCBJCT          GET ADDRESS OF JCT                   A 014200
+         ST    R3,ADDRJCT          PRESERVE JCT ADDRESS FOR DEBUGGING   A 014300
+         DROP  R15                 DROP JSCB ADDRESSABILITY             A 014400
+         USING JCT,R3              ESTABLISH JCT ADDRESSABILITY         A 014500
+         MVC   ACTSTORE,ACTDSKAD   PRESERVE ACT FOR DEBUGGING           A 014600
+         DROP  R3                  DROP JCT ADDRESSABILITY              A 014700
+        SUBOUT ,                   RETURN TO CALLER                     A 014800
+         EJECT                                                          A 014900
+*********************************************************************** A 015000
+*        DETERMINE IPL DATE                                           * A 015100
+*********************************************************************** A 015200
+         SPACE 1                                                        A 015300
+GETDATE  SUBIN ,                   ENTER ROUTINE                        A 015400
+         UT458 ,                   DETERINE IPL DATE ( IN ENGLISH )     A 015500
+         MVC   $IPLDATE,UTREPORT   PRESERVE IPL DATE ( IN REPORT FORM)  A 015600
+         MVC   $RUNTIME(2),UTHHMMSS MOVE 'HH' TO SAVE AREA              A 015700
+         MVC   $RUNTIME+3(2),UTHHMMSS+2 MOVE 'MM' TO SAVE AREA          A 015800
+         MVC   $RUNTIME+6(2),UTHHMMSS+4 MOVE 'SS' TO SAVE AREA          A 015900
+        SUBOUT ,                   RETURN TO MAIN-LINE                  A 016000
+         EJECT                                                          A 016100
+*********************************************************************** A 016200
+*        DETERMINE WHICH DD STATEMENTS ARE PRESENT                    * A 016300
+*********************************************************************** A 016400
+         SPACE 1                                                        A 016500
+DDFIND   SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              A 016600
+         IOM   TIOTSCAN,SYSPRINT,LOOP=IOMMAXDD,RTN=TIOTSCN TEST FOR DD  A 016700
+        SUBOUT RESTORE=R4          RESTORE AND RETURN TO CALLER         A 016800
+         EJECT                                                          A 016900
+*********************************************************************** A 017000
+*        OPEN SYSPRINT ( IF AVAILABLE )                               * A 017100
+*********************************************************************** A 017200
+         SPACE 1                                                        A 017300
+OPENSY   SUBIN SAVE=R4             PRESERVE RETURN ADREESS              A 017400
+         IOM   OPEN,SYSPRINT       OPEN SYSPRINT IF PRESENT             A 017500
+         LA    R1,LINE05           POINT R1 AT MESSAGE                  A 017600
+         TM    SYSPRINT+IOPSSW,IOSWPRES TEST IF SYSPRINT PRESENT        A 017700
+         BO    *+8                 BR IF PRESENT                        A 017800
+         ST    R1,SYSPRINT+IOPSRECA USE MESSAGE AREA AS DUMMY BUFFER    A 017900
+         CBAL  R4,PRINT            ISSUE 1ST PUT TO GET BUFFER ADDR     A 018000
+         MVI   0(R5),PAGESKIP      ESTABLISH PAGE SKIP REQUIET          A 018100
+         CBAL  R4,PRINT            SKIP TO HEAD OF PAGE                 A 018200
+         MVC   LINE05D,$IPLDATE    MOVE DATA TO HEADING LINE            A 018300
+         MVC   LINE05T,$RUNTIME    MOVE TIME TO HEADING LINE            A 018400
+         MVC   0(133,R5),LINE05    SET UP HEADINH LINE                  A 018500
+         MVI   0(R5),SPCE3AFT      ESTABLISH TRIPLE SPACE               A 018600
+         COUNT SYSPRINT,2          ADJUST LINE COUNT                    A 018700
+         CBAL  R4,PRINT            PRINT HEADING                        A 018800
+        SUBOUT RESTORE=R4          RESTORE AND RETURN TO CALLER         A 018900
+         EJECT                                                          A 019000
+*********************************************************************** A 019100
+*        REPORT ON THE DD STAEMENTS THAT ARE PRESENT                  * A 019200
+*********************************************************************** A 019300
+         SPACE 1                                                        A 019400
+DDTELL   SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              A 019500
+         IOM   AUDIT,SYSPRINT,(R5),MANDMISS,RTN=PRINT,LOOP=IOMMAXDD,   *A 019600
+               MSGID='PRTA-006-I'  TELL OF SS STAT STATUS               A 019700
+        SUBOUT RESTORE=R4          RESTORE AND RETURN TO CALLER         A 019800
+         SPACE 1                                                        A 019900
+MANDMISS ABEND 36                  MANDATORY STATEMENT MISSING SO ABEND A 020000
+         TITLE 'PARROTA - 2ND PHASE OFINITIALISATION'                   A 020100
+*********************************************************************** A 020200
+*        2ND PHASE OF INITIALISATION - MAIN-LINE                      * A 020300
+*********************************************************************** A 020400
+         SPACE 1                                                        A 020500
+INITPH2  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              A 020600
+         CBAL  R4,OPENALL          OPEN ALL AVAILABLE DATA SETS         A 020700
+         CBAL  R4,OPENOCB          OPEN ALL USER-DEFINED OUTPUT DATA SE A 020800
+         CBAL  R4,GETDBUFF         ACQUIRE CORE FOR DUMMY BUFFER        A 020900
+         CBAL  R4,OCBDBUFF         SET DUMMY BUFFER ADDRESS IN OCB'S    A 021000
+         CBAL  R4,BUFFOCB          GET ADDR OF 1ST BUFF FOR ALL USER DS A 021100
+         CBAL  R4,REPORT           ISSUE 1ST PUT TO PRINT TO GET BUFFER A 021200
+         CBAL  R4,DRWLOGO          DRAW LOGOGRAM ON 'PRINT'             A 021300
+         CBAL  R4,INITEXIT         INITIALISE USER EXIT IF NECESSARY    A 021400
+        SUBOUT RESTORE=R4          RESTORE AND RETURN                   A 021500
+         EJECT                                                          A 021600
+*********************************************************************** A 021700
+*        OPEN ALL AVAILABLE DATA SETS                                 * A 021800
+*********************************************************************** A 021900
+         SPACE 1                                                        A 022000
+OPENALL  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              A 022100
+         IOM   OPEN,SYSPRINT,NOREOPEN,LOOP=IOMMAXDD OPEN ALL AVAIL D/S  A 022200
+        SUBOUT RESTORE=R4          RETURN TO MAIN-LINE                  A 022300
+         EJECT                                                          A 022400
+*********************************************************************** A 022500
+*        OPEN ALL AVAILABLE USER-DEFINED OUTPUT DATA SETS             * A 022600
+*********************************************************************** A 022700
+         SPACE 1                                                        A 022800
+         USING OCBNTRY,R8          ESTABLISH OCB ADDERSSABILITY         A 022900
+OPENOCB  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              A 023000
+         L     R8,$OCBOCB          GET ADDRESS OF 1ST OCB ( 'PRINT' )   A 023100
+OPENOCB1 L     R8,OCBOCB           GET ADDRESS OF NEXT OCB              A 023200
+         LTRR  R8                  PURIFY AND TEST FOR END OF CHAIN     A 023300
+         BZ    OPENOCBX            GO TO EXIT IF END OF CHAIN           A 023400
+         L     R2,OCBIOSW          GET ADDRESS OF ASSOCIATED IOSW C/B   A 023500
+         IOM   TIOTSCAN,0(,R2),RTN=TIOTSCN TEST IF DD STATEMENT PRESENT A 023600
+         IOM   OPEN,0(,R2)         OPEN DATA SET IF DD STATEMENT PRESEN A 023700
+         B     OPENOCB1            LOOP BACK TO PROCESS NEXT OCB        A 023800
+OPENOCBX SUBOUT RESTORE=R4         RESTORE AND RETURN TO CALLER         A 023900
+         DROP  R8                  DROP OCB ADDRESSBAILITY              A 024000
+         EJECT                                                          A 024100
+*********************************************************************** A 024200
+*        GET ADDRESS OF 1ST BUFFER FOR ALL USER-DEFINED DATA SETS     * A 024300
+*********************************************************************** A 024400
+         SPACE 1                                                        A 024500
+         USING OCBNTRY,R7          ESTABLISH OCB ADDRESSABILITY         A 024600
+BUFFOCB  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              A 024700
+         L     R7,$OCBOCB          GET ADDRESS OF 1ST OCB ( 'PRINT' )   A 024800
+BUFFOCB1 L     R7,OCBOCB           GET ADDRESS OF NEXT OCB IN CHAIN     A 024900
+         LTRR  R7                  PURIFY AND TEST FOR END OF CHAIN     A 025000
+         BZ    BUFFOCBX            GO TO EXIT IF END OF CHAIN           A 025100
+         TM    OCBSW,MOCBREPT      IS THIS A REPORT DATA SET            A 025200
+         BO    BUFFOCB2            BR IF YES                            A 025300
+         CBAL  R4,WRITE            ISSUE PUT TO GET 1ST NON-REPORT BUFF A 025400
+         B     BUFFOCB1            LOOP BACK TO GET NEXT OCB            A 025500
+BUFFOCB2 CBAL  R4,WRITEP,NESTED=YES ISSUE PUT TO GET 1ST REPORT BUFFER  A 025600
+         B     BUFFOCB1            LOOP BACK TO GET NEXT OCB            A 025700
+BUFFOCBX SUBOUT RESTORE=R4         RESTORE AND RETURN TO CALLER         A 025800
+         DROP  R7                  DROP OCB ADDRESSABILITY              A 025900
+         EJECT                                                          A 026000
+*********************************************************************** A 026100
+*        ACQUIRE CORE FOR DUMMY BUFFER AREA                           * A 026200
+*********************************************************************** A 026300
+         SPACE 1                                                        A 026400
+*        ACQUIRE CORE FOR A DUMMY BUFFER FOR ANY MISSING DD STATEMENTS  A 026500
+         SPACE 1                                                        A 026600
+         USING IHADCB,R3           ESTABLISH DCB ADDRESSABILITY         A 026700
+GETDBUFF SUBIN SAVE=R4             PRESERVE RETRUN ADDRESS              A 026800
+         LA    R10,IOMMAXDD        SET NO OF DD'S FOR LOOP              A 026900
+         LA    R2,SYSPRINT         POINT R2 AT 1ST DCBSW                A 027000
+         LA    R1,133              SET DUMMY BUFFER BIG ENOUGH FOR LINE A 027100
+GETDBUF1 L     R3,IOPSDCB(,R2)     POINT R3 AT DCB ADDRESS              A 027200
+         TM    IOPSSW(R2),IOSWPRES IS THE DD STATEMENT PRESENT          A 027300
+         BO    *+16                BR IF DD STATEMENT IS PRESENT        A 027400
+         CH    R1,DCBLRECL         IS THIS LRECL > THAN ANY PREVIOUS    A 027500
+         BNL   *+8                 BR IF NOT                            A 027600
+         LH    R1,DCBLRECL         PRESERVE THIS LRECL AS GREATEST      A 027700
+         LA    R2,IOPSLGTH(,R2)    POINT AT NEXT DCBSW                  A 027800
+         BCT   R10,GETDBUF1        LOOP BACK IF AY LEFT                 A 027900
+         LR    R2,R1               SET LRECL IN R2                      A 028000
+         GETCB DBUF,NOCHAIN        ACQUIRE CORE FOR DUMMY BUFFER        A 028100
+         ST    R1,$DBUFF           PRESERVE ADDRESS OF DUMMY BUFFER     A 028200
+         LA    R10,IOMMAXDD        SET DCBSW COUNT FOR NEW LOOP         A 028300
+         LA    R2,SYSPRINT         POINT AT 1ST DCBSW                   A 028400
+GETDBUF2 TM    IOPSSW(R2),IOSWPRES IS DD STATEMENT PRESENT              A 028500
+         BO    *+8                 BR IF YES                            A 028600
+         ST    R1,IOPSRECA(R2)     IF NOT PRESENT, SET DUMMY ADDRESS    A 028700
+         LA    R2,IOPSLGTH(,R2)    POINT AT NEXT DCBSW                  A 028800
+         BCT   R10,GETDBUF2        LOOP BACK IF NAY LEFT                A 028900
+GETDBUFX SUBOUT RESTORE=R4         RESTORE AND RETURN                   A 029000
+         DROP  R3                  DROP DCB ADDRESSSABILITY             A 029100
+         EJECT                                                          A 029200
+*********************************************************************** A 029300
+*        SET DUMMY BUFFER ADDRESS FOR MISSING USER-DEFINES DATA SETS  * A 029400
+*********************************************************************** A 029500
+         SPACE 1                                                        A 029600
+         USING OCBNTRY,R8          ESTABLISH OCB ADDRESSABILITY         A 029700
+OCBDBUFF SUBIN ,                   ENTER ROUTINE                        A 029800
+         L     R1,$DBUFF           RETRIEVE DUMMY BUFFER ADDRESS        A 029900
+         LTA   R8,$OCBOCB          GET ADDRESS OF 1ST OCB ('PRINT')     A 030000
+OCBDBUF1 LTA   R8,OCBOCB,OCBDBUFX  GET ADDRESS OF NEXT OCB              A 030100
+         L     R2,OCBIOSW          GET ADDRESS OF ASSOCIATED DCBSW      A 030200
+         TM    IOPSSW(R2),IOSWPRES TEST IF DD STATEMENT IS PRESENT      A 030300
+         BO    OCBDBUF1            LOOP BACK FOR NEXT OCB IF PRESENT    A 030400
+         ST    R1,IOPSRECA(R2)     SET DUMMY BUFFER ADDRESS IN DCBSW    A 030500
+         B     OCBDBUF1            LOOP BACK FOR NEXT OCB               A 030600
+OCBDBUFX SUBOUT ,                  RETURN TO CALLER                     A 030700
+         DROP  R8                  DROP OCB ADDRESSABILITY              A 030800
+         EJECT                                                          A 030900
+*********************************************************************** A 031000
+*        DRAW THE LOGO ( USUALLY A PARROT ) ON 'PRINT'                * A 031100
+*********************************************************************** A 031200
+         SPACE 1                                                        A 031300
+DRWLOGO  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              A 031400
+         TM    SYSLIN+IOPSSW,IOSWPRES IS LOGO DATA SET PRESET           A 031500
+         BZ    DRWLOGOX            EXIT IF NO LOGO SUPPLIED             A 031600
+         CBAL  R4,READLIN          READ AND PRINT LOGO                  A 031700
+         IOM   CLOSE,SYSLIN        CLOSE LOGO D/S                       A 031800
+         MVI   0(R5),SPCE2AFT      ESTABLISH DOUBLE SPACE               A 031900
+         CBAL  R4,REPORT           PRINT A BLANK LINE                   A 032000
+         L     R1,$OCBOCB          GET ADDRESS OF 1ST OCB ( 'PRINT' )   A 032100
+         USING OCBNTRY,R1          ESTABLISH OCB ADDRESSABILITY         A 032200
+         L     R1,OCBHDG           GET ADDRESS OF 1ST HEADING LINE STOR A 032300
+         LTRR  R1                  PURIFY AND TEST IF HEADINGS SUPPLIED A 032400
+         BZ    *+10                BYPASS MOVE IF NO HEADINGS AVAILABLE A 032500
+         DROP  R1                  DROP OCB ADDRESSABILITY              A 032600
+         MVC   1(132,R5),HDGHEAD+1-HDGNTRY(R1) MOVE HEADING TO LINE     A 032700
+         MVC   106(9,R5),$IPLDATE  ADD DATE TO LINE                     A 032800
+         MVC   120(8,R5),$RUNTIME  ADD TIME OF RUN TO LINE              A 032900
+         CBAL  R4,REPORT           PRINT LINE BELOW LOGO                A 033000
+         L     R5,SYSPRINT+IOPSRECA RETRIEVE SYSPRINT BUFFER ADDRESS    A 033100
+DRWLOGOX SUBOUT RESTORE=R4         RESTORE AND RETURN                   A 033200
+         EJECT                                                          A 033300
+*********************************************************************** A 033400
+*        INITIALISE THE USER EXIT IF NECESSARY                        * A 033500
+*********************************************************************** A 033600
+         SPACE 1                                                        A 033700
+INITEXIT SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              A 033800
+         TM    $STATUS,STATEXIT    IS THERE A USER EXIT SPECIFIED       A 033900
+         BZ    INITEXX             EXIT IF NO USER ROUTINE              A 034000
+         MVI   $PROCTYP,C'I'       SET PROCESS CODE TO INITIALISE       A 034100
+         CBAL  R4,UXITCAL          INVOKE & INITIALISE THE USER ROUTINE A 034200
+INITEXX SUBOUT RESTORE=R4          RESTORE AND RETURN TO CALLER         A 034300
+         TITLE 'PARROTA - EXECUTED INSTRUCTIONS'                        A 034400
+*********************************************************************** A 034500
+*        EXECUTED INSTRUCTIONS                                        * A 034600
+*********************************************************************** A 034700
+         SPACE 1                                                        A 034800
+         TITLE 'PARROTA - MISC CONSTANTS AND FIELDS'                    A 034900
+ADDRTCB  DC    F'0'                ADDRESS OF TCB                       A 035000
+ADDRJSCB DC    F'0'                ADDRESS OF JSCB                      A 035100
+ADDRJCT  DC    F'0'                ADDRESS OF JCT                       A 035200
+         SPACE 1                                                        A 035300
+         DS    0F                  ENSURE ALIGNMENT                     A 035400
+ACTSTORE DC    CL39' '             STORE FOR ACT                        A 035500
+         SPACE 1                                                        A 035600
+LINE05   DS    0CL133                                                   A 035700
+         DC    CL5' ',C'PRTA-005-I',CL39' '                             A 035800
+         DC    C'PARROT MESSAGE DATA SET',CL26' '                       A 035900
+LINE05D  DC    CL9' '                                                   A 036000
+         DC    CL3' '                                                   A 036100
+LINE05T  DC    CL8' '                                                   A 036200
+         DC    CL10' '                                                  A 036300
+*LINE06  IS    AUDIT MESSAGE IDENTIFIER                                 A 036400
+         SPACE 5                                                        A 036500
+CODETABL EQU   *                   TABLE OF PRODUCTION CATEGORY CODES   A 036600
+CODENTRY DS    0PL2                LENGTH OF EACH TABLE ELEMENT         A 036700
+         DC    PL2'9'                                                   A 036800
+         DC    PL2'11'                                                  A 036900
+         DC    PL2'12'                                                  A 037000
+         DC    PL2'13'                                                  A 037100
+NUMCODES EQU   (*-CODETABL)/L'CODENTRY NUMBER OF ELEMENTS IN TABLE      A 037200
+         SPACE 1                                                        A 037300
+        SCSEND A                   TERMIANTE CSECT PARROTA              A 037400
+         END                                                            A 037500

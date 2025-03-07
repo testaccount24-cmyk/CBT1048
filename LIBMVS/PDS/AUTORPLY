@@ -1,0 +1,197 @@
+         TITLE 'AUTOMATIC WTOR RESPONSE ROUTINE'
+***********************************************************************
+*                                                                     *
+*            THIS ROUTINE WILL EXAMINE REGULARLY THE OUTSTANDING      *
+*        MESSAGES REQUIRING OPERATOR RESPONSE AND CHECK TO SEE        *
+*        IF THAT MESSAGE APPEARS IN A TABLE OF PREDEFINED MESSAGES    *
+*        TO WHICH AN AUTOMATIC RESPONSE SHOULD BE GIVEN.              *
+*            THE TABLE OF MESSAGE ID'S IS PART OF THE NORMAL          *
+*        AUTOCOMM MESSAGE AND COMMAND DEFINITION TABLE BUT THE        *
+*        ENTRIES FOR THIS ROUTINE ARE CHAINED SEPARATELY.             *
+*                                                                     *
+*            THE CONTROL CARDS HAVE THE FOLLOWING FORMAT:             *
+*                                                                     *
+*        RPLY WTORID='......',TEXT='..........',WAIT='NNN'            *
+*                                                                     *
+*        WTORID = THE IBM MESSAGE IDENTIFIER OR THE FIRST EIGHT BYTES *
+*                                  OF THE MESSAGE TEXT.               *
+*        TEXT   = THE REPLY WHICH SHOULD BE GIVEN.                    *
+*        WAIT   = THE LENGTH OF TIME WHICH SHOULD ELAPSE BETWEEN      *
+*                       FINDING THE MESSAGE AND REPLYING TO IT. THIS  *
+*                       GIVES THE OPERATOR A CHANCE TO REPLY HIMSELF. *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        DSECTS USED IN THE PROGRAM                                   *
+***********************************************************************
+         SPACE 2
+         MSG   DSECT=YES
+         SPACE 2
+         PRINT NOGEN
+         CVT
+         PRINT GEN
+         SPACE 2
+         IEECUCM FORMAT=NEW
+         SPACE 2
+         IHAORE
+         SPACE 2
+         IHAWQE
+         EJECT
+***********************************************************************
+*        PROGRAM INITIALISATION                                       *
+***********************************************************************
+AUTORPLY ZCSECT
+         L     REG1,0(REG1)        ADDRESS OF PASSED PARAMETER
+         ST    REG1,STOPECB        SAVE ADDRESS OF STOP REQUEST ECB
+         EJECT
+***********************************************************************
+*        PUT THE PSW INTO PROTECT KEY ZERO AND SUPERVISOR MODE        *
+***********************************************************************
+         SPACE 2
+         MODESET MODE=SUP,KEY=ZERO
+         EJECT
+***********************************************************************
+*        LOCATE THE CONTROL TABLE                                     *
+***********************************************************************
+         SPACE 2
+         LOAD EP=T115P510          LOAD THE CONTROL TABLE
+         LR    REG1,REG0           LOAD WORK REGISTER
+         L     REG0,4(REG1)        ADDRESS OF AUTORPLY CHAIN
+         ST    REG0,CNTRLTAB       SAVE ADDRESS OF CONTROL TABLE
+         EJECT
+***********************************************************************
+*        INFORM OPERATOR THAT INITIALISATION IS COMPLETE              *
+***********************************************************************
+         SPACE 2
+INFORM   WTO   '**** AUTORPLY INIALISATION COMPLETE ****'
+         EJECT
+***********************************************************************
+*        ISSUE THE STIMER MACRO AND THEN WAIT FOR SOMETHIN TO HAPPEN  *
+***********************************************************************
+         SPACE 2
+STIMER   DS    0H
+         STIMER REAL,STMERXIT,BINTVL=WAITTIME
+         WAIT  1,ECBLIST=ECBLIST   WAIT FOR STOP REQUEST OR TIMER
+         TM    STMERECB,X'40'      WAS IT TIMER ELAPSED ?
+         BZ    SHUTDOWN            NO. TERMINATE PROCESSING
+         MVI   STMERECB,0          RESET ECB FLAG FIELDS
+         EJECT
+***********************************************************************
+*        EXAMINE THE OUTSTANDING REPLY QUEUES FOR MESSAGES
+***********************************************************************
+         SPACE 2
+         L     REG1,16             LOAD ADDRESS OF THE CVT
+         USING CVTMAP,REG1         ADDRESSABILITY FOR IT
+         L     REG10,CVTCUCB       LOAD ADDRESS OF UCM BASE
+         USING UCM,REG10           ADDRESSABILITY FOR IT
+         LA    REG9,UCMRPYQ        LOAD ADDRESS OF ADDRESS OF REPLY Q
+         USING OREF,REG9           ADDRESSABILITY FOR IT
+ORELOOP  EQU   *
+         L     REG9,ORELKP         LOAD ADDRESS OF FIRST/NEXT ORE
+         LTR   REG9,REG9           TEST FOR PRESCENCE
+         BZ    ORELENDS            END OF ORE LOOP
+         L     REG8,OREWQE         GET ADDRESS OF MATCHING WQE
+         USING WQE,REG8            ADDRESSABILITY FOR WQE
+         LA    REG7,WQETXT         ADDRESS OF MESSAGE TEXT
+         BAL   REG11,FINDMTCH      GO SEE IF I'M INTERESTED IN IT
+         LTR   REG6,REG6           MATCHING TABLE ENTRY FOR THAT MSG ?
+         BZ    ORELOOP             NO. CARRY ON FOR NEXT MESSAGE
+         BAL   REG11,PROCSSIT      YES. GO PROCESS THE REPLY
+         B     ORELOOP             AND THE TRY NEXT REPLY
+         SPACE 2
+ORELENDS EQU   *
+         B     STIMER              GO WAIT NEXT INTERVAL
+         EJECT
+***********************************************************************
+*        LOCATE A MATCHING TABLE ENTRY IF ONE EXISTS                  *
+***********************************************************************
+         SPACE 2
+FINDMTCH DS    0H
+         L     REG6,CNTRLTAB       LOAD ADDRESS OF CONTROL TABLE
+         USING RPYENTRY,REG6       ADDRESSABILITY FOR REPLY TABLE
+GOLOOP   LTR   REG6,REG6           ANY MORE TO LOOK AT ?
+         BZ    MTCHEXIT            NO. RETURN TO CALLER
+         CLC   IDTEXT,4(REG7)      DOES THE MESSAGE MATCH THIS ENTRY
+         BE    MTCHEXIT            YES. RETURN TO CALLER
+         L     REG6,RPYCHAIN       LOAD ADDRESS OF NEXT ENTRY
+         B     GOLOOP              CARRY ON WITH NEXT ONE
+MTCHEXIT EQU   *
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        PROCESS THE REPLY FOR THIS MESSAGE
+***********************************************************************
+         SPACE 2
+PROCSSIT DS    0H
+         PACK  DBLWORD,WQERPYID    PACK THE REPLY ID
+         CVB   REG1,DBLWORD        CONVERT IT TO BINARY
+         SLL   REG1,3              MULTIPLY BY EIGHT
+         LA    REG5,RPYLIST(REG1)  ADDRESS OF REPLY TABLE ENTRY
+         CLC   WQESEQN,1(REG5)     HAVE I ALREADY GOT HIM ?
+         BNE   NEWRPY              NO. THIS IS A NEW MESSAGE APPEARED
+         TM    0(REG5),RPYDONE     HAVE I ISSUED A REPLY TO THIS ?
+         BO    PROCEXIT            YES. RETURN IMMEDIATELY
+         L     REG15,4(REG5)       GET TIME I'VE WAITED FOR HIM
+         A     REG15,WAITTIME      ADD TIME SINCE LAST EXAMINATION
+         C     REG15,RPYWAIT       HAVE I WAITED LONG ENOUGH
+         BH    DOAREPLY            YES. GO ISSUE THE REPLY
+         ST    REG15,4(REG5)       NO. JUST KEEP TABS ON IT
+PROCEXIT EQU   *
+         BR    REG11               RETURN TO CALLER
+         SPACE 2
+NEWRPY   EQU   *
+         MVC   1(3,REG5),WQESEQN   INTIIALISE THE SEQUENCE COUNT
+         XC    0(1,REG5),0(REG5)   CLEAR THE FLAGS FIELD
+         XC    4(4,REG5),4(REG5)   CLEAR THE TIME TO WAIT FIELD
+         BR    REG11               RETURN TO CALLER
+         SPACE 2
+DOAREPLY EQU   *
+         LA    REG1,RPYTEXT        LOAD ADDRESS OF TABLE ENTRY REPLY
+         MVC   6(2,REG1),WQERPYID  SET UP ID FOR REPLY
+         SVC   34                  ISSUE THE REPLY COMMAND
+         OI    0(REG5),RPYDONE     SHOW THAT A REPLY HAS BEEN ISSUED
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        TERMINATION PROCESSING                                       *
+***********************************************************************
+         SPACE 2
+SHUTDOWN DS    0H
+NOSTWAIT DELETE EP=T115P510        RELEASE CONTROL TABLE
+         WTO   '**** AUTORPLY TERMINATED ****'
+ZRETURN  ZRETURN RC=0
+         EJECT
+***********************************************************************
+*        ERROR ROUTINES                                               *
+***********************************************************************
+         SPACE 2
+         EJECT
+***********************************************************************
+*        STIMER EXIT ROUTINE. ENTERED AT ELAPSE OF WAIT INTERVAL      *
+***********************************************************************
+         SPACE 2
+         PUSH  USING
+STMERXIT DS    0H
+         USING *,REG15             TEMPORARY ADDRESSABILITY
+         POST  STMERECB            POST THE ECB
+         BR    REG14               RETURN TO CONTROL PROGRAM
+         POP   USING               RESTORE ADDRESSABILITY
+         EJECT
+***********************************************************************
+*        CONSTANTS AND WORK AREAS                                     *
+***********************************************************************
+         SPACE 2
+RPYDONE  EQU   X'80'               REPLY HAS BEEN ISSUED
+DBLWORD  DS    D                   WORK AREA FOR UNPACK
+WAITTIME DC    F'100'              ONE SECOND BETWEEN SEARCHES
+ECBLIST  DS    0F                  WAIT ECB ADDRESS LIST
+STOPECB  DC    A(0)                ADDRESS OF STOP REQUEST ECB
+         DC    X'80'               END OF LIST FLAG
+         DC    AL3(STMERECB)       TIMER WAIT ECB
+STMERECB DC    F'0'                ECB POSTED BY STIMER EXIT ROUTINE
+CNTRLTAB DS    F                   ADDRESS OF CONTROL TABLE
+         LTORG
+RPYLIST  DC    200F'0'             WORK TABLE FOR REPLY ID'S
+         END

@@ -1,0 +1,198 @@
+         TITLE 'VALIDITY CHECK ROUTINE FOR OPEN SVC'
+***********************************************************************
+*                           D C B C H E C K
+*
+*            THIS ROUTINE IS INVOKED BY THE SECURITY HOOK IN THE
+*        OPEN SVC ROUTINE IGC0001I. IT IS ENTERED WITH NORMAL
+*        LINKAGE CONVENTIONS AND REGISTER 1 POINTING TO A PARAMETER ARE
+*        CONTAINING ALL THE RELEVANT DATA TO AN OPEN REQUEST. (SEE
+*        EXPANSION OF THE DCWKAREA MACRO).
+*            THIS ROUTINE CAN EXAMINE THIS DATA AND MAKE A DECISION
+*        AS TO THE VALIDITY OF THE OPEN REQUEST. IF THE OPEN IS TO BE
+*        ALLOWED TO PROCEED, THEN THE ROUTINE SHOULD RETURN TO CALLER
+*        WITH ZERO IN REG15. IF THE REQUEST IS NOT VALID, A RETURN CODE
+*        OF NON-ZERO WILL CAUSE THE ABEND OF THE JOB STEP.
+*
+*
+*
+***********************************************************************
+         SPACE 2
+***********************************************************************
+*
+*        CURRENTLY, THIS SECURITY CHECK ROUTINE OPERATES AS FOLLOWS:
+*
+*        ON ENTRY TO THIS ROUTINE, A TABLE IS LOADED FROM LINKLIST.
+*        THIS TABLE CONTAINS TWO PARTS; A LIST OF FOUR BYTE ENTRIES
+*        (ONE PER REMOTE NUMBER), AND A SECTION OF DATA SET NAMES,
+*        OR PARTIAL DATA SET NAMES, (INDEXES), EACH PRECEEDED BY ITS
+*        LENGTH AND SOME FLAG BYTES. (SEE MACROS 'DSN' 'REMOTE' AND
+*        'ENDLIST' FOR MORE INFORMATION).
+*            THE FIRST PART OF THE TABLE IS INDEXED INTO BY THE REMOTE
+*        NUMBER AND THE FOUR BYTE ENTRY IS THE ADDRESS OF THE DSN LIST
+*        FOR THAT REMOTE. THE LIST OF DSN'S CAN BE INCLUSIVE; (REMOTE
+*        CAN ACCESS ONLY DATA SETS ON THE LIST) OR EXCLUSIVE; (REMOTE
+*        CAN ACCESS ONLY FILES NOT ON THE LIST).
+*            IN ADDITION EACH DATA SET NAME/INEDEX ENTRY CAN BE A
+*        'NORMAL' ENTRY OR IT CAN SPECIFY 'READ-ONLY' OR 'WRITE-ONLY'
+*        ACCESS TO THAT FILE BY THIS REMOTE. NOTE THAT THE LATTER
+*        SPECIFICATION IS INDEPENDANT OF WETHER THE REMOTE ITSELF IS
+*        DEFINED AS INCLUSIVE OR EXCLUSIVE.
+*
+*
+*
+***********************************************************************
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING
+***********************************************************************
+         SPACE 2
+DCBCHECK ZCSECT GETMAIN=1          ENTER UNDER NORMAL LINKAGE
+         LR    REG3,REG1           SAVE ADDRESS OF THE PARAMETER AREA
+         USING DCWKAREA,REG3       AND ESTABLISH ADDRESSABILITY
+         EJECT
+***********************************************************************
+*        LOAD THE TABLE OF REMOTES AND DSN'S
+***********************************************************************
+         SPACE 2
+         L     REG1,16             LOAD ADDRESS OF THE CVT
+         USING CVTMAP,REG1         ADDRESSABILITY FOR IT
+         L     REG1,CVTLINK        GET ADDRESS OF LINKLIB DCB
+         LOAD  EP=FILELIST,DCB=(1) LOAD THE TABLE INTO CORE
+         DROP  REG1                RELEASE CVT ADDRESSABILITY
+         LR    REG4,REG0           START ADDRESS OF THE TABLE
+         EJECT
+***********************************************************************
+*        CHECK FIRST FOR A TEMPORARY DATA SET AND IGNORE
+***********************************************************************
+         SPACE 2
+TEMPCHCK DS    0H
+         L     REG14,JFCBADDR      LOAD ADDRESS OF THE JFCB
+         USING INFMJFCB,REG14      ADDRESSABILITY
+         TM    JFCBIND2,JFCTEMP    TEMPORARY DATA SET ?
+         BO    NORMRET             YES. BYPASS CHECKING
+         EJECT
+***********************************************************************
+*        INDEX INTO THE REMOTE LIST AND TEST FOR PRESCENCE OF DSN'S
+***********************************************************************
+         SPACE 2
+         XR    REG15,REG15         CLEAR WORK REGISTER
+         IC    REG15,SOURCE        LOAD SOURCE REMOTE OF JOB
+         CLC   SOURCE,DRAIN        OUTPUT GOING TO SOURCE REMOTE ?
+         BE    NORMALSD            YES. NORMAL SOURCE AND DRAIN
+         NC    SOURCE,SOURCE       SOURCE IS REMOTE 0 (LOCAL) ?
+         BNZ   NORMALSD            NO. SO TAKE SOURCE REMOTE FOR CHECK
+         IC    REG15,DRAIN         YES. SO TAKE DESTINATION FOR CHECK
+NORMALSD EQU   *
+         SLL   REG15,2             MULTIPLY BY FOUR
+         LA    REG15,0(REG15,REG4) GET ADDRESS OF REMOTE ENTRY IN TABLE
+         NC    1(3,REG15),1(REG15) DOES A DSN TABLE EXIST HERE ?
+         BZ    NORMRET             NO. RETURN TO CALLER
+         L     REG5,0(REG15)       GET ADDRESS OF THE DSN LIST
+         LR    REG6,REG15          AND SAVE THE WORK REGISTER
+         EJECT
+***********************************************************************
+*        PROCESS EACH DSN ENTRY FOR A MATCH
+***********************************************************************
+         SPACE 2
+         USING TABENTRY,REG5       ADDRESSABILITY FOR TABLE ENTRY
+DSNLOOP  DS    0H
+         TM    TABFLAG1,TF1LAST    IS THIS THE END OF THE LIST
+         BO    NOMATCH             YES. EXIT FROM THIS LOOP
+         LA    REG0,DSNAME         LOAD ADDRESS OF INCOMING DSNAME
+         LA    REG1,L'DSNAME       AND THE LENGTH OF IT
+         LA    REG14,TABNAME       START ADDRESS OF TABLE DSN/INDEX
+         XR    REG15,REG15         CLEAR WORK REGISTER
+         IC    REG15,TABLENTH      LENGTH OF THE TABLE ENTRY
+         TM    TABFLAG1,TF1DSNAM   IS THIS A FULL DSNAME OR INDEX ?
+         BO    LGTHISOK            DATA SET NAME LENGTH IS OK
+         LR    REG1,REG15          INDEX. ONLY COMPARE START OF NAME
+LGTHISOK EQU   *
+         ICM   REG15,8,=C' '       LOAD THE COMPARE PADDING CHAR
+         CLCL  REG0,REG14          TEST FOR A MATCH
+         BE    MATCH               YES. WHOOPEE. MAYBE I CAN ABEND HIM
+         XR    REG15,REG15         OH WELL. BACK TO THE GRIND
+         IC    REG15,TABLENTH      GET BACK THE DSN LENGTH
+         LA    REG5,TENTYLEN(REG15,REG5)    NEXT TABLE ENTRY.
+         B     DSNLOOP             AND TRY AGAIN.
+         EJECT
+***********************************************************************
+*        DETERMINE IF THE REQUEST IS GOOD
+***********************************************************************
+         SPACE 2
+MATCH    DS    0H
+         TM    TABFLAG1,TF1READ+TF1WRITE ANY SPECIAL ACCESS  THIS FILE
+         BZ    NOACCESS            NO. NO SPECIAL ACCESS CODES
+         BAL   REG11,INOROUT       CHECK FOR INOROUT ETC
+         B     BADRET              AND ASSUME ACCESS IS INVALID
+NOACCESS EQU   *
+         TM    0(REG6),X'01'       IS THIS AN EXCLUSIVE LIST ?
+         BO    BADRET              YES. ACCESS TO MATCH IS ILLEGAL
+         B     NORMRET             BUT OK FOR AN INCLUSIVE LIST.
+         SPACE 2
+NOMATCH  DS    0H
+         TM    0(REG6),X'01'       IS THIS AN EXCLUSIVE LIST ?
+         BZ    BADRET              NO. ANY OTHER ACCESS IS ILLEGAL,
+         B     NORMRET             BUT, IF ITS DOWN ON MY LIST SQUIRE..
+         EJECT
+***********************************************************************
+*        RETURN SHOWING INVALID ATTEMPT TO OPEN
+***********************************************************************
+         SPACE 2
+BADRET   DS    0H
+         DELETE EP=FILELIST
+         ZRETURN RC=4
+         EJECT
+***********************************************************************
+*        RETURN TO CALLER OF THIS ROUTINE
+***********************************************************************
+         SPACE 2
+NORMRET  DS    0H
+         DELETE EP=FILELIST
+         ZRETURN
+         EJECT
+***********************************************************************
+*        CHECK THE OPEN TYPE FOR READ-ONLY OR WRITE-ONLY REQUESTS
+***********************************************************************
+         SPACE 2
+INOROUT  DS    0H
+         TM    DCBADDR,X'06'       THOSE TWO BITS ARE ON FOR OUTPUT
+         BZ    TSTIN               OPEN IS FOR INPUT. GO TEST
+         TM    TABFLAG1,TF1WRITE   IS HE ALLOWED WRITE ACCESS
+         BO    INOUTOK             YES. GO BACK NORMALLY
+         B     INOUTBAD            NO. RETURN WITH ERROR
+TSTIN    EQU   *
+         TM    TABFLAG1,TF1READ    IS HE ALLOWED READ ACCESS ?
+         BO    INOUTOK             YES. RETURN WITH GOOD INDICATION
+         B     INOUTBAD            NO. RETURN WITH ERROR
+         SPACE 2
+INOUTOK  B     4(REG11)            NORMAL RETURN TO CALLER
+INOUTBAD BR    REG11               ERROR RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        CONSTANTS AND WORK AREAS
+***********************************************************************
+         SPACE 2
+         LTORG
+         EJECT
+***********************************************************************
+*        DSECTS
+***********************************************************************
+         SPACE 2
+         DCWKAREA
+         SPACE 2
+TABENTRY DSECT ,                   FORMAT OF DSN/INDEX TABLE ENTRY
+TABFLAG1 DS    X                   FLAG FOR ENTRY TYPE
+TF1DSNAM EQU   X'80'               THIS IS A FULL DSNAME
+TF1INDEX EQU   X'40'               THIS IS AN INDEX LEVEL
+TF1READ  EQU   X'20'               THE ACCESS TO THIS FILE IS READ
+TF1WRITE EQU   X'10'               THE ACCESS TO THIS FILE IS WRITE
+TF1LAST  EQU   X'01'               THIS IS END OF TABLE
+TABFLAG2 DS    X                   SPARE
+TABFLAG3 DS    X                   SPARE
+TABLENTH DS    X                   LENGTH OF WHAT FOLLOWS
+TABNAME  DS    0C                  NAME OF DSN OR INDEX
+TENTYLEN EQU   *-TABENTRY          LENGTH OF A TABLE ENTRY
+         CVT
+         SPACE 2
+         IEFJFCBN
+         END

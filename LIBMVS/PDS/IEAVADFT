@@ -1,0 +1,323 @@
+//IEAVADFT JOB (1586,5),'** FOR J. NOLS **',CLASS=N
+//*********************  FORMAT SERVICE RTN  **************************
+//STEP01       EXEC GENASMOD,AOS=C5
+         TITLE 'ABDUMP COMMON CONTROL BLOCK FORMATTER'
+***********************************************************************
+*                          I E A V A D F T                            *
+*                                                                     *
+*          THIS IS A SERVICE ROUTINE TO THE MONSANTO ABDUMP EN-       *
+*        HANCEMENT ROUTINES AND ALLOWS THEM TO EASILY FORMAT AND      *
+*        PRINT A CONTROL BLOCK IN THE DUMP LISTING. ON ENTRY TO THE   *
+*        ROUTINE, REGISTER ONE CONTAINS THE ADDRESS OF A PARAMETER    *
+*        LIST OF THREE OR FOUR ENTRIES. (VL BIT MUST BE ON)           *
+*          THE FIRST PARAMETER IS THE ADDRESS OF THE ABDUMP WORK AREA *
+*          THE SECOND PARAMETER IS THE CONTROL BLOCK TO BE PRINTED.   *
+*              IF THE TOP BYTE OF THIS PARAMETER REGISTER IS NON-ZERO *
+*              THEN THE ROUTINE WILL REPEAT THE FORMATTING A NUMBER   *
+*              OF TIMES USING SUCCESSIVE LOCATIONS IN CORE. THE NUMBER*
+*              OF REPEATS IS TAKEN AS THE VALUE OF THE TOP BYTE OF THE*
+*              PARAMETER REGISTER.                                    *
+*          THE THIRD PARAMETER IS A TABLE OF ENTRIES DESCRIBING THE   *
+*        FIELDS THAT MAKE UP THE DESIRED OUTPUT. IT IS DESCRIBED      *
+*        BELOW.                                                       *
+*          THE FOURTH (OPTIONAL) PARAMETER IS THE NAME OF THE         *
+*        CONTROL BLOCK IN THE FORM: 1 BYTE LENGTH FOLLOWED IMMED-     *
+*        IATELY BY THE NAME ITSELF. THIS WILL BE PRINTED AT THE TOP   *
+*        OF AND TO THE LEFT OF THE OUTPUT. (MAX 8 BYTES)              *
+*                                                                     *
+*                                                                     *
+*        REGISTER USAGE                                               *
+*                                                                     *
+*        REG00 PARAMETER REGISTER AND WORK REGISTER                   *
+*        REG01 PARAMETER REGISTER AND WORK REGISTER                   *
+*        REG02 WORK REGISTER                                          *
+*        REG03 ADDRESS OF INTERNAL WORK AREA                          *
+*        REG04 ADDRESS OF NEXT BYTE TO BE FORMATTED                   *
+*        REG05 ADDRESS OF CURRENT TABLE ENTRY                         *
+*        REG06                                                        *
+*        REG07                                                        *
+*        REG08 ADDRESS OF ABDUMP WORK AREA                            *
+*        REG09                                                        *
+*        REG10 GENERAL LENGTH WORK REGISTER                           *
+*        REG11 LINK REGISTER BETWEEN ROUTINES                         *
+*        REG12 BASE REGISTER OF THIS PROGRAM                          *
+*        REG13 ADDRESS OF THE PROGRAMS SAVE AREA                      *
+*        REG14 RETURN ADDRESS REGISTER AND WORK REGISTER              *
+*        REG15 ENTRY POINT ADDRESS AND WORK REGISTER                  *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*                                                                     *
+*              INPUT PARAMETER TABLE TO IEAVADFT                      *
+*                                                                     *
+*        THIS IS THE SECOND PARAMETER PASSED TO THIS ROUTINE BY       *
+*        STANDARD LINKAGE CONVENTIONS AND HAS THE FOLLOWING FORM:     *
+*                                                                     *
+*              FLAG BYTE FOR FIRST FIELD          - 1 BYTE            *
+*              LENGTH OF FIRST OUTPUT FIELD TITLE - 1 BYTE            *
+*              NAME OF FIRST OUTPUT FIELD         - 0-30 BYTES        *
+*              LENGTH OF FIRST OUTPUT FIELD       - 1 BYTE            *
+*                                                                     *
+*              FLAG BYTE FOR NEXT FIELD           - 1 BYTE            *
+*              LENGTH OF NEXT OUTPUT FIELD TITLE  - 1 BYTE            *
+*              NAME OF NEXT OUTPUT FIELD          - 0-30 BYTES        *
+*              LENGTH OF NEXT OUTPUT FIELD        - 1 BYTE            *
+*                                                                     *
+*              ETC. ETC. ....                                         *
+*                                                                     *
+*              END OF TABLE INDICATOR, HIGH VALUES - 1 BYTE           *
+*                                                                     *
+*        THE ROUTINE EXPECTS ONE TABLE ENTRY FOR EACH FIELD TO BE     *
+*        PRINTED. EACH FIELD FOLLOWS THE LAST AND NO ALIGNMENT IS     *
+*        ASSUMED. A MAXIMUM OF 121 PRINT POSITIONS IS USED ON EACH    *
+*        OUTPUT LINE.                                                 *
+*                                                                     *
+*        THE MACRO FMTENT CAN BE USED TO BUILD THIS TABLE. IT HAS     *
+*        OPERANDS AS FOLLOWS:                                         *
+*                                                                     *
+*        FMTENT XXXX OR 'XXXX' OR $DSECT, WHERE XXXX IS THE FIELD NAME*
+*               NN,                       WHERE NN IS LENGTH OF FIELD *
+*                                         (DEFAULT: 4,  MAX: 24)      *
+*               CONVERT=YES OR NO,       FIELD IS/IS NOT TO BE CNVRTED*
+*               NL=YES OR NO             THIS FIELD BEGINS A NEW LINE *
+*                                                                     *
+*        I.E. A TYPICAL TABLE MIGHT BE:                               *
+*                                                                     *
+*TABLE   DS    0F                  FORMATTING TABLE                   *
+*        FMTENT FLD1,4             FIRST FOUR BYTE FIELD              *
+*        FMTENT DBLW,8             SECOND FIELD; DOUBLE WORD          *
+*        FMTENT 'THIS IS A SPECIAL FIELD',1 ONE BYTE FLAG FIELD       *
+*        FMTENT ,                  NO LABEL, DEFAULT LENGTH OF FOUR   *
+*        FMTENT NEWLINE,12,NL=YES  12 BYTE FIELD ON A NEW LINE        *
+*TABEND  DC    AL1(255)            END OF TABLE                       *
+*                                                                     *
+*        THE OPERAND '$DSECT' INSTEAD OF A FIELD NAME CAUSES THE MACRO*
+*        TO PRODUCE A DSECT OF THE TABLE ENTRY CALLED FMTTABLE.       *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        DSECTS USED IN THIS MODULE                                   *
+***********************************************************************
+         SPACE 2
+WKAREA   DSECT ,                   INTERNAL WORK AREA
+GETMNLEN DS    F                   SAVED DETAILS FOR FREEMAIN THIS AREA
+SAVER111 DS    F                   SAVE AREA FOR LINK REGISTER
+WKPARMS  DS    0F                  REFERENCE FOR NEXT 3 WORDS
+WKCBADDR DS    F                   START ADDRESS OF CONTROL BLOCK
+WKFMTTAB DS    F                   ADDRESS OF FORMAT TABLE
+WKCBNAME DS    F                   ADDRESS OF CTL BLK NAME OR 0
+NXTADDR  DS    F                   ADDRESS OF NEXT OUTPUT BYTE
+ENDLNADD DS    F                   ADDRESS OF END OF OUTPUT LINE
+NXTLENTH DS    F                   SAVE AREA FOR OUTPUT LENGTH ACROSS
+*                                  A NEW LINE.
+FLAG     DS    X                   INTERNAL FLAG
+FMTAREA  DS    CL82                WORK AREA FOR PREPARATION
+WKARELEN EQU   *-WKAREA            LENGTH OF THIS WORK AREA
+         SPACE 2
+         FMTENT $DSECT             FORMAT OF TABLE ENTRIES
+         SPACE 2
+         IHAABDA ,                 ABDUMP WORK AREA
+         EJECT
+***********************************************************************
+*        EQUATES USED IN THIS MODULE                                  *
+***********************************************************************
+         SPACE 2
+ENDING   EQU   X'80'               RELATES TO FLAG: ALL OUTPUT IS DONE
+NEWLINON EQU   X'40'               RELATES TO FLAG: NEWLINE IN PROGRESS
+LINELEN  EQU   104                 MAXIMUM LENGTH OF DATA PER LINE
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING                                   *
+***********************************************************************
+         SPACE 2
+IEAVADFT ZCSECT GETMAIN=1
+         XR    REG7,REG7           CLEAR REGISTER 7
+         LM    REG4,REG6,0(REG1)   LOAD INPUT PARAMETERS
+         LTR   REG6,REG6           TEST FOR PRESCENCE OF FOURTH PARM
+         BM    NOFOURTH            NO NO CONTROL BLOCK NAME
+         L     REG7,12(REG1)       LOAD ADDRESS OF SUPPLIED NAME
+NOFOURTH EQU   *
+         EJECT
+***********************************************************************
+*        GETMAIN AND INITIALISE THE WORK AREA                         *
+***********************************************************************
+         SPACE 2
+         LA    REG0,WKARELEN       LOAD LENGTH OF WORK AREA
+         GETMAIN R,LV=(0)          GETMAIN CORE FOR WORK AREA
+         LR    REG3,REG1           LOAD BASE REGISTER FOR WORK AREA
+         USING WKAREA,REG3         ADDRESSABILITY FOR WORK AREA
+         ST    REG0,GETMNLEN       SAVE DETAILS FOR FREEMAIN
+         STM   REG5,REG7,WKPARMS   SAVE ADDRESSES INCOMING PARAMETERS
+         LR    REG8,REG4           LOAD ADDRESS ABDUMP WORK AREA
+         USING ABDAREA,REG8        ADDRESSABILITY FOR ABDUMP WORK AREA
+         L     REG4,WKCBADDR       INITIALISE START ADDRESS
+         LA    REG4,0(REG4)        CLEAR TOP BYTE
+         MVI   ABDCC,C'0'          FORCE DOUBLE SPACING FIRST LINE
+         EJECT
+***********************************************************************
+*        THIS IS THE MAINLINE OUTPUT ROUTINE                          *
+***********************************************************************
+         SPACE 2
+MAIN     DS    0H
+         NI    FLAG,255-ENDING     TURN OFF END OF OUTPUT FLAG
+         L     REG5,WKFMTTAB       INITIALISE START ADDRESS OF TABLE
+         XC    ABDLINE,ABDLINE     CLEAR THE OUTPUT AREA
+         BAL   REG11,NAMEIT        TEST FOR NAME AND LOAD IF FOUND
+         XC    NXTLENTH,NXTLENTH   CLEAR SAVE LENGTH FIELD
+LINELOOP LA    REG1,ABDLINE+16     LOAD ADDRESS OF START OF OUT AREA
+         ST    REG1,NXTADDR        STORE INTO WORK AREA
+         LA    REG1,LINELEN(REG1)  STEP UP BY THE LENGTH OF DATA
+         ST    REG1,ENDLNADD       SAVE THIS FOR LINE ROUTINE
+         BAL   REG11,DOLINE        GO FORMAT A LINE
+         BAL   REG11,DOOUTPUT      GO OUTPUT A LINE
+         XC    ABDLINE,ABDLINE     CLEAR THE OUTPUT AREA
+         MVI   ABDCC,C' '          SET SINGLE SPACING OF LINES
+         TM    FLAG,ENDING         END OF OUTPUT REACHED ?
+         BZ    LINELOOP            NO. PREPARE FOR ANOTHER LINE
+         CLI   WKCBADDR,1          REPEAT DUPLICATE FORMAT REQUESTED ?
+         BNH   EXITPGM             NO. RETURN TO CALLER
+         IC    REG10,WKCBADDR      LOAD DUPLICATE FORMAT COUNT
+         BCTR  REG10,0             SUBTRACT ONE
+         STC   REG10,WKCBADDR      STORE BACK INTO WORK AREA
+         B     MAIN                GO REPEAT ALL OUTPUT.
+         EJECT
+***********************************************************************
+*        TERMINATION ROUTINE                                          *
+***********************************************************************
+         SPACE 2
+EXITPGM  DS    0H
+         LA    REG0,WKARELEN       LOAD FREEMAIN DETAILS
+         LR    REG1,REG3           LOAD PARAMETER REG1
+         FREEMAIN R,LV=(0),A=(1)   FREE UP THE WORK AREA
+         ZRETURN RC=0              RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        THIS IS THE CONTROL BLOCK NAME ROUTINE                       *
+***********************************************************************
+         SPACE 2
+NAMEIT   DS    0H
+         L     REG10,WKCBNAME      LOAD ADDRESS OF NAME FIELD
+         LTR   REG10,REG10         TEST FOR PRESCENCE OF NAME
+         BZ    NAMEEXIT            NONE SUPPLIED. IGNORE REQUEST
+         IC    REG2,0(REG10)       LOAD LENGTH OF NAME FIELD
+         BCTR  REG2,0              SUBTRACT ONE FOR EXECUTE
+         N     REG2,=F'7'          LIMIT LENGTH TO 8 BYTES
+         EX    REG2,MOVENAME       MOVE SUPPLIED NAME TO OUT AREA
+         LA    REG14,ABDLINE+2(REG2) LOAD ADDRESS FOR ADDRESS
+         UNPK  0(7,REG14),WKCBADDR+1 UNPACK ADDRESS TO OUTPUT
+         TR    0(6,REG14),TRTABLE-C'0' MAKE OUTPUT PRINTABLE
+         MVI   6(REG14),C' '       BLANK OUT UNWANTED SIGN BYTE
+NAMEEXIT BR    REG11               RETURN TO CALLER
+         SPACE 2
+MOVENAME MVC   ABDLINE(0),1(REG10) MOVE NAME TO OUTPUT AREA
+         EJECT
+***********************************************************************
+*        THE OUTPUT LINE IS PREPARED HERE                             *
+***********************************************************************
+         SPACE 2
+DOLINE   DS    0H
+         ST    REG11,SAVER111      SAVE LINK REGISTER
+         USING FMTTABLE,REG5       ADDRESSABILITY FOR FORMAT TABLE
+FLDLOOP  CLI   FMTFLAG,X'FF'       END OF TABLE REACHED ?
+         BE    LINEXIT1            YES. RETURN TO CALLER
+         BAL   REG11,PREPARER      PREPARE OUTPUT DATA TO WORK AREA
+         TM    FMTFLAG,FMTNLINE    NEW LINE FOR THIS FIELD ?
+         BO    LINEXIT3            YES. GO RETURN THIS LINE
+RETEXIT3 NI    FLAG,255-NEWLINON   RESET NEWLINE FLAG.
+         TM    FMTFLAG,FMTNOPRT    THIS FIELD IS NON-PRINT ?
+         BO    LOOPEND             YES. DONT DO ANY PRINTING
+         L     REG1,NXTADDR        LOAD ADDRESS NEXT OUTPUT BYTE
+         LA    REG14,3(REG10,REG1) LOAD ADDRESS OF END OF THIS AREA
+         C     REG14,ENDLNADD      DOES THIS EXCEED END OF LINE ?
+         BH    LINEXIT2            YES. GO ON TO A NEW LINE
+         EX    REG10,MVCDATA       MOVE DATA TO OUTPUT AREA
+         ST    REG14,NXTADDR       SAVE NEXT START ADDRESS FOR OUTPUT
+LOOPEND  XC    NXTLENTH,NXTLENTH   CLEAR SAVED LENGTH FIELD
+         XR    REG2,REG2           CLEAR LENGTH REGISTER
+         IC    REG2,FMTLBLEN       LOAD LENGTH OF THIS LABEL
+         LA    REG5,FMTENLEN(REG2,REG5) LOAD ADDRESS NEXT TABLE ENTRY
+         B     FLDLOOP             LOOP UNTIL LINE IS FULL
+LINEXIT3 TM    FLAG,NEWLINON       NEWLINE ALREADY EXIST
+         BO    RETEXIT3            NEW LINE DONE . RETURN TO LOOP
+         OI    FLAG,NEWLINON       SIGNAL NEW LINE CONDITION
+         B     LINEXIT2            RETURN TO OUTPUT LINE
+LINEXIT1 OI    FLAG,ENDING         SIGNAL END OF PROCESSING
+LINEXIT2 L     REG11,SAVER111      RELOAD LINK REGISTER
+         BR    REG11               RETURN TO CALLER
+         SPACE 2
+MVCDATA  MVC   0(0,REG1),FMTAREA   MOVE PREPARED DATA TO OUT AREA
+         EJECT
+***********************************************************************
+*        THE OUTPUT IS PREPARED FIRST IN THE WORK AREA                *
+***********************************************************************
+         SPACE 2
+PREPARER DS    0H
+         L     REG10,NXTLENTH      LOAD SAVED LENGTH FIELD
+         LTR   REG10,REG10         ANYTHING BEEN SAVED HERE ?
+         BNZ   PREPEXIT            YES. RETURN DIRECTLY
+         XC    FMTAREA,FMTAREA     CLEAR PREVIOUS CONTENTS
+         XR    REG2,REG2           CLEAR LENGTH REGISTER
+         IC    REG10,FMTLBLEN      LOAD EXECUTABLE LENGTH OF LABEL
+         IC    REG2,FMTFDLEN(REG10) LOAD EXECUTABLE LENGTH OF FIELD
+         TM    FMTFLAG,FMTNOLAB    THIS FIELD HAS NOLABLE REQUIREMENT ?
+         BO    NOLABEL             YES. STEP OVER MOVE INSTRUCTION
+         EX    REG10,MOVELABL      MOVE LABEL TO FORMAT AREA
+         LA    REG10,FMTAREA+2(REG10) LOAD ADDRESS FOR RECEIVING FIELD
+         B     NOLABEL2            BRANCH TO NEXT SECTION
+NOLABEL  LA    REG10,FMTAREA       LOAD ADDRESS FOR RECEIVING FIELD
+NOLABEL2 TM    FMTFLAG,FMTCNVRT    THIS FIELD REQUIRES CONVERSION ?
+         BZ    NOCNVRTN            NO. BYPASS CONVERSION ROUTINE
+         LA    REG14,1             LOAD INCREMENT FOR BXLE
+         LA    REG15,0(REG2,REG4)  LOAD ADDRESS OF END OF DATA
+LOOP1    UNPK  0(3,REG10),0(2,REG4) UNPACK DATA TO RECEIVING FIELD
+         TR    0(2,REG10),TRTABLE-C'0' MAKE THE DATA PRINTABLE
+         LA    REG10,2(REG10)      STEP TO NEXT RECEIVING AREA
+         BXLE  REG4,REG14,LOOP1    LOOP FOR ENTIRE DATA FIELD
+         B     NOCNVRT2            JUMP TO NEXT SECTION
+NOCNVRTN EX    REG2,MOVEDATA       MOVE UNCONVERTED DATA TO WORK AREA
+         LA    REG10,1(REG2,REG10) LOAD ADDRESS OF END OF DATA
+         LA    REG4,1(REG2,REG4)   LOAD START ADDRESS OF NEXT FIELD
+NOCNVRT2 LA    REG1,FMTAREA+1      LOAD ADDRESS OF FORMATTED DATA + 1
+         MVI   0(REG10),C' '       BLANK OUT 1 EXTRA PLACE AFTER DATA
+         SR    REG10,REG1          CALCULATE EXECUTABLE LENGTH OF DATA
+         O     REG10,=F'1'         ENSURE FIELD IS MULTIPLE OF 2 BYTES
+         ST    REG10,NXTLENTH      SAVE LENGTH OF THIS PREPARATION
+PREPEXIT BR    REG11               RETURN TO CALLER
+         SPACE 2
+MOVELABL MVC   FMTAREA(0),FMTTITLE MOVE FIELD NAME TO PREPARE AREA
+MOVEDATA MVC   0(0,REG10),0(REG4)  MOVE DATA TO WORK AREA (EXECUTED)
+         EJECT
+***********************************************************************
+*        THIS ROUTINE EFFECTS LINKAGE WITH THE ABDUMP I/O MODULE      *
+***********************************************************************
+         SPACE 2
+DOOUTPUT DS    0H
+         LR    REG1,REG8           LOAD ADDRESS OF ABDUMP WORK AREA
+         L     REG15,IEAVAD11      LOAD ADDRESS OF OUTPUT ROUTINE
+         BALR  REG14,REG15         LINK TO THE I/O ROUTINE
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        LITERAL POOL                                                 *
+***********************************************************************
+         SPACE 2
+IEAVAD11 DC    V(IEAVAD11)         OUTPUT I/O ROUTINE
+TRTABLE  DC    C'0123456789ABCDEF' TABLE TO CONVERT OUTPUT PRINTABLE
+         LTORG
+         END
+//LKED.SYSIN DD *
+ SETCODE AC(1)
+ NAME IEAVADFT(R)
+ INCLUDE SYSLMOD(IEAVADFT)
+ INCLUDE SYSLMOD(IEAVADDM)
+ ENTRY IEAVADDM
+ SETCODE AC(1)
+ NAME IEAVADDM(R)
+ INCLUDE SYSLMOD(IEAVADFT)
+ INCLUDE SYSLMOD(IEAVADDY)
+ ENTRY IEAVADDY
+ SETCODE AC(1)
+ NAME IEAVADDY(R)
+/*

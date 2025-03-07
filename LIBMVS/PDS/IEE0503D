@@ -1,0 +1,169 @@
+//IEE0503D JOB (1586,5),'** FOR J. NOLS **',CLASS=N
+//STEP01 EXEC GENASMOD,AOS=B3
+         TITLE 'ARTIFICIAL EXIT FROM O.S. COMMAND PROCESSOR'
+***********************************************************************
+*                         X E E 0 5 0 3 D                             *
+*                                                                     *
+*        THIS MODULE IS USED TO GAIN ENTRY INTO THE O.S. COMMAND      *
+*        PROCCESSING ROUTINES. IT IS LINK EDITTED INTO SVC 34         *
+*        (IGC0003D) AS A REPLACEMENT FOR THE ERROR MESSAGE ROUTINE    *
+*        (IEE0503D). THE MODULE LINKS TO THE MONSANTO COMMAND ROUTER  *
+*        (AUXCOMM) WHICH ANALYSES THE USER COMMAND. ON RETURN,        *
+*        IF NECCESSARY, THE REAL ERROR MESSAGE MODULE IS INVOKED.     *
+*                                                                     *
+*        ATTRIBUTES. REENTRANT, SUPERVISOR MODE, AUTHORISED, PK0.     *
+*                                                                     *
+*        PARAMETERS. ON ENTRY, REGISTER 2 IS ASSUMED TO POINT TO THE  *
+*              EXTENDED SAVE AREA OF THE SVC34 SUPERVISOR REQUEST     *
+*              BLOCK. THIS IS PASSED ON TO THE FOLLOWING ROUTINES.    *
+*                                                                     *
+*        ENTRY.  THE MODULE IS ENTERED FROM VARIOUS PLACES IN THE     *
+*              COMMAND PROCESSING SVC WHEN ANY ERROR CONDITION IS     *
+*              ENCOUNTERED AND A MESSAGE IS TO BE OUTPUT.             *
+*                                                                     *
+*        EXIT. THE MODULE HAS THREE NORMAL EXITS.                     *
+*              1) FOR ERRORS WHICH ARE NOT 'INVALID COMMAND' TYPE     *
+*                  ERRORS, THE MODULE DOES NO PROCESSING, BUT PASSES  *
+*                  CONTROL STRAIGHT ON TO THE REAL IEE0503D.          *
+*              2) FOR 'INVALID COMMAND' TYPE ERRORS, CONTROL IS       *
+*                  GIVEN TO THE MONSANTO COMMAND ROUTER TO SEE IF     *
+*                  THE COMMAND IS A VALID MONSANTO ONE. IF IT IS,     *
+*                  A RETURN CODE OF ZERO IS RECEIVED AND CONTROL IS   *
+*                  RETURNED DIRECTLY TO THE CALLER OF XEE0503D. IF    *
+*                  IT IS NOT, A RETURN CODE OF FOUR IS RETURNED, AND  *
+*                  CONTROL IS PASSED ON TO THE REAL ERROR MESSAGE     *
+*                  ROUTINE TO REPORT THE INVALID COMMAND.             *
+*              3) CONTROL IS GIVEN TO IEE0503D FOR UNKNOWN COMMANDS   *
+*                  AS EXPLAINED UNDER 2) ABOVE.                       *
+*                                                                     *
+*        REGISTER USAGE.                                              *
+*        REG0  PARAMETER REGISTER. USED IN GETMAIN. SAVED IN SVRB     *
+*        REG1  PARAMETER REGISTER. USED IN GETMAIN. SAVED IN SVRB     *
+*        REG2  ADDRESS OF EXTENDED SAVE AREA OF SVRB.                 *
+*        REG3  NOT USED BY THIS PROGRAM.                              *
+*        REG4  INITIAL ENTRY POINT BASE REGISTER                      *
+*        REG5-REG12 ARE NOT USED BY THIS ROUTINE                      *
+*        REG13 ADDRESS OF A GETMAINED SAVE AREA PASSED TO AUXCOMM     *
+*        REG14 PROGRAM LINK REGISTER                                  *
+*        REG15 PROGRAM LINK REGISTER                                  *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        DSECTS                                                       *
+***********************************************************************
+         SPACE 2
+WKAREA   DSECT ,                   INTERNAL WORK AREA
+         DS    18F                 SAVE AREA FOR FOLLOWING MODULES
+WKAREND  EQU   *
+WKARELEN EQU   WKAREND-WKAREA      LENGTH OF WORK AREA
+         SPACE 2
+EXTNDSA  DSECT ,                   SVRB EXTENDED SAVE AREA
+         DS    4F                  NOT USED IN THIS MODULE
+XSAFCODE DS    0C                  FUNCTION CODE FOR IEE0503D
+         DS    4F                  UNUSED BY THIS ROUTINE
+XSATFLD1 DS    D                   TEMP SAVE AREA
+         EJECT
+***********************************************************************
+*        EQUATES                                                      *
+***********************************************************************
+         SPACE 2
+         EQUATE ,                  EQUATE THE REGISTERS
+*
+*        THESE EQUATES RELATE TO FUNCTION CODE IN EXT. SAVE AREA
+*
+XSAFINCM EQU   X'05'               INVALID COMMAND MESSAGE REQUIRED
+XSAMIPRM EQU   X'0B'               MISSING OPERAND MESSAGE REQUIRED
+         EJECT
+***********************************************************************
+*        HOUSEKEEPING                                                 *
+***********************************************************************
+         SPACE 2
+XEE0503D CSECT
+         BALR  REG4,0              ESTABLISH SAME BASE AS REAL MODULE
+         USING *,REG4              ADDRESSABILITY FOR THIS PROGRAM
+         USING EXTNDSA,REG2        ADDRESS EXTENDED SAVE AREA OF SVRB
+         CLI   XSAFCODE,XSAFINCM   IS THIS AN INVALID COMMAND ENTRY
+         BE    MONSANTO            YES. GO PROCESS MONSANTO COMMANDS
+         L     REG4,IEE0503D       LOAD ADDRESS OF THE REAL ROUTINE
+         BR    REG4                BRANCH TO IT
+         SPACE 2
+MONSANTO DS    0H                  SET NORMAL BASE REGISTER
+         STM   REG0,REG1,XSATFLD1  SAVE INCOMING PARAMETER REGS
+         LA    REG0,WKARELEN       LOAD LENGTH REQUIRED AREA
+         O     REG0,SUBPOOL        PUT SUBPOOL NUMBER IN REG
+         GETMAIN R,LV=(0)          GETMAIN SOME CORE
+         LR    REG13,REG1          LOAD UP WORK AREA AS SAVE AREA
+         LM    REG0,REG1,XSATFLD1  RELOAD INCOMING REGISTERS
+         EJECT
+***********************************************************************
+*        INVOKE THE MONSANTO COMMAND ROUTER.                          *
+***********************************************************************
+         SPACE 2
+         LINK  EP=AUXCOMM
+         EJECT
+***********************************************************************
+*        ANALYSE THE RETURN FROM AUXCOMM & TAKE ACTION                *
+***********************************************************************
+         SPACE 2
+         LTR   REG15,REG15         TEST FOR ZERO RETURN CODE
+         BZ    EXITPGM             OK. NO NEED FOR REAL ERROR MODULE
+         SPACE 2
+         STM   REG0,REG1,XSATFLD1  SAVE PARAMETER REGS
+         LR    REG1,REG13          LOAD ADDRESS GETMAINED AREA
+         LA    REG0,WKARELEN       LOAD LENGTH FOR FREEMAIN
+         O     REG0,SUBPOOL        LOAD SUBPOOL NUMBER
+         FREEMAIN R,LV=(0),A=(1)   FREE UP THE CORE
+         LM    REG0,REG1,XSATFLD1  RELOAD PARM REGISTERS
+         L     REG15,IEE0503D      LOAD ADRESS REAL ERROR ROUTINE
+         BR    REG15               BRANCH TO IT
+         EJECT
+***********************************************************************
+*        COMMON EXIT ROUTINE                                          *
+***********************************************************************
+         SPACE 2
+EXITPGM  DS    0H
+         STM   REG0,REG1,XSATFLD1  SAVE PARM REGISTERS
+         LR    REG1,REG13          LOAD ADDRESS AREA TO FREEMAIN
+         LA    REG0,WKARELEN       LOAD LENGTH FOR FREEMAIN
+         O     REG0,SUBPOOL        LOAD UP SUBPOOL NUMBER
+         FREEMAIN R,LV=(0),A=(1)   FREE UP THE CORE
+         LM    REG0,REG1,XSATFLD1  RELOAD PARM REGISTERS
+         BR    REG14               EXIT
+         EJECT
+***********************************************************************
+*        CONSTANTS & LITERALS                                         *
+***********************************************************************
+         SPACE 2
+IEE0503D DC    V(IEE0503D)        ADDRESS OF REAL ERROR MESSAGE ROUTINE
+SUBPOOL  DS    0F                  USED TO LOAD NEXT IN TOP REG 0
+         DC    AL1(241)            SUBPOOL FOR GETMAIN/FREEMAIN
+         DC    AL3(0)              PADDING
+         LTORG
+         END
+//LKED.SYSIN   DD   *
+ REPLACE IEE0503D(XEE0503D)
+ INCLUDE LPALIB(IGC0003D)
+ ORDER IEE0003D
+ ORDER IEE0303D
+ ORDER IEE5403D
+ ORDER IEE0403D
+ ORDER IEE7503D
+ ORDER IEE5603D
+ ORDER IEE5903D
+ ORDER IEE6703D
+ ORDER IEE7703D
+ ORDER IEE6803D
+ ORDER IEE6903D
+ ORDER IEE6303D
+ ORDER IEE6403D
+ ALIAS IGG2103D
+ ALIAS IGC0503D
+ ALIAS IEE0503D
+ ALIAS IEE7603D
+ ALIAS IEE2103D
+ ENTRY IEE0003D
+ SETCODE AC(1)
+ NAME IGC0003D(R)
+/*

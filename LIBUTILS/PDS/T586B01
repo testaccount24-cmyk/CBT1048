@@ -1,0 +1,1285 @@
+//T586B01      JOB  (5860,5),'ADD TO MOPP.TABLIB',CLASS=N
+//STEP01   EXEC     PGM=B1801
+//SYSPRINT     DD   SYSOUT=A
+//SYSUT1       DD   *
+***********************************************************************
+*                                                                     *
+*        MOPP REQUEST CARD VALIDATION - WORKING STORAGE LAYOUT        *
+*                                                                     *
+*                                                                     *
+*    START  LEN   FIELD                                               *
+*    POSN.  GTH   USAGE                                               *
+*                                                                     *
+*     001    80   INPUT RECORD                                        *
+*     081    05   UPDATE NUMBER                                       *
+*     086    02   UPDATE TYPE.  CURRENTLY: AP/RP/LP/TP                *
+*     088    05   SOURCE CODE                                         *
+*     093    04   SOURCE FLAGS                                        *
+*     097    08   SYSTEM NAME                                         *
+*     105    02   REMOTE ID.                                          *
+*     107    01   SECURITY FLAG                                       *
+*     108    08   MEMBER NAME                                         *
+*     116    04   PASSWORD                                            *
+*     120    06   REQUESTOR                                           *
+*     126    08   ALIAS1                                              *
+*     134    08   ALIAS2                                              *
+*     142    08   2ND. SYSTEM COPY                                    *
+*     150    18   SEQUENCE INFORMATION                                *
+*     168    10   10-DIGIT PROGRAMMER NAME                            *
+*---------------------------------------------------------------------*
+*                       TEMPORARY STORAGE                             *
+*     178    38   PROC. NAME PLUS SYMBOLIC PARAMETERS.                *
+* RD  178    27   'FROM' LIBRARY NAME                                 *
+*     205    08   LIBRARIAN PRODUCTION LIBRARY                        *
+* RD  178    01   EXIT CALL CODE:  1 - LIBRARYN LOOKUP                *
+*                                  2 - SUPPLY NEXT RECORD.            *
+*                                  3 - SUPPLY SSI AND MCD INFO        *
+*                                  4 - SUPPLY LKED RECORD             *
+*                                  5 - STORE -DESC CARD               *
+*                                  6 - SUPPLY -DES CARD               *
+*                                  7 - MOVE UPDT. NO. TO W/A          *
+*     179    01   LIBRN RETURN CODE:  0 - ALL OK.                     *
+*                                     1 - MODULE NOT FOUND/EOM/EOH    *
+*                                     2 OR 9 - ERROR ON MASTER        *
+*     180    01   EXIT RETURN CODE:  0 - ALL OK.                      *
+*                                    1 - EOM NO LKED DATA.            *
+*                                    2 - EOM. LKED DATA PRESENT.      *
+*                                    3 - END OF LKED DATA.            *
+*     181    01   MODULE STATUS:  0 - TEST                            *
+*                                 1 - PROD1                           *
+*                                 2 - PROD2                           *
+*     182    01   DESCRIPTION FLAG:  0 - NOT PRESENT                  *
+*                                    1 - PRESENT                      *
+*     183    04   PASSWORD FROM LIBRARYN MASTER                       *
+*     187    08   SYSTEM FROM  LIBRARYN MASTER                        *
+*     195    05   SOURCE CODE FROM LIBRARYN MASTER                    *
+*     200    08   ALIAS1 FROM LIBRARYN MASTER                         *
+*     208    08   ALIAS2 FROM LIBRARYN MASTER                         *
+* RD  183    04   MCD CODE                                            *
+*     187    08   SSI INFO EXPANDED TO 8-BYTES                        *
+*---------------------------------------------------------------------*
+*     216    80   BUILT UP O/P RECORD  **ONLY 40 BYTES ADDRESSABLE**  *
+*                                                                     *
+***********************************************************************
+SKIP3
+***********************************************************************
+*                                                                     *
+*        MOPP REQUEST CARD VALIDATION - INDICATOR USAGE               *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+*       IND    USED IN        COMMENTS                                *
+*       NO.    REQ TYPE                                               *
+*                                                                     *
+*        01    ALL            SET IF FIRST ALIAS IS BLANK             *
+*        02    ALL           ISAM LOOKUP FOR PGMR INITIALS FAILED     *
+*        03    ALL           ISAM LOOKUP FOR 10-DG PGMR NAME FAILED   *
+*        04    XXXPROG       USED WHEN TESTING FOR COBOL(E) SUBRTN.   *
+*        05    ALL           ISAM LOOKUP FOR SYSTEM NAME              *
+*        06    TSTPROG       SET IF MODULE FOUND ON TEST LIBRN.       *
+*        07    TSTPROG       SOURCE CODE NOT BLANK                    *
+*        08    PRC/CTL/TAB   TESTING FOR IEBUPDTE CONTROL CARDS.      *
+*        09    PRC/CTL/TAB   TESTING FOR SYSTEM2 COPY, NON PROGRAMS.  *
+*        10    ALL           CORRECTING ROUTE CODE ERRORS.            *
+*        71    REP/ADDPROG   -DESC CARD DETECTED IN REQUEST           *
+*        72    REP/ADDPROG   DESCRIPTION PRESENT IN REQUEST OR MODULE *
+*        73    REPPROG       -HST CARD DETECTED IN REQUEST            *
+*        74    ALL           CARD DATA HEADER DETECTED                *
+*        75    XXXPROG       LKED DATA FOUND IN LIBRARYN MODULE.      *
+*        76    PRC/CTL/TAB   UPDATE FOLLOWS ON CARDS                  *
+*        77    PRC/CTL/TAB   UPDATE MODULE IS ON LIBRARYN             *
+*        78    PRC/CTL/TAB   UPDATE MODULE ON TEST.PROCLIB            *
+*        79    PRODGRP       PRODUCTION UPDATE GROUP REQUEST.         *
+*        61    REP/ADDPROG   '-HST SYSTEM' CARD TO BE PRODUCED        *
+*        62    REP/ADDPROG   '-HST SLANG ' CARD TO BE PRODUCED        *
+*        63    REP/ADDPROG   '-HST ALIAS1' CARD TO BE PRODUCED        *
+*        64    REP/ADDPROG   '-HST ALIAS2' CARD TO BE PRODUCED        *
+*        99    ALL           NO-GO. HARD ERROR IN REQUEST.            *
+*                                                                     *
+***********************************************************************
+*
+MS01  MOPP       REQUEST CARD CONTROL REPORT
+*
+*        DUMMY BATCH CARD TO GET ROUND ERROR IN BUDGIE VERSION 2.0 11/7/77.
+*
+*S02018DUMMY           D     0801T586P14 108            296
+TITLE REPLACE PROGRAM IN PRODUCTION LIBRARY
+*
+*        REPLACE PROGRAM IN PRODUCTION LIBRARY
+*
+MS02018-REPPROG        D     0801T586P14 108815         296399483
+MS13                                     ON    77 * ALL PROGS MUST BE ON LIBRN
+MS13                                     S   X1   * RUN BASIC TESTS ON REQUEST
+MS1399ON                                 DM 3     * TERMINATE IF NO-GO FLAG ON
+MS13                                     S   X2   * CHECK SCE CODE FOR COBE SUBM
+MS13                                08602E2  RP   * INDICATE UPDATE TYPE
+MS13                                09304E2       * CLEAR SOURCE FLAGS AREA
+MS130381        NE                       C3  SC   *  SUPPRESS COPY IF NOSEC ON.
+MS130688        NE                       C3  SD   * ADD COPY FOR 2ND SYSTEM
+MS13                                     S   X3   * WRITE JOBCARD TO EXEC CARD0
+MS1399ON                                 DM 3     * TERMINATE IF NO-GO >ET.
+MS13                                     S   X4   * CONTINUE WITH EXEC1 ONWARDS
+MS1399ON                                 DM 3     * TERMINATE IF NO-GO >ET.
+*
+*         END OF BATCH PROCESSING FOR -REPPROG REQUEST
+*
+MS1399OF                                 SB  XE   * PERFORM END OF BATCH CHECKS
+MS1399OF74OF                             SB  X8   * IF ALL OK, WRITE SOURCE DECK
+MS1399OF74OF75ON                         SB  XG   * IF LKED IN MODULE, GET IT.
+MS1399OF74OF75OF                         SB  X9   * IF NO LKED CARDS, CREATE THM
+MS1399OF                                 SB  Y5   * INCREMENT UPDATE COUNTER
+*
+*        -DESC CARDS IN A -REPPROG REQUEST
+*
+MS11016-DESC
+MS13                                     S   X5   * PERFORM -DESC CARD SUBROUTIN
+MS1399ON                                 DM 3     *TERMINATE IF NO-GO FLAG IS ON
+*
+*        -HST CARDS IN A -REPPROG REQUEST
+*
+MS11015-HST
+MS1373OF                                 S   X6   * IF FIRST PERFORM X-6
+*        SECOND AND SUBSEQUENT -HST CARDS WRITTEN ASTRAIGHT TO WORK FILE
+*
+*        -/LKED. CARDS ARE WRITTEN TO WORKFILE AFTER COL1 IS CHANGED
+*        TO A '/'. UNRECOGNISED CARDS FOLLING ARE CONSIDERED TO BE
+*        LKED. CONTROL STATEMENTS
+MS11017-/LKED.
+MS1374OF                                 S   X8   * IF 1ST LKED WRITE OUT SOURCE
+MS1374OF                                 ON    74 * INDICATE 1ST LKED CARD READ
+MS13                                00101E2  /    * PUT '/' IN COL1
+*              RECORD AUTOMATICALLY WRITTEN BY BUDGIE3
+*
+*        IF LKED CARDS HAVE BEEN DETECTED, ACCEPT UNRECOGNISED CARDS AS LKED
+*        CONTROL CARDS, OTHERWISE PROVOKE AN ERROR.
+MS11
+MS1374ON                                 S   XF   * IF LKED FOUND, TREAT AS LKED
+MS1374OF01090199EQ                       ER2      MOP-01I BLANK CARD. DISCARDED.
+MS1374OF00190109NE                       ER    99 MOP02C INVALID CARD IN REQUEST
+TITLE ADD PROGRAM TO PRODUCTION LOAD LIBRARY
+*
+*        ADD PROGRAM TO PRODUCTION LOAD LIBRARY
+*
+MS02018-ADDPROG        D     0801T586P14 108815         296399483
+MS13                                     ON    77 * ALL PROGS MUST BE ON LIBRN
+MS13                                     S   X1   * RUN BASIC TESTS ON REQUEST
+MS1399ON                                 DM 3     * TERMINATE IF NO-GO FLAG ON
+MS13                                     S   X2   * CHECK SCE CODE FOR COBE SUBM
+MS13                                08602E2  AP   * INDICATE UPDATE TYPE
+MS13                                09304E2       * CLEAR SOURCE FLAGS AREA
+MS130688        NE                       C3  SD   * ADD COPY FOR 2ND SYSTEM
+MS13                                     S   X3   * WRITE JOBCARD TO EXEC CARD0
+MS1399ON                                 DM 3     * TERMINATE IF NO-GO SWITCH SE
+MS13                                     S   X4   * CONTINUE WITH EXEC1 ONWARDS
+MS1399ON                                 DM 3     * TERMINATE IF NO-GO SWITCH SE
+MS11016-DESC
+MS13                                     S   X5   * PERFORM -DESC CARD SUBROUTIN
+MS1399ON                                 DM 3     *TERMINATE IF NO-GO FLAG IS ON
+MS11015-HST
+MS13                                     ER2      MOP-03I -HST CARD IGNORED
+*
+*        END OF BATCH PROCESSING FOR A -ADDPROG REQUEST
+*
+MS1399OF                                 SB  XE   * PERFORM END OF BATCH CHECKS
+MS1399OF74OF                             SB  X7   * SET-UP PSEUDO -HST CARD
+MS1399OF74OF                             SB  X8   * IF ALL OK, WRITE SOURCE DECK
+MS1399OF74OF75ON                         SB  XG   * IF LKED IN MODULE, GET IT.
+MS1399OF75OF74OF                         SB  X9   * IF NO OTHER LKED, CREATE IT
+MS1399OF                                 SB  Y5   * INCREMENT UPDATE COUNTER
+*
+*        -/LKED. CARDS ARE WRITTEN TO WORKFILE AFTER COL1 IS CHANGED
+*        TO A '/'. UNRECOGNISED CARDS FOLLING ARE CONSIDERED TO BE
+*        LKED. CONTROL STATEMENTS
+MS11017-/LKED.
+MS1399OF74OF                             S   X7   * SET-UP PSEUDO -HST CARD
+MS1399OF74OF                             S   X8   * IF 1ST LKED WRITE OUT SOURCE
+MS1399OF74OF                             ON    74 * INDICATE 1ST LKED CARD READ
+MS13                                00101E2  /    * PUT '/' IN COL1
+*              RECORD AUTOMATICALLY WRITTEN BY BUDGIE3
+*
+*        IF LKED CARDS HAVE BEEN DETECTED, ACCEPT UNRECOGNISED CARDS AS LKED
+*        CONTROL CARDS, OTHERWISE PROVOKE AN ERROR.
+MS11
+MS1374ON                                 S   XF   * IF LKED FOUND, TREAT AS LKED
+MS1374OF01090199EQ                       ER2      MOP-01I BLANK CARD. DISCARDED.
+MS1374OF00190109NE                       ER    99 MOP02C INVALID CARD IN REQUEST
+TITLE MOVE PROGRAM SOURCE FROM PRODN. TO TESTING LIBRARY
+MS02018-TSTPROG        D     0801T586P14 108815         296399483
+MS13                                     S   X1   * BASIC TESTS
+MS1399ON                                 DM 3     * TERMINATE IF NO-GO SET
+MS13                                08602E2  TP   * INDICATE UPDATE TYPE
+MS13                                09304E2       * CLEAR SOURCE FLAGS AREA
+MS130201        EQY                 09401E2  Y    * IF COMPILE, MODIFY KEY
+MS13                                     S   X3   * CREATE JOBCARD TO EXEC CARD0
+MS1399ON                                 DM 3     * TERMINATE IF NO-GO SET
+MS13                                     S   XA   * CONTINUE TESTS FOR -TSTPROG
+MS1306ON1811    EQ0                 01008ER    99 MOP-04C MODULE IN TEST STATUS
+MS1399ON                                 DM 3     * TERMINATE IF NO-GO SET
+MS13                                     S   XB   * CREATE JOSTREAM FOR LIBRN.
+*
+*        END OF BATCH PROCESSING FOR -TSTPROG REQUEST
+*
+MS1399OF                                 SB  XC   * COMPLETE LIBRN. JOBSTREAM
+MS1399OF                                 SB  Y5   * INCR. UPDATE CTR. AND /*EOF
+*
+*        IGNORE ALL DETAIL CARDS IN A -TSTPROG REQUEST
+TITLE LIST LATEST VERSION OF PRODUCTION PROGRAM
+MS02018-LSTPROG        D     0801T586P14 108815         296399483
+MS13                                     S   X1   * BASIC TESTS
+MS1399ON                                 DM 3     * TERMINATE IF NO-GO SET
+MS13                                08602E2  TL   * UPDATE TYPE = LSTPROG
+MS13                                09304E2       * CLEAR SOURCE FLAGS AREA
+MS130201        EQY                 09401E2  Y    * IF COMPILE, MODIFY KEY
+MS13                                     S   X3   * CREATE JOBCARD TO EXEC CARD0
+MS1399ON                                 DM 3     * TERMINATE IF NO-GO SET
+MS13                                     S   XA   * CONTINUE TESTS FOR -TSTPROG
+MS13                                     S   XD   * CREATE JOSTREAM FOR LIBRN.
+*
+*        IGNORE ALL DETAIL CARDS IN A -LSTPROG REQUEST
+*
+TITLE PUT A GROUP OF MODULES INTO PRODUCTION STATUS ON LIBRARYN.
+MS02018-PRODGRP        D     0801T586P14 108815         296399483
+MS13                                     ON    77 * ALL PROGS MUST BE ON LIBRN
+MS13                                     ON    72 * NO DESCRIPTION REQD.
+MS13                                     ON    79 * INDICATE LIBRARYN GROUP UPDT
+MS13                                     S   X1   * RUN BASIC TESTS ON REQUEST
+MS1399ON                                 DM 3     * TERMINATE IF NO-GO FLAG ON
+MS13                                08602E2  GP   * INDICATE UPDATE TYPE
+MS13                                09304E2       * CLEAR SOURCE FLAGS AREA
+MS13                                     S   X3   * WRITE JOBCARD TO EXEC CARD0
+MS1399ON                                 DM 3     * TERMINATE IF NO-GO SET.
+MS13                                     S   XJ   * CONTINUE WITH EXEC1 ONWARDS
+MS1399ON                                 DM 3     * TERMINATE IF NO-GO SET.
+*
+*         END OF BATCH PROCESSING FOR -PRODGRP REQUEST
+*
+MS1399OF                                 SB  XE   * PERFORM END OF BATCH CHECKS
+MS13                                     SB  XC   * TERMINATE LBN1 INPUT DATASET
+MS1399OF                                 SB  Y5   * INCREMENT UPDATE COUNTER
+*
+*        DISCARD ALL DESC CARDS IN GROUP REQUESTS.
+*
+*
+*        -HST CARDS IN A -PRODGRP REQUEST
+*
+MS11015-HST
+MS1373OF                                 S   X6   * IF FIRST PERFORM X-6
+*        SECOND AND SUBSEQUENT -HST CARDS WRITTEN  STRAIGHT TO WORK FILE
+*
+TITLE REPLACE ANY IEBUPDTE FORMAT MEMBER IN A PRODUCTION PDS.
+MS02014-REP            D     0801T586P14 108815         296399483
+MS13                                     S   X1   * RUN BASIC TESTS
+MS13                                     S   XH   * DETERMINE UPDATE TYPE
+MS130381        NE                       C3  SC   * IF NOSEC. SUPPRESS COPY
+MS13                                     S   X3   * WRITE JOB TO EXEC CARDS
+MS13                                     S   X4   * COMPLETE FOR REQUEST CARD
+*
+*        -REP    END OF BATCH PROCESSING
+*
+MS1399OF                                 SB  XE   * HAVE WE GOT EVERYTHING?
+MS1399OF76OF                             SB  X8   * OK WRITE UPDATE IF NOT CARDS
+MS1399OF76ON                             SB  YG   * FOR CARDS TERMINATE JOBSTREA
+MS1399OF                                 SB  Y5   * IF NO ERR. INCRMNT COUNTER
+*
+*        -DESC CARD PROCESSING
+*
+MS11016-DESC
+MS13                                     S   X5   * DO -DESC CARD SUBROUTINE
+*
+*
+*        -HST CARD PROCESSING
+MS11015-HST
+MS1373ON77OF                             ER2      MOP-32W ONLY 1ST HST CARD USED
+MS1373OF                                 S   X6   * IF FIRST, DO RTN X-6
+*                  IF LIBRN UPDATE SECOND AND SUSEQUENT WRITTEN TO WORK
+*
+*        -CARD DATA HEADER RECORD
+*
+MS11015-CARD
+MS13                                     ON    74 * INDICATE -HDR REC FOUND
+MS13                                     S   YF   * TERMINATE LIBRN. STEP
+MS13                                     S   YJ   * CREATE UPDATE HEADER CARD
+*                  UPDATE HDR WRITTEN TO WORK FILE BY BUDGIE3
+*
+*        UPDATE CARDS OK IF HDR HAS BEEN READ. OTHERWISE ERROR.
+*
+MS11
+MS1374OF                                 ER 3  99 MOP-33C UNIDENTIFIED CARD.
+MS1374ON0017    EQMEMBER                 ER2      MOP-35W 'MEMBER' CARDS INVALID
+MS1374ON00190101EQ./ DELETE              ON    08 * SET IND IF VALID IEBUPDTE CD
+MS1374ON08OF0012EQ./                     ER2      MOP-34W IEBUPDTE CARDS INVALID
+*        IF CARD OK, IT IS WRITTEN BY BUDGIE3
+TITLE ADD ANY IEBUPDTE FORMAT MEMBER IN A PRODUCTION PDS
+MS02014-ADD            D     0801T586P14 108815         296399483
+MS13                                     S   X1   * RUN BASIC TESTS
+MS13                                     S   XH   * DETERMINE UPDATE TYPE
+MS13                                     S   X3   * WRITE JOB TO EXEC CARDS
+MS13                                     S   X4   * COMPLETE FOR REQUEST CARD
+*
+*        -ADD    END OF BATCH PROCESSING
+*
+MS1399OF                                 SB  XE   * HAVE WE GOT EVERYTHING?
+MS1399OF76OF                             SB  X7   * SET-UP PSEUDO -HST CARD.
+MS1399OF76OF                             SB  X8   * OK WRITE UPDATE IF NOT CARDS
+MS1399OF76ON                             SB  YG   * FOR CARDS TERMINATE JOBSTREA
+MS1399OF                                 SB  Y5   * IF NO ERR. INCRMNT COUNTER
+*
+*        -DESC CARD PROCESSING
+*
+MS11016-DESC
+MS13                                     S   X5   * DO -DESC CARD SUBROUTINE
+*
+*
+*        -HST CARD PROCESSING
+MS11015-HST
+MS13                                     ER2      MOP-03I -HST CARD IGNORED.
+*        -CARD DATA HEADER RECORD
+*
+MS11015-CARD
+MS13                                     ON    74 * INDICATE -HDR REC FOUND
+MS1399OF                                 S   X7   * SET-UP PSEUDO -HST CARD
+MS13                                     S   YF   * TERMINATE LIBRN. STEP
+MS13                                     S   YJ   * CREATE UPDATE HEADER CARD
+*                  UPDATE HDR WRITTEN TO WORK FILE BY BUDGIE3
+*
+*        UPDATE CARDS OK IF HDR HAS BEEN READ. OTHERWISE ERROR.
+*
+MS11
+MS1374OF                                 ER 3  99 MOP-33C UNIDENTIFIED CARD.
+MS1374ON0017    EQMEMBER                 ER2      MOP-35W 'MEMBER' CARDS INVALID
+MS1374ON00190101EQ./ DELETE              ON    08 * SET IND IF VALID IEBUPDTE CD
+MS1374ON08OF0012EQ./                     ER2      MOP-34W IEBUPDTE CARDS INVALID
+*        IF CARD OK, IT IS WRITTEN BY BUDGIE3
+TITLE CHANGE  ANY IEBUPDTE FORMAT MEMBER IN A PRODUCTION PDS.
+MS02014-CHG            D     0801T586P14 108815         296399483
+MS13                                     S   X1   * RUN BASIC TESTS
+MS13                                     S   XH   * DETERMINE UPDATE TYPE
+MS130381        NE                       C3  SC   * IF NOSEC. SUPPRESS COPY
+MS13                                     S   X3   * WRITE JOB TO EXEC CARDS
+MS13                                     S   X4   * COMPLETE FOR REQUEST CARD
+*
+*        -CHG    END OF BATCH PROCESSING
+*
+MS1399OF                                 SB  XE   * HAVE WE GOT EVERYTHING?
+MS1399OF76OF                             SB  X8   * OK WRITE UPDATE IF NOT CARDS
+MS1399OF76ON                             SB  YG   * FOR CARDS TERMINATE JOBSTREA
+MS1399OF                                 SB  Y5   * IF NO ERR. INCRMNT COUNTER
+*
+*        -DESC CARD PROCESSING
+*
+MS11016-DESC
+MS13                                     S   X5   * DO -DESC CARD SUBROUTINE
+*
+*
+*        -HST CARD PROCESSING
+MS11015-HST
+MS1373ON77OF                             ER2      MOP-32W ONLY 1ST HST CARD USED
+MS1373OF                                 S   X6   * IF FIRST, DO RTN X-6
+*                  IF LIBRN UPDATE SECOND AND SUSEQUENT WRITTEN TO WORK
+*
+*        -CARD DATA HEADER RECORD
+*
+MS11015-CARD
+MS13                                     ON    74 * INDICATE -HDR REC FOUND
+MS13                                     S   YF   * TERMINATE LIBRN. STEP
+MS13                                     S   YJ   * CREATE UPDATE HEADER CARD
+*                  UPDATE HDR WRITTEN TO WORK FILE BY BUDGIE3
+*
+*        UPDATE CARDS OK IF HDR HAS BEEN READ. OTHERWISE ERROR.
+*
+MS11
+MS1374OF                                 ER 3  99 MOP-33C UNIDENTIFIED CARD.
+MS1374ON0017    EQMEMBER                 ER2      MOP-35W 'MEMBER' CARDS INVALID
+MS1374ON00190101EQ./ DELETE              ON    08 * SET IND IF VALID IEBUPDTE CD
+MS1374ON08OF0012EQ./                     ER2      MOP-34W IEBUPDTE CARDS INVALID
+MS1308OF                            07308NN    99 MOP-36C CHANGE. INVALID SEQNCE
+*        IF CARD OK, IT IS WRITTEN BY BUDGIE3
+TITLE SUBROUTINES.
+***********************************************************************
+*        SUBRTN-X1  BASIC TESTS FOR ALL REQUEST TYPES.                *
+*              THE FOLLOWING FIELDS ARE MANDATORY IN ALL REQUESTS:-   *
+*                   UPDATE TYPE  (DEFINED BY MSO2 CARD).              *
+*                   MEMBER NAME                                       *
+*                   SYSTEM NAME                                       *
+*                   REQUESTOR                                         *
+***********************************************************************
+SKIP1
+MS40X1
+MS13009101810231NE                       ER    99 MOP-05C INVALID FIELD ALIGNMNT
+MS13029106710765NE                       ER    99 MOP-05C INVALID FIELD ALIGNMNT
+MS13                                01008L4    99 MOP-06C NO MEMBER NAME
+MS13                                03008L4    99 MOP-07C NO SYSTEM NAME
+MS13                                03906L4    99 MOP-08C NO REQUESTOR NAME
+MS13                                05101L43   01 * IF 1ST ALIAS BLANK, THEN
+*                                                 * SECOND ALIAS MUST BE BLANK
+MS1301ON                            05908L5    99 MOP-09C FIRST ALIAS BLANK
+MS1399OF                            03903I 3 I302 * LOOK FOR PGMR INITS.
+MS1302ON99OF                        03910I 3 I603 * IF NOT FND LOOK FOR 10DG NAM
+MS1303ON99OF                        03910ER    99 MOP-10C INVALID PGMR. NAME
+MS130244        EQLBRN                   ON    77 * IF UPDT ON LIBRN, SET IND
+MS130244        EQCARD                   ON    76 * IF UPDT ON CARDS SET IND.
+MS130244        EQTLIB                   ON    78 * IF UPDT ON T.PROC, SET IND.
+MS130491        LT1                      ON    10 * IF 1ST DIGIT OF ROUTE INVALD
+MS1310ON                                 C3  SX   * MOVE 2ND TO 1ST
+MS1310ON                            05001E2       * MOVE BLANK TO 2ND
+MS41X1
+SKIP3
+***********************************************************************
+*        SUBRTN-X2  FOR -ADDPROG AND -REPPROG, COBE WITH ALIAS = COBES*
+***********************************************************************
+SKIP1
+MS40X2
+MS13                                05108L53   04 * IF ALIAS1 NOT BLANK AND LANG
+MS13024504ON    EQCOBE                   ER1      MOP-11W SOURCE CODE NOW =COBES
+MS13024504ON    EQCOBE              02702E2  ES   * = COBE THEN LANG = COBES
+MS41X2
+EJECT
+***********************************************************************
+*        SUBRTN-X3  SET UP ISAM KEYS AND JCL JOBCARD - EXEC CARD0.    *
+*              PRODUCES FOLLOWING JCL FOR ALL REQUESTS:-              *
+*                   //MEMBER  JOB (PROJ,CT,,,COR),'RQSTOR PRODN. UPDATE',
+*                   //        CLASS=N,MSGLEVEL=(0,0),COND=(16,EQ)     *
+*                   /*ROUTE  PRINT REMOTEXX                           *
+*                   //UPDATE EXEC PROCNAME,PLUS,SYMBOLIC,PARAMS       *
+***********************************************************************
+SKIP1
+MS40X3
+*
+*
+*        SAVE FIELDS FROM REQUEST CARD
+MS13                                     C3  S1   *  MEMBER NAME
+MS13                                     C3  S2   *  PASSWORD
+MS13                                     C3  S3   *  SOURCE CODE
+MS13                                     C3  S4   *  SYSTEM NAME
+MS13                                     C3  S5   *  SECURITY FLAG
+MS13                                     C3  S6   *  REQUESTOR
+MS13                                     C3  S7   *  REMOTEID.
+MS13                                     C3  S8   *  ALIAS1 AND ALIAS2
+MS13                                     C3  S9   *  2ND. SYSTEM COPY
+*
+*        SET-UP JOB CARD
+*
+MS13                                25541E2       *  CLEAR OP AREA TO BLANKS
+MS13                                     C3  J1   *  MOVE JOBCARD1 TO O/P
+MS13                                     C3  SA   *  MOVE JOBNAME  TO O/P
+MS13                                     C3  SB   *  MOVE PGMR.    TO O/P
+MS130861        EQT                 25514E2       * IF TESTREQ DELETE PRODN....
+MS130861        EQT                 23901E2  1    * IF TESTREQ CHANGE CAT. CODE
+MS13                                02405I   I199 MOP-12C INVALID SOURCE CODE
+MS13                                     C3  SE   * MOVE UPDATE TYPE TO SYSTEM
+MS130862        EQTL                10701E2  P    * IF OPCODE=TL CORRECT KEY
+MS130861        EQT                 10502E2  L    * IF TESTING CLEAR RMT ID. *?*
+MS13                                03008I   I205 MOP-13C INVALID SYSTEM NAME
+MS1305ON                                 ON    99 * IF IND 05 ON, SET NO-GO SW
+MS13                                     S   Y1   * WRITE FIRST JOB CARD
+MS13                                     C3  J2   * MOVE 2ND JOBCARD TO O/P AREA
+MS13                                     S   Y1   * WRITE SECOND JOBCARD
+MS130492        GT0                      C3  J3   * MOVE ROUTE CARD TO O/P AREA
+MS130492        GT0                      C3  SF   * SET-UP REMOTE-ID
+MS130492        GT0                      S   Y1   * WRITE ROUTE CARD
+MS13                                     C3  J4   * MOVE EXEC CARD0 TO O/P AREA
+MS13                                     C3  SH   * MOVE PROC. + PARAMS.
+MS13                                     S   Y1   * WRITE EXEC CARD0
+MS41X3
+EJECT
+***********************************************************************
+*        SUBRTN-X4  EXEC CARD1 ONWARDS FOR ADD/REPPROG.               *
+*              PRODUCES FOLLOWING PARTS OF JOBSTREAM:-                *
+*                   //       *  TO=DATA FROM SYSTEM TABLE             *
+*                   //         TO2=DATA FROM SYSTEM TABLE             *
+*                   //        FROM=DATA FROM SYSTEM TABLE             *
+*                   //COPY.SYSIN DD  *,DCB=BLKSIZE=80                 *
+*                     COPY INDD=((SYSUT1,R)),OUTDD=SYSUT2             *
+*                     S  M=MEMBER,ALIAS1,ALIAS2                       *
+*                   //LBN1.SYSIN   DD  *,DCB=BLKSIZE=80               *
+*                   -OPT NOPC,NOLIST,NOEXEC,NORESEQ                   *
+*                   -MCD                                              *
+*                   -SEL AUDITTRL,TMRC                                *
+*                    REQUEST CARD WITHOUT - IN COL1.                  *
+***********************************************************************
+SKIP1
+MS40X4
+MS13                                     S   YA   * CREATE 'FROM=' AND 'TO=' CDS
+MS1377ON                                 S   YB   * CHECK MODULE ON LIBRARYN
+MS1378ON                                 S   YK   * CHECK MODULE ON PDS LIBRARY
+MS13                                     S   YC   * CONSTRUCT IEBCOPY DATASET
+*
+*        CONSTRUCT INPUT D/S FOR LIBRARYN UPDATE
+*
+MS13                                     S   Y6   * SET-UP LIBRN D/S
+MS13                                     S   Y7   * BUILD AUDITTRL UPDATE
+*  THIS IS THE END OF PROCESSING FOT -REPPROG AND -ADDPROG CARDS.
+*  AT THIS POINT THEY ARE AUTOMATICALLY WRITTEN TO THE WORK FILE
+MS41X4
+SKIP2
+***********************************************************************
+*        SUBRTN-X5  PROCESS ANY -DESC CARDS                           *
+*                   THIS FIRST -DESC CARD IS STORED IN THE            *
+*                   USER EXIT. IF ANY OTHERS ARE FOUND, THE REQUEST   *
+*                   SET IS REJECTED.                                  *
+***********************************************************************
+SKIP1
+MS40X5
+MS1371ON                            00106ER    99 MOP-29C MULT/MISPL -DESC CARD
+*
+*        TEST VALIDITY OF -DESC CARD
+*
+MS130119        EQ                  01109ER    99 MOP-24C INVALID -DESC CARD
+MS130379        NE                  03705ER    99 MOP-30C DESCRIPTION TOO LONG
+MS13                                17801E2  5    * SET EXIT TO STORE -DESC CA
+MS13                                     R5       * CALL USER EXIT
+MS1371OF                                 ER2      MOP-31I NEW DESCRIPTION
+MS13                                     ON    71 * INDICATE -DESC CARD FOUND
+MS13                                     ON    72 * INDICATE -DESC PRESENT
+MS41X5
+EJECT
+***********************************************************************
+*        SUBRTN-X6  PROCESS FIRST -HST CARD IN UPDATE REQUEST         *
+*              FOLLOWING CARDS ADDED TO JOBSTREAM AFTER REQUEST CARD:-*
+*                    HST FIRST HISTORY CARD                           *
+*                   -SEL MEMBER,PSWD,PROD1                            *
+*                   -PGMR SYSTEM NAME                                 *
+*                   -DESC FROM USER EXIT.                             *
+*                   -HST SYSTEM 'SYSNAME '  *                         *
+*                   -HST SLANG 'SLANG'      * IF NOT IN MODULE        *
+*                   -HST ALIAS 'ALS1    '   * ON LIBRARIAN            *
+*                   -HST ALIAS 'ALS2    '   *                         *
+*                    HST FIRST HST CARD FROM REQUEST LESS -           *
+*              OTHER -HST CARDS FOLLOW AUTOMATICALLY                  *
+***********************************************************************
+SKIP1
+MS40X6
+*
+*        TEST VALIDITY OF -HST CARD
+*                   AND
+*        FOR FIRST -HST CARD ONLY, WRITE OUT AFTER REQUEST CARD
+*
+MS13                                     S   YE   * VALIDATE FIRST -HST CARD.
+MS1377ON                            001  WR       * WRITE HST CARD FOR AUDITTRL
+MS1377ON                            00101E2  -    * RESTORE HYPHEN FOR -SEL
+*
+*        CREATE -SEL TO PUT MODULE INTO PRODUCTION STATUS.
+*
+MS1377ON                                 S   YD   * PRODN. UPDATE FPR MODULE
+*
+*  END OF PROCESSING FOR FIRST -HST CARD. IT WILL NOW
+*  BE WRITTEN AUTOMATICALLY TO THE WORK FILE
+MS41X6
+SKIP3
+***********************************************************************
+*        SUBRTN-X7  -ADDPROG REQUEST. FORCE A FIXED -HST CARD.        *
+***********************************************************************
+SKIP1
+MS40X7
+MS13                                21630E3        HST ADDED TO PRODUCTION
+MS13                                     S   Y8   * WRITE TO WORKFILE WITH UPNO.
+MS1377ON                                 S   YD   * IF LIBRN, DO PRODN. UPDATE
+MS1377ON                            21630E3       -HST ADDED TO PRODUCTION
+MS1377ON                                 S   Y8   * WRITE TO WORKFILE WITH UPNO.
+MS41X7
+EJECT
+***********************************************************************
+*        SUBRTN-X8  END OF -REPPROG/-ADDPROG REQUEST SET.             *
+*                   CONSTRUCT REST OF JOBSTREAM.                      *
+*                   ALSO EXECUTED IF -LKED CARD IS ENCOUNTERED.       *
+*              PRODUCES THE FOLLOWING CARDS:-                         *
+*                   -END                                              *
+*                   //SORC.SYSIN  DD  *,DCB=BLKSIZE=80                *
+*                   ALL SOURCE CARDS FROM LIBRN MODULE                *
+*                   DELETING JCL AND CONTROL CARDS.                   *
+*                   /*                                                *
+*                   //LKED.SYSIN  DD  *,DCB=BLKSIZE=80                *
+***********************************************************************
+SKIP1
+MS40X8
+MS13                                     S   YF   * CREATE -END & // SORC.SYSIN
+MS130871        NEP                      S   YJ   * IF NOT PGM CREATE CARD HDR
+MS13                                18001E2  0    * RESET RETURN FLAG FOR DOWH3
+MS13                                17801E2  2    * SET EXIT CALL CODE
+MS131801        EQ0                      DW  Y2   * WRITE SOURCE DATA TO WORK FL
+MS131801        EQ2                      ON    75 * SET IND IF LKED DATA FOUND
+MS13                                     S   YG   * CREATE END-OF-FILE MARKER
+MS41X8
+SKIP3
+***********************************************************************
+*        SUBRTN-X9  BUILD LKED CONTROL CARDS FROM REQUEST CARD        *
+***********************************************************************
+SKIP1
+MS40X9
+MS13                                     C3  J7   * CREATE BASIC SYSIN CARD
+MS13                                     C3  R6   * ADD 'LKED'
+MS13                                     S   Y1   * WRITE TO WORKFILE
+MS131268        NE                       S   Y3   * IF PRESENT CONSTRUCT ALIAS
+MS130885        EQCBE15                  S   Y4   * LKED CARDS FOR SORT-EXITS
+MS130885        EQCBE35                  S   Y4   * LKED CARDS FOR SORT-EXITS
+MS13                                     S   YH   * CREATE SSI CARD.
+MS13                                     C3  LD   * SET-UP NAME CARD
+MS33LDLIT06MV21606  NAME
+MS130862        EQRP                     C3  LE   * IF REPPROG ADD '(R)'
+MS33LELIT03MV23003 (R)
+MS13                                     C3  LF   * MOVE MODULE NAME
+MS33LF10808MV22208
+MS13                                22212E4       * ELIMINATE SPACES
+MS13                                     S   Y1   * WRITE NAME CARD TO WORK FILE
+MS41X9
+EJECT
+***********************************************************************
+*        SUBRTN-XA  -TSTPROG REQUEST. TESTS                           *
+***********************************************************************
+SKIP1
+MS40XA
+*
+*        SEARCH LIBRARYN MASTER FOR MODULE.
+*        IF FOUND AND NOT IN PRODUCTION, REQUEST MUST BE REJECTED
+*
+MS13                                17801E2  1    * SET EXIT CALL CODE
+MS13                                17937E2       * CLEAR TEMP. STORAGE
+MS13                                     R5       * CALL USER EXIT
+MS131791        EQ0                      ON    06 * SET IND IF MODULE FOUND
+MS41XA
+SKIP3
+***********************************************************************
+*        SUBRTN-XB  -TSTPROG REQUEST. CREATE JOBSTREAM.               *
+***********************************************************************
+SKIP1
+MS40XB
+MS13                                     S   Y9   * SET-UP 'FROM=' & 'TO=' JCL
+*
+*        SET-UP LIBRARYN DATASET
+*
+MS13                                     S   Y6   * BASIC LIBRN DS SET-UP
+MS13                                     C3  LK   * SET-UP -COPY CARD
+MS13                                     C3  LL   * MOVE IN MEMBER NAME
+MS13                                22220E4       * ELIMINATE SPACES
+MS13                                     S   Y1   * WRITE TO WORK FILE
+MS13                                     C3  LM   * SET-UP -SEL CARD
+MS13                                     C3  LN   *SET-UP SEQUENCE INFO IN W/A
+MS13                                     C3  LO   * MOVE ACTUAL SEQUENCE INFO
+MS130191        EQN                 24001E2  H    * IF NOLIST, LIST -HST ONLY
+MS130241        NE                       ON    07 * SET IND 07 IF SLANG PRESENT
+MS13020107ON    EQY                 24302E2       * IF COMPILE WANTED KILL 'NO'
+MS13021107ON    NEN                      C3  LP   * MOVE RESEQ INFO. UNLESS SUPP
+MS13                                     C3  LL   * MOVE MEMBER NAME
+MS13                                22256E4       * ELIMINATE SPACES
+MS13                                     S   Y1   * WRITE -SEL CARD TO WORK FILE
+MS13                                     C3  L6   * SET-UP -PGMR CARD
+MS13                                     C3  LQ   * MOVE IN PGMR NAME
+MS13                                     S   Y1   * WRITE TO WORK FILE
+MS13                                     C3  LR   * SET-UP -HST CARD
+MS13                                     C3  LS   * MOVE PGMR NAME
+MS13                                     S   Y8   * WRITE TO WORK FILE
+MS1306ON                                 C3  LT   * IF MODULE ON TEST LIBRARY
+MS1306ON                                 S   Y8   * WARN PGMR WITH XTRA -HST CAR
+MS1302430221    EQCOB                    C3  LU   * IF COBOL CLEAR COLS 73-80
+MS1302430221    EQCOB                    S   Y1   * WRITE 'CLEAR' CARD
+MS130221        EQY                      C3  LU   * IF REQSTD. CLEAR COLS 73-80
+MS130221        EQY                      S   Y1   * WRITE CLEAR CARD
+*
+*        COMPLETE LIBRN. INPUT D/S WITH AUDITTRL UPDATE.
+*
+MS13                                     S   Y7   * BUILD AUDITTRL UPDATE
+*        REQUEST CARD IS NOW ATOMATICALLY WRITTEN TO THE WORK-FILE
+*        BY BUDGIE3
+MS41XB
+SKIP3
+***********************************************************************
+*        SUBRTN-XC  -TSTPROG REQUEST. END OF BATCH PROCESSING.        *
+***********************************************************************
+MS40XC
+SKIP1
+MS1306ON                                 C3  LT   * IF MODULE ON TEST LIBRARY
+MS1306ON                            21601E2       * WRITE XTRA CARD TO AUDITTRL
+MS1306ON                                 S   Y1   * WITHOUT FIRST HYPHEN
+MS13                                     C3  LC   * SET-UP -END SATEMENT
+MS13                                     S   Y1   * AND WRITE TO WORKFILE
+MS41XC
+SKIP3
+***********************************************************************
+*        SUBRTN-XD  -LSTPROG REQUEST. CREATE LIBRARYN JOBSTREAM       *
+***********************************************************************
+SKIP1
+MS40XD
+MS13                                     S   Y9   * SET-UP 'FROM=' & 'TO=' JCL
+MS13                                     S   Y6   * SET-UP BASIC LIBRN D/S
+*
+*        CREATE -SEL CARD TO END OF JOBSTREAM
+*
+MS13                                     C3  LM   * BASIC -SEL CARD
+MS13                                     C3  LL   * MEMBER NAME
+MS130191        EQN                 24001E2  H    * IF NOLIST, LIST -HSTS ONLY
+MS130201        EQY                 24302E2       * IF COMPILE, BLANK 'NO' EXEC
+MS13                                22256E4       * ELIMINATE SPACES
+MS13                                     S   Y1   * WRITE -SEL CARD TO WORK-FILE
+MS13                                     C3  LC   * SET-UP -END CARD
+MS13                                     S   Y1   * WRITE TO WORK-FILE
+MS13                                00108E3       /*EOF
+*                  THE PREVIOUS INSTN OVERWRITES THE REQUEST CARD.
+*                  THIS IS THEN AUTOMATICALLY WRITTEN BY BUDGIE3
+MS41XD
+SKIP3
+***********************************************************************
+*        SUBRTN-XE  -REPPROG. END OF BATCH CHECKS.                    *
+***********************************************************************
+SKIP1
+MS40XE
+MS13086173OF    NEA                      ER    99 MOP-28C NO UPDATE NARRATIVE.
+MS1377ON72OF                             ER    99 MOP-27C NO DESCRIPTION.
+MS1376ON74OF                             ER    99 MOP-02C NO UPDATE CARDS.
+MS41XE
+SKIP3
+***********************************************************************
+*        SUBRTN-XF  CHECK FOR NAME CARDS IN LKED CONTROL STATEMENTS   *
+***********************************************************************
+SKIP1
+MS40XF
+MS13                                     C3  SU   * MOVE CARD TO WORKAREA
+MS13                                21640E4       * LEFT SHUFFLE TO GET OPERATIO
+MS132164        EQNAME                   S   YH   * IF NAME CARD PUT OUT SSIINFO
+MS41XF
+SKIP3
+***********************************************************************
+*        SUBRTN-XG  GET LKED CARDS FROM LIBRARYN MODULE               *
+***********************************************************************
+SKIP1
+MS40XG
+MS13                                17801E2  4    * SET EXIT CALL CODE
+MS13                                18001E2  0    * RESET RETURN FLAG FOR DOWHL
+MS131801        EQ0                      DW  Y2   * WRITE LKED CARDS TO WORKFILE
+MS13                                21680E2       * CLEAR OUTPUT AREA
+MS13                                21602E2  /*   * SET-UP END-OF-FILE
+MS13                                     S   Y1   * WRITE TO WORK FILE
+MS41XG
+SKIP3
+***********************************************************************
+*        SUBRTN-XH  -REP/ADD/CHGXXXX. DETERMINE UPDATE TYPE.          *
+***********************************************************************
+SKIP1
+MS40XH
+MS130054        EQPRC               08602E2  RJ   * PROCEDURE UPDATE
+MS130054        EQCTL               08602E2  RC   * CONTRLIB UPDATE
+MS130054        EQTAB               08602E2  RT   * TABLIB UPDATE
+MS130054        EQFD                08602E2  RF   * FDLIB UPDATE
+MS130054        EQBIRD              08602E2  RB   * BUDGIE/PARROT UPDATE
+MS130023        EQADD               08601E2  A    * IF ADD MODIFY UPDATE TYPE
+MS130023        EQCHG               08601E2  C    * IF CHG MODIFY UPDATE TYPE
+MS13                                09304E2       * CLEAR SOURCE FLAGS AREA
+MS41XH
+EJECT
+***********************************************************************
+*        SUBRTN-XJ  EXEC CARD1 ONWARDS FOR -PRODGRP.                  *
+*              PRODUCES FOLLOWING PARTS OF JOBSTREAM:-                *
+*                   //        FROM=DATA FROM SYSTEM TABLE             *
+*                   //LBN1.SYSIN   DD  *,DCB=BLKSIZE=80               *
+*                   -OPT NOPC,NOLIST,NOEXEC,NORESEQ                   *
+*                   -MCD NNNN                                         *
+*                   -SEL AUDITTRL,TMRC                                *
+*                    REQUEST CARD WITHOUT - IN COL1.                  *
+***********************************************************************
+MS40XJ
+MS13                                     S   YA   * CREATE 'FROM=' CARD
+*
+*        CONSTRUCT INPUT D/S FOR LIBRARYN UPDATE
+*
+MS13                                     S   Y6   * SET-UP LIBRN D/S
+MS13                                     S   Y7   * BUILD AUDITTRL UPDATE
+*  THIS IS THE END OF PROCESSING FOR -PRODGRP CARDS.
+*  AT THIS POINT THEY ARE AUTOMATICALLY WRITTEN TO THE WORK FILE
+MS41XJ
+TITLE SUBROUTINES LEVEL 2
+***********************************************************************
+*        SUBRTN-Y1  WRITE A RECORD TO WORK FILE FROM WORK AREA POSN 216*
+***********************************************************************
+SKIP1
+MS40Y1
+MS13                                216  WR       * WRITE RECORD
+MS13                                21680E2       * CLEAR WORK AREA TO SPACES
+MS41Y1
+SKIP3
+***********************************************************************
+*        SUBRTN-Y2  GET SOURCE CARDS FROM MODULE ON LIBRARYN MASTER   *
+***********************************************************************
+SKIP1
+MS40Y2
+MS13                                     R5       * CALL USER EXIT
+MS131801        EQ0                 216  WR       * IF NOT EOM, WRITE RECORD TO
+MS41Y2
+***********************************************************************
+*        SUBRTN-Y3  SET-UP ALIAS CARD FOR LKED CONTROL D/S
+***********************************************************************
+SKIP1
+MS40Y3
+MS13                                     C3  LG   * BASIC ALIAS CARD
+MS33LGLIT07MV21607  ALIAS
+MS13                                     C3  C3   * MOVE FIRST ALIAS NAME
+MS131348        NE                  23801E2  ,    * COMMA FOR SECOND ALIAS
+MS131348        NE                       C3  C4   * MOVE SECOND ALIAS NAME
+MS13                                22325E4       * ELIMINATE SPACES
+MS13                                     S   Y1   * WRITE TO WORK FILE
+MS41Y3
+SKIP3
+**********************************************************************
+*        SUBRTN-Y4  WRITE LKED CONTROL CARDS FOR COBOL(E) SORT-EXITS  *
+**********************************************************************
+SKIP1
+MS40Y4
+MS13                                     C3  LH   * MOVE FIRST CARD
+MS33LHLIT25MV21625  INCLUDE SYSLIB(SORTEXIT)
+MS13                                     S   Y1   * TO WORK FILE
+MS13                                     C3  LI   * MOVE SECOND CARD
+MS33LILIT10MV21610  ENTRY E15
+MS13                                     C3  LJ   * MODIFY TO REFLECT EXIT TYPE
+MS33LJ09102MV22402
+MS13                                     S   Y1   * WRITE TO WORK FILE
+MS41Y4
+EJECT
+***********************************************************************
+*        SUBRTN-Y5  INCREMENT UPDATE COUNTER AT END OF GOOD REQUEST.  *
+*                   AND TERMINATE JOBSTREAM FOR HASP                  *
+***********************************************************************
+SKIP1
+MS40Y5
+MS13                                     C7  M1   * INCREMENT UPDATE COUNTER
+MS36M1+081050 LIT010 081050                 1
+MS13                                     C3  JB   * MOVE /*EOF CARD TO W/A
+MS13                                     S   Y1   * ADD TO END OF JOBSTREAM
+MS41Y5
+SKIP3
+***********************************************************************
+*        SUBRTN-YL  SET UP LIBRARYN 'GPO' INPUT DATASET.              *
+***********************************************************************
+SKIP 1
+MS40YL
+*        CREATE //LBN2.SYSIN   DD   *   CARD.
+MS13                                     C3  J7   * SET UP DD * CARD
+MS13                                     C3  RJ   * ADD STEPNAME
+MS13                                     S   Y1   * WRITE TO WORK FILE
+*        CREATE '-OPT GPO' CARD FOR GROUP UPDATES
+MS1379ON                                 C3  LY   * SET UP -OPT GPO CARD
+MS1379ON                                 S   Y1   * WRITE TO WORK FILE
+MS13                                17801E2  3    * CAL COD FOR MCD
+MS1379ON                                 R5       * CALL EXIT FOR -MCD CARD
+MS1379ON                                 S   Y1   * WRITE TO WORK FILE
+MS41YL
+SKIP1
+***********************************************************************
+*        SUBRTN-Y6  SET-UP BASIC LIBRARYN DATASET.                    *
+***********************************************************************
+SKIP1
+MS40Y6
+MS13                                     C3  J7   * SET UP DD * CARD
+MS13                                     C3  R4   * ADD STEPNAME
+MS13                                     S   Y1   * WRITE TO WORK FILE
+MS13                                17801E2  3    * CALL CODE FOR MCD
+*        CREATE '-OPT UTILITY' CARD FOR TEST REQUESTS'
+MS130862        EQTP                     C3  LW   * SET UP -OPT UTILITY CARD
+MS130862        EQTP                     S   Y1   * OUT TO WORK-FILE
+MS130862        EQTP                     R5       * CALL USER EXIT
+MS130862        EQTP                     S   Y1   * WRITE MCD TO WORK FILE
+*        CREATE NORMAL'-OPT' CARD FOR ALL UPDATES.
+MS13                                     C3  L1   * SET UP -OPT CARD
+MS13                                     S   Y1   * WRITE
+MS13                                     R5       * CALL EXIT AGAIN
+MS13                                     S   Y1   * WRITE ANOTHER MCD CARD
+MS41Y6
+SKIP3
+***********************************************************************
+*        SUBRTN-Y7  SET-UP AUDITTRL UPDATE.                           *
+***********************************************************************
+SKIP1
+MS40Y7
+MS13                                     C3  L2   * SET UP AUDITTRL CARD
+MS13                                     S   Y1   * WRITE TO WORK-FILE
+MS13                                     C3  LV   * -INS LAST  CARD
+MS13                                     S   Y1   * TO WORK FILE
+MS13                                00101E2       * CLEAR HYPHEN FROM REQUEST CA
+MS13                                     C3  SK   * MOVE UPDATE COUNTER
+MS13                                     C3  SQ   * 10-DG NAME TO RQUEST CARD
+MS41Y7
+EJECT
+***********************************************************************
+*        SUBRTN-Y8  PUT UPDATE NO. IN -HST CARDS AND WRITE TO WORK-FL *
+***********************************************************************
+SKIP1
+MS40Y8
+MS13                                17801E2  7    * SET CALL CODE FOR USER EXIT
+MS13                                     R5       * CALL USER EXIT
+MS13                                     S   Y1   * WRITE CARD TO WORK-FILE
+MS41Y8
+SKIP3
+***********************************************************************
+*        SUBRTN-Y9  -TST/-LSTPROG.  SET-UP 'FROM=' AMD 'TO=' JCL      *
+***********************************************************************
+SKIP1
+MS40Y9
+*
+*        SET-UP FROM AND TO LIBRARY NAMES
+*
+MS13                                     I   I4   * GET LIBRARY NAMES
+MS13                                     C3  J6   * MOVE //  FROM=
+MS13                                     C3  J9   * MOVE 'LIBRARYN.        '
+MS13                                     C3  JA   * MOVE LIBN. PRODN. MAST NME
+MS1306ON1811    NE0                      C3  SG   * IF ON TESTLIB CHANGE 'FROM='
+MS1306ON0862    EQTP                     ER1      MOP-26W NO SEC FOR LAST UPDATE
+MS13                                24318E4       * ELIMINATE SPACES
+MS13                                     S   Y1   * WRITE 'FROM=' CARD
+MS13                                     C3  J8   * SET-UP 'TO=' CARD
+MS13                                     C3  SG   * MOVE TESTING LIBRARY NAME
+MS13                                     S   Y1   * WRITE 'TO=' CARD
+MS41Y9
+SKIP1
+***********************************************************************
+*        SUBRTN-YA  -ADD/-REP. SET-UP 'FROM=' AND 'TO=' JCL.          *
+*                   //          TO=DATA FROM SYSTEM TABLE             *
+*                   //         TO2=DATA FROM SYSTEM TABLE             *
+*                   //        FROM=DATA FROM SYSTEM TABLE             *
+***********************************************************************
+SKIP1
+MS40YA
+MS13                                     C3  J8   * MOVE EXEC CARD1 TO WORK-AREA
+MS1305OF                                 I   I4   * GET SYSTEM LIBRARIES
+MS1379OF                                 S   Y1   * WRITE EXEC CARD1
+MS130871        NEP                      ON    09 * SET IND IF NOT PROGRAM
+MS1309ON0688    NE                  06808ER1      MOP-37W 2ND SYSTEM COPY IGNORD
+MS1309ON0688    NE                  06808E2       * CLEAR 2ND SYSTEM COPY
+MS130688        NE                       C3  J5   * MOVE EXEC CARD2 TO WORK-AREA
+MS130688        NE                  06808I   I599 MOP-14C INVALID SYSTEM2 NAME
+MS130688        NE                       S   Y1   * WRITE EXEC CARD2
+MS130244        EQTLIB                   C3  JC   * MOVE 'MBR=' CARD
+MS130244        EQTLIB                   C3  SV   * MOVE MEMBER FROM ALIAS1
+MS130244        EQTLIB              23309E4       * MOVE COMMA TO MEMBER NAME
+MS130244        EQTLIB              21627S   Y1   * WRITE 'MBR=' CARD TO WORKFLE
+MS131782        NE                       C3  J6   * MOVE EXEC CARD3 TO O/P AREA
+MS131782        NE                       C3  SG   * MOVE 'FROM' LIBRARARY NAME
+MS131782        NE                       S   Y1   * WRITE EXEC CARD3
+MS41YA
+SKIP3
+***********************************************************************
+*        SUBRTN-YB  -ADD/-REP. CHECK MODULE ON LIBRARYN TEST MASTER.  *
+***********************************************************************
+SKIP1
+MS40YB
+MS13                                17801E2  1    * SET EXIT CALL CODE
+MS13                                17937E2       * CLEAR TEMP STORAGE
+MS13                                     R5       * CALL USER EXIT
+MS131791        NE0                 01008ER    99 MOP-15C MODULE NOT ON TEST LIB
+MS13181199OF    NE0                 01008ER    99 MOP-16C MODULE IN PRODN STATUS
+MS131834        NE                  01904C3  SI99 MOP-17C INCORRECT PASSWORD
+MS131878        EQ                       ON    61 * IF SYSTEM BLANK, SET IND61
+MS1361OF                            03008C31 C561 MOP-18W SYSTEM NAME CHANGED
+MS131955        EQ                       ON    62 * IF SLANG BLANK,SET IND62
+MS1362OF                            02405C31 C662 MOP-19W SOURCE CODE CHANGED
+MS132008        EQ                       ON    63 * IF ALIAS1 BLANK SET IND63
+MS1363OF1268    EQ                  05108ER1      MOP-20W ALIAS1 BLANK. OLD USED
+MS1363OF1268    EQ                  05108C31 C7   * IF ALIAS 1 BLANK MOVE OLD
+MS1363OF                            05108C31 C863 MOP-21W ALIAS1 HAS CHANGED
+MS132088        EQ                       ON    64 * IF ALIAS2 BLANK SET IND
+MS1364OF1348    EQ                  05908ER1      MOP-22W ALIAS2 BLANK. OLD USED
+MS1364OF1348    EQ                  05908C31 C9   * IF ALIAS2 BLANK MOVE OLD ONE
+MS1364OF                            05908C31 CA64 MOP-23W ALIAS2 HAS CHANGED
+MS131821        EQ1                      ON    72 * INDICATE -DESC PRESENT
+MS41YB
+SKIP3
+***********************************************************************
+*        SUBRTN-YC  CREATE DATASET FOR IEBCOPY STEP                   *
+*                   //COPY.SYSIN DD  *,DCB=BLKSIZE=80                 *
+*                     COPY INDD=((SYSUT1,R)),OUTDD=SYSUT2             *
+*                     S  M=MEMBER,ALIAS1,ALIAS2                       *
+***********************************************************************
+SKIP1
+MS40YC
+MS13                                     C3  J7   * MOVE SYSIN CARD TO O/P AREA
+MS13                                     C3  R8   * SET-UP FOR COPY
+MS13                                     S   Y1   * WRITE SYSIN CARD
+MS13                                     C3  C0   * COPY LIBRARY STMNT
+MS13                                     S   Y1   * WRITE ABOVE
+*
+*        CONSTRUCT COPY SELECT CARD
+*
+MS13                                     C3  C1   *  BASIC COPY SELECT STMNT.
+MS13                                     C3  C2   * MEMBER NAME
+MS131261        NE                  22901E2  ,    * COMMA FOR 1ST ALIAS
+MS131261        NE                  22901C3  C3   *  FIRST ALIAS
+MS131341        NE                  23801E2  ,    * COMMA FOR 2ND ALIAS
+MS131341        NE                       C3  C4   *  SECOND ALIAS
+MS131261        NE                  22126E4       *  LEFT-SHUFFLE
+MS13                                     S   Y1   *  WRITE SELECT CARD TO WORK
+MS41YC
+SKIP3
+***********************************************************************
+*        SUBRTN-YD  -ADD/-REP. PUT MODULE INTO PRODN STATUS ON LIBRN. *
+*                   -EMOD X                                           *
+*                   -SEL MEMBER,PSWD,PROD1 | -SEL NAME=MEMBERS,PROD1  *
+*                   -PGMR SYSTEM NAME                                 *
+*                   -DESC FROM USER EXIT.                             *
+*                   -HST SYSTEM 'SYSNAME '  *                         *
+*                   -HST SLANG 'SLANG'      * IF NOT IN MODULE        *
+*                   -HST ALIAS 'ALS1    '   * ON LIBRARIAN            *
+*                   -HST ALIAS 'ALS2    '   *                         *
+***********************************************************************
+SKIP1
+MS40YD
+MS13                                     C3  LX   * SET-UP '-EMOD X' CARD
+MS13                                     S   Y1   * WRITE TO WORK FILE
+MS1379ON                                 S   YL   * FOR GROUP UPDATES S/U 'LBN2'
+MS13                                     C3  L3   * SET-UP -SEL CARD
+*        FOR NORMAL UPDATE EXECUTE NEXT TWO STATEMENTS.
+MS1379OF                                 C3  L4   * MOVE IN MODULE NAME
+MS1379OF                                 C3  L5   * MOVE IN PASSWORD
+*        FOR GROUP UPDATES EXECUTE THE NEXT TWO STATEMENTS
+MS1379ON                                 C3  LZ   * MOVE MODULE GROUP NAME.
+MS1379ON0885    NE                       C3  L0   * IF NOT NAME= MOVE ALTERNATE
+MS13                                22120E4       * REMOVE SPACES
+MS13                                     S   Y1   * WRITE -SEL TO WORK FILE
+MS13                                     C3  L6   * SET-UP -PGMR CARD
+MS13                                     C3  L7   * MOVE IN PGMR NAME
+MS13                                     S   Y1   * WRITE -PGMR CARD TO WORKFILE
+MS1371ON79OF                        17801E2  6    * SET EXIT TO RECALL DESC
+MS1371ON79OF                             R5       * CALL USER EXIT
+MS1371ON79OF                             S   Y1   * WRITE DESC TO WORK FILE
+*
+*        CREATE -HST CARDS FOR SYSTEM NAME, SLANG, AND ALIAI
+MS13                                     C3  L8   * -HST
+MS13                                     C3  L9   * SYSTEM CARD LAYOUT
+MS13                                     C3  SL   * MOVE SYSTEM NAME
+MS1361ON                            216  WR       * WRITE SYSTEM CARD
+MS13                                     C3  LA   * SLANG CARD LAYOUT
+MS130871        EQJ                      C3  RC   * IF PROC  MOVE TO SOURCE CODE
+MS130871        EQT                      C3  RD   * IF TAB   MOVE TO SOURCE CODE
+MS130871        EQF                      C3  RE   * IF FDLIB MOVE TO SOURCE CODE
+MS130871        EQC                      C3  RF   * IF CTL   MOVE TO SOURCE CODE
+MS130871        EQB                      C3  RG   * IF BIRD
+MS13                                     C3  SM   * MOVE SOURCE CODE
+MS1362ON                            216  WR       * WRITE SLANG CARD
+MS131268        NE                       C3  LB   * IF ALIAS1 NOT BLANK
+MS131268        NE                       C3  SN   * SET-UP ALIAS CARD
+MS13126863ON    NE                  216  WR       * AND WRITE TO WORK FILE
+MS131348        NE                       C3  LB   * SAME
+MS131348        NE                       C3  SO   * FOR
+MS13134864ON    NE                  216  WR       * ALIAS2
+MS13                                21680E2       * CLEAR WORK AREA
+MS41YD
+SKIP3
+***********************************************************************
+*        SUBRTN-YE  PROCESS FIRST-HST CARD FOUND IN REQUEST           *
+***********************************************************************
+SKIP1
+MS40YE
+MS130109        EQ                  00609ER    99 MOP-25C INVALID -HST CARD
+MS13                                     ON    73 * INDICATE -HST CARD READ.
+MS13                                     ON    71 * FORCE ERROR IF -DESC AFT HST
+MS13                                     C3  SK   * MOVE UPDATE COUNTER
+MS13                                00101E2       * CLEAR HYPHEN FOR AUDITTRL
+MS41YE
+SKIP3
+***********************************************************************
+*        SUBRTN-YF  TERMINATE LBN. D/S. CREATE SORC SYSIN CARD        *
+*                   -EMOD X                                           *
+*                   -END                                              *
+*                   //SORC.SYSIN  DD DATA,DLM=@$,DCB=BLKSIZE=80       *
+***********************************************************************
+SKIP1
+MS40YF
+MS13                                     C3  LX   * SET-UP '-EMOD X' CARD
+MS13                                     S   Y1   * WRITE TO WORK FILE
+MS13                                     C3  LC   * SET-UP -END STATEMENT
+MS13                                     S   Y1   * WRITE TO WORK FILE
+MS13                                     C3  R5   * SORC INPUT DATASET
+MS13                                     S   Y1   * WRITE TO WORK FILE
+MS41YF
+SKIP3
+***********************************************************************
+*        SUBRTN-YG  TERMINATE SORC D/S. CREATE LKED SYSIN CARD.       *
+*                   @$                                                *
+*                   //LKED.SYSIN  DD  *,DCB=BLKSIZE=80                *
+***********************************************************************
+SKIP1
+MS40YG
+MS13                                21680E2       * CLEAR OUTPUT AREA
+MS13                                21602E2  @$   * END OF FILE CARD
+MS13                                     S   Y1   * WRITE TO WORK FILE
+MS41YG
+SKIP3
+***********************************************************************
+*        SUBRTN-YH  CREATE SSI INFO CARD FOR LINKED DATASET.          *
+*                    SETSSI XXXXXXXX                                  *
+***********************************************************************
+SKIP1
+MS40YH
+MS13                                17801E2  3    * SET-UP EXIT CALL FOR SSI INF
+MS13                                     R5       * CALL USER EXIT
+MS13                                     C3  R9   * SET-UP SSI CARD
+MS13                                     C3  SP   * MOVE SSI INFO. TO WORK AREA
+MS13                                     S   Y1   * WRITE TO WORK FILE
+MS41YH
+SKIP3
+***********************************************************************
+*        SUBRTN-YJ  CREATE HEADER CARD FOR JCL VET PROGRAM            *
+*              SETS UP THE FOLLOWING CARD:-                           *
+*              ./ CHANGE LIST=ALL,SSI=XXXXXXXX,NAME=XXXXXXXX  RT      *
+*              OR REPL                                                *
+*              OR ADD                                                 *
+*              ./ NUMBER NEW1=NNN,INCR=NNN   (ONLY IF SEQ IN TABLE)   *
+*              THIS CARD IS AUTOMATICALLY WRITTEN BY BUDGIE3 IF       *
+*              UPDATE IS ON CARDS.                                    *
+***********************************************************************
+SKIP1
+MS40YJ
+MS13                                17801E2  3    * SET EXIT CALL FOR SSI INFO
+MS13                                     R5       * CALL EXIT
+MS13                                00180E2       * CLEAR INPUT AREA
+MS13                                     C3  RA   * SET-UP JCL3330 HEADER
+MS13                                     C3  SS   * MOVE IN SSI INFO
+MS131051        GT0                      C3  SR   * IF REMOTE MOVE ITS NO.
+MS13                                     C3  ST   * MOVE MODULE NAME
+MS130861        EQA                      C3  RH   * IF ADD,  CHANGE FUNCTION
+MS130861        EQR                      C3  RI   * IF REPL, CHANGE FUNCTION
+MS131509        NE                  001  WR       * IF SEQ,  WRITE TO WORKFILE
+MS131509        NE                       C3  RB   * IF SEQ, SET-UP NUMBER CARD
+MS131509        NE                       C3  SW   * IF SEQ, MOVE SEQUENCE INFO.
+MS1376OF                            001  WR       * IF NOT CARDS, WRITE TO WORKF
+MS41YJ
+SKIP3
+***********************************************************************
+*        SUBRTN-YK  CHECK MODULE ON A PDS (USUALLY TEST.PROCLIB).     *
+***********************************************************************
+SKIP1
+MS40YK
+MS13                                17801E2  1    * SET EXIT CALL CODE
+MS13                                17937E2       * CLEAR TEMP STORAGE
+MS13                                     R5       * CALL USER EXIT
+MS131791        NE0                 05108ER    99 MOP-15C MODULE NOT ON TEST LIB
+MS131268        NE                  12608E2       * CLEAR TEST NAME OUT OF ALS1
+MS41YK
+TITLE  MOVES, COMPARES AND ISAM LOOKUPS
+MS33S101008MV10808
+MS33S201904MV11604
+MS33S302405MV08805
+MS33S403008MV09708
+MS33S503801MV10701
+MS33S603906MV12006
+MS33S704902MV10502
+MS33S805116MV12616
+MS33S906808MV14208
+*        LABEL 'S0' AVAILABLE FOR REUSE
+MS33SA01008MV21808
+MS33SB03906MV24906
+MS33SCLIT01MV09301 N
+MS33SDLIT01MV09401 2
+MS33SE08701MV10701
+MS33SF04902MV23702
+MS33SG17827MV23327
+MS33SH17838MV23338
+MS33SI01904EQ18304
+*        LABEL 'SJ' AVAILABLE FOR REUSE.
+MS33SK08105MV07605
+MS33SL09708MV22908
+MS33SM08805MV22805
+MS33SN12608MV22808
+MS33SO13408MV22808
+MS33SP18708MV22408
+MS33SQ16810MV03910
+MS33SR10502MV04802
+MS33SS18708MV02408
+MS33ST10808MV03808
+MS33SU00180MV21680
+MS33SV05108MV23308
+MS33SW15018MV01118
+MS33SX05001MV04901
+MS33L008804MV22104
+MS33L1LIT31MV21631 -OPT NOPC,NOLIST,NOEXEC,NORESEQ
+MS33L2LIT18MV21618 -SEL AUDITTRL,TMRC
+MS33L3LIT24MV21624 -SEL NAME=   ,    ,PROD1
+MS33L410808MV22108
+MS33L511604MV23004
+MS33L6LIT05MV21605 -PGMR
+MS33L709708MV22208
+MS33L8LIT05MV21605 -HST
+MS33L9LIT17MV22117 SYSTEM '        '
+MS33LALIT17MV22117 SLANG '     '
+MS33LBLIT17MV22117 ALIAS '        '
+MS33LCLIT05MV21605 -END
+*        NAMES 'LD-LJ' USED ELSEWHERE IN CODING.
+MS33LKLIT26MV21626 -COPY         ,STATUS=TEST
+MS33LL10808MV22208
+MS33LMLIT33MV21633 -SEL          ,TEST,LIST  ,NOEXEC
+MS33LNLIT11MV17811 ,RESEQ,SEQ=
+MS33LO15018MV18918
+MS33LP17829MV24929
+MS33LQ16810MV22210
+MS33LRLIT31MV21631 -HST TEST VERSION REQUESTED BY
+MS33LS16810MV24710
+MS33LTLIT39MV21639 -HST NO SECURITY FOR LAST PRODN. UPDATE
+MS33LULIT16MV21616 -FILL '        '
+MS33LVLIT10MV21610 -INS LAST
+MS33LWLIT17MV21617 -OPT UTILITY,NOPC
+MS33LXLIT09MV21609 -EMOD X
+MS33LYLIT14MV21614 -OPT GPO,NOPC
+MS33LZ10808MV22608
+MS33J1LIT55MV21655 //         JOB   (    ,3,,,   ),'       PRODN. UPDATE',
+MS33J2LIT46MV21646 //         CLASS=N,MSGLEVEL=(0,0),COND=(16,EQ)
+MS33J3LIT40MV21640 /*ROUTE  PRINT REMOTE
+MS33J4LIT17MV21617 //UPDATE   EXEC
+MS33J8LIT17MV21617 //            TO=
+MS33J5LIT17MV21617 //           TO2=
+MS33J6LIT17MV21617 //          FROM=
+MS33J7LIT40MV21640 //    .SYSIN DD  *,DCB=BLKSIZE=80
+MS33J9LIT28MV23328 'LIBRARYN.                ',
+MS33JA20508MV24308
+MS33JBLIT06MV21606 /*EOF
+MS33JCLIT26MV21626 //           MBR=        ,
+MS33R4LIT04MV21804 LBN1
+MS33R5LIT44MV21644 //SORC.SYSIN DD DATA,DCB=BLKSIZE=80,DLM=@$
+MS33R6LIT04MV21804 LKED
+MS33R8LIT04MV21804 COPY
+MS33R9LIT08MV21608  SETSSI
+MS33RALIT50MV00150 ./ CHANGE LIST=ALL,SSI=        ,NAME=
+MS33RBLIT50MV00150 ./ NUMBER
+MS33RCLIT05MV08805 PROC
+MS33RDLIT05MV08805 TAB
+MS33RELIT05MV08805 FDLIB
+MS33RFLIT05MV08805 CTL
+MS33RGLIT05MV08805 BIRD
+MS33RHLIT06MV00406 ADD
+MS33RILIT06MV00406 REPL
+MS33RJLIT04MV21804 LBN2
+MS33C0LIT40MV21640   COPY INDD=((SYSUT1,R)),OUTDD=SYSUT2
+MS33C1LIT06MV21606  S M=
+MS33C201008MV22108
+MS33C312608MV23008
+MS33C413408MV23908
+MS33C509708EQ18708
+MS33C608805EQ19505
+MS33C720008MV12608
+MS33C820008EQ12608
+MS33C920808MV13408
+MS33CA20808EQ13408
+MS20I1MOPPTABS  L3LT3   08611
+MS2101503243                      01818150
+MS2103638178
+MS20I2MOPPTABS  L3LT4   09711
+MS2101504234
+MS20I3MOPPTABS  L3LT5   03903   L6      L2
+MS2102110168
+MS20I6MOPPTABS  L3LT5   03910   L1
+MS2102110168
+MS20I4MOPPTABS  L3LT4   09711
+MS2101927233                      04635178
+MS20I5MOPPTABS  L3LT4   06808   10503
+MS2101927233
+//SYSUT2   DD   DSN=&&B1801,DISP=(,PASS),
+//             UNIT=SYSDA,SPACE=(CYL,(1,1)),
+//             DCB=(RECFM=FB,LRECL=80,BLKSIZE=3120)
+//SYSIN   DD   *
+SELECT,E,1,C'MS'
+SELECT,E,1,C'./'
+/*
+//STEP02   EXEC     PGM=SHARDISK,PARM='SYSUT2,B1801'
+//SYSPRINT   DD   SYSOUT=A
+//SYSUT1   DD   DSN=&&B1801,DISP=(OLD,DELETE)
+//SYSUT2   DD   DSN=MOPP.TABLIB(T586B01),DISP=OLD
+//SYSIN   DD   *
+MODIFY,E,78,C'*?*'
+INSERT,46,X'C0'
+MODIFY,E,51,C'*',E,1,C'MS13'
+INSERT,52,C'                             '
+/*

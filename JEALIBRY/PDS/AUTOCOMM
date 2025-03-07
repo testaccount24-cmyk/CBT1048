@@ -1,0 +1,309 @@
+         TITLE 'AUTOMATIC OPERATOR COMMAND SCHEDULER'
+***********************************************************************
+*                                                                     *
+*            THIS ROUTINE WILL ISSUE PREDETERMINED OPERATOR COMMANDS  *
+*        AND MESSAGES AT SPECIFIC TIMES OF DAY OR INTERVALS. THE      *
+*        TEXT FOR THESE COMMANDS IS HELD ON A CONTROL FILE WHICH IN   *
+*        FACT CONTAINS MACRO STATEMENTS. WHEN THESE ARE ASSEMBLED,    *
+*        THE CORRECT PROGRAM TO ISSUE THEM AUTOMATICALLY IS           *
+*        GENERATED AND CAN THEN BE STARTED FROM THE CONSOLE.          *
+*                                                                     *
+*            THE CONTROL CARDS HAVE THE FOLLOWING FORMAT:             *
+*                                                                     *
+*        MSG TIME='HHMM',TEXT='.......',REPLY='......'                *
+*            INTVL='HHMM',START='HHMM' CAN BE SPECIFIED INSTEAD OF    *
+*                                        TIME='HHMM'                  *
+*        OR;                                                          *
+*                                                                     *
+*        CMD TIME='HHMM',TEXT='............'                          *
+*            INTVL='HHMM',START='HHMM' CAN BE SPECIFIED INSTEAD OF    *
+*                                        TIME='HHMM'                  *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        DSECTS USED IN THE PROGRAM                                   *
+***********************************************************************
+         SPACE 2
+         MSG   DSECT=YES
+         EJECT
+***********************************************************************
+*        PROGRAM INITIALISATION                                       *
+***********************************************************************
+T115P500 ZCSECT
+         EJECT
+***********************************************************************
+*        PUT THE PSW INTO PROTECT KEY ZERO AND SUPERVISOR MODE        *
+***********************************************************************
+         SPACE 2
+         MODESET MODE=SUP,KEY=ZERO
+         EJECT
+***********************************************************************
+*        ATTACH THE SYSTEM BRAKE ROUTINE                              *
+***********************************************************************
+         SPACE 2
+         ATTACH EP=JEARTC,DPMOD=255,ECB=BRAKEECB,SM=SUPV,KEY=ZERO
+         ST    REG1,BRAKETCB       SAVE ADDRESS OF HIS TCB
+         EJECT
+***********************************************************************
+*        ATTACH THE AUTOMATIC RESPONSE ROUTINE
+***********************************************************************
+         SPACE 2
+         LA    REG1,STOPECBA       ADDRESS OF ECB ADDRESS
+         ATTACH EP=AUTORPLY,ECB=AUTRECB,SM=SUPV,KEY=0
+         ST    REG1,AUTRTCB        SAVE THE ADDRESS OF THE TCB
+         EJECT
+***********************************************************************
+*        LOCATE THE CONTROL TABLE                                     *
+***********************************************************************
+         SPACE 2
+         LOAD EP=T115P510          LOAD THE CONTROL TABLE
+         LR    REG1,REG0           LOAD A WORK REGISTER
+         L     REG0,0(REG1)        LOAD ADDRESS OF FIRST ENTRY
+         ST    REG0,CNTRLTAB       SAVE ADDRESS OF CONTROL TABLE
+         EJECT
+***********************************************************************
+*        OBTAIN AND FORMAT THE TIME OF DAY                            *
+***********************************************************************
+         SPACE 2
+         TIME
+         ST    REG0,REALTIME       SAVE REAL TIME OF DAY
+         EJECT
+***********************************************************************
+*        INITIALISE THE CONTROL TABLE                                 *
+***********************************************************************
+         SPACE 2
+         L     REG3,CNTRLTAB       LOAD ADDRESS OF CONTROL TABLE
+         USING TABENTRY,REG3
+TABLOOP  L     REG10,NEXTTIME      LOAD ASSUMED START TIME
+         L     REG9,NEXTITVL       LOAD INTERVAL BETWEEN EXECUTIONS
+         B     *+8                 JUMP OVER FIRST TIME ADDITION
+INITLOOP BAL   REG11,ADDTIMES      GO ADD THEM TOGETHER
+         TM    TABFLG,FLGTOD       TIME OF DAY TYPE ENTRY
+         BO    CHKTIMOD            YES. JUST GO CHECK CURRENT STATUS
+         CL    REG10,REALTIME      ARE WE REALLY UP TO THAT YET
+         BNH   INITLOOP            NO. GO ADD ANOTHER INTERVAL
+EXIGENT  CL    REG10,INTERVAL      DOES THIS LOOK CLSER THAN OTHERS
+         BH    LEAVEIT             NO. LEAVE CURRENT INTERVAL AS IS
+         ST    REG10,INTERVAL      RESET PROJECTED STIMER INTERVAL
+LEAVEIT  ST    REG10,NEXTTIME      RESET NEXT EXECUTION TIME
+         L     REG3,TABCHAIN       LOAD ADDRESS OF NEXT ENTRY
+         LTR   REG3,REG3           ANY MORE TO LOOK AT ?
+         BNZ   TABLOOP             YES GO PROCESS NEXT ENTRY
+         B     INFORM              GO TELL OPERATOR ABOUT ME
+CHKTIMOD CL    REG10,REALTIME      GONE PAST IT YET ?
+         BNH   LEAVEIT             YES. IGNORE IT
+         B     EXIGENT             NO. GO TEST FOR SOONEST ETC
+         EJECT
+***********************************************************************
+*        INFORM OPERATOR THAT INITIALISATION IS COMPLETE              *
+***********************************************************************
+         SPACE 2
+INFORM   WTO   '**** AUTOCOMM INIALISATION COMPLETE ****'
+         EJECT
+***********************************************************************
+*        ISSUE THE STIMER MACRO AND THEN WAIT FOR SOMETHIN TO HAPPEN  *
+***********************************************************************
+         SPACE 2
+STIMER   DS    0H
+         CLI   INTERVAL,X'24'      HAVE WE GONE OVER A DAY ?
+         BL    THISDAY             NO. ALL OK
+         BAL   REG11,OVERDAY       GO SORT IT OUT
+THISDAY  UNPK  ZDINTVL(L'ZDINTVL+1),INTERVAL(L'INTERVAL+1) CONVERT TIME
+         MVI   ZDINTVL+L'ZDINTVL-1,X'F0' MAKE LAST BYTE USABLE
+         STIMER REAL,STMERXIT,TOD=ZDINTVL
+         MVC   REALTIME,INTERVAL   SET UP TIME FIELD AT NEXT INTERRUPT
+         WAIT  1,ECBLIST=ECBLIST   WAIT FOR JEARTC OR TIMER
+         TM    STMERECB,X'40'      WAS IT TIMER ELAPSED ?
+         BZ    SHUTDOWN            NO. TERMINATE PROCESSING
+         MVI   STMERECB,0          RESET ECB FLAG FIELDS
+         MVI   INTERVAL,X'99'      FORCE LOW RESULT FOR FIRST CMPARE
+         EJECT
+***********************************************************************
+*        LOCATE TABLE ENTRIES TO BE PROCESSED                         *
+***********************************************************************
+         SPACE 2
+         L     REG3,CNTRLTAB       LOAD ADDRESS OF CONTROL TABLE
+GOLOOP   CLC   REALTIME,NEXTTIME   IS HE READY FOR EXECUTION ?
+         BNE   GOLOOP1             NO. LOOK AT NEXT ENTRY
+         BAL   REG11,PROCSSIT      GO PROCESS THE ENTRY
+         BAL   REG11,UPDATE        GO UPDATE INTERVALS ETC
+GOLOOP1  CLC   NEXTTIME,INTERVAL   DOES THESE NEED DOING SOONEST ?
+         BNL   GOLOOP2             NO. LEAVE CURRENT SETTING ALONE
+         TM    TABFLG,FLGTOD       REAL TIME OF DAY SPECIFIED ?
+         BZ    NORMAL              NO. CARRY ON
+         CLC   NEXTTIME,REALTIME   GONE PAST IT YET ?
+         BNH   GOLOOP2             YES. IGNORE IT THEN
+NORMAL   MVC   INTERVAL,NEXTTIME   RESET TIME OF NEXT EXECUTION
+GOLOOP2  L     REG3,TABCHAIN       LOAD ADDRESS OF NEXT ENTRY
+         LTR   REG3,REG3           END OF TABLE REACHED
+         BNZ   GOLOOP              NO. CARRY ON WITH NEXT ONE
+         B     STIMER              GO REISSUE THE WAIT
+         EJECT
+***********************************************************************
+*        PROCESS THE CURRENT ENTRY IN THE TABLE                       *
+***********************************************************************
+         SPACE 2
+PROCSSIT DS    0H
+         LA    REG1,TXTAREA        LOAD ADDRESS OF WTO/WTOR PARM AREA
+         XR    REG0,REG0           CLEAR MCS FLAGS REGISTER
+         TM    TABFLG,FLGPGM       PROGRAM TO BE EXECUTED ?
+         BO    ATTACH              YES. GO ATTACH IT
+         TM    TABFLG,FLGMSG       WTO/WTOR OR COMMAND TO BE ISSUED
+         BZ    COMMAND             COMMAND. ISSUE DIFFERENT SVC
+         SVC   35                  WTOR/WTOR SVC
+         B     PROCEXIT            RETURN TO CALLER
+COMMAND  SVC   34                  COMMAND SCHEDULING SVC
+         B     PROCEXIT
+ATTACH   LA    REG1,PGMPARM        ADDRESS OF PARM FIELD
+         OI    0(REG1),X'80'       TURN ON VL BIT
+         ATTACH ETXR=AUTOETXR,SF=(E,TXTAREA)
+         MVI   SUBTECB,0           RESET THE SUBTASK ECB
+         L     REG1,TCBCOUNT       LOAD COUNT OF SUBTASKS
+         LA    REG15,1(REG1)       INCREMENT BY ONE
+         CS    REG1,REG15,TCBCOUNT ATTEMPT TO UPDATE THE COUNT
+         BNE   *-8                 FAILED. TRY AGAIN....
+PROCEXIT BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        ROUTINE TO UPDATE THE EXPECTED TIME OF NEXT EXECUTION        *
+***********************************************************************
+         SPACE 2
+UPDATE   DS    0H
+         ST    REG11,LINKREG1      SAVE LINKAGE REGISTER
+         L     REG10,NEXTTIME      LOAD LAST PROJECTED EXECUTION TIME
+         L     REG9,NEXTITVL       LOAD INTERVAL FOR REQUEST
+         BAL   REG11,ADDTIMES      GO ADD THEM TOGETHER
+         ST    REG10,NEXTTIME      UPDATE THIS ENTRY
+         L     REG11,LINKREG1      RESTORE LINK REGISTER
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        ROUTINE TO ADD TOGETHER TWO TIMES IN HH.MM FORM              *
+***********************************************************************
+         SPACE 2
+ADDTIMES DS    0H
+         STCM  REG9,8,WORKPL20     STORE OUT HOURS
+         ZAP   DBLWORD,WORKPL20    ADD INTO ACCUMULATOR
+         MP    DBLWORD,=P'60'      CONVERT TO MINUTES
+         STCM  REG9,4,WORKPL20     STORE OUT MINUTES
+         AP    DBLWORD,WORKPL20    ADD TO PREVIOUS TOTAL
+         STCM  REG10,8,WORKPL20    STORE HOURS OF SECOND TIME
+         ZAP   DBLWORD2,WORKPL20   ADD IN TO ACCUMULATOR
+         MP    DBLWORD2,=P'60'     CONVERT TO MINUTES
+         STCM  REG10,4,WORKPL20    STORE OUT MINUTES OF SECOND TIME
+         AP    DBLWORD2,WORKPL20   ADD TO PREVIOUS TOTAL
+         AP    DBLWORD,DBLWORD2    ADD THE TWO TIMES TOGETHER
+         DP    DBLWORD,=PL2'600'   DIVIDE BACK TO GIVE MINUTES
+         MP    DBLWORD(6),=P'10'   RESET HOURS TO USABLE FORM
+         ICM   REG10,8,DBLWORD+4   LOAD HOURS
+         ICM   REG10,4,DBLWORD+6   LOAD MINUTES
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        ROUTINE TO SUBTRACT THE EQUIVALENT OF A DAY FROM A TIME      *
+***********************************************************************
+         SPACE 2
+OVERDAY  DS    0H
+         MVC   WORKPL20(1),INTERVAL   MOVE HOURS DIGITS TO WORK AREA
+         SP    WORKPL20,=P'240'    SUBTRACT HOURS IN A DAY (TIMES 10)
+         MVC   INTERVAL(1),WORKPL20 REPLACE REMAINDER BACK IN INTERVAL
+         L     REG3,CNTRLTAB       LOAD ADDRESS OF CONTROL TABLE
+OVERLOOP TM    TABFLG,FLGTOD       TIME OF DAY TYPE ENTRY ?
+         BO    OVERENDS            YES. LEAVE IT ALONE
+         MVC   WORKPL20(1),NEXTTIME GET HOURS OF NEXT PROJECTED TIME
+         SP    WORKPL20,=P'240'    SUBTRACT HOURS IN A DAY (TIMES 10)
+         MVC   NEXTTIME(1),WORKPL20 MOVE REMAINDER BACK TO TABLE ENTRY
+OVERENDS L     REG3,TABCHAIN       LOAD ADDRESS OF NEXT ENTRY IN TABLE
+         LTR   REG3,REG3           END OF TABLE ENTRIES ?
+         BNZ   OVERLOOP            NO. CONTINUE TO PROCESS ENTRIES
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        TERMINATION PROCESSING                                       *
+***********************************************************************
+         SPACE 2
+SHUTDOWN DS    0H
+         POST  STOPECB             TELL AUTORPLY TO STOP
+         DETACH BRAKETCB           DETACH THE SYSTEM BRAKE
+         NC    TCBCOUNT,TCBCOUNT   ANY ACTIVE SUBTASKS ?
+         BZ    NOSTWAIT            NO. DO NOT WAIT FOR THEM THEN
+         WAIT  ECB=SUBTECB         WAIT FOR THEM ALL TO COMPLETE
+NOSTWAIT EQU   *
+         WAIT  ECB=AUTRECB         WAIT FOR AUTORPLY TO STOP
+         DETACH AUTRTCB            DETACH THE SUBTASK
+         DELETE EP=T115P510        RELEASE CONTROL TABLE
+         WTO   '**** AUTOCOMM TERMINATED ****'
+ZRETURN  ZRETURN RC=0
+         EJECT
+***********************************************************************
+*        ERROR ROUTINES                                               *
+***********************************************************************
+         SPACE 2
+         EJECT
+***********************************************************************
+*        STIMER EXIT ROUTINE. ENTERED AT ELAPSE OF WAIT INTERVAL      *
+***********************************************************************
+         SPACE 2
+         PUSH  USING
+STMERXIT DS    0H
+         USING *,REG15             TEMPORARY ADDRESSABILITY
+         POST  STMERECB            POST THE ECB
+         BR    REG14               RETURN TO CONTROL PROGRAM
+         POP   USING               RESTORE ADDRESSABILITY
+         EJECT
+***********************************************************************
+*        END OF ATTACHED TASK EXIT ROUTINE                            *
+***********************************************************************
+         SPACE 2
+AUTOETXR DS    0H
+         PUSH  USING
+         USING *,REG12             TEMPORARY ADDRESSABILITY
+         LR    REG12,REG15         LOAD BASE ADDRESS REGISTER
+         ST    REG1,TCBADDR        SAVE ADDRESS OF TCB
+         DETACH TCBADDR            DETACH THE SUBTASK
+         L     REG1,TCBCOUNT       LOAD COUNT OF ACTIVE SUBTASKS
+         LR    REG15,REG1          LOAD INTO SECOND REGISTER AND ...
+         BCTR  REG15,0             SUBTRACT 1 FROM IT
+         CS    REG1,REG15,TCBCOUNT ATTEMPT TO UPDATE THE TCB COUNT
+         BNE   *-8                 FAILED. TRY AGAIN
+         LTR   REG15,REG15         ANY MORE ACTIVE TCB'S LEFT ?
+         BNZ   NOPOST              YES. SKIP THE TERMINATION POST
+         POST  SUBTECB             SIGNAL THAT ALL SUBTASKS COMPLETE
+NOPOST   BR    REG14               RETURN TO CALLER
+         POP   USING
+         EJECT
+***********************************************************************
+*        CONSTANTS AND WORK AREAS                                     *
+***********************************************************************
+         SPACE 2
+DBLWORD  DS    D                   WORK AREA FOR UNPACK
+DBLWORD2 DS    D                   SECOND WORK AREA FOR ADDTIMES
+WORKPL20 DC    PL2'0'              PACKED LENGTH 2 OF 0
+DAYMINS  DC    P'14400'            NUMBER OF MINS IN A DAY TIMES 10
+ECBLIST  DS    0F                  WAIT ECB ADDRESS LIST
+         DC    A(BRAKEECB)         JEARTC ECB ADDRESS
+         DC    X'80'               END OF LIST FLAG
+         DC    AL3(STMERECB)       TIMER WAIT ECB
+STMERECB DC    F'0'                ECB POSTED BY STIMER EXIT ROUTINE
+BRAKEECB DC    A(0)                COMPLETION ECB FOR JEARTC
+SUBTECB  DC    A(0)                ECB POSTED AT END OF ALL SUBTASKS
+BRAKETCB DS    F                   ADDRESS OF TCB FOR BRAKE
+STOPECB  DC    A(0)                REQUEST AUTORPLY TO STOP
+STOPECBA DC    A(STOPECB)          CALL PARAMETER LIST
+AUTRECB  DC    A(0)                END OF TASK ECB FOR AUTORPLY
+AUTRTCB  DS    F                   ADDRESS OF AUTORPLY TCB
+TCBADDR  DC    F'0'                ADDRESS OF ATTACHED SUBTASK TCB
+LINKREG1 DS    F                   SAVE AREA FOR LINK REGISTER
+CNTRLTAB DS    F                   ADDRESS OF CONTROL TABLE
+TCBCOUNT DC    F'0'                COUNT OF ATTCHED SUBTASKS
+INTERVAL DC    XL4'9900000C'       NEXT PROJECTED TIME FOR STIMER
+         DC    X'00'               OVERFLOW FIELD
+ZDINTVL  DS    D                   OPERAND OF STIMER MACRO
+         DC    X'00'               OVERFLOW FIELD
+REALTIME DS    F                   REAL TIME OF DAY
+TIMEMASK DC    X'FF00000F'         MASK TO REMOVE MINS FROM TIME
+TIMEMSK2 DC    X'FFFF000F'         MASK TO STRIP OF SECONDS
+         LTORG
+         END

@@ -1,0 +1,91 @@
+//IEFSD515 JOB (1140,0005),'MODIFY + ASSEMBLE',CLASS=T
+//STEP01       EXEC PGM=IEBUPDTE
+//SYSPRINT     DD   SYSOUT=A
+//SYSUT1   DD   DSN=SYS1.STLOUIS,UNIT=2314,VOL=SER=DLIB02,DISP=SHR
+//SYSUT2       DD   DSN=&&STLOUIS,DISP=(,PASS),UNIT=SYSDA,
+//             SPACE=(CYL,(1,1,1),RLSE),
+//             DCB=(RECFM=FB,LRECL=80,BLKSIZE=80)
+//SYSIN        DD   *
+./   CHANGE    NAME=IEFSD515
+         SPACE 1                                                 *MONS*
+******************************************************************MONS*
+*                                                                *MONS*
+*        THE FOLLOWING CODE RETRIEVES THE COMPLETION CODE        *MONS*
+*        OF THE TERMINATING PROBLEM PROGRAM AND PASSES IT        *MONS*
+*        TO THE USER SVC ROUTINE IGC254, WHICH STORES IT         *MONS*
+*        IN THE TASK'S ACCOUNTING TABLE.  THE CODE IN            *MONS*
+*        REGISTER 15 (R15 = 6) ALSO INSTRUCTS IGC254 TO          *MONS*
+*        TURN OFF THE FLAG THAT TRIGGERS THE 'HIGH WATER         *MONS*
+*        MARK' ROUTINE IN THE GETMAIN / FREEMAIN MODULE.         *MONS*
+*        THIS FLAG IS TURNED ON BY THE PROBLEM PROGRAM           *MONS*
+*        INTERFACE ROUTINE IEFSD513, ALSO VIA SVC 254.           *MONS*
+*                                                                *MONS*
+*        THE FIELD TCBCMP (OFFSET X'10' WITHIN THE TCB)          *MONS*
+*        CONTAINS 'XXSSSUUU', WHERE                              *MONS*
+*        XX IS A FLAG BYTE,                                      *MONS*
+*        SSS IS A 12-BIT SYSTEM COMPLETION CODE, AND             *MONS*
+*        UUU IS A 12-BIT USER-DESIGNATED COMPLETION CODE.        *MONS*
+*        AT ENTRY TO SVC 254, THE LOW-ORDER HALFWORD OF          *MONS*
+*        REGISTER 1 CONTAINS 'UUUE' OR 'SSSF' DEPENDING          *MONS*
+*        ON WHETHER A USER OR SYSTEM COMPLETION CODE IS          *MONS*
+*        FOUND IN TCBCMP.  (NOTE THAT 'SSS' MAY BE '000').       *MONS*
+*                                                                *MONS*
+******************************************************************MONS*
+         SPACE 1                                                 *MONS*
+ACCTG    EQU   254                 NUMBER OF ACCT'G SVC          *MONS*
+REMOVES  EQU   X'0FFF'             MASK TO TAKE 'S' FROM 'SUUU'  *MONS*
+SYSTMSGN EQU   X'F'                SIGN TO INDICATE SYSTEM CODE  *MONS*
+USERSIGN EQU   X'E'                SIGN TO INDICATE USER CODE    *MONS*
+STEPTERM EQU   6                   INDICATOR CODE FOR SVC 254    *MONS*
+ABEND    EQU   X'80'               ABNORMAL TERM'N IN PROGRESS   *MONS*
+         SPACE 1                                                 *MONS*
+         SR    R1,R1               ZEROISE REGISTER 1            *MONS*
+         TM    TCBFLGS,ABEND       TEST IF ABDUMP REQUESTED      *MONS*
+         BZ    SYSTEMOR            NO - THEN SET TO '000F'       *MONS*
+         LH    R1,TCBCMP+2         RETRIEVE 'SUUU' OF COMP CODE  *MONS*
+         LA    R11,REMOVES         MOVE MASK TO REG 11           *MONS*
+         NR    R1,R11              REMOVE 'S' FROM 'SUUU'        *MONS*
+         LTR   R1,R1               Q.- WAS THERE A USER COMP CDE *MONS*
+         BZ    SYSTMCDE            NO - SO RETRIEVE SYSTEM CODE  *MONS*
+         SLL   R1,4                SET R1 TO '0000UUU0'          *MONS*
+         LA    R11,USERSIGN        MOVE SIGN MASK TO REG 11      *MONS*
+         OR    R1,R11              INSERT SIGN 'E' AFETR CODE    *MONS*
+         B     SVCACCTG            ISSUE ACCT'G SVC              *MONS*
+SYSTMCDE L     R1,TCBCMP           RETRIEVE 'XXSSSUUU' IN REG 1  *MONS*
+         SRL   R1,8                ADJUST R1 TO '00XXSSSU'       *MONS*
+SYSTEMOR LA    R11,SYSTMSGN        MOVE SIGN MASK TO REG 11      *MONS*
+         OR    R1,R11              INSERT SIGN 'F' AFTER CODE    *MONS*
+SVCACCTG LA    R15,STEPTERM        INDICATE STEP TERMINATION     *MONS*
+         SVC   ACCTG               ISSUE ACCT'G SVC              *MONS*
+         SPACE 1                                                 *MONS*
+         SPACE 1                                                 *MONS*
+******************************************************************MONS*
+*                                                                *MONS*
+*        THE FOLLOWING CODING RETRIEVES THE CONDITION CODE       *MONS*
+*        RETURNED BY THE PROBLEM PROGRAM AND PASSES IT TO        *MONS*
+*        THE USER SVC ROUTINE IGC254, WHICH STORES IT IN         *MONS* 3830060
+*        THE TASK'S ACCOUNTING TABLE.                            *MONS*
+*                                                                *MONS*
+*        AT ENTRY TO SVC 254, THE LOW-ORDER HALFWORD OF          *MONS*
+*        REGISTER 1 CONTAINS THE CONDITION CODE.                 *MONS*
+*                                                                *MONS*
+******************************************************************MONS*
+         SPACE 1                                                 *MONS*
+SCTRETCD EQU   8                   OFFSET OF COND-CODE IN SCT    *MONS*
+CONDCODE EQU   9                   INDICATOR CODE FOR SVC 254    *MONS*
+         SPACE 1                                                 *MONS*
+         LA    R15,CONDCODE        SET ENTRY INDICATOR FOR SVC   *MONS*
+         LH    R1,SCTRETCD(,R5)    RETRIEVE PBLM PGM COND-CODE   *MONS*
+         SVC   ACCTG               ISSUE ACCOUNTING SVC          *MONS*
+         SPACE 1                                                 *MONS*
+/*
+//STEP02       EXEC ASMFCL,
+//             PARM.LKED='SYSLMOD,IEWL,XREF,LIST,LET,NCAL'
+//ASM.SYSLIB   DD
+//             DD
+//             DD   DSN=SYS1.MACROS,DISP=SHR,UNIT=2314,VOL=SER=DLIB02
+//             DD   DSN=SYS1.GENLIB,DISP=SHR,UNIT=2314,VOL=SER=DLIB02
+//             DD   DSN=SYS1.MODGEN,DISP=SHR,UNIT=2314,VOL=SER=DLIB02
+//ASM.SYSIN    DD   DSN=&&STLOUIS(IEFSD515),DISP=(OLD,DELETE)
+//LKED.SYSLMOD DD   DISP=SHR,
+//             DSN=SYS1.R206LIB(IEFSD515)

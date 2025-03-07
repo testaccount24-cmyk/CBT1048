@@ -1,0 +1,115 @@
+//IEFSD513 JOB (1140,0005),'MODIFY + ASSEMBLE',CLASS=T
+//STEP01       EXEC PGM=IEBUPDTE
+//SYSPRINT     DD   SYSOUT=A
+//SYSUT1       DD   DSN=SYS1.STLOUIS,DISP=SHR,UNIT=2314,VOL=SER=DLIB02
+//SYSUT2       DD   DSN=&&STLOUIS,DISP=(,PASS),UNIT=SYSDA,
+//             SPACE=(CYL,(1,1,1),RLSE),
+//             DCB=(RECFM=FB,LRECL=80,BLKSIZE=80)
+//SYSIN        DD   *
+./   CHANGE    NAME=IEFSD513
+         SPACE 1                                                 *MONS*
+******************************************************************MONS*
+*                                                                *MONS*
+*        THE FOLLOWING CODE CHECKS TO SEE IF THE STEP ABOUT      *MONS*
+*        TO EXECUTE IS HASP.  IF IT IS, STEP TIMING IS           *MONS*
+*        BYPASSED, AND A MESSAGE IS ISSUED TO THE OPERATOR.      *MONS*
+*        A TEST IS ALSO MADE TO DETECT (AND MODIFY) A TIME       *MONS*
+*        LIMIT OF 24 HOURS, LEST AN ATTEMPT IS MADE TO GET       *MONS*
+*        A JOB FOR FREE WHILE HASP IS NOT IN CONTROL.            *MONS*
+*        (WHILE PRESENT, HASP ENSURES THAT THIS DOES             *MONS*
+*        NOT OCCUR).                                             *MONS*
+*                                                                *MONS*
+******************************************************************MONS*
+         SPACE 1                                                 *MONS*
+TIONJOB  EQU   0                   16 BYTE JOB & STEP NAME       *MONS*
+         SPACE 1                                                 *MONS*
+         L     R1,0(,R3)           GET POINTER TO TIOT           *MONS*
+         CLC   TIONJOB(16,R1),HASP Q.- IS HASP STARTING          *MONS*
+         BNE   TIMING2             NO - MAKE NEXT TEST           *MONS*
+         WTO   'HASP STARTING - WILL NOT BE TIMED' TELL OPERATOR *MONS*
+         B     NOSTIMER            BYPASS TIMING                 *MONS*
+         SPACE 1                                                 *MONS*
+HASP     DC    CL16'HASP    SYSTEM' JOB & STEP NAME FOR HASP     *MONS*
+HOURS6   DC    F'2160000'          6 HOURS IN 100'THS OF SECS    *MONS*
+         SPACE 1                                                 *MONS*
+TIMING2  EQU   *                                                 *MONS*
+         CLC   LCTTMWRK+D4,HOURS24 Q.- IS TIME LIMIT 24 HOURS    *MONS*
+         BL    *+10                NO - CONTINUE WITH TIMING RTN *MONS*
+         MVC   LCTTMWRK+D4,HOURS6  REDUCE TIME LIMIT TO 6 HOURS  *MONS*
+         SPACE 1                                                 *MONS*
+./   DELETE    SEQ1=46226019,SEQ2=46228019                       *MONS*
+         SPACE 1                                                 *MONS*
+******************************************************************MONS*
+*                                                                *MONS*
+*        THE FOLLOWING CODE DETERMINES THE SIZE OF THE           *MONS*
+*        PARTITION AND THE NUMBER OF TAPE DATA SETS AND          *MONS*
+*        DISK DATA SETS ALLOCATED TO THE STEP, AND               *MONS*
+*        PASSES THESE DATA TO THE USER SVC ROUTINE IGC254.       *MONS*
+*        THE CODE IN REGISTER 15 (R15 = 5) INSTRUCTS IGC254      *MONS*
+*        TO STORE THESE DATA AND TO TURN ON THE FLAG THAT        *MONS*
+*        TRIGGERS THE 'HIGH WATER MARK' ROUTINE IN THE           *MONS*
+*        GETMAIN / FREEMAIN MODULE.  THIS FLAG IS TURNED OFF     *MONS*
+*        BY A CALL TO SVC 254 FROM THE STEP DELETION MODULE      *MONS*
+*        IEFSD515 UPON TERMINATION OF THE PROBLEM PROGRAM.       *MONS*
+*                                                                *MONS*
+*        AT ENTRY TO SVC 254 REG 1 CONTAINS 'SSSSTTDD', WHERE    *MONS*
+*        SSSS IS THE PARTITION SIZE IN 1K UNITS,                 *MONS*
+*        TT IS THE NUMBER OF TAPE ALLOCATIONS, AND               *MONS*
+*        DD IS THE NUMBER OF DISK ALLOCATIONS.                   *MONS*
+*                                                                *MONS*
+******************************************************************MONS*
+         SPACE 1                                                 *MONS*
+ACCTG    EQU   254                 NUMBER OF ACCT'G SVC          *MONS*
+BBLOADDR EQU   4                   DISP IN BOUND BOX OF LO ADR   *MONS*
+BBHIADDR EQU   8                   DISP IN BOUND BOX OF HI ADR   *MONS*
+STEPINIT EQU   5                   INDICATOR CODE FOR SVC 254    *MONS*
+UCBTYP   EQU   16                  DISP IN TIOT ENTRY OF UCBTYP  *MONS*
+TAPE     EQU   X'80'               INDICATES TAPE IN UCBTYP+2    *MONS*
+DISK     EQU   X'20'               INDICATES DISK IN UCBTYP+2    *MONS*
+TCBTIOT  EQU   X'C'                TIOT ADDRESS IN TCB           *MONS*
+TCBMS    EQU   X'18'               BOUNDARY BOX ADDRESS IN TCB   *MONS*
+TIOELNG  EQU   X'18'               FIRST DD ENTRY IN TIOT        *MONS*
+TIOESTB  EQU   X'10'               FIRST UCB ENTRY IN DD ENTRY   *MONS*
+         SPACE 1                                                 *MONS*
+         SR    R1,R1               SET R1 PRIOR TO COUNTING DEVS *MONS*
+         L     R15,TCBTIOT(,R6)    GET TIOT ADDRESS              *MONS*
+         LA    R15,TIOELNG(,R15)   GET FIRST DD ENTRY            *MONS*
+NEXTNTRY SR    R5,R5               RESET R5 TO ZERO              *MONS*
+         IC    R5,0(,R15)          GET LENGTH OF ENTRY           *MONS*
+         LTR   R5,R5               Q.- IS LENGTH ZERO            *MONS*
+         BZ    GETSIZE             IF ZERO, THEN END OF TIOT     *MONS*
+         AR    R5,R15              SET R5 TO END OF THIS ENTRY   *MONS*
+         LA    R15,TIOESTB(,R15)   POINT TO 1ST UCB ENTRY        *MONS*
+NXTUCB   L     R14,0(,R15)         GET UCB ADDRESS FROM ENTRY    *MONS*
+         LA    R14,0(,R14)          LTR   R14,R14             Q.- WAS IT 'DD DUM
+         BZ    INCRMENT            IF IT WAS GET NEXT ENTRY      *MONS*
+         CLI   UCBTYP+2(R14),TAPE  Q.- IS IT A TAPE              *MONS*
+         BNE   CHEKDISK            IF NOT THEN CHECK FOR DISK    *MONS*
+         LA    R1,256(,R1)         COUNT THE TAPE                *MONS*
+         B     INCRMENT            GET NEXT ENTRY                *MONS*
+CHEKDISK CLI   UCBTYP+2(R14),DISK  Q.- IS IT A DISK              *MONS*
+         BNE   INCRMENT            NO, SO GET NEXT UCB           *MONS*
+         LA    R1,1(,R1)           COUNT THE DISK                *MONS*
+INCRMENT LA    R15,4(,R15)         POINT AT NEXT ALLOC ENTRY     *MONS*
+         CR    R5,R15              Q.- END OF ALLOCS FOR ENTRY   *MONS*
+         BH    NXTUCB              NO, SO GO LOOK AT NEXT UCB    *MONS*
+         B     NEXTNTRY            GET NEXT DD ENTRY             *MONS*
+GETSIZE  L     R5,TCBMS(,R6)       GET BOUNDARY BOX ADDRESS      *MONS*
+         L     R14,BBHIADDR(,R5)   HIGH CORE ADDRESS TO R14      *MONS*
+         L     R15,BBLOADDR(,R5)   LOW CORE ADDRESS TO R 15      *MONS*
+         SR    R14,R15             NOW R14 = SIZE OF PARTITION   *MONS*
+         SLL   R14,6               CONVERT TO 1K UNITS IN HI-    *MONS*
+         OR    R1,R14               ORDER 2 BYTES & MOVE TO R1   *MONS*
+         LA    R15,STEPINIT        MOVE INDICATOR TO REG 15      *MONS*
+         SVC   ACCTG               ISSUE ACCT'G SVC              *MONS*
+         SPACE 1                                                 *MONS*
+/*
+//STEP02       EXEC ASMFCL,
+//             PARM.LKED='SYSLMOD,IEWL,XREF,LIST,LET,NCAL'
+//ASM.SYSLIB   DD
+//             DD
+//             DD   DSN=SYS1.MACROS,DISP=SHR,UNIT=2314,VOL=SER=DLIB02
+//             DD   DSN=SYS1.GENLIB,DISP=SHR,UNIT=2314,VOL=SER=DLIB02
+//             DD   DSN=SYS1.MODGEN,DISP=SHR,UNIT=2314,VOL=SER=DLIB02
+//ASM.SYSIN    DD   DSN=&&STLOUIS(IEFSD513),DISP=(OLD,DELETE)
+//LKED.SYSLMOD DD   DSN=SYS1.R206LIB(IEFSD513),DISP=SHR

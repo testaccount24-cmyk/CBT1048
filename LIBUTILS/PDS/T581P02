@@ -1,0 +1,696 @@
+T581P02  START 0
+         SPACE 1
+***********************************************************************
+*        PROGRAM ID. :             T581P02                            *
+*        ALIAS :                   HVTOC                              *
+*        DATE WRITTEN :            JANUARY 1974                       *
+*        LOCATION :                EUROPEAN COMPUTER CENTER           *
+*        AUTHOR :                  J. NOLS                            *
+***********************************************************************
+         SPACE 1
+***********************************************************************
+*        PURPOSE                                                      *
+*       =========                                                     *
+*                                                                     *
+*        TO CREATE A DATA SET CONTAINING THE INFORMATION FROM         *
+*        THE VTOC'S OF ALL THE DIRECT ACCESS VOLUMES                  *
+*                                                                     *
+***********************************************************************
+         SPACE 3
+***********************************************************************
+*        REGISTERS EQUATES AND USAGE                                  *
+***********************************************************************
+         SPACE 1
+R0       EQU   0    SVC COMMUNICATIONS AND WORK REGISTER
+R1       EQU   1    SVC COMMUNICATIONS AND WORK REGISTER
+R2       EQU   2    RETURN CODE FOR DEVTYPE OR OBTAIN MACROS
+*                       IF ABEND U0581
+R3       EQU   3    WORK REGISTER
+R4       EQU   4    WORK REGISTER
+R5       EQU   5    WORK REGISTER
+R6       EQU   6    WORK REGISTER
+R7       EQU   7    WORK REGISTER
+R8       EQU   8    ADDRESS OF CURRENT ELEMENT OF THE TABLE
+R9       EQU   9    WORK REGISTER
+R10      EQU   10   WORK REGISTER
+R11      EQU   11   WORK REGISTER 1
+R12      EQU   12   WORK REGISTER 2
+R13      EQU   13   SAVE AREA POINTER
+R14      EQU   14   BALR RETURN ADDRESS
+R15      EQU   15   BALR RUOTINE ADDRESS
+         EJECT
+**********************************************************************
+*        HOUSEKEEPING                                                *
+**********************************************************************
+         SPACE 1
+         PGMIN EQUATES=NO,USING=(R11,R12) ESTABLISH ADDRESSABILITY
+         ST    R1,ADDRPARM         SAVE POINTER TO PARM FIELD.
+         SPACE 1
+         PRINT NOGEN                SUPPRESS MACRO EXPANSION
+         SPACE 3
+**********************************************************************
+*        REQUEST IPL DATE AND TIME .                                 *
+**********************************************************************
+         SPACE 1
+         TIME  ,                   REQUEST DATE AND TIME
+         STM   R0,R1,DECIMAL       STORE PACKED TIME AND DATE
+         UNPK  HHMM(7),DECIMAL(4)  UNPACK TIME
+         UNPK  YYDDD,DECIMAL+5(3)  UNPACK DATE
+         OI    YYDDD+4,SIGN        FORCE SIGN TO 'F'
+         TESTOS MVS                TEST IF OPERATING SYSTEM IS MVS
+         LTR   R15,R15
+         BZ    PARMPROC            BRANCH IF YES
+         WTO   '** IT IS NOT POSSIBLE TO EXECUTE THIS VERSION OF T581P0*
+               2 UNDER MFT ********************'
+         B     ABEND               BRANCH TO ABEND
+         EJECT
+**********************************************************************
+*        PROCESS PARM INFORMATION AND SET PARM SWITCHES              *
+*                                                                    *
+*        DEFAULT PARM VALUES:-   PDS,CAT,ACC,NOTMP                   *
+*        OTHER POSSIBLE VALUES:- NOPDS,NOCAT,NOACC,TMP               *
+*                                                                    *
+*        WHERE:-  PDS = THE DIRECTORY OF EAXH PDS IS READ TO         *
+*                       FIND BLOCKS ALLOCATED AND USED.              *
+*                 CAT = THE CATALOG IS SEARCHED FOR A MATCH ON       *
+*                       DSNAME AND VOLUME NO. FOR EACH FMT-1 DSCB.   *
+*                 ACC = DATA IS ACCUMULATED ON THE HVTOC DATASET AND *
+*                       OLD DATA FOR THE VOLUME(S) BEING PROCESSED   *
+*                       IS DELETED.                                  *
+*                 TMP = TEMPORARY DATASETS ARE WRITTEN TO THE OUTPUT *
+*                       FILE.                                        *
+*               NOPDS = NO DIRECTORY READ.                           *
+*               NOCAT = NO CATALOG LOOKUP.                           *
+*               NOACC = DSCBS FOR REQUESTED VOLUMES WRITTEN TO OUTPUT*
+*                       NO CARRIED FORWARD DATA.                     *
+*               NOTMP = TEMPORARY DATASETS DROPPED.                  *
+**********************************************************************
+         SPACE
+PARMPROC EQU   *
+         OI    PARMSW,PDSSW+CATSW+ACCSW  SET SWICH DEFAULTS
+         L     R1,ADDRPARM         GET PARM POINTER
+         L     R1,0(0,R1)          POINT  TO PARM LENGTH FIELD
+         LH    R2,0(0,R1)          LENGTH IN REG2
+         LA    R3,2(0,R1)          POINT TO FIRST PARM CHAR.
+PARMNEXT EQU   *
+         LTR   R2,R2               END  OF PARM?
+         BNP   PARMEND             YES. BRANCH
+         LA    R4,3
+         CR    R2,R4               LENGTH LEFT LESS THAN 3 CHARS?
+         BL    PARMEND             YES. END OF VALID PARMS
+         CLC   0(3,R3),=C'PDS'     PDS PROC. REQD?
+         BE    PARMINCR            YES. SWITCH ALREADY SET.
+         CLC   0(3,R3),=C'CAT'     CATALOG PROC. REQD?
+         BE    PARMINCR            YES. ALREADY SET.
+         CLC   0(3,R3),=C'ACC'     DATA ACCUMULATION REQD?
+         BE    PARMINCR            YES. SWITCH ALREADY SET.
+         CLC   0(3,R3),=C'TMP'     TEMP. D/S TO BE PROCESSED?
+         BNE   *+12                NO. SKIP NEXT 2 INSTNS.
+         OI    PARMSW,TMPSW        YES. SET SWITCH
+         B     PARMINCR            BRANCH.
+*        INCLUDE FURTHER PARM TESTS HERE.
+         LA    R4,5                LENGTH FOR NOS
+         CR    R2,R4               REMAING PARM LARGE ENOUGH?
+         BL    PARMEND             NO. BRANCH
+         CLI   3(R3),C','          COMMA?
+         BE    PARMINCR            YES. THEN 3-DIGIT PARM IS INVALID.
+         CLC   0(5,R3),=C'NOPDS'   PDS TO BE SUPPRESSED?
+         BNE   *+12                NO. SKIP NEXT 2 INSTNS.
+         NI    PARMSW,255-PDSSW    TURN OFF PDS SWITCH
+         B     PARMINCR            BRANCH
+         CLC   0(5,R3),=C'NOCAT'   CATALOG LOOKUP TO BE SUPPRESSED?
+         BNE   *+12                NO. SKIP
+         NI    PARMSW,255-CATSW    TURN OFF CATALOG SWITCH
+         B     PARMINCR            BRANCH
+         CLC   0(5,R3),=C'NOACC'   DATA ACCUM TO BE SUPPRESSED.
+         BNE   *+12                NO. SKIP NEXT 2 INSTNS.
+         NI    PARMSW,255-ACCSW    TURN OFF ACCUMULATE SWITCH
+         B     PARMINCR
+         CLC   0(5,R3),=C'NOTMP'   TEMP. D/S TO BE DROPPED?
+         BE    PARMINCR            YES. SWITCH ALREADY OFF.
+*        INCLUDE FURTHER TESTS HERE. NEGATIVE.
+         SPACE
+PARMINCR EQU   *
+         SR    R2,R4               SUBTRACT SEGMENT LENGTH FROM TOTAL
+         BNP   PARMEND             END IF RESULT NOT POSITIVE
+         LA    R3,0(R4,R3)         BUMP ALONG PARM FIELD
+PARMCOMA EQU   *
+         CLI   0(R3),C','          COMMA FOR NEXT SEGMENT?
+         BE    PARMINC2            YES. BRANCH
+         LA    R3,1(0,R3)          BUMP ALONG ONE
+         BCT   R2,PARMCOMA         REDUCE LENGTH AND BRANCH
+         B     PARMEND             END IF ZERO LENGTH
+         SPACE
+PARMINC2 EQU   *
+         BCTR  R2,0                REDUCE PARM LENGTH
+         LA    R3,1(0,R3)          BUMP ALONG PARM
+         B     PARMNEXT            PROCESS NEXT PARM SEGMENT
+         SPACE
+PARMEND  EQU   *
+         STM   R1,R4,SAVEM         **** DEBUGGING AID   ******
+         EJECT
+***********************************************************************
+*                                                                     *
+*        TEST IF GDG OUTPUT DATASET IS IN USE. IF SO, WAIT UNTIL IT   *
+*        IS FREED AND THEN TERMINATE PROGRAM WITH NON-ZERO RETURN     *
+*        CODE SO IT MAY BE REINVOKED TO UPDATE NEW GENERATION OF GDG. *
+*        IF OUTPUT GDG IS FREE, ENQ AND OPEN.                         *
+*        IF DATA ACCUMULATION IS NOT REQUIRED, THIS SECTION IS        *
+*        BYPASSED AND A STRAIGHT FORWARD OPEN OF THE OUTPUT DATASET   *
+*        IS SUBSTITUTED.                                              *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+         TM    PARMSW,ACCSW        DATA ACCUMULATION REQUIRED?
+         BNO   NOACC               NO. BRANCH
+         RDJFCB (INPUT)            READ JFCB OF SYSUT1
+         MVC   RNAME,JFCBDSNM      MOVE DSNAME TO WA ENQ/DEQ MACRO
+         LA    R4,RNAME+1
+         LA    R5,36               ZERO AND ADD 36
+LOOPGDG  CLC   0(2,R4),=C'.G'      TEST IF THIS DS IS A GDG
+         BE    CONFGDG             YES - GO TO CONFIRME TEST
+CNP      LA    R4,1(R4)            NO - ADD ONE FOR NEXT TEST
+         BCT   R5,LOOPGDG          REPEAT
+NOTAGDG  WTO   '*** T581P02 - SYSUT1 IS NOT A GDG D.S. *',ROUTCDE=(11)
+         B     ABEND
+CONFGDG  CLC   6(3,R4),=C'V00'     CONFIRME IF IS GDG D.S.
+         BNE   CNP                 NO
+         PACK  DECIMAL(3),2(4,R4)  YES - PACK NUMBER OF GEN(0)
+         AP    DECIMAL(3),=P'1'    ADD ONE
+         UNPK  DECIMAL+3(5),DECIMAL(3) UNPACK NUMBER OF GEN(+1)
+         OI    DECIMAL+7,SIGN      FORCE SIGN TO 'F0'
+         MVC   GDGPLUS1+2(4),DECIMAL+4
+         MVI   0(R4),X'40'         CLEAR GEN NUMBER IN WA FOR ENQ/DEQ
+         MVC   1(8,R4),0(R4)       MACROS
+         ENQ   (QNAME,RNAME,E,,SYSTEM),RET=TEST
+         LTR   R15,R15             TEST IF RETURN CODE = 0
+         BZ    ENQ                 YES - GO TO ENQ
+         STH   R15,RTCODE          NO - STORE RETURN CODE
+         ENQ   (QNAME,RNAME,E,,SYSTEM)  WAIT
+         B     EOP                 BRANCH TO END OF PROGRAM
+ENQ      ENQ   (QNAME,RNAME,E,,SYSTEM)
+         OPEN  (INPUT)             OPEN INPUT FILE
+         RDJFCB (OUTPUT)           READ JFCB OF SYSUT2
+         CLI   JFCBNVOL,X'05'      TEST IF NUMBER OF VOLS IS > 5
+         BNH   PREPJFCB            NO - GO TO PREPARE JFCB BEFORE OPEN
+         WTO   '*** T581P02 - NUMBER OF VOLUME > 5 *',ROUTCDE=(11)
+         B     ABEND
+PREPJFCB LA    R5,RNAME
+         SR    R4,R5               GET DISPL. FOR MOVE NUMB. OF GEN(+1)
+         MVC   OLDDSN,JFCBDSNM     SAVE OLD DSNAME
+         LA    R5,JFCBDSNM
+         MVC   0(44,R5),RNAME
+         LA    R5,0(R4,R5)
+         MVC   0(9,R5),GDGPLUS1
+         OI    JFCBMASK+4,B'10000000' SET ON HIGH BIT OF JFCBMASK+4
+         MVC   NEWDSN,JFCBDSNM     SAVE NEW DSNAME
+         DEVTYPE DDNOUT,WADEV
+         MVC   VOLIST+1(1),JFCBNVOL
+         LA    R4,VOLIST+2
+         LA    R5,5
+         LA    R6,JFCBVOLS
+LOOPVOLS MVC   0(4,R4),WADEV
+         MVC   4(6,R4),0(R6)
+         MVC   10(2,R4),JFCBVLSQ
+         LA    R4,12(R4)
+         LA    R6,6(R6)
+         BCT   R5,LOOPVOLS
+         SR    R0,R0               CLEAR
+         RENAME RENAMBOP
+         OPEN  (OUTPUT,(OUTPUT)),TYPE=J   OPEN OUTPUT FILE
+         B     ACC
+         SPACE 2
+NOACC    EQU   *
+         MVI   STRJFCB,X'80'       CLOSE OPEN EXIT
+         OPEN  (OUTPUT,(OUTPUT))   OPEN OUTPUT DATASET.
+         MVI   STRJFCB,X'87'       RE-OPEN OPEN EXIT
+         SPACE
+ACC      EQU   *
+         EJECT
+***********************************************************************
+*                                                                     *
+*        BUILD TABLE OF DISK PACKS TO BE PROCESSED.                   *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+         EXTRACT ADDRTIOT,FIELDS=TIOT   EXTRACT ADDRESS TIOT
+         L     R5,ADDRTIOT         ADDRESS OF TASK I/O TABLE
+         LA    R5,24(R5)           ADDRESS OF FIRST DD ENTRY
+         LA    R8,TABLE            ADDRESS OF TABLE
+         SR    R9,R9               RESET
+NEXTDDIN LA    R6,IGNOREDD         ADDRESS OF FIRST DD TO IGNORE
+         LH    R7,NIDD             NUMBER OF DD TO IGNORE
+         CLC   0(4,R5),ZEROS       TEST IF END OF TIOT
+         BE    EOTIOT              YES - BRANCH TO END TIOT TEST
+NEXTIG   CLC   4(8,R5),0(R6)       TEST IF IGNOREDD IS EQUAL TO DDNAME
+         BE    NEXTDD              YES - BRANCH TO NEXT DD TEST
+         LA    R6,8(R6)            ADDRESS OF NEXT DD TO IGNORE
+         BCT   R7,NEXTIG
+         MVC   0(8,R8),4(R5)       MOVE DDNAME FROM TIOT TO TABLE
+         MVC   14(4,R8),16(R5)     MOVE UCB ADDRESS TO TABLE
+         LA    R8,19(R8)           ADDRESS FOR NEXT MOVE DDNAME
+         AH    R9,ONE              ADD ONE TO NUMBER OF DDNAME IN TAB.
+         CH    R9,TWENTY           TEST IF NUMB OF DD IN TABLE IS > 20
+         BH    ERROR1              YES - BRANCH TO ERROR 1
+NEXTDD   SR    R6,R6               RESET
+         IC    R6,0(R5)            LENGTH OF DD ENTRY
+         LA    R5,0(R5,R6)         ADDRESS OF NEXT DD ENTRY
+         B     NEXTDDIN            BRANCH TO NEXT TEST TIOT
+ERROR1   WTO   '*** T581P02  - TOO MANY DD STATEMENTS  **',ROUTCDE=(11)
+         WTO   '*** T581P02  - ONLY FIRST 20 PROCESSED **',ROUTCDE=(11)
+EOTIOT   LA    R8,TABLE            ADDRESS OF FIRST DDNAME IN TABLE
+         SR    R9,R9               RESET
+         AH    R9,ONE              ADD ONE TO NUMBER OF DD IN TABLE
+         B     TESTDEV             BRANCH TO TEST DEVICE
+         EJECT
+***********************************************************************
+*                  ** START OF MAIN PROCESSING LOOP **                *
+*                                                                     *
+*        GET NEXT DISK VOLUME FROM TABLE AND INIT. FOR VTOC READ.     *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+NEXTDEV  AH    R9,ONE
+         MVI   18(R8),C'X'         SET ON CURRENT ELEMENT OF TABLE
+         CH    R9,TWENTY           TEST IF END OF TABLE
+         BH    READ                YES - BRANCH TO READ
+         LA    R8,19(R8)           NO  - ADDRESS FOR NEXT TEST DEVICE
+TESTDEV  CLC   0(8,R8),BLANK       TEST IF DDNAME IS BLANK
+         BE    READ                YES - BRANCH TO READ
+         MVI   TABCCHHR,X'00'      CLEAR
+         MVC   TABCCHHR+1(99),TABCCHHR  TABLE CCHHR OF TEMP. DS
+         LA    R3,TABCCHHR         ADDRESS TABLE OF CCHHR OF TEMP. DS
+         MVC   CURDDN(8),0(R8)     MOVE DDNAME
+         DEVTYPE CURDDN,WADEV      RESEARCH DEVICE TYPE
+         LTR   R15,R15             TEST IF RC IS ZERO
+         BZ    OK                  YES
+         LR    R2,R15              SAVE RETURN CODE
+         WTO   '*** T581P02  - RC IS NOT 0 FOR DEVTYPE **',ROUTCDE=(11)
+         B     ABEND               BRANCH TO ABEND
+OK       TM    WADEV+2,DASD        TEST IF DIRECT ACCESS STORAGE DEVICE
+         BNO   NEXTDEV             NO - BRANCH TO NEXT TEST DEVICE
+         RDJFCB (TEST)             READ JFCB FOR VOLUME NAME
+         CLI   JFCBNVOL,ONEVOL     TEST IF ONLY ONE VOLUME
+         BE    ONLYONE             YES - BRANCH TO ONLYONE
+         WTO  '*** T581P02  - NUMBER OF VOL > 1 PER DDN *',ROUTCDE=(11)
+         B     ABEND               BRANCH TO ABEND
+ONLYONE  LH    R5,TWENTY           LOAD TWENTY INTO REG.5
+         LA    R6,TABLE+8          ADDRESS OF FIRST VOLNAME IN TABLE
+TESTVON  CLC   0(6,R6),JFCBVOLS    TEST IF VOLNAME IN TABLE = JFCBVOLS
+         BE    NEXTDEV             YES - BRANCH NEXT TEST DEVICE
+         LA    R6,19(R6)           NO - ADDRESS OF NEXT VOLNAME IN TAB
+         BCT   R5,TESTVON
+         MVC   8(6,R8),JFCBVOLS    MOVE VOLNAME TO TABLE
+         MVC   VOLID,JFCBVOLS      MOVE VOLNAME TO VOLID
+         EJECT
+***********************************************************************
+*                                                                     *
+*        READ FORMAT-4 DSCB. SET DEVICE CONSTANTS AND WRITE TO OUTPUT.*
+*                                                                     *
+***********************************************************************
+         SPACE 1
+         MVC   UCBXREF+1(3),15(R8) MOVE UCB ADDRESS TO PSEUDO DEB
+         L     R4,14(R8)           UCB ADDRESS FOR THE CURRENT VOLID
+         L     R10,16              ADDRESS OF COMMUNICATION VECTOR TAB
+         L     R0,24(R4)  MVS      TTR0 OF VTOC
+         LA    R1,DEB              ADDRESS OF PSEUDO DEB
+         LA    R2,SEEK             ADDRESS TO STORE
+         L     R15,28(R10)         ADDRESS OF CONVERT ROUTINE
+         MVC   APPEN,21(R10)       MOVE ADDRESS OF APPENTAGE TABLE
+         LA    R4,HOLD             ADDRESS SAVE AREA REGS
+         STM   R9,R13,0(R4)        SAVE R9 TO R13
+         BALR  R14,R15             EXECUTE CONVERT ROUTINE
+         LM    R9,R13,0(R4)        RESTORE R9 TO R13
+READSCBS OBTAIN LIST               READ DSCB FORMAT 4
+         LTR   R15,R15             TEST IF RC IS ZERO
+         BZ    TESTF4              YES - BRANCH TEST FORMAT 4.
+         LR    R2,R15              SAVE RETURN CODE
+         WTO   '*** T581P02  - RC IS NOT 0 FOR OBTAIN1 **',ROUTCDE=(11)
+         B     ABEND               NO  - BRANCH TO ABEND
+TESTF4   CLI   WAOBTAIN+44,C'4'    TEST IF WAOBTAIN IS = TO FORMAT 4
+         BE    WF4                 YES - BRANCH TO WRITE F.4
+         WTO   '*** T581P02  - REC IS NOT F.4 OBTAIN1  **',ROUTCDE=(11)
+         B     ABEND               NO  - BRANCH TO ABEND
+WF4      MVC   OUTDSCB(140),WAOBTAIN   **> MOVES FOR OUTPUT RECORD
+         MVC   OUTYYDDD,YYDDD           *    DSCB FORMAT 4, FOR CURRENT
+         MVC   OUTHHMM,HHMM             *    VOLUME.
+         MVC   OUTCCHHR,ADDSEEK         *
+         MVC   OUTVOLID,VOLID          **
+         MVI   OUTDSCB,X'00'       NECESSARY FOR PGM=T581P05
+         BAL   R4,WRITE            PERFORM WRITE
+         MVC   SAVETPC,OUTDSCB+64  SAVE NUMBER OF TRACKS PER CYLINDER
+         MVC   SAVETRKC,OUTDSCB+74 SAVE NUMBER OF DSCB'S PER TRACK
+         MVC   SAVEHWM,OUTDSCB+45  SAVE HIGH WATER MASK IN VTOC (1)
+         MVC   SAVEF6,OUTDSCB+100  SAVE FIRST POINTER FOR F.6 (2)
+         CLC   SAVEHWM,SAVEF6      TEST IF (1) IS LESS THAN (2)
+         BNL   NEXTDSCB            NO  - BRANCH TO NEXT RESEARCH DSCB
+         MVC   SAVEHWM,SAVEF6      YES - MOVE (2) TO (1)
+         EJECT
+***********************************************************************
+*                                                                     *
+*        READ AND WRITE VALID DSCBS FOR CURRENT VOLUME IN TABLE.      *
+*        THE CATALOG IS OPTIONALLY SEARCHED FOR A MATCH OF DSNAME     *
+*        AND VOLUME NUMBER.                                           *
+*        ANOTHER OPTIONAL FUNCTION IS THE READING OF PDS DIRECTORIES  *
+*        TO FIND BLOCKS ALLOCATED AND BLOCKS USED.                    *
+*        TEMPORARY DATASETS ARE NOT NORMALLY WRITTEN TO THE OUTPUT    *
+*        DATASET, BUT MAY BE IF DESIRED.                              *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+NEXTDSCB SR    R4,R4               RESET
+         IC    R4,ADDSEEK+4        RECORD COUNT INTO REG.4
+         AH    R4,ONE              ADD ONE TO RECORD COUNT
+         CH    R4,TRKCOUNT         TEST IF REC.COUNT IS > TRKCOUNT
+         BNH   STOREC              NO  - BRANCH TO STORE NEW REC. COUNT
+         MVC   DECIMAL(4),ADDSEEK  YES - MOVE CCHH TO DECIMAL
+         L     R4,DECIMAL          LOAD CCHH INTO REG.4
+         A     R4,=F'1'            ADD ONE TO CCHH
+         ST    R4,DECIMAL          STORE NEW CCHH TO DECIMAL
+         CLC   DECIMAL+2,SAVETPC   TEST IF CURRENT HH > TRACKS PER CYL
+         BL    *+22                BRANCH IF NO
+         LH    R4,DECIMAL          YES - LOAD CC INTO R4
+         A     R4,=F'1'            ADD ONE TO CC
+         STH   R4,DECIMAL          STORE CC
+         XC    DECIMAL+2(2),DECIMAL+2  CLEAR CC
+         MVC   ADDSEEK(4),DECIMAL  MOVE NEW CCHH TO ADDSEEK
+         LH    R4,ONE              RECORD COUNT = 1
+STOREC   STC   R4,ADDSEEK+4        STORE NEW RECORD COUNT
+         CLC   SAVEHWM,ADDSEEK     TEST IF END OF VTOC
+         BL    NEXTDEV             YES - BRANCH TO NEXT TEST DEVICE
+         OBTAIN LIST               READ NEXT DSCB
+         LTR   R15,R15             TEST IF CC IS ZERO
+         BZ    F0ORTEMP            YES - TEST IF FORMAT 0 OR TEMP. DS
+         LR    R2,R15              SAVE RETURN CODE
+         WTO   '*** T581P02  - RC IS NOT 0 FOR OBTAIN2 **',ROUTCDE=(11)
+         B     ABEND               NO  - BRANCH TO ABEND
+F0ORTEMP CLI   WAOBTAIN+44,X'00'   TEST IF THIS DSCB IS FORMAT 0
+         BE    NEXTDSCB            YES - BRANCH TO REARCH NEXT DSCB
+         LH    R7,TWENTY           LOAD TWENTY INTO REG. 13
+         LA    R10,TABCCHHR        ADDRESS TABLE OF CCHHR OF TEMP DS
+NEXTCHR  CLC   0(5,R10),=X'0000000000'  TEST IF END OF TABLE CCHHR
+         BE    ENDTCHR             YES - TEST IF THIS DSCB IS TEMP. DS
+         CLC   0(5,R10),ADDSEEK
+         BE    ADDTCHR
+         LA    R10,5(R10)
+         BCT   R7,NEXTCHR
+ENDTCHR  EQU   *
+         TM    PARMSW,TMPSW        TEMP. DATASETS TO BE WRITTEN?
+         BO    WDSCB               YES. JUMP TESTS
+         CLC   WAOBTAIN(3),=C'SYS' DSNAME START WITH 'SYS'
+         BNE   WDSCB                    NO  - BRANCH TO WRITE THIS DSCB
+         CLC   WAOBTAIN+8(2),=C'.T'     YES - TEST1 IF TEMPORY DATA SET
+         BNE   WDSCB                    NO  - BRANCH TO WRITE THIS DSCB
+         CLC   WAOBTAIN+16(2),=C'.R'    YES - TEST2 IF TEMPORY DATA SET
+         BE    ADDTCHR                  YES - BRANCH TO ADD TABLE CCHHR
+         CLC   WAOBTAIN+16(2),=C'.S'    NO  - TEST3 IF TEMPORY DATA SET
+         BNE   WDSCB                    NO  - BRANCH TO WRITE THIS DSCB
+ADDTCHR  CLC   WAOBTAIN+135(5),=X'0000000000' TEST IF CCHHR F.2 OR F.3
+         BE    NEXTDSCB            YES - BRANCH TO NEXTDSCB      / = 0
+         MVC   0(5,R3),WAOBTAIN+135     MOVE CCHHR F.2 OR F.3 TO TABCHR
+         LA    R3,5(R3)            ADDRESS FOR NEXT MOVE IN TABCCHHR
+         B     NEXTDSCB            BRANCH TO RESEARCH NEXT DSCB
+WDSCB    MVC   OUTDSCB(140),WAOBTAIN    MOVE DSCB TO OUTPUT RECORD
+         MVC   OUTCCHHR,ADDSEEK         MOVE CCHHR TO OUTPUT RECORD
+         CLI   WAOBTAIN+44,X'F1'   TEST IF DSCB FORMAT 1
+         BNE   NOF1                NO
+         TM    WAOBTAIN+82,X'02'
+         BNO   NOPDS
+         TM    PARMSW,PDSSW        PDS PROCESSING REQUIRED?
+         BNO   NOPDS               NO. BRANCH
+         MVC   RNAME2,WAOBTAIN     MOVE DSN OF THIS PDS FOE ENQ
+         ENQ   (QNAME2,RNAME2,E,,SYSTEM) TEST IF THIS PDS IS AVAILABLE
+         LTR   R15,R15             TEST IF RETUN CODE IS 0
+         BNZ   PDSUNA              NO - DATA SET UNAVAILABLE
+         MVC   PDS+40(8),0(R8)       MOVE CURRENT DDNAME
+         RDJFCB (PDS)
+         MVC   PDSDSNM(44),WAOBTAIN
+         MVC   PDSCRDT(6),WAOBTAIN+53
+         MVI   PDSNVOL,X'01'
+         MVC   PDSVOLS(6),VOLID
+         OI    PDSMASK+4,X'80'
+         OPEN  (PDS,(INPUT)),TYPE=J
+         STM   R5,R7,PDSSA
+         XR    R5,R5
+         XR    R6,R6
+         XR    R7,R7
+PDSLOOP  GET   PDS,PDSWA
+         CH    R5,PDSWA
+         BE    *+8
+         LA    R7,1(R7)
+         LA    R6,1(R6)
+         B     PDSLOOP
+PDSERIN  MVC   IOPDS+59(44),WAOBTAIN    MOVE DSNAME TO ERROR MESSAGE
+IOPDS    WTO   '** T581P02 - I/O ERROR READING PDS DIRECTORY - DSN=    C
+                                                       ',ROUTCDE=(11)
+PDSEND   STC   R6,OUTDSCB+75
+         STC   R7,OUTDSCB+76
+         CLOSE PDS
+         DEQ   (QNAME2,RNAME2,,SYSTEM)
+         LM    R5,R7,PDSSA
+         B     NOPDS
+PDSUNA   MVI   OUTDSCB+75,X'FF'
+         MVI   OUTDSCB+76,X'FF'
+NOPDS    EQU   *
+         TM    PARMSW,CATSW        CATALOG LOOKUP REQUIRED?
+         BNO   NOF1                NO. BRANCH
+         MVI   OUTDSCB+61,C'Y'     YES
+         LOCATE ISITCTLG           TEST IF THE D/S IS CATALOGED
+         LTR   R15,R15
+         BE    NOF1                YES
+         MVI   OUTDSCB+61,C'N'     NO
+         CLC   VOLID,WADUMMY+6
+         BE    *+8
+         MVI   OUTDSCB+61,C'N'
+NOF1     EQU   *
+         BAL   R4,WRITE            PERFORM WRITE
+         CLC   SAVEHWM,WAOBTAIN+135
+         BNL   NEXTDSCB                 NO  - BRANCH TO REACH NEXT DSCB
+         MVC   SAVEHWM,WAOBTAIN+135     YES - MOVE
+         B     NEXTDSCB                 BRANCH TO RESEARCH NEXT DSCB
+         EJECT
+***********************************************************************
+*                                                                     *
+*        AT THE END OF PROCESSING FOR ALL VOLUMES IN THE TABLE,       *
+*        THE CARRIED FORWARD FILE IS READ AND RECORDS TRANSFERRED     *
+*        TO THE OUTPUT FILE IF NOT BELONGING TO A VOLUME JUST         *
+*        PROCESSED. THIS SECTION IS BYPASSED WHEN THE ACC SWITCH      *
+*        IS OFF.                                                      *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+READ     EQU   *
+         TM    PARMSW,ACCSW        DATA ACCUMULATION REQUIRED?
+         BNO   CLOSE2              NO. BRANCH
+         GET   INPUT               READ INPUT FILE
+         LR    R6,R1               SAVE ADDRESS OF RECORD
+         CLC   VOLEQ,154(R6)       TEST IF VOLUME ID IS EQUAL TO VOLEQ
+         BE    TESTSW              YES - BRANCH TO TEST SWITCH
+         MVI   SWITCH,OFF          SET OFF SWITCH
+         MVC   VOLEQ,154(R6)       MOVE VOLUME ID TO VOLEQ
+         LA    R8,TABLE            ADDRESS OF FIRST ELEMENT IN TABLE
+         LH    R7,TWENTY           LOAD TWENTY INTO REG7
+LOOP     CLC   VOLEQ,8(R8)         TEST IF VOLUME ID EXIST IN TABLE
+         BE    SETONSW             NO  - BRANCH TO SET ON SWITCH
+         LA    R8,19(R8)           ADDRESS NEXT VOLUME ID. IN TABLE
+         BCT   R7,LOOP
+         B     TESTSW              BRANCH TO TEST SWITCH
+SETONSW  MVI   SWITCH,ON           YES - SET ON SWITCH
+TESTSW   CLI   SWITCH,ON           TEST IF SWITCH IS ON
+         BE    READ                YES - BRANCH TO NEXT READ
+         MVC   OUTFILE,0(R6)       NO  - MOVE RECORD FROM INPUT FILE
+*                                             TO OUTPUT FILE
+         LA    R4,READ             ADDRESS FOR NEXT READ
+WRITE    PUT   OUTPUT,OUTFILE      WRITE RECORD TO OUTPUT FILE
+         BR    R4
+         EJECT
+***********************************************************************
+*        SYNAD AND ABEND ROUTINE                                      *
+***********************************************************************
+         SPACE 1
+ERINPUT  MVC   IOER1+34(6),=C'INPUT '
+EROUTPUT SYNADAF ACSMETH=QSAM
+         MVC   IOER2+20(42),50(R1)
+IOER1    WTO '** T581P02 - I/O ERROR ON OUTPUT D.S. MORE DATA FOLLOWS' C
+               ROUTCDE(11)
+IOER2    WTO '** T581P02 -                                           ' C
+               ROUTCDE(11)
+         SYNADRLS
+         ABEND 581,,STEP
+         SPACE 3
+ABEND    ABEND 581,DUMP            ABEND
+         SPACE 3
+***********************************************************************
+*        CLOSE THE FILES AND END OF PROGRAM                           *
+***********************************************************************
+         SPACE 1
+CLOSE    CATALOG GENP1
+         DEQ   (QNAME,RNAME,,SYSTEM)
+         CLOSE (INPUT,,OUTPUT)     CLOSE FILES
+         B     PGO
+         SPACE 1
+EOP      DEQ   (QNAME,RNAME,,SYSTEM)
+PGO      PGMOUT RC=RTCODE
+         SPACE 2
+CLOSE2   EQU   *
+         CLOSE (OUTPUT)            CLOSE OUTPUT DATASET.
+         B     PGO                 RETURN TO O.S.
+         EJECT
+***********************************************************************
+*        DCB FOR INPUT AND OUTPUT FILES                               *
+***********************************************************************
+         SPACE 1
+INPUT    DCB   DDNAME=T581F010,                                        C
+               DSORG=PS,                                               C
+               EODAD=CLOSE,                                            C
+               MACRF=GL,                                               C
+               SYNAD=ERINPUT,                                          C
+               RECFM=FB,                                               C
+               EXLST=STRJFCB,                                          C
+               LRECL=160,                                              C
+               BLKSIZE=1600
+         SPACE 3
+OUTPUT   DCB   DDNAME=T581F011,                                        C
+               DSORG=PS,                                               C
+               MACRF=PM,                                               C
+               SYNAD=EROUTPUT,                                         C
+               RECFM=FB,                                               C
+               EXLST=STRJFCB,                                          C
+               LRECL=160,                                              C
+               BLKSIZE=1600
+DDNOUT   EQU   OUTPUT+40
+         SPACE 3
+TEST     DCB   DSORG=PS,                                               C
+               MACRF=GM,                                               C
+               RECFM=F,                                                C
+               BLKSIZE=140,                                            C
+               EXLST=STRJFCB
+         SPACE 1
+CURDDN   EQU   TEST+40             CURRENT DDNAME
+         SPACE 3
+PDS      DCB   DDNAME=DUMMY,DSORG=PS,MACRF=GM,BFTEK=S,RECFM=F,         C
+               BLKSIZE=256,LRECL=256,BUFNO=4,EODAD=PDSEND,             C
+               EXLST=PDSJFCB,SYNAD=PDSERIN
+         SPACE 3
+***********************************************************************
+*        DEFINITION OUTPUT FILE                                       *
+***********************************************************************
+         SPACE 1
+OUTFILE  DS    0CL160
+OUTDSCB  DS    CL140               DSCB
+OUTYYDDD DS    CL5                 DATE
+OUTHHMM  DS    CL4                 HHMM
+OUTCCHHR DS    CL5                 CCHHR OF ORIGINAL DSCB IN VTOC
+OUTVOLID DS    CL6                 VOLUME ID
+         EJECT
+***********************************************************************
+*        WORK AREAS                                                   *
+***********************************************************************
+         SPACE 1
+         DS    0D
+GENP1    CAMLST CAT,NEWDSN,,VOLIST
+RENAMBOP CAMLST RENAME,OLDDSN,NEWDSN,VOLIST
+SAVETPC  DC    H'0'                NUMBER OF TRACKS PER CYL.
+OLDDSN   DS    CL44
+NEWDSN   DS    CL44
+QNAME    DC    C'DSNHVTOC'
+QNAME2   DC    C'SYSDSN  '
+RNAME    DS    CL44
+RNAME2   DS    CL44
+GDGPLUS1 DC    C'.G    V00'
+VOLIST   DC    62H'0'
+HHMM     DS    CL4                 IPL TIME
+YYDDD    DS    CL5                 IPL DATE
+DECIMAL  DS    D                   WORK AREA FOR PACKED OPERATIONS
+TABLE    DC    20CL19' '           TABLE (20 ELEMENTS OF 15 BYTES)
+WADEV    DC    2F'0'               WORK AREA FOR DEVTYPE MACRO
+VOLEQ    DC    CL6' '              WA FOR VOLUME NAME FROM INPUT FILE
+         DS    0F
+PDSJFCB  DC    X'87'
+         DC    AL3(PDSAREA)
+PDSAREA  DS    CL176
+PDSDSNM  EQU   PDSAREA
+PDSMASK  EQU   PDSAREA+72
+PDSCRDT  EQU   PDSAREA+80
+PDSIND1  EQU   PDSAREA+86
+PDSIND2  EQU   PDSAREA+87
+PDSNVOL  EQU   PDSAREA+117
+PDSVOLS  EQU   PDSAREA+118
+PDSSA    DS    3F
+PDSWA    DS    CL256
+STRJFCB  DC    X'87'               READ JFCB
+         DC    AL3(JFCBAREA)
+JFCBAREA DS    CL176
+JFCBDSNM EQU   JFCBAREA
+JFCBVLSQ EQU   JFCBAREA+70
+JFCBMASK EQU   JFCBAREA+72
+JFCBNVOL EQU   JFCBAREA+117        NUMBER OF VOL.SER. NUMBERS
+JFCBVOLS EQU   JFCBAREA+118        VOLUME NAME
+ISITCTLG CAMLST NAME,WAOBTAIN,,WADUMMY
+         DS    0D
+WADUMMY  DS    CL265
+VOLID    DC    CL6' '              CURRENT VOLUME NAME
+WAOBTAIN DS    0D
+         DC    CL148' '            WORK AREA FOR OBTAIN MACRO
+LIST     CAMLST SEEK,ADDSEEK,VOLID,WAOBTAIN
+         DS    0D
+SEEK     DC    XL3'0'              DUMMY PART
+ADDSEEK  DC    XL5'0'
+HOLD     DC    5F'0'               SAVE AREA FOR REG. 9 TO 13
+         DS    0H
+TRKCOUNT DC    X'0'                HALF WORD CHECK FOR NUMBER OF
+SAVETRKC DC    X'0'                DSCB'S PER TRACK
+SAVEHWM  DC    XL5'0'              SAVE AREA FOR HIGHEST CCHHR TO CHECK
+SAVEF6   DC    XL5'0'              SAVE AREA FOR FIRST POINTER OF F.6
+DEB      DC    4F'0'               FAKE UP A DEB FOR TRACK CONVERTION
+         DC    AL1(1)              ONE EXTENT
+         DC    AL3(0)
+         DC    1F'0'               NO PURGE
+         DC    X'0F'               ID
+         DC    AL3(0)
+         DC    X'04'               EXTENT SCALE
+APPEN    DC    AL3(0)              APPENTAGE TABLE ADDRESS
+UCBXREF  DC    XL4'C0000000'       UCB ADDRESS
+         DC    3AL2(0)             STARTING ADDRESS
+         DC    X'FFFFFFFF7FFF'     LAST CCHH NUMBER POSSIBLE
+TABCCHHR DS    20XL5               TABLE OF CCHHR (TEMP. DS F.2 OR F.3)
+RTCODE   DC    H'0'
+         EJECT
+***********************************************************************
+*        CONSTANTS , EQUATES AND LITTERAL POOL                        *
+***********************************************************************
+         SPACE 1
+IGNOREDD DC    CL8'JOBLIB'       ***
+         DC    CL8'STEPLIB'        *
+         DC    CL8'SYSPRINT'       *
+         DC    CL8'SYSOUT'         *
+         DC    CL8'SYSLOUT'        *
+         DC    CL8'SYSLIB'         *
+         DC    CL8'SYSLIN'         *
+         DC    CL8'SYSABEND'       *
+         DC    CL8'SYSUDUMP'        > DDNAME TO IGNORE
+         DC    CL8'T58101R'        *
+         DC    CL8'T581F010'       *
+         DC    CL8'T581F011'     ***
+NIDD     DC    H'12'               NUMBER OF DDNAMES TO IGNORE
+ADDRTIOT DC    F'0'                ADDRESS OF TIOT
+ADDRPARM DC    F'0'
+SAVEM    DC    4F'0'               *******
+ZEROS    DC    F'0'
+ONE      DC    H'1'
+EIGHT    DC    H'8'
+TWENTY   DC    H'20'
+SWITCH   DC    X'00'
+PARMSW   DC    X'00'
+BLANK    DC    CL8' '
+         SPACE 3
+DASD     EQU   X'20'
+ON       EQU   X'FF'
+OFF      EQU   X'00'
+SIGN     EQU   X'F0'
+ONEVOL   EQU   B'00000001'
+PDSSW    EQU   X'80'               PDS DIRECTORY PROCESSING
+CATSW    EQU   X'40'               CATALOG LOOKUP
+ACCSW    EQU   X'20'               DATA ACCUMULATION
+TMPSW    EQU   X'10'               TEMPORARY DATASETS REQD.
+         END

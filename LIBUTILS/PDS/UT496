@@ -1,0 +1,1503 @@
+UT496    CSECT
+         PRINT GEN
+         SPACE 2
+*******************************************************************
+*                                                                 *
+*        PROGRAM ID. :             UT496                          *
+*                                                                 *
+*        DATE WRITTEN :            JUNE, 1976                     *
+*                                                                 *
+*        AUTHOR :                  J.P. RAINSON                   *
+*                                                                 *
+*        LOCATION :                BRUSSELS                       *
+*                                                                 *
+*******************************************************************
+         SPACE 3
+*******************************************************************
+*                                                                 *
+*                                                                 *
+*    DESCRIPTION:  THIS PROGRAM HAS THE ABILITY TO COPY AN INPUT  *
+*    -----------   DATA SET TO ONE OR TWO OUTPUT DATA SET AFTER   *
+*                  REPLACING CONTROL CARDS BY PARTITIONED DATA    *
+*                  SETS MEMBERS. SOME FUNCTIONS ARE PERFORMING    *
+*                  DEPENDING OF THE PARAMETERS ENTERED IN THE     *
+*                  EXEC CARD.                                     *
+*                                                                 *
+*    CONTROL CARDS: .*MEMB  - SIMPLE COPY OF THE REQUESTED PDS    *
+*    -------------                 MEMBERS.                       *
+*                   /*PROC  - CREATION OF INSTREAM PROCEDURE.     *
+*                                  AN // PEND CARD IS ADDED AFTER *
+*                                  EACH OF THE SELECTED PDS       *
+*                                  MEMBERS.                       *
+*                                                                 *
+*    EXEC PARAMETERS :  UNLIKE  -  MIXED DEVICE TYPES MAY BE USED *
+*    ---------------                    FOR CONCATENATED INPUT.   *
+*                       NODUMP  -  POSSIBILITY TO SUPPRESS THE    *
+*                                       PROGRAM DUMP.             *
+*                                       (NOT APPLICABLE ON HARD   *
+*                                       ERROR).                   *
+*                       INTRDR  -  AN /*EOF CARD IS ADDED AT THE  *
+*                                       END OF OUTPUT DATA SETS   *
+*                                       IN ORDER TO ALLOW DIRECT  *
+*                                       INTERNAL READER INPUT.    *
+*                                  DCB'S FORCE TO F,80,80 BUFNO=1 *
+*                                                                 *
+*                       DEFAULTS ARE:   LIKE DEVICES              *
+*                                       OUTPUT NOT FOR INT/READER *
+*                                       DUMP IF ANORMAL PROCESS.  *
+*                                                                 *
+*    OPERATION REQUIRED DD STATEMENTS:                            *
+*    --------------------------------                             *
+*              MANDATORY -    SYSUT1   - INPUT                    *
+*                             SYSUT2   - OUTPUT                   *
+*                                                                 *
+*              OPTIONAL  -    SYSPRINT - OUTPUT                   *
+*                             SYSLIB   - INPUT  (PDS LIBRARIES)   *
+*                             SYSUT3   - OUTPUT                   *
+*                                                                 *
+*    ACCESS METHOD:  QSAM AND BPAM                                *
+*    -------------   SIMPLE BUFFERING                             *
+*                    GET MOVE / PUT MOVE                          *
+*                                                                 *
+*    SPECIAL TECHNIQUES:  TIOT SEARCH FOR DDNAMES.                *
+*    ------------------   PROGRAM SUPPLIED STATUS LIST OF DD'S    *
+*                                                                 *
+*    RESTRICTIONS:   OUTPUT RECORDS MUST BE EQUAL OR LESS THAN    *
+*    ------------    INPUT.                                       *
+*                    ODS MEMBERS MUST BE CODED BETWEEN COLS 8     *
+*                    AND 71, SEPATE BY ','.                       *
+*                                                                 *
+*                                                                 *
+*******************************************************************
+         EJECT
+*******************************************************************
+*        DCB DSECT                                                *
+*******************************************************************
+         SPACE 1
+         PRINT NOGEN
+         DCBD  DSORG=PS
+DCBLNGTH EQU   *-IHADCB            LENGTH OF DCB
+UT496    CSECT                     END OF DCB DSECT
+         PRINT GEN
+         EJECT
+*******************************************************************
+*        FORMAT OF OUTPUT FILE DDNAME CONTROL BLOCKS              *
+*******************************************************************
+         SPACE 3
+TBLENTRY DSECT                     OUTPUT FILE REFERENCE ENTRY
+TBLDCBPT DS    F                   POINTER TO OUTPUT DCB
+*                                  HI-ORDER BYTE USED AS TEST BYTE
+TBLDDNAM DS    CL8                 OUTPUT FILE DDNAME
+TBLDDTYP DS    CL8                 OUTPUT FILE TYPE
+TBLRECNT DS    PL4                 OUTPUT FILE RECORD COUNTER
+TBLLINK  DS    F                   POINTER TO NEXT ENTRY
+TBLENTSZ EQU   *-TBLENTRY          TABLE ENTRY LENGTH
+UT496    CSECT END OF TABLE ENTRY DSECT
+         EJECT
+*******************************************************************
+*        REGISTER EQUATES AND USAGES.                             *
+*******************************************************************
+         SPACE 1
+R0       EQU   0    SVC COMMUNICATIONS AND WORK REGISTER
+R1       EQU   1    SVC COMMUNICATIONS AND WORK REGISTER
+R2       EQU   2    SUB-ROUTINE CONTROL INFORMATION AND WORK REG.
+R3       EQU   3    WORK REGISTER
+R4       EQU   4    BAL RETURN ADDRESS
+R5       EQU   5
+R6       EQU   6
+R7       EQU   7
+R8       EQU   8
+R9       EQU   9
+R10      EQU   10
+R11      EQU   11
+R12      EQU   12   BASE REGISTER 2
+R13      EQU   13   SAVE AREA POINTER / BASE REGISTER 1
+R14      EQU   14   BALR RETURN ADDRESS
+R15      EQU   15   BALR ROUTINE ADDRESS AND WORK REGISTER
+         SPACE 3
+*******************************************************************
+*        HOUSEKEEPING                                             *
+*******************************************************************
+         SPACE 1
+         PGMIN EQUATES=NO,USING=(R13,R12)    ESTABLISH ADDRESSABILITY
+         ST    R1,PARMSAVE
+         SPACE 3
+         EJECT
+*******************************************************************
+*        ANALYSE PARAMETER SUPPLIED IN EXEC CARD                  *
+*******************************************************************
+         SPACE 1
+         BAL   R4,PARMANAL         PERFORM ANALYSIS OF EXEC-PARAMETER
+         SPACE 3
+*******************************************************************
+*        TEST WHICH ARE THE DD'S SUPPLIED, AND OPEN DATA SETS     *
+*         PRESENT.                                                *
+*******************************************************************
+         SPACE 1
+         LA    R3,MAXDS            ESTABLISH LOOP
+         LA    R2,DCBTABLE         POINT R2 AT DCB TABLE
+         OI    0(R2),DDINT         INDICATE DD INTEREST
+         BAL   R4,TESTIOT          GO TEST IF DD STATEMENT PRESENT
+         BAL   R4,OPEN             GO OPEN DATA SET
+         LA    R2,DCBNTRY(R2)      POINT AT NEXT TABLE ENTRY
+         BCT   R3,*-16             PROCESS NEXT DATA SET
+         SPACE 3
+*******************************************************************
+*        TEST IF MANDATORY SYSUT1 PRESENT                         *
+*******************************************************************
+         SPACE 1
+DDUT1    TM    SYSUT1SW,DDPRES     TEST SYSUT1 DD PRESENT
+         BO    DDUT1X              YES - BRANCH
+         WTO   'UT496 **  SYSUT1 DD STATEMENT NOT SUPPLIED **'
+         B     PROCBYP             BRANCH END MESSAGE AND CLOSE
+DDUT1X   EQU   *
+         SPACE 3
+*******************************************************************
+*        TEST IF MANDATORY SYSUT2 PRESENT                         *
+*******************************************************************
+         SPACE 1
+DDUT2    TM    SYSUT2SW,DDPRES     TEST SYSUT2 DD PRESENT
+         BO    DDUT2X              YES - BRANCH
+         WTO   'UT496 **  SYSUT2 DD STATEMENT NOT SUPPLIED **'
+         B     PROCBYP             BRANCH END MESSAGE AND CLOSE
+DDUT2X   EQU   *
+         EJECT
+*******************************************************************
+*        PROGRAM CONTROL ROUTINE                                  *
+*******************************************************************
+         SPACE 1
+         BAL   R4,INITIAL          PERFORM PROGRAM INITIALISATION
+         SPACE 1
+         BAL   R4,MAINSEC          PERFORM PROGRAM MAIN SECTION
+         SPACE 1
+         BAL   R4,ENDING           PERFORM END OF PROGRAM SECTION
+         EJECT
+*******************************************************************
+*        JOB TERMINATION ROUTINE -                                *
+*         CLOSE ANY OPEN DATA SETS,                               *
+*         SET A COMPLETION CODE IN REGISTER 15, AND RETURN.       *
+*******************************************************************
+         SPACE 1
+JOBEND   EQU   *
+         LA    R3,MAXDS            ESTABLISH LOOP
+         LA    R2,DCBTABLE         POINT AT START OF DCB TABLE
+         BAL   R4,CLOSE            CLOSE DATA SET IF OPEN
+         LA    R2,DCBNTRY(R2)      POINT AT NEXT TABLE ENTRY
+         BCT   R3,*-8              CLOSE NEXT DATA SET
+         SPACE 1
+*        DUMP IF CC16 AND DUMPSW = 'Y'
+         SPACE 1
+         CLC   COMPCODE,COND16     TEST IF CONDITION CODE = 16
+         BNE   JOBCODE             NO - BYPASS ABEND PROCESSING
+         CLI   DUMPSW,C'Y'         TEST IF DUMP REQUEST (DEFAULT)
+         BNE   JOBCODE             NO - BYPASS ABEND PROCESSING
+         WTO   'UT496 ** BAD END OF PROGRAM                **'
+         ABEND 0496,,STEP          ABEND WITH U0496
+         SPACE 1
+*        RETURN WITH CONDITION CODE
+         SPACE 1
+JOBCODE  EQU   *
+         PGMOUT RC=COMPCODE        SET COND CODE AND RETURN
+         SPACE 3
+*******************************************************************
+*        PROCESSING BYPASSED DUE TO HARD ERROR                    *
+*******************************************************************
+         SPACE 1
+PROCBYP  EQU   *
+         MVC   COMPCODE,COND16     SET CONDITION CODE TO 16
+         MVI   DUMPSW,C'Y'         SET DUMP SWITCH TO DUMP
+         WTO   'UT496 **  PROCESSING BYPASSED              **'
+         B     JOBEND              BRANCH TO END OF JOB PROCESSING
+         EJECT
+*******************************************************************
+*        PATCH AREA FOR APPLYING SUPERZAP                         *
+*******************************************************************
+         SPACE 1
+*        ( 'B  *'  SIMPLIFIES CALCULATION ADDRESSES )
+         SPACE 1
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         EJECT
+*******************************************************************
+*        ANALYSE PARAMETER FIELD                                  *
+*                                                                 *
+*        R2    ADDRESS OF PARM FIELD                              *
+*        R5    START OF PARM DETAIL.                              *
+*        R7    NO OF PARM CHARACTERS LEFT                         *
+*        R8    START POSITION OF DDNAME                           *
+*        R10   EXECUTE LENGTH FOR DDNAME MOVE                     *
+*******************************************************************
+         SPACE 1
+PARMANAL SUBIN SAVE=(R4)
+         L     R1,PARMSAVE         LOAD PARAMETER ADDRESS POINTER
+         L     R2,0(0,R1)          LOAD ADDRESS OF PARM FIELD
+         LH    R7,0(0,R2)          LOAD PARM FIELD LENGTH
+         LA    R5,2(0,R2)          ADDRESS OF FIRST CHARACTER
+PARMPROC EQU   *
+         LTR   R7,R7               IS PARMFLD LENGTH ZERO
+         BZ    PARMEND             YES - GO END PARM ANALYSE
+         CLI   0(R5),C','          TEST IF DELIMITTER CHARACTER
+         BNE   *+16                NO - BYPASS FORWARD CHAINING
+         SH    R7,=H'1'            DECREMENT PARM LENGTH BY 1
+         LA    R5,1(0,R5)          INCREMENT POINTER PAST ','
+         B     PARMPROC            GO TEST NEXT PARM POSITION
+         CLC   0(6,R5),=C'UNLIKE'  'UNLIKE' REQUESTED
+         BE    PARMUNLK            YES - BRANCH
+         CLC   0(6,R5),=C'INTRDR'  INTERNAL READER REQUESTED?
+         BE    PARMINTR            YES - BRANCH
+         CLC   0(6,R5),=C'NODUMP'  TEST IF NO DUMP REQUESTED?
+         BE    PARMDUMP            YES - BRANCH
+         CLC   0(7,R5),=C'LINKLIB' TEST LINKLIB CHANGE?
+         BE    PARMLIB2            YES - BRANCH
+         CLC   0(7,R5),=C'DDNAME='  NON CTL CARDS TO SPECIAL OUTPUT?
+         BE    PARMOUT             YES - BRANCH
+         CLC   0(4,R5),=C'DDN='    NON CTL CARDS TO SPECIAL OUTPUT?
+         BE    PARMOUTS            YES - BRANCH
+         SPACE 1
+*        INVALID PARAMETER - DISPLAY ERROR AND SET CONDITION CODE
+         SPACE 1
+PARMINVL EQU   *
+         WTO   'UT496 **  INVALID PARM IN EXEC CARD        **'
+         MVC   ENDPRPAR+90(L'PARMERMS),PARMERMS  ERR MESS TO PRT LINE
+         MVC   COMPCODE,COND16     SET CONDITION CODE TO 16
+         B     PARMNEXT            GO POINT TO NEXT PARAMETER
+         SPACE 1
+PARMUNLK EQU   *
+         MVI   UT1LIST,X'85'       SET SYSUT1 EXIT TO GO
+         B     PARMNEXT            GO POINT TO NEXT PARAMETER
+         SPACE 1
+PARMINTR EQU   *
+         MVI   INTRDRSW,C'Y'       SET INTERNAL READER SWITCH TO YES
+         B     PARMNEXT            GO POINT TO NEXT PARAMETER
+         SPACE 1
+PARMDUMP EQU   *
+         MVI   DUMPSW,C'N'         SET DUMP SWITCH TO 'NODUMP'
+         B     PARMNEXT            GO POINT TO NEXT PARAMETER
+         SPACE 1
+PARMLIB2 EQU   *
+         MVI   LKLIB2SW,C'Y'       SET LINKLIB2 SWITCH ON
+         B     PARMNEXT            GO TEST NEXT PARM
+         SPACE 1
+*        STORE OUTMAIN D/S DDNAME
+         SPACE 1
+PARMOUT  EQU   *
+         LA    R5,7(0,R5)          POINT R5 TO START OF DDNAME
+         SH    R7,=H'7'            DECREMENT PARM LENGTH BY 7
+         B     PARMOUTC            GO TO COMMUN PARMOUT SECTION
+PARMOUTS EQU   *
+         LA    R5,4(0,R5)          POINT R5 TO START OF DDNAME
+         SH    R7,=H'4'            DECREMENT PARM LENGTH BY 4
+PARMOUTC EQU   *
+         LR    R8,R5               SAVE START POSITION OF DDNAME
+         SR    R10,R10             ZEROISE EX LENGTH OF DDNAME
+         SPACE 1
+PARMOUTL EQU   *
+         LTR   R7,R7               IS PARM LENGTH ZERO?
+         BE    PARMOUTF            YES - GO TO END OF PARM LOOP
+         CLI   0(R5),C','          TEST IF DELIMITTER CHARACTER
+         BE    PARMOUTF            YES - GO TO END OF PARM LOOP
+         LA    R10,1(0,R10)        INCREMENT EXECUTE LENGTH BY 1
+         LA    R5,1(0,R5)          INCREMENT PARM POINTER BY 1
+         SH    R7,=H'1'            DECREMENT PARM LENGTH BY 1
+         B     PARMOUTL            GO TEST NEXT PARM POSITION
+         SPACE 1
+PARMOUTF EQU   *
+         C     R10,=F'0'           PARM LENGTH ZERO?
+         BE    PARMINVL            YES - BRANCH TO PARAMETER ERROR
+         C     R10,=F'8'           PARM LENGTH > 8?
+         BH    PARMINVL            YES - BRANCH TO PARAMETER ERROR
+         BCTR  R10,0               DECREMENT PARM LENGTH FOR EXECUTE MV
+         SPACE 1
+PARMOUTP EQU   *
+         LA    R2,OUTIOTTB         POINT R2 FOR TESTIOT
+         EX    R10,PARMOUTM        EXECUTE MOVE DDNAME IN DCBTABLE
+         BAL   R4,TESTIOT          GO TEST IF DD PRESENT
+         TM    OUTIOTSW,DDPRES     DD PRESENT?
+         BNO   PARMINVL            NO - GO TO INVALID PARM
+         B     PARMNEXT            GO POINT TO NEXT PARAMETER
+         SPACE 1
+*        POINT TO NEXT PARAMETER DELIMITTER
+         SPACE 1
+PARMNEXT EQU   *
+         LTR   R7,R7               IS PARMFLD LENGTH ZERO
+         BZ    PARMEND             YES - GO TO END OF PARM ANALYSE
+         CLI   0(R5),C','          TEST IF DELIMITTER CHARACTER
+         BE    PARMPROC            YES - GO TEST NEXT PARAMETER
+         SH    R7,=H'1'            DECREMENT PARM LENGTH BY 1
+         LA    R5,1(0,R5)          INCREMENT PARM POINTER BY 1
+         B     PARMNEXT            GO TEST NEXT POSITION
+         SPACE 1
+PARMEND  EQU   *
+         SUBOUT RESTORE=(R4)       RETURN TO CALLER
+         SPACE 1
+PARMOUTM MVC   4(0,R2),0(R8)       EX STORE DDNAME IN TESTIOT TABLE
+         EJECT
+*******************************************************************
+*        INITIALISATION SECTION                                   *
+*******************************************************************
+         SPACE 1
+INITIAL  SUBIN SAVE=(R4)           INITIALISATION SECTION
+         SPACE 1
+         TM PRINTSW,DDPRES         SYSPRINT DD PRESENT?
+         BNO   *+14                NO - BYPASS FORWARD CHAINIG
+         BAL   R4,PRINT            STORE PRINT BUFFER ADDRESS IN R5
+         ZAP   LINECOUN,MAXLINE    SET LINE COUNT TO MAX
+         BAL   R4,LINEPRT          PERFORM PRINT SECTION
+         SPACE 1
+INITIALX SUBOUT RESTORE=(R4)       RETURN TO CALLER
+         EJECT
+*******************************************************************
+*        INPUT RECORDS TREATMENT SECTION                          *
+*******************************************************************
+         SPACE 1
+MAINSEC  SUBIN SAVE=(R4)           INPUT RECORD MAIN SECTION
+RECREAD  EQU   *
+         BAL   R4,RUT1             PERFORM READ SYSUT RECORD
+         LR    R6,R1               STORE RECORD ADDRESS IN R6
+         CLC   0(6,R6),=C'/*PROC'  TEST IF '/*PROC' CARD
+         BNE   *+12                NO - BYPASS FORWARD CHAINING
+         BAL   R4,RECPROC          PERFORM LOAD PDS SECTION
+         B     RECREAD             GO TREAT NEXT RECORD
+         CLC   0(6,R6),=C'.*MEMB'  TEST IF '.*MEMB' CARD
+         BNE   *+12                NO - BYPASS FORWARD CHAINING
+         BAL   R4,RECPROC          PERFORM LOAD PDS SECTION
+         B     RECREAD             GO TREAT NEXT RECORD
+         CLC   0(5,R6),=C'.*DDN'   TEST IF '.*DDN' CARD
+         BNE   *+12                NO - BYPASS FORWARD CHAINING
+         BAL   R4,RECPROC          PERFORM LOAD FILE SECTION
+         B     RECREAD             GO TREAT NEXT RECORD
+         CLI   LKLIB2SW,C'Y'       IS SYS2.LINKLIB TO BE MODIFY IN BXL
+         BNE   *+8
+         BAL   R4,LKLIBMOD         PERFORM RECORD MODIFICATION
+         SPACE 1
+*        TEST IF NON CTL ON SPECIAL OUTPUT AND OPEN D/S IF NECESSARY
+         SPACE 1
+RECFIRST NOP   RECOUTWR            SWITCH FIRST TIME
+         MVI   RECFIRST+1,X'F0'    SET BRANCH UNCONDITIONAL
+         CLC   OUTIOTSW+4(8),=CL8' '  TEST VALID OUTMAIN PARM SUPPLIED
+         BE    RECOUTWR            NO - BYPASS OPEN D/S
+         LA    R2,SYSUT1           LOAD SYSUT1 ADDRESS IN R2
+         ST    R2,SAVEFILE         STORE DCB ADDRESS OF INPUT DCB
+         MVC   DDONAME,OUTIOTSW+4  STORE DDNAME FOR TESTIOT & OPEN
+         MVI   DDOFTYPE,C'O'       INDICATE OUTPUT TYPE
+         MVI   DDOROPEN,C'Y'       INDICATE OPEN REQUEST
+         BAL   R4,DDOFIND          GO OPEN SPECIAL OUTPUT IF NOT
+         C     R1,=F'0'            TEST RETURN CODE = 0 (D/S OPEN)
+         BNE   RECOUTWR            NO - BYPASS STORE D/S INFORMATION
+         L     R2,DDOTBADR         LOAD OUTPUT TBLENTRY ADDRESS
+         MVC   OUTIOTSW(4),DDOTBADR  SAVE OUTPUT TBLENTRY ADDRESS
+         MVC   OUTIOTSW(1),0(R2)   SAVE OUTPUT TBLENTRY SWITCH
+         SPACE 1
+*        WRITE RECORD TO SYSUT2 AND SYSUT3
+         SPACE 1
+RECOUTWR EQU   *
+         TM    OUTIOTSW,DDINT+DDPRES+DDOPEN  VALID SPECIAL OUTPUT IN EX
+         BO    RECOUTWS            YES - GO WRITE REC ON SPECIAL OUTPUT
+         SPACE 1
+         BAL   R4,WUT2             WRITE RECORD TO SYSUT2
+         BAL   R4,WUT3             WRITE RECORD TO SYSUT3 (IF OPEN)
+         B     RECREAD             GO TREAT NEXT INPUT RECORD
+         SPACE 1
+*        WRITE NON CTL RECORDS ON SPECIAL OUTPUT D/S
+         SPACE 1
+RECOUTWS EQU   *
+         MVC   DDOWRITE,OUTIOTSW   MOVE OUTPUT D/S TBLENTRY ADDRESS
+         BAL   R4,WDDO             WRITE RECORD ON SPECIAL OUTPUT D/S
+         B     RECREAD             GO TREAT NEXT INPUT RECORD
+         SPACE 1
+EODUT1   EQU   *                   EOF ON SYSUT1
+         SUBOUT RESTORE=(R4)       RETURN TO CALLER
+         EJECT
+*******************************************************************
+*        REPLACE '/*PROC' CARDS BY AN INSTREAM PROCEDURE          *
+*        OR '.*MEMB' BY THE SELECTED PDS MEMBER                   *
+*******************************************************************
+         SPACE 1
+RECPROC  SUBIN SAVE=(R4)
+         SPACE 1
+*        R1    LINK WITH PDS ROUTINE
+*        R7    USE IN PRINT ERROR MESSAGE
+*        R8    POINT TO START OF RECORD
+*        R9    LENGTH OF PDS MEMBER FOR EXECUTE INSTRUCTUIN
+*        R10   MEMBER NAME DISPLACEMENT
+*        R11   POINT TO SYSUT1 RECORD COLUMN TESTED
+         SPACE 1
+*        PRINT PDS SELECTION CONTROL CARD
+         SPACE 1
+         TM    PRINTSW,DDINT+DDPRES+DDOPEN  TEST IF NEED TO PRINT
+         BNO   *+18                NO - BYPASS FORWARD CHAINING
+         MVI   0(R5),SPCE1AFT      SET SPACE 1 AFTER
+         MVC   1(80,R5),0(R6)      MOVE RECORD IN BUFFER PRINT
+         BAL   R4,LINEPRT          PRINT THE RECORD
+         SPACE 1
+         LR    R8,R6               SAVE RECORD ADDRESS
+         LA    R11,5(,R6)          POINT R11 TO FIRST MEMBER-1
+         LA    R11,1(,R11)         POINT TO NEXT COLUMN
+         CLI   0(R11),C' '         TEST IF COLUMN BLANK
+         BE    *-8                 LOOP UNTILL NON BLANK
+         SPACE 1
+MEMBLOP1 EQU   *                   RETRIEVE PDS NAME MAIN LOOP
+         MVC   MEMBNAME,=CL8' '    MOVE BLANK IN MEMBER NAME AREA
+         MVI   MEMBERSW,C'N'       SET ERROR SWITCH TO NO
+         MVC   DDONAME,=CL8' '     MOVE BLANK IN DDNAME AREA
+         MVI   DDOSW,C'N'          SET SPECIAL OUTPUT SWITCH TO NO
+         MVI   DDOERSW,C'N'        SET SPECIAL OUTPUT ERR SW TO NO
+         LR    R9,R11              SAVE START POS OF PDS MEMBER NAME
+         SR    R10,R10             ZEROISE MEMBER NAME EX LENGTH
+         SPACE 1
+MEMBLOP2 EQU   *                   COMPLETE PDS NAME AREA LOOP
+         CLI   1(R11),C' '         TEST IF NEXT COLUMN IS BLANK
+         BE    MEMBFND             YES - GO READ PDS MEMBER
+         CLI   1(R11),C','         TEST IF NEXT COLUMN IS ','
+         BE    MEMBFND             YES - GO READ PDS MEMBER
+         LA    R11,1(,R11)         POINT TO NEXT COLUMN
+         LA    R10,1(,R10)         INCREMENT MEMBER NAME EX LENGTH
+         B     MEMBLOP2            GO TEST NEXT COLUMN
+         SPACE 1
+*        CHECK IF MEMBER IS PRESENT
+         SPACE 1
+MEMBFND  EQU   *
+         C     R10,=F'7'           TEST MEMBER LENGTH > 8 POSITIONS
+         BH    *+8                 YES - BYPASS FORWARD CHAINING
+         EX    R10,MEMBMOVE        EXECUTE MEMBER NAME MOVE
+         LA    R1,MEMBNAME         LOAD ADDRESS OF PDS MEMBER NAME
+         CLC   0(6,R8),=C'/*PROC'  TEST IF /*PROC CTL CARD
+         BNE   *+16                NO - BYPASS FORWARD CHAINING
+         LA    R2,PDSFIND          LOAD ADDRESS OF PDS FIND
+         LA    R3,PDSGET           LOAD ADDRESS OF PDS READ
+         ST    R3,READTYPA         STORE ADDRESS OF PDS READ
+         CLC   0(6,R8),=C'.*MEMB'  TEST IF .*MEMB CTL CARD
+         BNE   *+16                NO - BYPASS FORWARD CHAINING
+         LA    R2,PDSFIND          LOAD ADDRESS OF PDS FIND
+         LA    R3,PDSGET           LOAD ADDRESS OF PDS READ
+         ST    R3,READTYPA         STORE ADDRESS OF PDS READ
+         CLC   0(5,R8),=C'.*DDN'   TEST IF .*DDN CTL CARD
+         BNE   *+16                NO - BYPASS FORWARD CHAINING
+         LA    R2,DDNFIND          LOAD ADDRESS OF SEQ FILE OPEN
+         LA    R3,DDNGET           LOAD  ADDRESS OF SEQ READ
+         ST    R3,READTYPA         STORE ADDRESS OF SEQ READ
+         BALR  R4,R2               GO FIND PDS OR DDNAME
+         C     R1,=F'0'            TEST RETURN CODE ZERO
+         BE    *+8                 YES - BYPASS FORWARD CHAINING
+         MVI   MEMBERSW,C'Y'       SET ERROR SWITCH TO YES
+         SPACE 1
+*        TEST IF SPECIAL OUTPUT REQUESTED
+         SPACE 1
+         CLC   1(L'DDOCONS1,R11),DDOCONS1  TEST IF ',DDNAME='
+         BNE   *+12                NO - BYPASS FORWARD CHAINING
+         MVI   DDOSW,C'Y'          SET SPECIAL OUTPUT SWITCH ON
+         LA    R11,9(0,R11)        POINT R11 TO START OF DDNAME
+         CLC   1(L'DDOCONS2,R11),DDOCONS2  TEST IF ',DDN='
+         BNE   *+12                NO - BYPASS FORWARD CHAINING
+         MVI   DDOSW,C'Y'          SET SPECIAL OUTPUT SWITCH ON
+         LA    R11,6(0,R11)        POINT R11 TO START OF DDNAME
+         SPACE 1
+         CLI   DDOSW,C'Y'          TEST IF SPECIAL OUTPUT DDNAME REQ
+         BNE   MEMBREAD            NO - BYPASS SEARCH OF OUTPUT DDNAME
+         LR    R3,R11              SAVE START OF DDNAME ADDRESS
+         SR    R10,R10             ZEROISE DDNAME EXECUTE LENGTH
+         SPACE 1
+DDOLOOPS EQU   *
+         CLI   1(R11),C' '         TEST IF NEXT COLUMN = ' '
+         BE    DDOLOOPE            YES - GO TO END OF DDNAME LOOP
+         CLI   1(R11),C','         TEST IF NEXT COLUMN = ','
+         BE    DDOLOOPE            YES - GO TO END OF DDNAME LOOP
+         LA    R11,1(0,R11)        INCREMENT POINTER TO NEXT COLUMN
+         LA    R10,1(0,R10)        INCREMENT EXECUTE LENGTH BY 1
+         B     DDOLOOPS            GO TEST NEXT POS
+         SPACE 1
+DDOLOOPE EQU   *
+         C     R10,=F'7'           TEST DDNAME > 8 POSITIONS
+         BH    *+8                 YES - BYPASS FORWARD CHAINING
+         EX    R10,DDOMOVE         EXECUTE DDNAME MOVE
+         MVI   DDOFTYPE,C'O'       INDICATE OUTPUT TYPE
+         MVI   DDOROPEN,C'Y'       INDICATE OPEN REQUEST
+         BAL   R4,DDOFIND          GO OPEN SPECIAL OUTPUT
+         MVC   DDOWRITE,DDOTBADR   SAVE TBLENTRY ADDRESS
+         C     R1,=F'0'            TEST RETURN CODE = 0
+         BE    *+8                 YES - BYPASS FORWARD CHAINING
+         MVI   DDOERSW,C'Y'        SET SPECIAL OUTPUT ERROR SW TO YES
+         SPACE 1
+         SPACE 1
+*        READ PDS MEMBER
+         SPACE 1
+MEMBREAD EQU   *
+         CLI   MEMBERSW,C'Y'       TEST IF INPUT MEMBER ERROR
+         BE    MEMBNFND            YES - TERMINATE WITH ERROR MESSAGE
+         CLI   DDOERSW,C'Y'        TEST IF OUTPUT DDNAME ERROR
+         BE    MEMBNFND            YES - TERMINATE WITH ERROR MESSAGE
+         L     R2,READTYPA         LOAD ADDRESS OF READ SECTION
+         BALR  R4,R2               READ RECORD
+         C     R1,=F'0'            TEST RECORD ADDRESS = 0 (EOF)
+         BE    MEMBEND             YES - GO ADD 'PEND' CARD
+         LR    R6,R1               LOAD PDS RECORD ADDRESS IN R6
+         SPACE 1
+         CLI   LKLIB2SW,C'Y'       IS SYS2.LINKLIB TO BE MODIFY IN BXL
+         BNE   *+8
+         BAL   R4,LKLIBMOD         PERFORM RECORD MODIFICATION
+         SPACE 1
+*        WRITE RECORD TO OUTPUT FILES
+         SPACE 1
+         CLI   DDOSW,C'Y'          IS SPECIAL OUTPUT REQUESTED?
+         BE    *+16                YES - BYPASS FORWARD CHAINING
+         BAL   R4,WUT2             WRITE PDS RECORD TO SYSUT2
+         BAL   R4,WUT3             WRITE PDS RECORD TO SYSUT3 (IF OPEN)
+         B     MEMBREAD            GO READ NEXT PDS RECORD
+         BAL   R4,WDDO             WRITE RECORD IN CONTROL CARD D/S
+         B     MEMBREAD            GO READ NEXT RECORD
+         SPACE 1
+*        WRITE 'PEND' CARD AFTER THE PROCEDURE
+         SPACE 1
+MEMBEND  EQU   *
+         CLC   0(6,R8),=C'/*PROC'  TEST IF /*PROC CTL CARD
+         BNE   MEMBSTAR            NO - GO POINT TO NEXT MEMBER
+         LA    R6,PROCPEND         LOAD ADDRESS OF 'PEND' AREA IN R6
+         CLI   DDOSW,C'Y'          IS SPECIAL OUTPUT REQUESTED?
+         BE    *+16                YES - BYPASS FORWARD CHAINING
+         BAL   R4,WUT2             WRITE PDS RECORD TO SYSUT2
+         BAL   R4,WUT3             WRITE PDS RECORD TO SYSUT3 (IF OPEN)
+         B     MEMBSTAR            GO POINT TO NEXT MEMBER
+         BAL   R4,WDDO             WRITE RECORD IN CONTROL CARD D/S
+         SPACE 1
+*        TEST IF MORE PDS MEMBER TO BE READ,
+*              IF YES POINT R11 TO START OF MEMBER NAME
+         SPACE 1
+MEMBSTAR EQU   *
+         LA    R11,1(,R11)         POINT TO NEXT COLUMN
+         CLI   0(R11),C' '         TEST IF COLUMN IS BLANK
+         BE    RECPROCX            YES - NO MORE PDS MEMBER TO BE READ
+         CLI   0(R11),C','         TEST IF CONTINUATION CHARACTER
+         BNE   MEMBSTAR            NO - TEST NEXT COLUMN
+         LA    R11,1(,R11)         POINT TO START OF NEXT PDS MEMBER
+         B     MEMBLOP1            GO IDENTIFY NEXT PDS MEMBER
+         SPACE 1
+*        PDS MEMBER OR DDNAME NOT FOUND,
+*              - WRITE CTL CARD ON SYSOUT FILES
+*              - ISSUE ERROR MESSAGE
+         SPACE 1
+MEMBNFND EQU   *
+         MVI   MEMBMISS,C' '       MOVE BLANK TO 1ST POS OF ERR RECORD
+         MVC   MEMBMISS+1(39),MEMBMISS  PROPAGATE BLANK
+         MVC   MEMBMISS(6),0(R8)   MOVE TYPE OF PDS READ
+         LR    R7,R11              LOAD END POS ERROR
+         SR    R7,R9               SUBTRACT START POS ERROR
+         EX    R7,MEMBMISM         EXECUTE MOVE OF INVAL REQ MEMBER
+         LA    R6,MEMBMISS         LOAD ADDRESS OF MISSING MEMBER REC.
+         BAL   R4,WUT2             WRITE MISSING PDS RECORD TO SYSUT2
+         BAL   R4,WUT3             WRITE MISSING PDS RECORD TO SYSUT3
+         SPACE 1
+         MVC   COMPCODE,COND16     SET CONDITION CODE TO 16
+         TM    PRINTSW,DDINT+DDPRES+DDOPEN  TEST IF NEED TO PRINT
+         BNO   MEMBSTAR            NO - GO TEST IF MORE PDS MEMBER
+         MVI   0(R5),SPCE1AFT      SET SPACE 1 AFTER
+         LR    R7,R9               LOAD MEMBER NAME COLUMN
+         SR    R7,R8               SUBTRACT RECORD ADDRESS
+         AR    R7,R5               ADD BUFFER ADDRESS
+MEMBMISL EQU   *
+         MVI   1(R7),C'*'          MOVE ERROR CHAR IN START MEMBER POS
+         CR    R9,R11              STRAT > END ERR POS
+         BNL   *+16                NO - BYPASS FORWARD CHAINING
+         LA    R7,1(0,R7)          INCREMENT UNDERLINE POSITION
+         LA    R9,1(0,R9)          INCREMENT START POS BY 1
+         B     MEMBMISL            GO UNDERLINE NEXT POSITION
+         MVC   82(L'ERRMESS,R5),ERRMESS  MOVE ERROR MESS IN PRT LINE
+         B     MEMBSTAR            GO TEST IF MORE PDS MEMBER TO FIND
+         SPACE 1
+RECPROCX EQU   *
+         BAL   R4,LINEPRT          PUT BLANK LINE OR ERROR MESSAGE
+         SUBOUT RESTORE=(R4)       RETURN TO CALLER
+         SPACE 1
+*        EXECUTE INSTRUCTION
+         SPACE 1
+MEMBMOVE MVC   MEMBNAME(0),0(R9)   EX STORE OF PDS MEMBER NAME
+DDOMOVE  MVC   DDONAME(0),0(R3)    EX STORE DDNAME IN  DDNAME AREA
+MEMBMISM MVC   MEMBMISS+7(0),0(R9) EX MOVE OF INVALID REQUEST
+         EJECT
+*******************************************************************
+*        MODIFY RECORDS BEFORE WRITING ON OUTPUT FILES            *
+*******************************************************************
+         SPACE 3
+LKLIBMOD SUBIN ,
+         SPACE 1
+         LR    R2,R6               LOAD RECORD ADDRESS IN R2
+         SR    R3,R3               SET R3 TO ZERO
+         SPACE 1
+LKLIBLOP EQU   *
+         CLC   0(L'LKLIBSYS,R2),LKLIBSYS  TEST IF SYS2.LINKLIB
+         BE    LKLIBMV             YES - GO MOVE BXL.LINKLIB
+         C     R3,=F'60'           TEST IF MAX NBR OF COLUMNS
+         BH    LKLIBMDX            YES - GO TO END OF S/ROUTINE
+         LA    R2,1(0,R2)          INCREMENT R2 BY 1
+         LA    R3,1(0,R3)          INCREMENT R3 BY 1
+         B     LKLIBLOP            GO TEST NEXT COLUMN
+         SPACE 1
+LKLIBMV  EQU   *
+         MVC   0(L'LKLIBBXL,R2),LKLIBBXL  MOVE BXL.LINKLIB IN RECORD
+         SPACE 1
+LKLIBMDX EQU   *
+         SUBOUT ,                  RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        PARTITIONED DATA SET PROCESSING SUBROUTINES                  *
+***********************************************************************
+         SPACE 2
+         SPACE 4
+PDSFIND  EQU   *
+         LH    R15,COND16          RETURN CODE FOR D/S NOT OPEN
+         TM    PDSSW,DDOPEN        SYSLIB D/S OPEN?
+         BNO   PDSFINDX            NO - RETURN
+         LA    R2,PDSDCB           LOAD  DCB ADDRESS OF INPUT FILE
+         ST    R2,SAVEFILE         STORE DCB ADDRESS OF INPUT FILE
+         LR    R0,R1               MOVE MEMBER NAME POINTER
+         FIND  PDSDCB,(R0),D       POINT AT FIRST BLOCK FOR MEMBER
+PDSFINDX EQU   *
+         LR    R1,R15              PUR RETURN CODE IN R1
+         BR    R4                  RETURN TO CALLER
+         SPACE 4
+PDSGET   EQU   *
+         TM    PDSSW,DDOPEN        SYSLIB D/S OPEN?
+         BNO   PDSEOF              NO - RETURN
+         TM    PDSSW,FIRSTGET      FIRST RECORD FOR NEW MEMBER
+         BO    PDSGET1             NO. BRANCH
+         GETBUF  PDSDCB,(R2)       GET ADDRESS FIRST BUFFER
+         ST    R2,PDSABUF1         STORE IN READ CONTROL BLOCK1
+         GETBUF PDSDCB,(R2)        GET ADDRESS OF SECOND BUFFER.
+         ST    R2,PDSABUF2         STORE IN READ CONTROL BLOCK2
+         READ  PDSECB1,SF,MF=E     READ FIRST DATA BLOCK.
+         OI    PDSSW,FIRSTGET+READREQ    INDICATE FIRST READ  DONE
+*                                       AND ANOTHER READ REQUIRED
+PDSGET1  EQU   *
+         TM    PDSSW,READREQ       IS A READ REQUIRED
+         BNO   PDSGET2             NO. BRANCH
+         CHECK PDSECB1             WAIT FOR I/O TO COMPLETE
+         MVC   PDSSEGAD,PDSABUF1        GET ADDRESS OF FIRST RECORD
+         L     R2,PDSIOBA          GET ADDRESS OF IOB.
+         LH    R3,PDSBLKSI         GET MAXIMUM BLOCKSIZE,
+         SH    R3,14(0,R2)         SUBTRACT IOB RESIDUAL COUNT
+         STH   R3,PDSBYTES         TO GIVE BYTES IN NEW BLOCK.
+         NI    PDSSW,255-READREQ   RESET READ SWITCH
+         L     R1,PDSABUF2         *
+         MVC   PDSABUF2,PDSABUF1   ** SWAP OVER BUFFERS
+         ST    R1,PDSABUF1         *
+         READ  PDSECB1,SF,MF=E     INITIATE READ TO FILL OTHER BUFFER
+PDSGET2  EQU   *
+         L     R1,PDSSEGAD         GET CURRENT BUFFER SEGMENT ADDRESS
+         LH    R3,PDSBYTES         GET BYTES LEFT IN CURRENT BUFFER
+         LH    R2,PDSLRECL         GET RECORD LENGTH
+         SR    R3,R2               SUBTRACT FROM BYTES LEFT IN BUFFER
+         BNZ   *+8                 BRANCH IF STILL SOME LEFT
+         OI    PDSSW,READREQ       SET FLAG TO INVOKE PHYSICAL READ.
+         STH   R3,PDSBYTES         SAVE BYTES LEFT IN BUFFER
+         LA    R2,0(R1,R2)         POINT TO NEXT RECORD IN BUFFER
+         ST    R2,PDSSEGAD         SAVE NEW ADDRESS
+PDSGEXIT EQU   *
+         AP    CNTLIB,ONE          INCREMENT RECORD COUNTER
+         BR    R4                  RETURN TO CALLER
+         SPACE 4
+PDSEODAD EQU   *
+         NI    PDSSW,255-FIRSTGET  SET FIRSTTIME SWITCH FOR NEXT MEMBER
+         L     R2,PDSABUF1         GET 1ST BUFFER ADDRESS
+         FREEBUF PDSDCB,(R2)       FREE IT
+         L     R2,PDSABUF2         GET 2ND BUFFER ADDRESS
+         FREEBUF PDSDCB,(R2)       FREE IT
+PDSEOF   EQU   *
+         SR    R1,R1               INDICATE END OF MEMBER
+         BR    R4                  RETURN TO CALLER
+         EJECT
+*******************************************************************
+*        THIS SUB/ROUTINE CONTROL THE TESTIOT AND OPEN OF         *
+*              INPUT D/S SPECIFIED IN '.*DDN' CONTROL CARDS.      *
+*******************************************************************
+         SPACE 3
+         USING IHADCB,R1           ESTABLISH DCB ADDRESSABILITY
+         USING TBLENTRY,R8         ESTABLISH TABLE ENTRY ADDRESSABILITY
+DDNFIND  SUBIN SAVE=(R4,R8)
+         MVC   DDNCOND,COND16      RETURN CODE FOR D/S NOT OPEN
+         MVC   DDOSAVE,DDONAME     SAVE DDONAME
+         MVC   DDONAME,MEMBNAME    MOVE INPUT D/S DDNAME
+         MVI   DDOFTYPE,C'I'       INDICATE INPUT TYPE
+         MVI   DDOROPEN,C'N'       INDICATE NO OPEN
+         BAL   R4,DDOFIND          GO BUILD A NEW TBLENTRY BLOCK
+         MVC   DDONAME,DDOSAVE     RESTORE DDONAME
+         L     R8,DDOTBADR         LOAD TBLENTRY ADDRESS
+         ST    R8,DDNREAD          SAVE TBLENTRY ADDRESS
+         C     R1,=F'0'            D/S PRESENT?
+         BNE   DDNFINDX            NO - RETURN
+         SPACE 1
+*        OPEN SPECIAL INPUT D/S
+         SPACE 1
+         MVC   DDNDCB(DCBLNGTH),DDNORG  RESTORE DCB FOR OPEN
+         LA    R1,DDNDCB           LOAD DCB ADDRESS
+         MVC   DCBDDNAM,MEMBNAME   MOVE DDNAME IN DCB
+         ST    R1,SAVEFILE         STORE DCB ADDRESS OF INPUT FILE
+         ST    R1,ZEROWORD         MOVE DCB ADDRESS IN INTERMEDIATE FLD
+         MVC   TBLENTRY+1(3),ZEROWORD+1  STORE DCB ADDRESS IN TBLENTRY
+         LR    R2,R8               LOAD TBLENTRY IN R2
+         BAL   R4,OPEN             GO OPEN DATA SET
+         TM    TBLENTRY,DDINT+DDPRES+DDOPEN  D/S PRESENT AND OPEN?
+         BNO   DDNFINDX            NO - RETURN
+         MVC   DDNCOND,=H'0'       INDICATE D/S OPEN
+         SPACE 1
+DDNFINDX EQU   *
+         LH    R1,DDNCOND          LOAD CONDITION CODE IN R1
+         SUBOUT RESTORE=(R4,R8)    RETURN TO CALLER
+         SPACE 1
+         DROP  R1                  DROP DCB ADDRESSABILITY
+         DROP  R8                  DROP TABLE ENTRY ADDRESSABILITY
+         EJECT
+*******************************************************************
+*        THIS SUB ROUTINE READ THE FILES SPECIFIED IN .*DDN CARDS *
+*******************************************************************
+         SPACE 3
+         USING TBLENTRY,R8         ESTABLISH TABLE ENTRY ADDRESSABILITY
+DDNGET   SUBIN SAVE=(R4,R8)
+         L     R8,DDNREAD          POINT DSECT TO TBLENTRY
+         TM    TBLENTRY,DDINT+DDPRES+DDOPEN  D/S PRESENT AND OPEN?
+         BNO   DDNGETX             NO - RETURN
+         L     R2,TBLDCBPT
+         GET   0(R2)               READ A RECORD
+         AP    TBLRECNT,ONE        INCREMENT RECORD COUNTER
+         B     DDNGETX             RETURN
+         SPACE 1
+*        END OF SPECIAL INPUT FILE PROCESSING
+         SPACE 1
+DDNEOF   EQU   *
+         L     R2,DDNREAD          POINT DSECT AT TBLENTRY
+         BAL   R4,CLOSE            CLOSE REQUESTED D/S
+         SR    R1,R1               INDICATE END OF FILE
+         SPACE 1
+DDNGETX  EQU   *
+         SUBOUT RESTORE=(R4,R8)    RETURN TO CALLER
+         SPACE 1
+         DROP  R8                  DROP TABLE ENTRY ADDRESSABILITY
+         EJECT
+*******************************************************************
+*        THIS SUB-ROUTINE PERFORM THE CONTROL OF USER DDNAME,     *
+*              BUILD A NEW TBLENTRY CONTROL BLOCK,                *
+*              TEST IF DD STATEMENT IS SUPPLIED,                  *
+*              AND OPEN IT IF NECESSARY                           *
+*******************************************************************
+         SPACE 3
+         USING IHADCB,R1           ESTABLISH DCB ADDRESSABILITY
+         USING TBLENTRY,R8         ESTABLISH TABLE ENTRY ADDRESSABILITY
+DDOFIND  SUBIN SAVE=(R4,R8)
+         MVC   DDOCOND,COND16      RETURN CODE FOR D/S NOT OPEN
+         CLC   DDONAME,=C'SYSLIB  '  TEST IF DDNAME = SYSLIB
+         BE    DDOFINDX            YES - INVALID DDNAME
+         CLC   DDONAME,=C'SYSUT1  '  TEST IF DDNAME = SYSUT1
+         BE    DDOFINDX            YES - INVALID DDNAME
+         CLC   DDONAME,=C'SYSUT2  '  TEST IF DDNAME = SYSUT2
+         BE    DDOFINDX            YES - INVALID DDNAME
+         CLC   DDONAME,=C'SYSUT3  '  TEST IF DDNAME = SYSUT3
+         BE    DDOFINDX            YES - INVALID DDNAME
+         SPACE 1
+*        TEST IF DDNAME ALREADY OPEN
+*              YES - FIND DCB ADDRESS
+*              NO - GO OPEN IT
+         SPACE 1
+         CLC   DDOFIRST,=F'0'      IS THERE A PREVIOUS ENTRY
+         BE    DDOENTRY            NO - GO AND GET ONE
+         L     R8,DDOFIRST         POINT DSECT TO FIRST TBLENTRY
+DDOTBLLP EQU   *
+         CLC   TBLDDNAM,DDONAME    TEST IF DDNAME IN TBLENTRY
+         BE    DDOCOMM             YES - GO TO COMMUN SECTION
+         CLC   TBLLINK,=F'0'       TEST LINK ADDRESS ZERO
+         BE    DDOENTRY            YES - GO BUILD A NEW TBLENTRY & DCB
+         L     R8,TBLLINK          POINT DSECT TO NEXT TBLENTRY
+         B     DDOTBLLP            GO TEST NEXT TBL ENTRY
+         SPACE 1
+*        TEST SPECIAL OUTPUT DATA SET DD PRESENT
+         SPACE 1
+DDOENTRY EQU   *
+         CLI   DDOFTYPE,C'I'       INPUT  D/S
+         BNE   *+14                NO - BYPASS FORWARD CHAINING
+         MVC   DDOTABSW(TBLENTSZ),DDOINPUT  INPUT  CONTROL BLOCK?
+         B     DDOGETTB            GO FIND CORE
+         CLI   DDOFTYPE,C'O'       OUTPUT D/S
+         BNE   DDOFINDX            NO - RETURN
+         MVC   DDOTABSW(TBLENTSZ),DDOUTPUT  OUTPUT CONTROL BLOCK?
+DDOGETTB EQU   *
+         LA    R0,TBLENTSZ         LOAD LENGTH OF TBL ENTRY IN R0
+         GETMAIN R,LV=(0)          GET CORE FOR TABLE ENTRY
+         ST    R1,DDOTHISA         SAVE POINTER TO THIS TBLENTRY
+         CLC   DDOFIRST,=F'0'      FIRST GET MAIN ISSUED?
+         BNE   *+8                 YES - BYPASS FORWARD CHAINING
+         ST    R1,DDOFIRST         SAVE POINTER TO FIRST TBLENTRY
+         MVC   0(TBLENTSZ,R1),DDOTABSW  BUILD A NEW DCB LIST
+         CLC   DDOLASTA,=F'0'      PREVIOUS GET MAIN ISSUED?
+         BE    *+14                NO - BYPASS FORWARD CHAINING
+         L     R8,DDOLASTA         POINT DSECT TO LAST TBLENTRY
+         MVC   TBLLINK,DDOTHISA    STORE ADDRESS OF PREVIOUS TBLENTRY
+         L     R8,DDOTHISA         POINT DSECT TO THIS TBLENTRY
+         ST    R8,DDOLASTA         STORE ADDRESS FOR NEXT GETMAIN
+         MVC   TBLDDNAM,DDONAME    MOVE DDNAME INTO TABLE ENTRY
+         OI    TBLENTRY,DDINT      INDICATE DD INTEREST
+         LR    R2,R8               POINT R2 AT DCB TABLE
+         BAL   R4,TESTIOT          TEST IF DD STATEMENT PRESENT
+         TM    TBLENTRY,DDPRES     DDNAME PRESENT?
+         BNO   DDOFINDX            NO - RETURN
+         SPACE 1
+*        OPEN SPECIAL OUTPUT DATA SET
+         SPACE 1
+         CLI   DDOROPEN,C'Y'       OPEN REQUEST?
+         BNE   DDOCOMM             NO - BRANCH
+         LA    R0,DCBLNGTH         GET LENGTH OF OUTPUT DCB IN R0
+         GETMAIN R,LV=(0)          GET CORE FOR OUTPUT DCB
+         MVC   0(DCBLNGTH,R1),DDOUTDCB  BUILD A NEW OUTPUT DCB
+         ST    R1,ZEROWORD         STORE DCB ADDRESS IN INTERM FIELD
+         MVC   TBLENTRY+1(3),ZEROWORD+1  STORE DCB ADDRESS IN TBLENTRY
+         MVC   DCBDDNAM,DDONAME    MOVE DDNAME IN DCB
+         LR    R2,R8               POINT R2 AT DCB TABLE
+         BAL   R4,OPEN             GO OPEN FILE
+         SPACE 1
+*        COMMUN WHEN D/S OPEN
+         SPACE 1
+DDOCOMM  EQU   *
+         TM    TBLENTRY,DDINT+DDPRES  D/S PRESENT?
+         BNO   DDOFINDX            NO - RETURN
+         CLI   DDOROPEN,C'Y'       OPEN REQUEST?
+         BNE   *+12                NO - BYPASS FORWARD CHAING
+         TM    TBLENTRY,DDOPEN     D/S OPEN
+         BNO   DDOFINDX            NO - RETURN
+         ST    R8,DDOTBADR         STORE ADDRESS OF TBLENTRY
+         MVC   DDOCOND,=H'0'       INDICATE DDNAME PRESENT
+         SPACE 1
+DDOFINDX EQU   *
+         LH    R1,DDOCOND          LOAD COND CODE IN R1
+         SUBOUT RESTORE=(R4,R8)    RETURN TO CALLER
+         SPACE 1
+         DROP  R1                  DROP DCB ADDRESSABILITY
+         DROP  R8                  DROP TABLE ENTRY ADDRESSABILITY
+         EJECT
+*******************************************************************
+*        WRITE RECORD ON OUTPUT D/S SPECIFIED IN CONTROL CARD     *
+*******************************************************************
+         SPACE 3
+         USING TBLENTRY,R8         ESTABLISH TABLE ENTRY ADDRESSABILITY
+WDDO     SUBIN SAVE=(R8)
+         L     R8,DDOWRITE         POINT DSECT TO D/S TBLENTRY
+         TM    TBLDCBPT,DDINT+DDPRES+DDOPEN  TEST IF NEED TO WRITE
+         BNO   WDDOX               NO - RETURN
+         L     R2,TBLDCBPT         LOAD D/S DCB ADDRESS
+         PUT   0(R2),0(R6)         WRITER RECORD TO SPECIAL OUTPUT D/S
+         AP    TBLRECNT,ONE        INCREMENT RECORD COUNTER
+         SPACE 1
+WDDOX    EQU   *
+         SUBOUT RESTORE=(R8)       RETURN TO CALLER
+         SPACE 1
+         DROP  R8                  DROP TABLE ENTRY ADDRESSABILITY
+         EJECT
+*******************************************************************
+*        END OF PROGRAM SECTION                                   *
+*******************************************************************
+         SPACE 1
+ENDING   SUBIN SAVE=(R4)           ENDING SECTION
+         SPACE 1
+*        ADD '/*EOF' TO OUTPUT IF 'INTRDR' PARM IN EXEC CARD
+         SPACE 1
+         CLI   INTRDRSW,C'Y'       TEST IF INTERNAL READER REQUEST
+         BNE   *+16                NO - BYPASS FORWARD CHAINING
+         LA    R6,INTRDRCD         LOAD ADDRESS OF /*EOF RECORD CONST.
+         BAL   R4,WUT2             WRITE /*EOF REC ON SYSUT2
+         BAL   R4,WUT3             WRITE /*EOF REC ON SYSUT3
+         SPACE 1
+         TM    PRINTSW,DDINT+DDPRES+DDOPEN  TEST IF NEED TO PRINT
+         BNO   *+8                 NO - RETURN
+         BAL   R4,ENDPRT           PERFORM  ENDING PRINT ROUTINE
+               SPACE               1
+ENDINGX  SUBOUT RESTORE=(R4)       RETURN TO CALLER
+         EJECT
+*******************************************************************
+*        ENDING PRINT SECTION                                     *
+*******************************************************************
+         SPACE 1
+         USING TBLENTRY,R8         ESTABLISH TABLE ENTRY ADDRESSABILITY
+         SPACE 1
+ENDPRT   SUBIN SAVE=(R4)           PRESERV RETURN ADDRESS
+         TM    PRINTSW,DDINT+DDPRES+DDOPEN  TEST IF NEED TO PRINT
+         BNO   ENDPRTX             NO - RETURN
+         SPACE 1
+         MVI   0(R5),SPCE3AFT      SET SPACE 3 AFTER
+         BAL   R4,LINEPRT          PRINT 3 BLANK LINES
+         SPACE 1
+*        PRINT STATUS OF SYSIN DATA SET
+         SPACE 1
+         LA    R8,DDOTABSW         POINT DSECT TO TBLENTRY
+         MVC   TBLENTRY(20),PDSSW      MOVE SYSLIB   CONTROL BLOCK
+         ZAP   TBLRECNT,CNTLIB     MOVE SYSLIB   RECORD COUNTER
+         BAL   R4,ENDPRTED         EDIT THE PRINT LINE
+         SPACE 1
+*        PRINT STATUS OF SYSUT1 DATA SET
+         SPACE 1
+         MVC   TBLENTRY(20),SYSUT1SW   MOVE SYSUT1   CONTROL BLOCK
+         OI    TBLENTRY,DDMAN      SET SWITCH TO MANDATORY
+         ZAP   TBLRECNT,CNTUT1     MOVE SYSUT1   RECORD COUNTER
+         BAL   R4,ENDPRTED         EDIT THE PRINT LINE
+         SPACE 1
+*        PRINT STATUS OF SYSUT2 DATA SET
+         SPACE 1
+         MVC   TBLENTRY(20),SYSUT2SW   MOVE SYSUT2   CONTROL BLOCK
+         OI    TBLENTRY,DDMAN      SET SWITCH TO MANDATORY
+         ZAP   TBLRECNT,CNTUT2     MOVE SYSUT2   RECORD COUNTER
+         BAL   R4,ENDPRTED         EDIT THE PRINT LINE
+         SPACE 1
+*        PRINT STATUS OF SYSUT3 DATA SET
+         SPACE 1
+         MVC   TBLENTRY(20),SYSUT3SW   MOVE SYSUT3   CONTROL BLOCK
+         ZAP   TBLRECNT,CNTUT3     MOVE SYSUT3   RECORD COUNTER
+         BAL   R4,ENDPRTED         EDIT THE PRINT LINE
+         SPACE 1
+*        PRINT STATUS OF SPECIAL OUTPUT DATA SET
+         SPACE 1
+         L     R9,DDOFIRST         LOAD ADDRESS OF FIRST TBLENTRY
+         B     *+8                 BYPASS FORWARD CHAINING
+         SPACE 1
+ENDDDOLP EQU   *
+         L     R9,TBLLINK          LOAD ADDRESS OF NEXT TBLENTRY
+         C     R9,=F'0'            TEST IF NEXT TABLE ENTRY ADDRESS = 0
+         BE    ENDDDOLX            YES - GO TO END OF PRINT LOOP
+         MVC   TBLENTRY(TBLENTSZ),0(R9)  MOVE SPECIAL D/S CONTROL BLOCK
+         BAL   R4,ENDPRTED         EDIT THE PRINT LINE
+         TM    0(R9),DDOPEN        D/S OPEN?
+         BNO   ENDDDOLP            NO - GO TEST IF MORE D/S TO EDIT
+         LR    R2,R9               LOAD TBLENTRY IN R2 FOR CLOSE D/S
+         BAL   R4,CLOSE            GO CLOSE D/S
+         B     ENDDDOLP            GO TEST IF MORE D/S TO EDIT
+         SPACE 1
+ENDDDOLX EQU   *
+         SPACE 1
+         MVI   0(R5),SPCE2AFT      SET SPACE 2 AFTER
+         BAL   R4,LINEPRT          PRINT 2 BLANK LINES
+         SPACE 1
+*        PRINT EXEC PARAMETER INFORMATIONS
+         SPACE 1
+         MVI   0(R5),SPCE1AFT      SET SPACE 1 AFTER
+         MVC   1(L'ENDPRPAR,R5),ENDPRPAR  MOVE PARM MESSAGE IN PRT LINE
+         L     R1,PARMSAVE         LOAD PARAMETER ADDRESS POINTER
+         L     R2,0(0,R1)          LOAD ADDRESS OF PARM FIELD
+         LH    R7,0(0,R2)          LOAD PARM FIELD LENGTH
+         LA    R2,2(0,R2)          POINT R2 AT 1ST PARM CHARACTER
+         LTR   R7,R7               IS PARM FIELD LENGTH ZERO?
+         BZ    *+10                YES - BYPASS FORWARD CHAINING
+         BCTR  R7,0                DECREMENT PARM LENGTH BY 1
+         EX    R7,ENDPARMV         EXECUTE MOVE OF PARM TO PRT LINE
+         BAL   R4,LINEPRT          PRINT THE LINE
+         SPACE 1
+         MVI   0(R5),SPCE3AFT      SET SPACE 3 AFTER
+         BAL   R4,LINEPRT          PRINT 3 BLANK LINES
+         MVI   0(R5),SPCE1AFT      SET SPACE 1 AFTER
+         MVC   1(L'ENDCON00,R5),ENDCON00 MOVE COND.CODE 00 MESSAGE
+         CLC   COMPCODE,=H'0'      TEST IF COND. CODE = 0
+         BE    *+10                YES - SKIP NEXT INSTRUCTION
+         MVC   1(L'ENDCON16,R5),ENDCON16 MOVE COND. CODE 16 MESSAGE
+         BAL   R4,LINEPRT           AND GO WRITE IT
+         SPACE 1
+ENDPRTX  SUBOUT RESTORE=(R4)       RETURN TO CALLER
+         SPACE 1
+ENDPARMV MVC   37(0,R5),0(R2)      MOVE PARAMETER IN PRT LINE
+         SPACE 1
+         DROP  R8                  DROP TBLENTRY ADDRESSABILITY
+         EJECT
+*******************************************************************
+*        THIS SUB-ROUTINE EDIT AND PRINT ENDING STATUS OF FILES   *
+*******************************************************************
+         SPACE 3
+         USING TBLENTRY,R8         ESTABLISH TABLE ENTRY ADDRESSABILITY
+         SPACE 1
+ENDPRTED SUBIN SAVE=(R4,R8)
+         LA    R8,DDOTABSW         POINT DSECT TO TBLENTRY
+         MVI   0(R5),SPCE1AFT      SET SPACE 1 AFTER
+         MVC   1(L'ENDPROPT,R5),ENDPROPT  MOVE OPTIONAL AND MISSING MES
+         TM    TBLENTRY,DDMAN      D/S MANDATORY?
+         BNO   *+10                NO - BYPASS FORWARD CHAINING
+         MVC   1(L'ENDPRMAN,R5),ENDPRMAN  MOVE MANDATORY IN PRT LINE
+         MVC   20(L'TBLDDNAM,R5),TBLDDNAM  MOVE DDNAME IN PRT LINE
+         TM    TBLENTRY,DDPRES     DD PRESENT?
+         BNO   *+10                NO - BYPASS FORWARD CHAINING
+         MVC   29(L'ENDPRPRE,R5),ENDPRPRE  MOVE  DD  PRESENT IN PRT LIN
+         CLC   TBLDDTYP,=CL8'INPUT '  INPUT  FILE?
+         BNE   *+10                NO - BYPASS FORWARD CHAINING
+         MVC   41(L'ENDPRRDR,R5),ENDPRRDR  MOVE READ  IN PRT LINE
+         CLC   TBLDDTYP,=CL8'OUTPUT'  OUTPUT FILE?
+         BNE   *+10                NO - BYPASS FORWARD CHAINING
+         MVC   41(L'ENDPRWTR,R5),ENDPRWTR  MOVE WRITE IN PRT LINE
+         MVC   75(L'MASKNR,R5),MASKNR  MOVE MASK IFOR EDIT
+         ED    75(L'MASKNR,R5),TBLRECNT  EDIT NUMBER OF RECORDS
+         BAL   R4,LINEPRT          PRINT THE LINE
+         SPACE 1
+         SUBOUT RESTORE=(R4,R8)    RETURN TO CALLER
+         SPACE 1
+         DROP  R8                  DROP TBLENTRY ADDRESSABILITY
+         EJECT
+*******************************************************************
+*        PRINT ROUTINE                                            *
+*******************************************************************
+         SPACE 1
+LINEPRT  SUBIN SAVE=(R4)           PRESERV REGISTER
+         TM    PRINTSW,DDINT+DDPRES+DDOPEN  TEST IF NEED TO PRINT
+         BNO   LINEPRTX            BRANCH IF NO
+         CLI   0(R5),SPCE1AFT      TEST IF SPACE 1 AFTER
+         BNE   *+10                NO - BYPASS FORWARD CHAINING
+         AP    LINECOUN,=P'1'      ADD 1 TO LINE COUNT
+         CLI   0(R5),SPCE2AFT      TEST IF SPACE 2 AFTER
+         BNE   *+10                NO - BYPASS FORWARD CHAINING
+         AP    LINECOUN,=P'2'      ADD 2 TO LINE COUNT
+         CLI   0(R5),SPCE3AFT      TEST IF SPACE 3 AFTER
+         BNE   *+10                NO - BYPASS FORWARD CHAINING
+         AP    LINECOUN,=P'3'      ADD 3 TO LINE COUNT
+         CP    LINECOUN,MAXLINE    TEST IF OVERFLOW
+         BL    *+8                 NO - BYPASS FORWARD CHAINING
+         MVI   0(R5),PAGESKIP      SET SKIP TO NEW PAGE
+         BAL   R4,PRINT            PRINT THE LINE
+         CP    LINECOUN,MAXLINE    TEST OVERFLOW
+         BL    LINEPRTX            NO - BYPASS OVERFLOW
+         ZAP   LINECOUN,=P'0'      ZEROISE LINE COUNT
+         AP    PAGECOUN,=P'1'      ADD 1 TO PAGE COUNT
+         MVI   0(R5),SPCE3AFT      SET SPACE 3 AFTER
+         MVC   1(L'HEADLIN1,R5),HEADLIN1  MOVE HEADING LINE 1
+         BAL   R4,PRINT            PRINT THE LINE
+         MVI   0(R5),SPCE1AFT      SET SPACE 1 AFTER
+         MVC   1(L'HEADLIN2,R5),HEADLIN2  MOVE HEAD LINE 2
+         BAL   R4,PRINT            PRINT THE LINE
+         MVI   0(R5),SPCE2AFT
+         MVC   1(L'HEADLIN3,R5),HEADLIN3  MOVE HEAD LINE 3
+         BAL   R4,PRINT
+LINEPRTX SUBOUT RESTORE=(R4)       RETURN TO CALLER
+         EJECT
+*******************************************************************
+*        WRITE SUBROUTINE FOR SYSPRINT                            *
+*******************************************************************
+         SPACE 1
+PRINT    SUBIN ,
+         TM    PRINTSW,DDINT+DDPRES+DDOPEN   TEST IF NEED TO WRITE
+         BNO   PRINTX              BRANCH IF NO
+         PUT   SYSPRINT            WRITE RECORD TO SYSPRINT D/S
+         LR    R5,R1               SAVE BUFFER ADDRESS
+         MVI   1(R5),BLANK         MOVE BLANK TO START OF LINE
+         MVC   2(131,R5),1(R5)      AND PROPAGANTE THROUGH
+PRINTX   SUBOUT ,                  RETURN TO CALLER
+         SPACE 2
+*******************************************************************
+*        READ SUBROUTINE FOR SYSUT1                               *
+*******************************************************************
+         SPACE 1
+RUT1     SUBIN ,
+         GET   SYSUT1              READ RECORD FROM SYSUT1 D/S
+         CLI   UT1RRSW,C'1'        IS REREAD REQ FOR UNLIKE INPUT
+         BNE   RUT1CONT            NO - SYSUT1 RECORD READ OK
+         MVI   UT1RRSW,C'0'        TURN OF REREAD SWITCH
+         B     RUT1                GO REREAD NEXT RECORD
+         SPACE 1
+RUT1CONT EQU   *
+         LR    R6,R1               SAVE RECORD ADDRESS
+         AP    CNTUT1,ONE          INCREMENT RECORD COUNTER
+         SUBOUT ,                  RETURN TO CALLER
+         SPACE 2
+*******************************************************************
+*        WRITE SUBROUTINE FOR SYSUT2                              *
+*******************************************************************
+         SPACE 1
+WUT2     SUBIN ,
+         TM    SYSUT2SW,DDINT+DDPRES+DDOPEN  TEST IF NEED TO WRITE
+         BNO   WUT2X               BRANCH IF NO
+         PUT   SYSUT2,0(R6)        WRITE RECORD TO SYSUT2 D/S
+         AP    CNTUT2,ONE          INCREMENT RECORD COUNTER
+WUT2X    SUBOUT ,                  RETURN TO CALLER
+         SPACE 2
+*******************************************************************
+*        WRITE SUBROUTINE FOR SYSUT3                              *
+*******************************************************************
+         SPACE 1
+WUT3     SUBIN ,
+         TM    SYSUT3SW,DDINT+DDPRES+DDOPEN  TEST IF NEED TO WRITE
+         BNO   WUT3X               BRANCH IF NO
+         PUT   SYSUT3,0(R6)        WRITE RECORD TO SYSUT3 D/S
+         AP    CNTUT3,ONE          INCREMENT RECORD COUNTER
+WUT3X    SUBOUT ,                  RETURN TO CALLER
+         EJECT
+*******************************************************************
+*        DCB EXIT WHEN UNLIKE DEVICE ATTRIBUTES                   *
+*        REQUESTED FOR CONCATENETED SYSUT1 INPUTS                 *
+*******************************************************************
+         SPACE 3
+         USING IHADCB,R1           ESTABLISH DCB ADDRESSABILITY
+         SPACE 1
+UT1UNLK  SUBIN ,
+         CLI   UT1RRSW,X'00'       FIRST TIME AROUND
+         BNE   UT1OTHTM            NO - GO SET RRSW
+         MVI   UT1RRSW,C'0'        SET FIRST TIME TO REREAD SWITCH
+         OI    DCBOFLGS,X'08'      SET UNLIKE FLAG ON IN DCB
+         B     UT1UNLKX            RETURN
+         SPACE 1
+UT1OTHTM EQU   *
+         MVI   UT1RRSW,C'1'        TURN ON REREAD SWITCH
+UT1UNLKX SUBOUT RETURN=(R14)       RETURN TO OPEN ROUTINES
+         SPACE 1
+         DROP  R1                  DROP DCB ADDRESSABILITY
+         EJECT
+*******************************************************************
+*        COMPLETE SYSUT2 AND SYSUT3 DCB WITH SYSUT1 DCB INFORM    *
+*         IF NOT CODED.                                           *
+*******************************************************************
+         SPACE 1
+BLKSZRTN SUBIN ,
+         USING IHADCB,R1           ESTABLISH DCB ADDRESSABILITY
+         SPACE 1
+*        FORCE DCB INFORM IF OUTPUT ON INTERNAL READER
+         SPACE 1
+         CLI   INTRDRSW,C'Y'       TEST IF OUTPUT ON INTRDR
+         BNE   BLKSZRNC            NO - GO TEST IF CODED
+         MVI   DCBBUFNO,X'01'      FORCE BUFNO   TO 1
+         MVI   DCBRECFM,X'80'      FORCE RECFM   TO F
+         MVC   DCBBLKSI,=X'0050'   FORCE BLKSIZE TO 80
+         MVC   DCBLRECL,=X'0050'   FORCE LRECL   TO 80
+         B     BLKSZRTX            RETURN
+         SPACE 1
+*        COMPLETE SYSUT2-3 WITH SYSUT1 DCB INFO'S IF NOT CODED
+         SPACE 1
+BLKSZRNC EQU   *
+         LA    R2,SYSUT1           LOAD ADDRESS OF SYSUT1
+         CLI   DCBRECFM,X'00'      RECFM SPECIFIED IN JCL?
+         BNE   *+10                YES - BYPASS FORWARD CHAINING
+         MVC   DCBRECFM,DCBRECFM-IHADCB(R2)  MOVE IN SYSUT1 RECFM
+         CLC   DCBBLKSI,=X'0000'   BLKSIZE SPECIFIED IN JCL?
+         BNE   *+10                YES - BYPASS FORWARD CHAINING
+         MVC   DCBBLKSI,DCBBLKSI-IHADCB(R2)  MOVE IN SYSUT1 BLKSIZE
+         CLC   DCBLRECL,=X'0000'   LRECL SPECIFIED IN JCL?
+         BNE   *+10                YES - BYPASS FORWARD CHAINING
+         MVC   DCBLRECL,DCBLRECL-IHADCB(R2)  MOVE IN SYSUT1 LRECL
+BLKSZRTX EQU   *
+         DROP  R1                  DROP DCB ADDRESSABILITY
+         SUBOUT RETURN=(R14)       RETURN TO OPEN ROUTINES
+         EJECT
+**********************************************************************
+*        COMPLETE DDNAME DCB WITH INPUT DCB INFORMATION IF NOT CODED *
+**********************************************************************
+         SPACE 3
+DCBMOD   SUBIN ,
+         USING IHADCB,R1           ESTABLISH DCB ADDRESSABILITY
+         SPACE 1
+         L     R2,SAVEFILE         LOAD ADDRESS OF INPUT DCB
+         CLI   DCBRECFM,X'00'      RECFM SUUPLIED IN JCL?
+         BNE   *+10                YES - BYPASS FORWARD CHAINING
+         MVC   DCBRECFM,DCBRECFM-IHADCB(R2)  MOVE IN INPUT RECFM
+         CLC   DCBBLKSI,=X'0000'   BLKSIZE SPECIFIED IN JCL?
+         BNE   *+10                YES - BYPASS FORWARD CHAINING
+         MVC   DCBBLKSI,DCBBLKSI-IHADCB(R2)  MOVE IN INPUT BLKSIZE
+         CLC   DCBLRECL,=X'0000'   LRECL SPECIFIED IN JCL?
+         BNE   *+10                YES - BYPASS FORWARD CHAINING
+         MVC   DCBLRECL,DCBLRECL-IHADCB(R2)  MOVE IN INPUT LRECL
+DCBMODX  EQU   *
+         SUBOUT RETURN=(R14)       RETURN TO CALLER
+         DROP  R1                  DROP DCB ADDRESSABILITY
+         EJECT
+*******************************************************************
+*        I/O ERROR ROUTINE                                        *
+*******************************************************************
+         SPACE 1
+IOERROR  SUBIN ,                   ANALYSE I/O ERROR
+         MVC   COMPCODE,COND16     SET COMPLETION CODE
+         SYNADAF ACSMETH=QSAM      CALL ANALYSIS ROUTINE
+IOERRMES EQU   *                   LET OPERATOR KNOW OF I/O ERROR
+         MVC   WTOIOE+27(86),50(R1) ADD RESULT OF ANALYSIS TO LINE
+         SYNADRLS ,                RELEASE OS BUFFER
+         WTO   MF=(E,WTOIOE)       TELL OPERATOR OF ERROR
+         SUBOUT RETURN=JOBEND      TERMINATE JOB
+         SPACE 3
+*******************************************************************
+*        I/O ERROR ROUTINE FOR PDS                                *
+*******************************************************************
+         SPACE 1
+IOERRPDS SUBIN ,                   ANALYSE PDS I/O ERROR
+         MVC   COMPCODE,COND16     SET CONDITION CODE
+         SYNADAF ACSMETH=BPAM      CALL ANALYSIS ROUTINE
+         SUBOUT RETURN=IOERRMES    GO TELL OPERATOR I/O ERROR MESSAGE
+         EJECT
+*******************************************************************
+*        TEST IF A DD STATEMENT IS PRESENT BEFORE OPEN            *
+*******************************************************************
+         SPACE 1
+TESTIOT  SUBIN ,                   TEST TASK INPUT/OUTPUT TABLE
+         CLC   4(8,R2),=CL8' '     TEST IF DDNAME BLANK
+         BNE   *+12                NO - BYPASS FORWARD CHAINING
+         L     R15,=F'4'           SET R15 TO 4 (NOT FOUND)
+         B     TESTIOTX            RETURN
+         TESTIOT DDNAME=4(R2)      TEST IF DDNAME FOUND IN TIOT
+         B     *+4(R15)            TEST CONDITION CODE
+         OI    0(R2),DDPRES        TELL THAT DD STATEMENT SUPPLIED
+TESTIOTX EQU   *
+         SUBOUT ,                  RETURN TO CALLER
+         SPACE 3
+*******************************************************************
+*        OPEN ROUTINE                                             *
+*******************************************************************
+         SPACE 1
+OPEN     SUBIN SAVE=(R3)           OPEN DATA SET
+         TM    0(R2),DDINT+DDPRES  TEST IF DD INTERESTING AND
+         BNO   OPENX               BRANCH IF NO    / PRESENT.
+         L     R3,0(R2)            GET DCB ADDRESS
+         CLC   12(8,R2),=C'INPUT   ' TEST FOR INPUT D/S
+         BE    OPENZ               BRANCH IF INPUT D/S
+         OPEN  ((R3),(OUTPUT))     OPEN OUTPUT DATA SET
+         B     OPENY               GO SET SWITCH
+OPENZ    OPEN  ((R3),(INPUT))      OPEN INPUT DATA SET
+OPENY    OI    0(R2),DDOPEN        INDICATE DATA SET OPEN
+OPENX    SUBOUT RESTORE=(R3)       RETURN TO CALLER
+         SPACE 3
+*******************************************************************
+*        CLOSE ROUTINE                                            *
+*******************************************************************
+         SPACE 1
+CLOSE    SUBIN SAVE=(R3)           CLOSE DATA SET
+         TM    0(R2),DDOPEN        TEST IF DATA SET OPEN
+         BZ    CLOSEX              EXIT IF NOT
+         L     R3,0(R2)            GET DCB ADDRESS
+         CLOSE ((R3))              CLOSE DATA SET
+         NI    0(R2),FF-DDOPEN     SET OFF 'OPEN' SWITCH
+CLOSEX   SUBOUT RESTORE=(R3)       RETURN TO CALLER
+         TITLE 'DCB''S AND I/O CONTROL TABLES'
+*******************************************************************
+*        DCB'S TABLE                                              *
+*******************************************************************
+         SPACE 1
+DCBTABLE DS    0F
+PRINTSW  DC    X'00',AL3(SYSPRINT),CL8'SYSPRINT',CL8'OUTPUT'
+SYSUT1SW DC    X'00',AL3(SYSUT1),CL8'SYSUT1',CL8'INPUT'
+SYSUT2SW DC    X'00',AL3(SYSUT2),CL8'SYSUT2',CL8'OUTPUT'
+SYSUT3SW DC    X'00',AL3(SYSUT3),CL8'SYSUT3',CL8'OUTPUT'
+PDSSW    DC    X'00',AL3(PDSDCB),CL8'SYSLIB',CL8'INPUT'
+         SPACE 1
+TABSIZE  EQU   *-DCBTABLE          DCB'S TABLE SIZE
+DCBNTRY  EQU   20                  LENGTH OF ONE TABLE ELEMENT
+MAXDS    EQU   TABSIZE/DCBNTRY     MAXIMUN NUMBER OF DCB'S
+         SPACE 1
+DDMAN    EQU   32                  DD MANDATORY
+DDINT    EQU   16                  DD INTEREST
+DDPRES   EQU   8                   DD PRESENT
+DDOPEN   EQU   1                   DATA SET IS OPEN
+         SPACE 2
+EXITLIST DC    X'85',AL3(BLKSZRTN) ENTRY FOR DCB MODIFICATION
+         SPACE 2
+WTOIOE   DS    0F
+         DC    AL2(WTOEND-*),H'0',CL109'******** - I/O ERROR -'
+WTOEND   EQU   *
+SAVEFILE DC    F'0'                INPUT DCB ADDRESS
+MODLIST  DC    X'85',AL3(DCBMOD)
+DDOTABLE DS    0F
+DDOTABSW DC    X'00',X'000000',CL8' ',CL8' ',PL4'0',F'0'
+DDOUTPUT DC    X'00',X'000000',CL8'DDOXXXXX',CL8'OUTPUT',PL4'0',F'0'
+DDOINPUT DC    X'00',X'000000',CL8'DDOXXXXX',CL8'INPUT ',PL4'0',F'0'
+OUTIOTTB DS    0F                  SYSUT1 NON CTL OUTPUT TABLE
+OUTIOTSW DC    X'00',X'000000',CL8' '  SYSUT1 NON CTL OUTPUT SWITCH
+         EJECT
+*******************************************************************
+*        DATA CONTROL BLOCKS                                      *
+*******************************************************************
+         SPACE 1
+         PRINT NOGEN
+SYSPRINT DCB   DDNAME=SYSPRINT,                                        C
+               DSORG=PS,                                               C
+               SYNAD=IOERROR,                                          C
+               RECFM=FBM,                                              C
+               MACRF=PL,                                               C
+               LRECL=133,                                              C
+               BLKSIZE=133
+         SPACE 3
+SYSUT1   DCB   DDNAME=SYSUT1,                                          C
+               DSORG=PS,                                               C
+               SYNAD=IOERROR,                                          C
+               MACRF=GL,                                               C
+               EXLST=UT1LIST,                                          C
+               EODAD=EODUT1
+         SPACE 3
+SYSUT2   DCB   DDNAME=SYSUT2,                                          C
+               DSORG=PS,                                               C
+               SYNAD=IOERROR,                                          C
+               EXLST=EXITLIST,                                         C
+               MACRF=PM
+         SPACE 3
+SYSUT3   DCB   DDNAME=SYSUT3,                                          C
+               DSORG=PS,                                               C
+               SYNAD=IOERROR,                                          C
+               EXLST=EXITLIST,                                         C
+               MACRF=PM
+         SPACE 3
+DDNDCB   DCB   DDNAME=DDNXXXXX,                                        C
+               DSORG=PS,                                               C
+               SYNAD=IOERROR,                                          C
+               MACRF=GL,                                               C
+               EODAD=DDNEOF
+         SPACE 3
+DDNORG   DCB   DDNAME=DDNXXXXX,                                        C
+               DSORG=PS,                                               C
+               SYNAD=IOERROR,                                          C
+               MACRF=GL,                                               C
+               EODAD=DDNEOF
+         SPACE 3
+DDOUTDCB DCB   DDNAME=DDOXXXXX,                                        C
+               DSORG=PS,                                               C
+               SYNAD=IOERROR,                                          C
+               EXLST=MODLIST,                                          C
+               MACRF=PM
+         SPACE 3
+PDSDCB   DCB   DDNAME=SYSLIB,                                          C
+               DSORG=PO,                                               C
+               SYNAD=IOERRPDS,                                         C
+               MACRF=R,                                                C
+               BUFNO=2,                                                C
+               RECFM=FB,                                               C
+               EODAD=PDSEODAD
+PDSBLKSI EQU   PDSDCB+62
+PDSLRECL EQU   PDSDCB+82
+         SPACE
+         READ  PDSECB1,SF,PDSDCB,PDSABUF1,'S',MF=L
+PDSABUF1 EQU   PDSECB1+12
+PDSIOBA  EQU   PDSECB1+16
+         SPACE 3
+         PRINT GEN
+         TITLE 'MISCELLANIOUS EQUATES, CONSTANTS AND WORK AREAS'
+*******************************************************************
+*        EQUATES                                                  *
+*******************************************************************
+         SPACE 1
+FF       EQU   255                 FOR 'NI' INSTRUCTION
+BLANK    EQU   X'40'               BLANK
+ON       EQU   X'FF'               ON
+OFF      EQU   X'00'               OFF
+HIGHVAL  EQU   X'FF'               HIGH VALUE
+LOWVAL   EQU   X'00'               LOW VALUE
+SIGN     EQU   X'F0'               FOR FORCE SIGN TO 'F'
+         SPACE 1
+SPCE1AFT EQU   X'09'               SPACE 1 AFTER PRINTING
+SPCE2AFT EQU   X'11'               SPACE 2 AFTER PRINTING
+SPCE3AFT EQU   X'19'               SPACE 3 AFTER PRINTING
+PAGESKIP EQU   X'89'               SKIP TO NEW PAGE
+*        NEXT 2 SWITCHES ARE FOR PDS PROCESSING
+FIRSTGET EQU   X'80'               FIRST TIME ROUND FOR CURRENT MEMBER
+READREQ  EQU   X'40'               PHYSICAL READ REQUIRED
+         EJECT
+*******************************************************************
+*        CONSTANTS                                                *
+*******************************************************************
+         SPACE 1
+ZEROWORD DC    F'0'                BINARY ZERO FULLWORD FOR TESTS
+         SPACE 1
+COND4    DC    H'4'                COMPLETION CODE OF 4
+COND8    DC    H'8'                COMPLETION CODE OF 8
+COND12   DC    H'12'               COMPLETION CODE OF 12
+COND16   DC    H'16'               COMPLETION CODE OF 16
+         SPACE 1
+ZERO     DC    PL1'0'              PACKED CONSTANT OF ZERO
+ONE      DC    PL2'1'              PACKED CONSTANT OF ONE
+PDSABUF2 DC    F'0'
+PDSSEGAD DC    F'0'
+PDSBYTES DC    H'0'
+HEADLIN1 DC    C'UT496 - INSTREAM PROCEDURE CREATION UTILITY'
+HEADLIN2 DC    C'0        1         2         3         4         5    *
+                    6         7         8'
+HEADLIN3 DC    C'123456789012345678901234567890123456789012345678901234*
+               56789012345678901234567890'
+ERRMESS  DC    C'** WARNING - INVALID MEMBER OR DDNAME (*)'
+ENDPRPAR DC    CL132'THE CONTENT OF THE PARM FIELD ARE -'
+PARMERMS DC    C'** WARNING - INVALID PARM IN EXEC CARD'
+ENDPROPT DC    C' OPTIONAL DATA SET ........ MISSING'
+ENDPRMAN DC    C'MANDATORY'
+ENDPRRDR DC    C'- NUMBER OF RECORDS READ FROM  ='
+ENDPRWTR DC    C'- NUMBER OF RECORDS WRITTEN TO ='
+ENDPRPRE DC    C'PRESENT'
+ENDCON00 DC    C'CONDITION CODE = 0  - OPERATION SUCCESSFUL'
+ENDCON16 DC    C'CONDITION CODE = 16 - ONE OR MORE ERRORS DETECTED'
+         EJECT
+*******************************************************************
+*        WORK AREAS                                               *
+*******************************************************************
+         SPACE 1
+PARMSAVE DS    F                   PARAMETER ADDRESS POINTER
+UT1LIST  DC    X'80',AL3(UT1UNLK)
+UT1RRSW  DC    X'00'
+MEMBNAME DC    D'0'                PDS MEMBER NAME AREA
+ASYSUT1  DC    F'0'                SAVE ADDRESS OF SYSUT1
+PROCPEND DC    CL80'//             PEND'  LAST CARD OF PROCEDURE
+MEMBMISS  DC   CL80'                                        * UT496 - IC
+               NVALID REQUEST *'
+READTYPA  DC   F'0'                SAVE ADDRESS OF READ FROM CTL REC.
+DECIMAL  DS    D                   WA FOR DECIMAL OPERATIONS
+COMPCODE DC    H'0'                CONDITION CODE
+INTRDRSW DC    C'N'                INTERNAL READER SWITCH
+INTRDRCD DC    CL80'/*EOF'         LAST OUTPUT RECORD IF INTRDR PARM
+DUMPSW   DC    C'Y'                DUMP ON CC16 SWITCH
+LKLIB2SW DC    C'N'                LINKLIB2 MODIFICATION PARM SWITCH
+LKLIBSYS DC    C' DSN=SYS2.LINKLIB'    LINKLIB COMPARE CONSTANT
+LKLIBBXL DC    C'  DSN=BXL.LINKLIB'    LINKLIB REPLACEMENT
+MEMBERSW DC    C'N'                MEMBER ERROR SWITCH
+DDOCONS1 DC    C',DDNAME='         SPECIAL OUTPUT CONTANT 1
+DDOCONS2 DC    C',DDN='            SPECIAL OUTPUT CONTANT 2
+DDONAME  DC    CL8' '              OUTPUT DDNAME AREA
+DDOSAVE  DC    CL8' '              SAVE AREA FOR DDONAME
+DDOSW    DC    C'N'                SPECIAL OUTPUT SWITCH
+DDOERSW  DC    C'N'                DDNAME ERROR SWITCH
+DDOFTYPE DC    C'X'                TYPE OF TBLENTRY
+DDOROPEN DC    C'X'                OPEN REQUEST
+DDOFIRST DC    F'0'                ADDRESS OF FIRST TABLE ENTRY
+DDOLASTA DC    F'0'                ADDRESS OF LAST  TABLE ENTRY
+DDOTHISA DC    F'0'                ADDRESS OF ACTUAL TABLE ENTRY
+DDOTBADR DC    F'0'                ADDRESS OF TBLENTRY
+DDNREAD  DC    F'0'                ADDRESS OF TBLENTRY SPECIAL INPUT
+DDOWRITE DC    F'0'                ADDRESS OF TBLENTRY SPECIAL OUTPUT
+DDOCOND  DC    H'0'                SPECIAL OUTPUT CONDITION CODE
+DDNCOND  DC    H'0'                SPECIAL INPUT  CONDITION CODE
+         SPACE 1
+PAGECOUN DC    PL2'0'              COUNT OF PAGES
+LINECOUN DC    PL2'0'              COUNT OF LINES
+MAXLINE  DC    PL2'55'             MAXIMUM NUMBER OF LINES PER PAGE
+         SPACE 1
+CNTUT1   DC    PL4'0'
+CNTUT2   DC    PL4'0'
+CNTUT3   DC    PL4'0'
+CNTLIB   DC    PL4'0'
+MASKNR   DC    X'40202020202021204060'
+         EJECT
+*******************************************************************
+*        LITERAL POOL                                             *
+*******************************************************************
+         SPACE 1
+         LTORG
+         END

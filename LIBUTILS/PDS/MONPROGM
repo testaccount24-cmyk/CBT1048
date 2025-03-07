@@ -1,0 +1,496 @@
+MONPROGM CSECT                         SEE NEXT PAGE FOR DETAILS
+         PGMIN
+         EJECT
+         SPACE 5
+***********************************************************************
+* MONPROGM - A PROGRAM DESIGNED TO EASE CONVERSION TO 3330 MODEL 11.  *
+*                                                                     *
+*  THIS PROGRAM READS CONTROL CARDS INTENDED FOR THE IEHPROGM UTILITY *
+*  AND CREATES NEW CONTROL CARDS IN THE FOLLOWING MANNER :            *
+*         CVOL REFERENCES ARE DELETED.                                *
+*         VOL=XXXX IS CHANGED TO VOL=DISK.                            *
+*         A SEARCH OF THE CATALOG IS MADE FOR THE DSNAME              *
+*         IF SUCCESSFUL THE VOLUME SERIAL IS USED FOR VOL=DISK= .     *
+*         IF UNSUCCESSFUL ANOTHER CATALOG SEARCH IS MADE USING AS     *
+*         A DSNAME THE OLD VOLUME SERIAL SUPPLIED.THE VOLUME          *
+*         RETURNED FOR THIS POINTER IS USED FOR VOL=DISK= .           *
+*                                                                     *
+*  THESE NEW CONTROL CARDS ARE WRITTEN TO A TEMPORARY FILE AND AT     *
+*  THE END OF THE INPUT CONTROL IS PASSED TO IEHPROGM WITH A NEW      *
+*  DDNAME FOR SYSIN.                                                  *
+*                                                                     *
+*         D.CARTWRIGHT   MISD/TSG   JUNE 1975                         *
+***********************************************************************
+         TITLE 'MONPROGM - INITILISATION'
+         PRINT ON,NOGEN,NODATA
+         OPEN  (SYSIN,,SYSUT6,(OUTPUT)) OPEN FILES
+         TM    SYSIN+48,X'10'          SYSIN OPENED OK?
+         BO    TESTUT6                 YES, TRY SYSUT6
+         MVC   BADDMESS+4(6),SYSINDD   NO, TELL USER NO SYSIN
+         B     ABENDIT                 AND THROW UP
+         SPACE 1
+TESTUT6  DS    0H                      TEST SYSUT6 OPEN
+         TM    SYSUT6+48,X'10'         OPENED OK?
+         BO    START                   YES - GET GOING
+         MVC   BADDMESS+4(6),SYSUT6DD  NO,TELL USER
+         B     ABENDIT                 AND SUITABLY REWARD HIM
+         TITLE 'MONPROGM - MAIN LINE PROCESSING'
+START    DS    0H                      HERE WE GO
+         GET    SYSIN,IMAGE            READ A CARD
+         CLI   IMAGE+71,C' '           TEST FOR CONTINUATION
+         BE    NOCONT                  NO - BYPASS CONTINUATION FRIG
+         SPACE 1
+*
+* THIS ROUTINE MERGES TWO RECORDS INTO ONE LONG ONE
+*
+         SPACE 1
+         GET   SYSIN,IMAGE+71          READ CONTINUATION CARD
+         LA    R3,IMAGE+71             POINT AT END OF 1ST CARD
+         LA    R2,71                   SET NUMBER OF LOOPS
+COMMASC  DS    0H                      SCAN FOR LAST COMMA
+         BCTR  R3,0                    TEST NEXT COLUMN DOWN
+         CLI   0(R3),C','              IS IT A COMMA?
+         BE    GOTCOMMA                YES
+         BCT   R2,COMMASC              OR NO
+         B     SYNNER                  ERROR IF NO COMMA AT ALL
+         SPACE 1
+GOTCOMMA DS    0H                      FOUND LAST COMMA
+         MVC   1(56,R3),IMAGE+86       SCRUNCH UP OPERANDS
+         LA    R3,56(,R3)              POINT AT LAST COLUMN
+         B     GOTLAST                 GO STORE IT
+         SPACE 2
+NOCONT   DS    0H                      ONLY ONE CARD
+         LA    R3,IMAGE+72             SET END ADDRESS
+         MVI   IMAGE+72,C' '
+         MVC   IMAGE+73(7),IMAGE+72
+         SPACE 1
+GOTLAST  DS    0H                      NOW FOUND LAST COLUMN
+         ST    R3,ENDCARD              SAVE IT
+         SPACE 1
+         LA    R8,IMAGE                SET FOR SCAN
+         BAL   R4,LSCAN                SCAN OVER LABEL
+         BAL   R4,BSCAN                SCAN OVER BLANKS
+         BAL   R4,VSCAN                SCAN FOR VERB
+         LTR   R3,R3                   IS THERE ONE?
+         BZ    SYNNER                  NO,ERROR
+         SPACE 1
+         MVI   CARD1,C' '              CLEAR FIRST.OUTPUT
+         MVC   CARD1+1(79),CARD1       AREA
+         BCTR  R3,0                    FOR EXECUTES
+         LA    R5,VERBTAB              POINT AT LIST OF ROUTINES
+         SPACE 1
+VERBLOOP DS    0H                      DECIDE WHAT ACTION REQUIRED
+         EX    R3,TESTVERB             TEST ENTRY IN TABLE
+         BE    GOTVERB                 PROCESS IF FOUND
+         TM    0(R5),X'80'             HIT THE END YET?
+         BO    SYNNER                  YES,YOU BLEW IT.
+         LA    R5,12(,R5)              ELSE TRY NEXT ENTRY
+         B     VERBLOOP                CIRCULATE.
+         SPACE 1
+GOTVERB  DS    0H                      WE NOW KNOW WHAT WE'RE DOING
+         EX    R3,MOVEVERB             COPY VERB TO OUTPUT
+         LA    R9,VERB+9               SET OUTPUT POINTER
+         L     R5,0(,R5)               PICK UP ADDRESS OF ROUTINE
+         LA    R5,0(,R5)               PURIFY IT
+         BALR  R4,R5                   AND OFT WE JOLLY WELL GO
+         B     TRANSFER                GO PROCESS COMPLETED CARDS
+         SPACE 5
+TESTVERB CLC   0(*-*,R2),4(R5)         EXECUTED TO TEST FOR OPERATION
+MOVEVERB MVC   VERB(*-*),0(R2)         EXECUTED TO COPY OPERATION
+VERBTAB  DS    0F                      OPERATION TABLE
+         DC    X'00',AL3(CATLGR),CL8'CATLG'
+         DC    X'00',AL3(UNCATLGR),CL8'UNCATLG'
+         DC    X'00',AL3(SCRATCHR),CL8'SCRATCH'
+         DC    X'00',AL3(CONNECTR),CL8'CONNECT'
+         DC    X'00',AL3(SIMPLER),CL8'RELEASE'
+         DC    X'00',AL3(SIMPLER),CL8'RENAME'
+         DC    X'00',AL3(SIMPLER),CL8'BLDX'
+         DC    X'00',AL3(SIMPLER),CL8'BLDG'
+         DC    X'00',AL3(SIMPLER),CL8'BLDA'
+         DC    X'00',AL3(SIMPLER),CL8'DLTX'
+         DC    X'80',AL3(SIMPLER),CL8'DLTA'
+         EJECT
+         SPACE 5
+*
+* THIS BIT IS A FRIG - THIS PROGRAM HAS BEEN WRITTEN TO ALLOW FOR
+* ANY FUTURE EXTRA PROCESSING E.G. MATCHING SCRATCH AND UNCATLG
+* REQUESTS FOR PASSING TO UT434 AS PURGE REQUESTS.THEREFORE IT IS
+* WRITTEN IN A MODULAR FASHION,BUT INITIALLY ALL REQUESTS REQUIRE
+* THE SAME PROCESSING,SO THEY ARE DIRECTED TO A COMMON MODULE.
+*
+         SPACE 3
+         DS    0H                      ALIGNMENT
+CATLGR   B     CHANGER                 ALWAYS
+UNCATLGR B     CHANGER                  GO
+SCRATCHR B     CHANGER                   TO
+CONNECTR B     CHANGER                    COMMON
+SIMPLER  B     CHANGER                     ROUTINE
+         EJECT
+TRANSFER DS    0H
+         SPACE 1
+***********************************************************************
+*                                                                     *
+*         THIS SECTION COMPLETES THE NEW CONTROL CARD(S)              *
+*                                                                     *
+***********************************************************************
+         SPACE 2
+         L     R3,ENDCARD              SCAN FOR TOTAL LENGTH
+LASTLOOP DS    0H
+         CLI   0(R3),C' '              TEST FOR BLANK
+         BNE   TRANSLEN                NO,HIT THE END
+         BCT   R3,LASTLOOP             ELSE TRY AGAIN
+         SPACE 2
+TRANSLEN DS    0H                      FIND LENGTH OF DATA
+         L     R2,KEYSTART             RECOVER START ADDRESS
+         SR    R3,R2                   CALCULATE LENGTH
+         BNP   TRANSDUN                IGNORE BLANK CARDS
+         EX    R3,MOVEDATA             MOVE DATA TO OUTPUT
+         LA    R9,1(R3,R9)             UPDATE OUTPUT POINTER
+TRANSDUN DS    0H                      CHECK OUTPUT SYNTAX
+         BCTR  R9,0                    POINT BACK AT LAST CHARACTER
+         CLI   0(R9),C','              IS IT A COMMA?
+         BNE   TRANSCNT                NO,TEST FOR CONTINUATION
+         MVI   0(R9),C' '              YES,BLANK IT OUT
+         BCTR  R9,0                    AND POINT AT LAST CHARACTER
+         SPACE 1
+TRANSCNT DS    0H                      TEST FOR CONTINUATION
+         CLI   CONTMARK,C' '           CONTINUATION INDICATED?
+         BE    TRANSOUT                NO,GO OUTPUT CARD
+         MVI   1(R9),C','              YES,INSERT COMMA
+         SPACE 1
+TRANSOUT DS    0H                      OUTPUT NEW CARDS
+         PUT   SYSUT6,CARD1            JUST ONE TO START WITH
+         CLI   CONTMARK,C' '           DO WE NEED TWO?
+         BE    START                   NO,GO BACK TO BEGINNING
+         PUT   SYSUT6,CARD2            YES,OUTPUT SECOND
+         B     START                   THEN GO BACK
+         SPACE 2
+MOVEDATA MVC   0(*-*,R9),0(R2)         OUTPUT USER DATA
+         EJECT
+ENDFILE  DS    0H
+         SPACE 1
+*
+* END-OF-FILE ROUTINE
+*
+         SPACE 2
+         CLOSE (SYSIN,,SYSUT6)         CLOSE FILES
+         SPACE 1
+         FREEPOOL SYSIN                RELEASE INPUT BUFFERS
+         SPACE 1
+         FREEPOOL SYSUT6               RELEASE OUTPUT BUFFERS
+         SPACE 1
+         LINK  EP=IEHPROGM,PARAM=(OPTLIST,DDLIST),VL=1 PASS CONTROL
+         PGMOUT RC=(15)                END OF RUN.
+         TITLE 'MONPROGM - CHANGE CONTROL CARDS COMMON ROUTINE'
+CHANGER  DS    0H                      PROCESS VOL= AND CVOL=
+         SUBIN SAVE=(R2,R3,R4,R5,R8)   PRESERVE ALL USEFUL INFO.
+         BAL   R4,BSCAN                SCAN OVER BLANKS
+         ST    R8,KEYSTART             PRESERVE START OF KEYWORDS ADDR
+         SCAN  IMAGE,=C'CVOL=',REG=R8,LIMIT=ENDCARD LOOK FOR CVOL PTR.
+         B     VOLPROC                 IF NONE LOOK FOR VOL=
+         BAL   R4,VSCAN                IF FOUND GET END OF FIELD
+         BAL   R4,SHORTEN              GET RID OF CVOL POINTER
+         SPACE 3
+VOLPROC  DS    0H                      NOW COMES THE HARD PART
+         CLC   VERB,UNCATLG            IS REQUEST TO UNCATALOG?
+         BE    TRANSFER                YES,SO NOTHING FANCY NEEDED
+         SPACE 1
+         SCAN  IMAGE,=C'DSNAME=',REG=R8,LIMIT=ENDCARD LOOK FOR DSNAME
+         B     VOLSCAN                 NONE,GO LOOK FOR VOL=
+         BAL   R4,VSCAN                FIND LENGTH OF FIELD
+         MVI   DSN,C' '                CLEAR
+         MVC   DSN+1(43),DSN           DSNAME SAVE AREA
+         SH    R3,=H'8'                FIX LENGTH
+         EX    R3,MOVEDSN              FOR MOVE
+         BAL   R4,SHORTEN              THEN REMOVE FIELD
+         MVI   CONTMARK,C'C'           SHOW WE HAVE A CONTINUATION
+         MVI   SWITCH,NOSEARCH         DON'T SEARCH FOR VOLUME POINTER
+        LOCATE CATALIST                INSTEAD LOOK FOR DSN
+         LTR   R15,R15                 DID IT WORK?
+         BZ    VOLSCAN                 YES,GO REMOVE VOL=
+         MVI   SWITCH,SEARCH           NO,USE OLD VOLUME POINTER
+         SPACE 5
+VOLSCAN  DS    0H                      HERE WE LOOK FOR VOL=XXX=LIST
+         SCAN  IMAGE,=C'VOL=',REG=R8,LIMIT=ENDCARD SEARCH FOR VOL=
+         B     TRANSFER                NO,GO OUTPUT WHAT WE HAVE
+         BAL   R4,VSCAN                GET LENGTH OF FIELD
+         SPACE 1
+BRANCH   DS    0H
+         BC    *-*,VOLOBT              DECIDE WHAT TO DO
+         SPACE 1
+SWITCH   EQU   BRANCH+1                CONDITION IS MODIFIED
+SEARCH   EQU   X'F0'                   EITHER GO
+NOSEARCH EQU   X'00'                   OR NOGO
+         SPACE 5
+VOLREM   DS    0H                      NO LONGER NEED INPUT VOL LIST ?
+         CLC   4(4,R2),=CL4'2314'      CHECK FOR RIGHT DEVICE
+         BE    VOLREM1                 YES,OK
+         CLC   4(4,R2),=CL4'DISK'      CHECK ALTERNATIVE
+         BNE   TRANSFER                NO,IT'S A TAPE
+         SPACE 2
+VOLREM1  DS    0H                      REALLY DON'T NEED LIST
+         BAL   R4,SHORTEN              SO REMOVE IT
+         BAL   R4,OUTVOLS              PROCESS NEW VOLUME(S)
+         B     TRANSFER                THEN GO OUTPUT CARDS
+         EJECT
+VOLOBT   DS    0H
+         SPACE 1
+*
+* THIS ROUTINE IS ENTERED WHEN THE VOLUMES REQUIRED CANNOT BE LOCATED
+* FROM A DATASET NAME.IT SEARCHES THE CATALOG FOR DSN=(OLD VOLSER).
+*
+         SPACE 1
+         CLC   4(4,R2),=CL4'2314'      CHECK FOR RIGHT DEVICE
+         BE    VOLOBT1                 YES,OK
+         CLC   4(4,R2),=CL4'DISK'      CHECK ALTERNATIVE
+         BNE   TRANSFER                NO,IT'S A TAPE
+         SPACE 1
+VOLOBT1  DS    0H                      REALLY DO NEED LIST
+         LR    R10,R2                  SAVE POINTER
+         LR    R11,R8                  AND NEXT ONE
+         LA    R8,8(,R2)               POINT NEAR TO START
+         CLI   1(R8),C'('              DO WE HAVE A LIST?
+         BNE   VOLFIND                 NO,HOORAY
+         OI    CHNGFLAG,INLIST         GROAN,YES
+         LA    R8,1(,R8)               IGNORE PARENTHESES
+VOLFIND  DS    0H                      LOOK UP CATALOG
+         BAL   R4,PSCAN                FIND LENGTH
+         BCTR  R3,0                    FIDDLE LENGTH FOR EXECUTE
+         MVI   VOLUME,C' '             CLEAR
+         MVC   VOLUME+1(5),VOLUME       RECEIVIN AREA
+         LA    R5,0(R3,R2)             POINT AT LAST CHARACTER
+         CLI   0(R5),C')'              IS IT CLOSE PAREN?
+         BNE   VOLOBT2                 NO,CARRY ON
+         NI    CHNGFLAG,255-INLIST     YES,SO RESET FLAG
+         BCTR  R3,0                    AND DECREMENT LENGTH
+         SPACE 1
+VOLOBT2  DS    0H                      PROCESS OPERAND
+         EX    R3,MOVEVOL              SET UP CATALOG POINTER
+         LOCATE DATALIST               AND FIND NEW VOLUME(S)
+         LTR   R15,R15                 SUCCESSFUL?
+         BZ    VOLFND                  YES
+VOLABEND DS    0H                      CANNOT FIND VOLUME(S)
+         MVC   BADDMESS+4(L'BADCAT),BADCAT NO,TELL USER
+         MVC   BADDMESS+4(6),VOLUME    TELL USER WHICH VOLUME
+         B     ABENDIT                 AND TERMINATE
+         SPACE 2
+VOLFND   DS    0H                      GOT NEW VOLUME(S)
+         BAL   R4,OUTVOLS              SO GO CONSTRUCT NEW CARD
+         TM    CHNGFLAG,INLIST         ARE WE IN A LIST?
+         BO    VOLFIND                 YES,SO GO PROCESS NEXT ONE
+         SPACE 3
+         LR    R2,R10                  POINT BACK AT KEYWORD
+         LR    R8,R11                  AND THE NEXT
+         BAL   R4,SHORTEN              REMOVE IT
+         B     TRANSFER                OUTPUT REST OF DATA
+         SPACE 2
+MOVEDSN  MVC   DSN(*-*),7(R2)          MOVE DSNAME TO OUTPUT
+MOVEVOL  MVC   VOLUME(*-*),0(R2)       MOVE VOLSER TO LIST
+         TITLE 'MONPROGM - SUBROUTINES'
+***********************************************************************
+*                                                                     *
+*                       S U B R O U T I N E S                         *
+*                                                                     *
+***********************************************************************
+ABENDIT  DS    0H                      ABEND ROUTINE
+         SPACE 1
+*
+* THIS ROUTINE TERMINATES THE JOB ON A SEVERE ERROR
+*
+         SPACE 1
+         WTO   MF=(E,BADDMESS)         OUTPUT ERROR MESSAGE
+         ABEND 3330,DUMP               EXPLODE ALL OVER THE PLACE
+         SPACE 5
+*
+*        SCAN  ROUTINES
+*
+         SPACE 1
+LSCAN    DS    0H                      SCAN OVER LABEL
+         LA    R7,9(,R8)               SET LIMIT
+         LA    R6,1                SET INCREMENT
+LLOOP    DS    0H                  HEAD OF SCAN LOOP
+         CLI   0(R8),C' '          TEST FOR BLANK
+         BER   R4                  YES,RETURN
+         BXLE  R8,R6,LLOOP         ELSE TRY AGAIN
+         BR    R4                  GO BACK AFTER 8 CHARACTERS
+         SPACE 3
+BSCAN    DS    0H                  SCAN OVER BLANKS
+         CLI   0(R8),C' '          AT LEAST ONE BLANK?
+         BNE   SYNNER              NO,NAUGHTY
+BLOOP    DS    0H                  HEAD OF SCAN LOOP
+         LA    R8,1(,R8)           POINT AT NEXT CHARACTER
+         C     R8,ENDCARD          END OF CARD?
+         BNL   SYNNER              WELL,THAT'S WRONG
+         CLI   0(R8),C' '          BLANK?
+         BE    BLOOP               YES,TRY NEXT COLUMN
+         BR    R4                  RETURN
+         SPACE 3
+PSCAN    DS    0H                  PARAMETER SCAN
+         SR    R3,R3                   CLEAR REGISTER 3
+         CLI   0(R8),C' '              SPACE?
+         BER   R4                      YES,IT IS THE END OF PARAMS
+         LA    R8,1(,R8)               POINT TO NEXT COLUMN
+VSCAN    DS    0H                      VERB SCAN
+         LR    R2,R8                   R2 POINTS TO START OF PARAM.
+PLOOP    DS    0H                      PARAMETER LOOP
+         CLI   0(R8),C'('              IS IT A LIST?
+         BE    LISTLOOP                YES,PROCESS DIFFERENTLY
+         CLI   0(R8),C','              COMMA?
+         BE    PAREND                  YES.PROCESS PARAM
+         CLI   0(R8),C' '              SPACE?
+         BE    PAREND                  YES.PROCESS PARAM
+         C     R8,ENDCARD              END OF CARD?
+         BNL   IGNORE                  YES,SKIP IT
+         LA    R8,1(,R8)               POINT TO NEXT PARAM
+         B     PLOOP                   TRY AGAIN
+         SPACE 2
+LISTLOOP DS    0H                      DEALING WITH A LIST
+         LA    R8,1(,R8)               UPDATE POINTER
+         CLI   0(R8),C')'              END OF LIST?
+         BE    PLOOP                   OK,LOOK FOR COMMA
+         C     R8,ENDCARD              STILL WITHIN BOUNDS?
+         BNL   IGNORE                  NO,DROP IT
+         B     LISTLOOP                OR TRY AGAIN
+         SPACE 2
+PAREND   DS    0H                      FOUND THE END OF A PARAMETER
+         LR    R3,R8                   CALCALATE
+         SR    R3,R2                   PARAMETER LENGTH
+         BR    R4                      AND RETURN
+         SPACE 1
+IGNORE   DS    0H                      INCOMPLETE PARAMETER FOUND
+         SR    R3,R3                   INDICATE ZERO LENGTH
+         BR    R4                      AND RETURN
+         SPACE 2
+SYNNER   DS    0H                      SYNTAX ERROR
+         MVC   BADDMESS+4(L'BADSYN),BADSYN SHOW SOMETHING'S WRONG
+         B     ABENDIT                 AND STOP HIM DOING SILLY THINGS
+         SPACE 5
+SHORTEN  DS    0H
+         SPACE 1
+*
+* THIS ROUTINE REMOVES A FIELD FROM THE INPUT RECORD
+*
+         L     R5,ENDCARD              CALCULATE
+         SR    R5,R8                   LENGTH OF FIELD
+         BNPR  R4                      IGNORE NULL FIELDS
+         BCTR  R5,0                    FOR EXECUTE
+         EX    R5,SCRUNCH              REMOVE FIELD
+         LA    R15,1(R5)       SET R15 TO TRUE LENGTH
+         AR    R15,R2          POINT R15 AT 1 PAST MOVED CHAR.
+         MVI   0(R15),C' '     ENSURE BYTE IS BLANK
+         L     R14,ENDCARD     POINT R14 AT END
+         SR    R14,R15         SET R14 TO LENGTH REMAINING
+         BCTR  R14,0           ALLOW FOR FIRST BLANK
+         BCTR  R14,0           DECREMENT FOR EXECUTE
+         EX    R14,PADBL       BLANK OUT REMAINDER OF CARD
+         CLI   0(R2),C' '              WAS FIELD LAST ONE?
+         BNER  R4                      NO,RETURN
+         BCTR  R2,0                    YES,POINT AT LAST ITEM
+         MVI   0(R2),C' '              ENSURE IT IS BLANK
+         BR    R4                      RETURN
+         SPACE 2
+SCRUNCH  MVC   0(*-*,R2),1(R8)         EXECUTED TO MOVE FIELDS DOWN
+PADBL    MVC   1(*-*,R15),0(R15) EXTRAPOLATE BLANKS
+         SPACE 5
+OUTVOLS  DS    0H
+         SPACE 1
+*
+* THIS ROUTINE CONSTRUCTS THE NEW VOLUME SERIAL LIST
+*
+         SPACE 1
+         SUBIN SAVE=(R2,R3,R4,R8,R9)   SAVE USEFUL INFORMATION
+         SPACE 1
+         LA    R6,CATBLOCK             POINT AT CATALOG BLOCK
+         LH    R5,CATBLOCK             PICK UP VOLUME COUNT
+         TM    CHNGFLAG,OUTLIST        ARE WE IN A LIST ALREADY?
+         BO    VOLNEXT                 YES,SO NO KEYWORD REQUIRED
+         MVC   0(L'VOLCONST,R9),VOLCONST PUT IN KEYWORD
+         LA    R9,L'VOLCONST(,R9)      UPDATE POINTER
+         SPACE 1
+VOLIST   DS    0H                      OUTPUT SERIAL NUMBERS
+         TM    CHNGFLAG,INLIST         WILL WE HAVE A LIST?
+         BO    *+12                    YES,FORCE PARENTHESE
+         CH    R5,=H'2'                TEST HOW MANY
+         BL    VOLNEXT                 IF ONLY ONE,NO PAREN
+         OI    CHNGFLAG,OUTLIST        OTHERWISE DO SEVERAL
+         MVI   0(R9),C'('              IN PARENTHESES
+         LA    R9,1(,R9)               UPDATE POINTER
+         SPACE 1
+VOLNEXT  DS    0H                      MOVE A VOLUME SERIAL
+         LA    R6,6(,R6)               POINT AT (NEXT) VOLUME SERIAL
+         MVC   0(6,R9),0(R6)           MOVE IT TO OUTPUT
+         LR    R8,R9                   SET UP TO
+         BAL   R4,VSCAN                FIND LENGTH OF FIELD
+         MVI   0(R8),C','              INSERT COMMA
+         LA    R9,1(,R8)               UPDATE OUTPUT POINTER
+         LA    R6,6(,R6)               UPDATE POINTER HALF-WAY
+         C     R9,=A(CONTMARK)         HAVE WE OVERFLOWED?
+         BNL   VOLABEND                YES,GIVE UP
+         BCT   R5,VOLNEXT              NO,DO THE NEXT
+         SPACE 2
+         TM    CHNGFLAG,INLIST         WILL THERE BE MORE?
+         BO    VOLRETRN                YES,GO BACK FOR THEM
+         TM    CHNGFLAG,OUTLIST        DID WE DO A LIST?
+         BNO   VOLRETRN                NO,GO BACK
+         MVI   0(R8),C')'              YES,SO CLOSE PARENTHESES
+         MVI   0(R9),C','              INSERT COMMA
+         LA    R9,1(,R9)               UPDATE OUTPUT POINTER
+         NI    CHNGFLAG,255-OUTLIST    SHOW LIST FINISHED
+         SPACE 3
+VOLRETRN DS    0H                      RETURN FROM WHENCE YOU CAME
+        SUBOUT RESTORE=(R2,R3,R4,R8)   GO BACK WITH ONLY R9 CHANGED
+         TITLE 'MONPROGM - DECLARATIONS'
+***********************************************************************
+*                                                                     *
+*                       D E C L A R A T I O N S                       *
+*                                                                     *
+***********************************************************************
+         SPACE 3
+SYSIN    DCB   DSORG=PS,MACRF=GM,DDNAME=SYSIN,EODAD=ENDFILE INPUT DCB
+         SPACE 2
+SYSUT6   DCB   DSORG=PS,MACRF=PM,DDNAME=SYSUT6,RECFM=FB,LRECL=80,      C
+               BLKSIZE=240                                 OUTPUT DCB
+         SPACE 3
+BADDMESS WTO   'DDNAME CANNOT BE OPENED - JOB FAILED',ROUTCDE=11,MF=L
+         SPACE 1
+SYSINDD  DC    CL6' SYSIN'             INPUT DDNAME
+SYSUT6DD DC    CL6'SYSUT6'             OUTPUT DDNAME
+BADCAT   DC    C'VOLUME CANNOT BE FOUND ' DATASET NOT FOUND MESSAGE
+BADSYN   DC    C'**** SYNTAX ERROR **** ' BAD LANGUAGE MESSAGE
+         SPACE 2
+CARD1    DS    0CL80                   FIRST OUTPUT CARD IMAGE
+         DS    CL1                     BLANK
+VERB     DS    CL8                     OPERATION
+         DS    CL2                     BLANKS
+         DS    CL60                    DATA AREA
+CONTMARK DS    CL1                     CONTINUATION MARH
+         DS    CL8                     PADDING
+CARD2    DS    0CL80                   SECOND OUTPUT CARD
+         DC    CL15' '                 BLANKS
+         DC    CL7'DSNAME='            KEYWORD
+DSN      DS    CL44                    DATA SET NAME
+         DC    CL14' '                 PADDING
+UNCATLG  DC    CL8'UNCATLG'            UNCATALOG VERB
+VOLCONST DC    C'VOL=DISK='            NEW VOLUME KEYWORDS
+CATALIST CAMLST NAME,DSN,,CATBLOCK     PARAMETERS FOR DSN LOOK-UP
+DATALIST CAMLST NAME,VOLUME,,CATBLOCK  PARAMETERS FOR VOL LOOK-UP
+IMAGE    DC    2CL80' '                CONTROL CARD IMAGES
+ENDCARD  DS    F                       SAVE LAST COLUMN ADDRESS
+KEYSTART DS    F                       SAVE START OF KEYWORDS ADDRESS
+CATBLOCK DS    0D                      SPACE FOR A
+         DS    265C                    CATALOG RECORD
+VOLUME   DS    CL6                     VOLUME SERIAL NAME
+         DC    CL38' '                 BLANK PADDING
+         SPACE 1
+CHNGFLAG DC    XL1'00'                 FLAG BYTE
+INLIST   EQU   X'01'                   INPUT LIST FLAG
+OUTLIST  EQU   X'02'                   OUTPUT LIST FLAG
+         SPACE 2
+         CNOP  2,4                     ALIGN CORRECTLY
+OPTLIST  DC    H'0'
+         CNOP  2,4                     ALIGNMENT
+DDLIST   DC    H'40'                   NUMBER OF BYTES
+         DC    8F'0'                   ZEROES
+         DC    CL8'SYSUT6'             SYSIN DDNAME FOR IEHPROGM
+         SPACE 2
+         END   MONPROGM

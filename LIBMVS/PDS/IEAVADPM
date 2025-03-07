@@ -1,0 +1,241 @@
+//IEAVADPM JOB (1586,5),'** FOR J. NOLS **',CLASS=N
+//*********************  PROGRAM MGT CTL BLKS  ************************
+//STEP01       EXEC GENASMOD,AOS=C5
+         TITLE 'PROGRAM MANAGEMENT CONTROL BLOCK FORMATTING'
+***********************************************************************
+*                        I E A V A D P M                              *
+*                                                                     *
+*        THIS MODULE IS INVOKED BY THE DRIVER 'XEAVAD02' AS PART OF   *
+*              ABEND PROCESSING. ITS PURPOSE IS TO ANALYSE THE        *
+*              PROGRAM MANAGEMENT CONTROL BLOCKS FOR A SYSUDUMP       *
+*              REQUEST. (WHICH DOES NOT NORMALLY HAVE CONTROL BLOCKS  *
+*              FORMATTED). EACH LLE IS PRINTED ALONG WITH ITS         *
+*              CORRESPONDING CDE. IN ADDITION, ALL THE CDE'S ON THE   *
+*              JOB PACK QUEUE ARE FORMATTED.                          *
+*                                                                     *
+*        PARAMETERS. THE ABDUMP WORK AREA IS PASSED IN & OUT VIA R1   *
+*                                                                     *
+*        EXITS. THE ROUTINE RETURNS CONTROL TO THE CALLER             *
+*                                                                     *
+*        REGISTER USAGE.                                              *
+*        REG1  PARAMETER REGISTER, WORK REGISTER                      *
+*        REG2  WORK REGISTER                                          *
+*        REG3  ADDRESS OF INTERNAL WORK AREA                          *
+*        REG4  ADDRESS OF THE ABENDING TCB                            *
+*        REG5  ADDRESS OF CDE AND WORK REGISTER                       *
+*        REG6  ADDRESS OF CONTROL BLOCK TO BE FORMATTED               *
+*        REG7  ADDRESS OF FORMAT CONTROL TABLE                        *
+*        REG8  ADDRESS OF CONTROL BLOCK NAME                          *
+*        REG9  ADDRESS OF CURRENT LLE                                 *
+*        REG10 ADDRESS OF ABDUMP WORK AREA                            *
+*        REG11 INTERNAL LINKAGE REGISTER BETWEEN SEGMENTS             *
+*        REG12 BASE ADDRESS REGISTER                                  *
+*        REG13 ADDRESS OF DYNAMIC SAVE AREA                           *
+*        REG14 RETURN ADDRESS & WORK REGISTER                         *
+*        REG15 ENTRY POINT ADDRESS & WORK REGISTER                    *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        EQUATES USED IN THIS MODULE                                  *
+***********************************************************************
+         SPACE 2
+TIOTOFF  EQU   X'28'               OFFSET TO TIOT OFFSET IN DCB
+         EJECT
+***********************************************************************
+*        DSECTS                                                       *
+***********************************************************************
+         SPACE 2
+         PRINT NOGEN
+         IHAABDA
+         IKJTCB
+         IHACDE
+         IHALLE
+         PRINT GEN
+         SPACE 2
+WKAREA   DSECT ,                   INTERNAL WORK AREA
+GETMNADD DS    F                   ADDRESS OF THIS AREA
+GETMNLEN DS    F                   LENGTH & SUBPOOL THIS GETMAIN
+PARMLIST DS    4F                  PARAMETER LIST FOR CALL ROUTINE
+DBLWORD  DS    D                   WORK AREA FOR CONVERSIONS
+WKAREND  EQU   *                   END OF WORK AREA
+WKARELEN EQU   WKAREND-WKAREA      LENGTH OF WORK AREA FOR GETMAIN
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING                                   *
+***********************************************************************
+         SPACE 2
+IEAVADPM ZCSECT GETMAIN=1
+         EJECT
+***********************************************************************
+*        LOAD UP WORKING ADDRESS OF CONTROL BLOCKS NEEDED             *
+***********************************************************************
+         LR    REG10,REG1          LOAD ADDRESS ABDUMP WORK AREA
+         USING ABDAREA,REG10       ADDRESSABILITY FOR WORK AREA
+         L     REG4,ABDTCB         LOAD ADDRESS OF TCB ABENDING
+         USING TCB,REG4            ADDRESSABILITY FOR TCB
+         L     REG5,TCBJPQ         LOAD ADDRESS OF CDE CHAIN
+         USING CDENTRY,REG5        ADDRESSABILITY FOR CDE
+         L     REG9,TCBLLS         LOAD ADDRESS OF LOAD LIST
+         USING LLE,REG9            ADDRESSABILITY FOR LLE
+         EJECT
+***********************************************************************
+*        TEST TO SEE IF THIS IS A SYSUDUMP REQUEST                    *
+***********************************************************************
+         SPACE 2
+TESTDUMP DS    0H
+         L     REG1,ABDPDCBP       LOAD ADDRESS DUMP DCB
+         LH    REG1,TIOTOFF(REG1)  LOAD TIOT OFFSET FROM DCB
+         L     REG15,TCBTIO        LOAD ADDRESS TIOT FOR FAILING TASK
+         LA    REG1,4(REG1,REG15)  LOAD ADDRESS DDNAME OF DUMP DATA SET
+         CLC   SYSUDUMP,0(REG1)    IS THIS A SYSUDUMP REQUEST ?
+         BNE   EXITPGMX            NO. BYPASS THE PROCESSING
+         EJECT
+***********************************************************************
+*        GETMAIN & INITIALISE WORK AREAS                              *
+***********************************************************************
+         SPACE 2
+         LA    REG0,WKARELEN       LOAD LENGTH CORE FOR WORK AREA
+         GETMAIN R,LV=(0)          GETMAIN CORE FOR WORK AREA
+         LR    REG3,REG1           BASE ADDRESS FOR WORK AREA
+         USING WKAREA,REG3         ADDRESSABILITY TO WORK AREA
+         ST    REG1,GETMNADD       SAVE ADDRESS FOR FREEMAIN
+         ST    REG0,GETMNLEN       SAVE LENGTH FOR FREEMAIN
+         EJECT
+***********************************************************************
+*        OUTPUT A HEADING LINE TO IDENTIFY THE DATA                   *
+***********************************************************************
+         SPACE 2
+HEADING  DS    0H
+         XC    ABDLINE,ABDLINE     CLEAR THE OUTPUT AREA
+         MVC   ABDLINE(L'TITLE),TITLE IDENTIFY THE FOLLOWING OUTPUT
+         MVI   ABDCC,C'0'          FORCE DOUBLE SPACING
+         BAL   REG11,OUTPUTER      GO OUTPUT THE TITLE LINE
+         EJECT
+***********************************************************************
+*        SCAN THE LLE CHAIN AND FORMAT THE LLE'S AND CDE'S            *
+***********************************************************************
+         SPACE 2
+         LA    REG1,LLEHEAD        LOAD ADDRESS OF SUITABLE TITLE LINE
+         LA    REG2,L'LLEHEAD      LOAD LENGTH OF THE LINE
+         BAL   REG11,HEADIT        GO OUTPUT HEADING LINE
+LLELOOP  LTR   REG9,REG9           TEST FOR FIRST/NEXT LLE
+         BZ    LLEEXIT             END OF CHAIN. GO ON TO JPQ
+         LA    REG6,0(REG9)        CLEAR TOP BYTE OF ADDRESS REGISTER
+         LA    REG7,LLETABLE       LOAD ADDRESS OF LLE FORMAT TABLE
+         LA    REG8,LLENAME        LOAD ADDRESS OF LLE TITLE FIELD
+         BAL   REG11,CALLFMT       GO FORMAT THE LLE
+         L     REG9,LLECHN         LOAD ADDRESS OF NEXT LLE ON CHAIN
+         B     LLELOOP             LOOP FOR ALL LLE'S ON LOAD LIST
+LLEEXIT  B     CDEROUTN            BRANCH TO NEXT ROUTINE
+         EJECT
+***********************************************************************
+*        FORMAT AND PRINT THE CDE'S ON THE JOB PACK QUEUE             *
+***********************************************************************
+         SPACE 2
+CDEROUTN DS    0H
+         LA    REG1,CDEHEAD        LOAD ADDRESS OF JPQ HEADING
+         LA    REG2,L'CDEHEAD      LOAD LENGTH OF THE LINE
+         BAL   REG11,HEADIT        GO OUTPUT THE HEAD LINE
+CDELOOP  LTR   REG5,REG5           TEST FOR FIRST/NEXT CDE
+         BZ    CDEEXIT             NONE. EXIT FROM THE ROUTINE
+         CLC   CDNAME,MYNAME       TEST FOR MY OWN CDE
+         BE    CDEENDL             YES. IGNORE THIS ENTRY
+         LA    REG6,0(REG5)        CLEAR TOP BYTE OF THE ADDRESS
+         LA    REG7,CDETABLE       LOAD ADDRESS OF THE CDE FORMAT TABLE
+         LA    REG8,CDENAME        LOAD ADDRESS OF THE TITLE FOR CDE
+         BAL   REG11,CALLFMT       GO FORMAT THE CDE
+CDEENDL  L     REG5,CDCHAIN        LOAD ADDRESS OF NEXT CDE ON CHAIN
+         B     CDELOOP             LOOP FOR ALL CDE'S ON CHAIN
+CDEEXIT  B     LASTLINE            BRANCH ON TO NEXT ROUTINE
+         EJECT
+***********************************************************************
+*        ALL OUTPUT IS DONE. PRINT AN ENCLOSING LINE OF ASTERISKS     *
+***********************************************************************
+         SPACE 2
+LASTLINE DS    0H
+         MVI   ABDLINE,C'*'        MOVE INITIAL LITERAL TO OUTPUT
+         MVC   ABDLINE+1(82),ABDLINE PROPAGATE THE LITERAL
+         MVI   ABDCC,C'0'          SET DOUBLE SPACING
+         BAL   REG11,OUTPUTER      OUTPUT THIS LINE OF ASTERISKS
+         EJECT
+***********************************************************************
+*        COMMON CLEANUP & PROGRAM EXIT ROUTINE                        *
+***********************************************************************
+         SPACE 2
+EXITPGM  DS    0H
+         L     REG1,GETMNADD       LOAD ADDRESS OF GETMAINED AREA
+         L     REG0,GETMNLEN       LOAD LENGTH OF GETMAINED AREA
+         FREEMAIN R,LV=(0),A=(1)   FREE UP THE WORK AREA
+EXITPGMX ZRETURN RC=0              RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        EFFECT LINKAGE WITH THE FORMATTING ROUTINE                   *
+***********************************************************************
+         SPACE 2
+CALLFMT  DS    0H
+         ST    REG10,PARMLIST      STORE ABDAREA ADDRESS IN PARAMETER
+         STM   REG6,REG8,PARMLIST+4 STORE REMAINING PARAMETERS
+         OI    PARMLIST+12,X'80'   TURN ON VL BIT
+         LA    REG1,PARMLIST       LOAD PARAMETER REGISTER 1
+         CALL  IEAVADFT            CALL THE FORMATTER
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        OUTPUT A HEADING LINE FOR EACH SECTION OF OUTPUT             *
+***********************************************************************
+         SPACE 2
+HEADIT   DS    0H
+         XC    ABDLINE,ABDLINE     CLEAR THE OUTPUT AREA
+         MVI   ABDCC,C'0'          DOUBLE SPACE THE OUTPUT
+         BCT   REG2,*+10           SUBTRACT ONE FROM THE LENGTH
+         MVC   ABDLINE(0),0(REG1)  MOVE THE DATA TO OUTPUT AREA
+         EX    REG2,*-6            EXECUTE THE MOVE
+         B     OUTPUTER            GO OUTPUT THE PREPARED LINE
+         EJECT
+***********************************************************************
+*        THIS IS THE ABDUMP OUTPUT ROUTINE LINKAGE                    *
+***********************************************************************
+         SPACE 2
+OUTPUTER DS    0H
+         LR    REG1,REG10          LOAD ADDRESS OF WORK AREA
+         L     REG15,IEAVAD11      LOAD ADDRESS OF FORMAT ROUTINE
+         BALR  REG14,REG15         LINK TO THE PRINT ROUTINE
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        LITERALS & CONSTANTS                                         *
+***********************************************************************
+         SPACE 2
+IEAVAD11 DC    V(IEAVAD11)         ADDRESS OF ABDUMP OUTPUT ROUTINE
+SYSUDUMP DC    CL8'SYSUDUMP'       ID FOR SYSUDUMP DD CARD
+MYNAME   DC    CL8'IEAVADPM'       NAME OF THIS MODULE FOR CDE TEST
+TITLE    DC    C'**** PROGRAM MANAGEMENT CONTROL BLOCKS ****************
+               *****************************   MONSANTO.IEAVADPM.V0.0'
+LLEHEAD  DC    C'0JOB STEP LOAD LIST CONTAINS THE FOLLOWING ELEMENTS:'
+CDEHEAD  DC    C'0THE FOLLOWING PROGRAMS HAVE BEEN BROUGHT INTO THE REGI
+               ION DYNAMICALLY:'
+LLENAME  DC    AL1(L'LLETEXT)      LENGTH OF TITLE TEXT
+LLETEXT  DC    C'LLE'              TITLE FOR DUMP OUTPUT
+LLETABLE DS    0F                  FORMAT TABLE FOR LOAD LIST ELEMENT
+         FMTENT CHAIN,4
+         FMTENT CDE,4
+         FMTENT USE-CT,2
+         FMTENT TOTCNT,2
+         DC    AL1(255)            END OF TABLE
+CDENAME  DC    AL1(L'CDETEXT)      LENGTH OF CDE TITLE
+CDETEXT  DC    C'CDE'              TITLE FOR DUMP OUTPUT
+CDETABLE DS    0F                  FORMAT TABLE FOR CDE'S
+         FMTENT CHAIN,4
+         FMTENT RB,4
+         FMTENT NAME,8,CONVERT=NO
+         FMTENT EPA,4
+         FMTENT XL/MJ,4
+         FMTENT USE-CT,2,NL=YES
+         FMTENT RSRV,2
+         FMTENT ATTR,4
+         DC    AL1(255)
+         LTORG
+         END
+//LKED.SYSIN   DD   *
+ NAME IEAVADPM(R)

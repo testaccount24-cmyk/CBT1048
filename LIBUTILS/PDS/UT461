@@ -1,0 +1,1605 @@
+B2784    START 0
+         PRINT NOGEN
+*PROGRAM IDENTIFICATION. B2784 (REPORT EXTRACTOR)
+*AUTHOR..................MIKE SMITH  SYSTEMS PROGRAMMING/CORPORATE MISD
+*DATE....................10 JULY 1972
+***********************************************************************
+*        IN ORDER TO CORRECT INVALID PROCESSING OF HEADER CARD X'8B'
+*              BUT MAINTAIN THE USAGE OF OLD CONTROL CARDS,
+*              THE PROCESSING OF X'8B' RECORDS HAVE BEEN MODIFIED
+*               WHEN READS 8B RECORDS ARE SAVED AND OUTPUT BEFORE THE
+*              FIRST LINE ISSUED FOR A PAGE.
+***********************************************************************
+*PURPOSE.................THE PURPOSE OF B2784 IS TO ALLOW THE USER
+*                        TO EXTRACT SPECIFIED PORTIONS OF A REPORT
+*                        BASED ON PAGE NUMBER OR A UNIQUE CHARACTER
+*                        STRING APPEARING IN A HEADING LINE
+*DD CARDS REQUIRED...... SYSPRINT - LISTING OF CONTROL CARDS,TOTALS,
+*                                   AND ERROR MESSAGES
+*                        SYSUT1   - DESCRIBES THE INPUT PRINT TAPE
+*                        PRINT00  -
+*                        .......  - THESE DATASETS ARE THE OUTPUT FILES
+*                        PRINT09  - AND CONTAIN THE PARTIAL REPORTS
+*                        SYSIN    - DEFINES THE CONTROL CARD SET
+*REGISTER USAGE......... CARDB----USED AS INDEX FOR DECODE OF
+*                                 CONTROL CARD
+*                        EXIT-----USED AS RETURN REG FOR INTERNAL
+*                                 SUBROUTINES
+*                        WR1--
+*                        WR2----
+*                        WR3------WORKING REGISTERS
+*                        WR4----
+*                        WR0--
+*                        CTAB-----BASE FOR REPORT CODE BLOCK
+*                        DIGITCNT-CONTAINS MAX DIGITS TO BE FOUND BY
+*                                 SUBROUTINE FIND AND AS BASE FOR THE
+*                                 CONSTRAINT BLOCKS
+*
+*                        MYBASE1
+*                        MYBASE2--BASE REGISTERS FOR PROGRAM
+*                        0,1,13,
+*                        14,15----NORMAL OS CONVENTIONS
+*PROGRAM FLOW.......... A. READ CONTROL CARDS AND BUILD-
+*                          1. REPORT CODE BLOCK FOR EACH REPORT
+*                             CODE SELECTED
+*                          2. CONSTRAINT BLOCK FOR EACH CONTROL CARD
+*                             IDENT OR PAGE
+*                          3. DCB FOR EACH PRINT FILE SELECTED
+*                       B. AT EOF  ON SYSIN-
+*                          1. RETURN WITH RC=12 IF ANY CONTROL CARD
+*                             ERROR OR-
+*                          2. START PROCESSING INPUT TAPE
+*                       C. OPEN ALL PRINT FILES SELECTED
+*                       D. OBTAIN STORAGE FOR HEADING LINE BUFFERS
+*                       E. GET LRECL (PRINT RECORD)
+*                       F. TEST TO SEE IF REPORT SELECTED IF SO THEN-
+*                          1. TEST FOR HEADING ACCUMULATION IN PROCESS
+*                          2. TEST FOR HEADING FORCED FROM LAST LINE
+*                          3. TEST FOR HEADING NEXT TIME
+*                       G. IF ENOUGH LINES ARE ACCUMULATED MAKE
+*                          CHECKS AS DEFINED BY CONSTRAINT BLOCKS
+*                          SET BIT IN PRINT MASK IF CONSTRAINT MET
+*                       H. OUTPUT ALL LINES QUEUED TO ALL FILES
+*                          WITH BIT SET IN PRINT MASK
+*                       I. WHEN EOF ON INPUT TAPE FLUSH ANY
+*                          LINES WHICH MIGHT HAVE BEEN SAVED(CLOSE)
+*                       J. OUTPUT TOTALS AND ANY APPROPRIATE ERROR
+*                          MESSAGES
+*              BELOW IS A DESCRIPTION OF THE SWITCHES USED
+*  SWITCH NAME         VALUES AND MEANINGS
+*
+*   VARSW2       F4---BRANCH RETURN ON REGISTER WR2 IF
+*                     RECFM=NOT VARIABLE
+*                04---NOP IF RECFM VARIABLE
+*   DUMPIT       F0---BRANCH AROUND BUMP OVER RDW IF RECFM=V
+*                00---NOP IF RECFM NOT VARIABLE
+*   DUMP8B       F0---BRANCH AROUND BUMP OVER RDW IF RECFM=V
+*                00---NOP IF RECFM NOT VARIABLE
+*   FORMATSW     F0---BRANCH IF B1900 FORMAT 3
+*                00---NOP IF NOT B1900 FORMAT 3
+*   FORMAT2S     F0---BRANCH IF B1900 FORMAT 2
+*                00---NOP IF NOT B1900 FORMAT 2
+*   REPORTSW     F0---BRANCH IF B1900 FORMAT 2
+*                00---NOP IF UT363 FORMAT 0 OR 1
+*   ASCIISW      F0---BRANCH IF ASCII CARRIAGE CONTROL TYPE
+*                00---NOP IF MACHINE CODE CARRIAGE CONTROL TYPE
+*   ASCIISW2     80---BRANCH EQ IF ASCII CC
+*                00---NOP IF MACHINE CC
+*   TYPE1900     F1---ASCII TOP OF FORM IF ASCII CC
+*                8B---MACHINE TOP OF FORM IF MACHINE CC
+*              THE FOLLOWING SWITCHES ARE USED TO RECOVER
+*              FROM THE CONDITION THAT OCCURS WHEN A NEW
+*              HEADING LINE IS DETECTED AND HEADING ACCUMULATION
+*              IS ALREADY IN PROCESS
+*  RECOVER1      F0---BRANCH WHEN RECOVERY IN PROCESS DON'T
+*                     OUTPUT LINE IN INPUT
+*                00---NOP WHEN RECOVERY IS NOT IN PROCESS
+*                     OUTPUT LINE IN INPUT
+*  RECOVER2....  F0---BRANCH IF RECOVERY IN PROCESS TO START
+*                     HEADING ACCUMULATION
+*                00---NOP  GO TO MAINLOOP TO GET A NEW RECORD IF
+*                     RECOVERY NOT IN PROCESS
+*  RECOVER4      00---NOP IF RECOVERY AND MAKE CHECK TO SEE IF
+*                     ENOUGH LINES HAVE BEEN ACCUMULATED
+*                F0---BRANCH IF NOT RECOVERY AND AVOID CHECKS
+*  RECOVER3      F0---BRANCH IF END OF FILE (FORCE RECOVERY)
+*                00---NOP NOT END OF FILE RESET ALL BRANCHES
+         EJECT
+*              THE FOLLOWING EQUATES ARE USED TO SET LIMITS
+*              ON CONTROL INFORMATION RECEIVED IN THE CONTROL
+*              CARD.  IF CONTROL LIMITS NEED TO BE CHANGED ONLY
+*              THESE EQUATES NEED TO BE MODIFIED.
+DCBTABL  EQU   8                  LENGTH OF DCB TABLE IN BYTES
+*                                 4 BYTES ADDRESS OF DCB
+*                                 4 BYTES FOR COUNT OF RECORDS
+CTABLEN  EQU   6                  LENGTH OF REPORT CODE CONTROL
+*                                 BLOCK IN FULL-WORDS
+IDOVHEAD EQU   12                 OVERHEAD FOR IDENT TYPE CONSTRAINT
+*                                 BLOCK IN BYTES
+CBSIZE   EQU   28                 LENGTH OF PAGE TYPE CONSTRAINT
+*                                 BLOCK IN BYTES
+MAXOUT   EQU   2                  THIS IS THE MAX DIGITS IN OUTPUT FILE
+*                                 DESIGNATION
+MAXREPT  EQU   8                  MAXIMUM NUMBER OF REPORT CODES/RUN
+MAXFILE  EQU   32                  MAXIMUM NUMBER OF OUTPUT FILES/RUN
+MAXCTLC  EQU   60                  MAXIMUM NUMBER OF CONTROL CARDS/RUN
+MAXHEAD  EQU   10                 MAXIMUM NUMBER OF HEADING LINES THAT
+*                                 NEED TO BE SAVED BEFORE CHECKS ON
+*                                 CONSTRAINTS CAN BE MADE
+         EJECT
+****           REGISTER DEFINITIONS                               ****
+CARDB    EQU   7
+EXIT     EQU   10
+WR1      EQU   3
+WR2      EQU   4
+WR4      EQU   6
+CTAB     EQU   9
+DIGITCNT EQU   8
+WR3      EQU   5
+WR0      EQU   2
+MYBASE1  EQU   11
+MYBASE2  EQU   12
+*
+         EJECT
+*              THE FOLLOWING ARE FLAG DEFINITIONS FOR BIT SWITCHES
+*              CONTAINED WITHIN THE VARIOUS CONTROL BLOCKS
+NOPAGE   EQU   X'01'              -INDICATES NO PAGE NUMBER FOUND
+INACTIVE EQU   X'40'              -INACTIVE REPORT CODE BLOCK
+NEXTIME  EQU   X'01'              -INDICATES HEADER NEXT TIME
+HEADACC  EQU   X'02'              -INDICATES HEADING BEING ACCUMULATED
+THISTIME EQU   X'04'              -INDICATES HEADING FORCE
+DEACTIV  EQU   X'F0'              -INACTIVE CONSTRAINT BLOCK(PAGE ONLY)
+LINSHORT EQU   X'02'              -INDICATES LINE TOO SHORT FOR TEST
+         EJECT
+*              BELOW ARE LAYOUTS OF THE TWO TYPES OF CONTROL
+*              BLOCKS THAT ARE CREATED TO CONTAIN THE CONTROL
+*              INFORMATION.
+*              A REPORT BLOCK IS BUILT FOR EACH REPORT CODE
+*              SELECTED BY THE USER.  A CONSTRAINT BLOCK IS
+*              BUILT FOR EACH CONTROL CARD SUBMITTED.
+*              ALL CONSTRAINT BLOCKS WHICH REFER TO THE SAME
+*              REPORT CODE ARE CHAINED TO THE REPORT BLOCK
+*              FOR THAT REPORT CODE.  IN THE CASE OF B1900
+*              WITHOUT REPORT CODES ALL CONSTRAINT BLOCKS ARE
+*              CHAINED TO ONE (ONLY ONE EXISTS) REPORT BLOCK.
+*              PROCESSING IS TERMINATED WHEN-
+*               1. THE END OF FILE IS REACHED ON THE INPUT TAPE.
+*               2. ALL REPORT BLOCKS BECOME INACTIVE.
+*              A REPORT BLOCK BECOMES INACTIVE WHEN ALL CONSTRAINT
+*              BLOCKS CHAINED TO THAT REPORT BLOCK BECOME INACTIVE.
+*              A CONSTRAINT BLOCK BECOMES INACTIVE WHEN-
+*               1. THE TOTAL NUMBER OF PAGES SELECTED BY THE
+*                  USER HAVE BEEN WRITTEN TO THE OUTPUT FILE.
+*               2. A NON-NUMERIC(EXCLUDING LEADING BLANKS) IS DETECTED
+*                  WHERE A PAGE NUMBER SHOULD BE.
+*              THE LAST ENTRY IN THE REPORT CODE BLOACK IS THE DEFAULT
+*              FILE MASK WHICH DEFINES THE FILE WHICH WILL CONTAIN
+*              ALL PAGES OF A GIVEN REPORT CODE WHICH ARE NOT SELECTED
+*              BY ANY CONSTRAINT.  IF THE MASK IS ZERO NO DEFAULT FILE
+*              WAS SELECTED BY THE USER.
+         TITLE '  SAMPLE  CONSTRAINT  BLOCK  ENTRY'
+*              *****************************
+*              * FILE *POINTER TO NEXT     * **** COMMON SEGMENT TO
+*              *  NO. *BLOCK IN CHAIN      *        BOTH BLOCKS
+*              *****************************
+*              * TYPE * LINE * CHAR.*LENGTH*
+*              *BLOCK * POS. * POS. *STRING*
+*              *****************************    INFORMATION STORED FOR
+*              *NO. TIMES    *FLAGS * CARD *       PAGE TYPE BLOCK
+*              *LINE SHORT   *      *  NO. *             *
+*              ********************************************************
+* INFORMATION  *                           * S T A R T I N G     *    *
+*  STORED FOR  *  L I T E R A L  W H I C H * PAGE NO. PACKED     *    *
+* IDENT TYPE   *                           ****************************
+*   BLOCK ******  M A Y  V A R Y  I N      *NUMBER PAGES *CURRENT PAGE*
+*              *                           * TO PRINT    * PRINTED    *
+*              *      L E N G T H          ****************************
+*              *                           * CHARACTERS FOUND WHERE   *
+*              *                           *  PAGE NUMBER SHOULD BE   *
+*              *                           ****************************
+*              *                           *      * NOT USED          *
+*              *                           *      *                   *
+*              ********************************************************
+*
+         TITLE '  SAMPLE  REPORT  BLOCK  ENTRY'
+*              *****************************
+*              *REPORT* LINES* MAX  *      *
+*              * CODE *      * LINES* FLAG *
+*              *****************************
+*              *                           *
+*              *   P O I N T E R           *
+*              *****************************
+*              *      P R I N T            *
+*              *       M A S K             *
+*              *****************************
+*              *  P O I N T E R   TO       *
+*              *C U R R E N T  B U F F E R *
+*              *****************************
+*              *  P O I N T E R   TO       *
+*              *  B U F F E R  P O O L     *
+*              *****************************
+*              *  D E F A U L T  P R I N T *
+*              *         M A S K           *
+*              *****************************
+         TITLE '  R E P O R T  E X T R A C T O R  U T I L I T Y '
+         SAVE  (14,12)
+         USING B2784,11,12
+         USING REPTCTAB,CTAB
+         USING CONSTAB,DIGITCNT   BASE FOR CONSTRAINT BLOCKS
+         LR    11,15               -LOAD BASE REGISTERS
+         LA    12,4095(,11)
+         LA    12,1(,12)
+         ST    13,MYSAVE+4        SAVE  ADDR OF SAVE AREA
+         LR    10,13
+         LA    13,MYSAVE          SET-UP SAVE AREA ADDRESS
+         ST    13,8(10)
+         XC    CTLCOUNT,CTLCOUNT  INITIALIZE CONTROL CARD COUNT
+***********************************************************************
+* G E T  S T O R A G E  F O R  R E P O R T  B L O C K S
+***********************************************************************
+         GETMAIN R,LV=CTABLEN*4*MAXREPT  -GET STORAGE FOR TABLES
+***********************************************************************
+* Z E R O  B L O C K S
+***********************************************************************
+         MVI   0(1),X'0'          -INITIALIZE TABLE AREA
+         MVC   1(CTABLEN*4*MAXREPT-1,1),0(1)  -ZERO TABLE SPACE
+         ST    1,STARTAB           -SAVE START OF AREA
+         XC    PRINT,PRINT        -ZERO PRINT BUFFER
+***********************************************************************
+* O P E N  I N P U T  T A P E,C A R D,P R I N T  F I L E S
+***********************************************************************
+         OPEN  (TAPEIN,,CARD,,LINE,(OUTPUT))
+***********************************************************************
+* S E T  D C B  F I E L D S  F O R  O U T P U T  F I L E S
+***********************************************************************
+         TM    TAPERECF,X'40'     -TEST FOR V OR U RECFM
+         BO    VORU                BRANCH IF NOT FIXED
+         CLC   TAPELREC,=H'150'    TEST FOR 150-BYTE RECORDS
+         BL    FIXB                BRANCH IF SHORTER
+         MVC   ADCBLREC(2),=H'133' SET LRECL TO 133
+         B     SETCC               DETERMINE CARRIAGE CONTROL
+VORU     MVC   ADCBLREC(2),=H'140'     -SET LRECL=140 BLKED 14
+         MVC   ADCBBLKS(2),=H'1964'
+         MVI   ADCBRECF,X'50'     -SET TO VARIABLE BLOCKED
+         B     SETCC              -GO SET CARRIAGE CONTROL TYPE
+FIXB     MVC   ADCBLREC(2),TAPELREC    -SET TO TAPE LRECL
+SETCC    MVC   HOLD(1),TAPERECF     -GET INPUT RECORD FORMAT
+         NI    HOLD,X'06'         -ISOLATE M OR A CARRIAGE CONTROL
+         BNZ   *+8                 BRANCH IF NOT UTL503-FORMAT
+         OI    HOLD,X'40'          FORCE 'A' CONTROL
+         OC    ADCBRECF(1),HOLD       -SET OUTPUT FILE TYPE  A  OR  M
+***********************************************************************
+* G E T  A  C O N T R O L  C A R D
+***********************************************************************
+GETACARD GET   CARD,CARDIN        READ A  CARD
+         LA    CARDB,CARDIN       GET START OF CONTROL CARD
+         MVC   ERRMES(80),CARDIN    -PRINT CONTROL CARD
+***********************************************************************
+* P R I N T  C A R D  A S  R E C E I V E D
+***********************************************************************
+         BAL   EXIT,WRITE          -DISPLAY CONTROL CARD CONTENTS
+***********************************************************************
+* B U M P  C O N T R O L  C A R D  C O U N T / C H E C K  M A X
+***********************************************************************
+         LH    WR1,CTLCOUNT       -GET CONTROL CARD COUNT
+         LA    WR1,1(WR1)          -BUMP BY ONE
+         CH    WR1,MAXCC           -TEST FOR MAX CONTROL CARD EXCEEDED
+         BH    CTLER11             -ERROR IF TOO MANY
+         STH   WR1,CTLCOUNT         -ELSE SAVE THE COUNT
+***********************************************************************
+* F I N D  F I R S T  N O N - B L A N K  C H A R A C T E R
+***********************************************************************
+         BAL   EXIT,NONBLANK      FIND FIRST NON-BLANK
+***********************************************************************
+* C H E C K  F O R  V A L I D  K E Y W O R D
+***********************************************************************
+         CLC   0(7,CARDB),=C'DEFAULT'
+         BE    DEFLT1              -BRANCH IF DEFAULT CONTROL
+         CLI   DEFLTSW,X'FF'
+         BE    CTLER12            -ERROR IF DEFAULT NOT LAST CARDS
+         CLC   0(5,CARDB),=C'IDENT' -CHECK FOR CONTROL CARD TYPE
+         BE    TYPEID               -BRANCH  IF IDENT  TYPE
+         CLC   0(5,CARDB),=C'DISTR' TEST FOR DISTR CONTROL CARD
+         BE    DISTR1               BRANCH IF DISTR CONTROL CARD
+         CLC   0(4,CARDB),=C'PAGE'  -NOT IDENT BETTER BE PAGE
+         BNE   CTLER1               -BRANCH IF INVALID TYPE
+***********************************************************************
+* S E T  T Y P E  F O R  P A G E  B L O C K
+***********************************************************************
+         MVI   TYPE,X'F0'         PAGE TYPE SELECT SO SET FLAG
+         LA    CARDB,4(CARDB)     -BUMP OVER KEYWORD
+         B     LOOKON1            CONTINUE SCAN
+***********************************************************************
+* S E T  T Y P E  F O R  I D E N T  B L O C K
+***********************************************************************
+TYPEID   MVI   TYPE,X'00'         SET TYPE SELECT FOR IDENT
+         LA    CARDB,5(CARDB)     -BUMP OVER KEYWORD
+***********************************************************************
+* S E T - U P  T O  F I N D  F I L E  N U M B E R
+***********************************************************************
+LOOKON1  LA    DIGITCNT,MAXOUT    SET-UP TO FIND DIGIT(S)
+         BAL   EXIT,NONBLANK      -GO FIND NEXT NON BLANK
+         BAL   EXIT,FIND            -GO FIND MAXOUT DIGITS
+         STC   WR1,OUTFILE          -SAVE VALUE RETURNED
+         MVC   FILEN,HOLD+6       -SAVE CURRENT FILE NUMBER
+         LA    DIGITCNT,1         SET-UP TO FIND DIGIT
+***********************************************************************
+* G O  F I N D  R E P O R T  T Y P E  1,2, O R  3
+* I F  N O T  F I R S T  T I M E , C H E C K  F O R  S A M E  C O D E
+***********************************************************************
+         BAL   EXIT,FIND            -GO FIND REPORT TYPE
+         CLC   CTLCOUNT,=H'1'
+         BNE   CHKFORMT               -BRANCH IF NOT,ELSE STORE
+         CH    WR1,=H'3'              -TEST FOR VALID CODE
+         BH    CTLER2                 -BRANCH IF TOO BIG
+         STC   WR1,FORMAT         -SAVE FORMAT OF TAPE
+         LTR   WR1,WR1            -TEST FOR 1400 TYPE TAPE
+         BNZ   LOOKON2            -BRANCH IF NOT
+         MVI   ADCBRECF,X'98'     -SET TO FIXED BLOCKED STANDARD
+         B     LOOKON2                -FORMAT STORED CONTINUE SCAN
+CHKFORMT STC   WR1,TEST1A            -NOT FIRST TIME SO COMPARE FORMATS
+TEST1    CLI   FORMAT,0              -COMPARE INITIAL TO CURRENT
+TEST1A   EQU   TEST1+1
+         BNE   CTLER2                -BRANCH IF FORMATS NOT THE SAME
+***********************************************************************
+* C H E C K  F O R  R E P O R T  C O D E
+***********************************************************************
+LOOKON2  CLI   0(CARDB),C','      CONTINUE SCAN LOOK FOR REPORT CODE
+         BE    NOCODE              -BRANCH NO CODE SPECIFIED(FORMAT 3?)
+         MVC   CURCODE(1),0(CARDB)  -SAVE REPORT CD
+         BAL   EXIT,SELECT         -SEE IF REPORT CODE ALREADY SET-UP
+***********************************************************************
+* S E E  I F  F I R S T  T I M E  T H I S  C O D E
+***********************************************************************
+         LTR   CTAB,CTAB            -CTAB MINUS MEANS REPORT CODE NOT
+         BNM   ITSBUILT             -THERE,SO MUST BUILT REPORT ENTRY
+***********************************************************************
+* C H E C K  F O R  T O O  M A N Y  R E P O R T  C O D E S
+***********************************************************************
+         LH    WR1,REPORTCT       -GET COUNT OF NUMBER OF REPORT CODES
+         LA    WR1,1(WR1)         -BUMP COUNT
+         CH    WR1,MAXNREPS       -CHECK FOR MAXIMUM REACHED
+         BH    CTLER13            -BRANCH IF TOO MANY
+         STH   WR1,REPORTCT       -ELSE, SAVE COUNT
+         MVC   REPTC,CURCODE      -SAVE FOR TABLE
+***********************************************************************
+* T E S T  F O R  A  V A L I D  R E P O R T  C O D E
+***********************************************************************
+         TRT   0(1,CARDB),REPTAB   -CHECK FOR VALID CODE
+         BZ    CTLER3               -ERROR NO MATCH INTABLE
+         CLI   FORMAT,1            -TEST FOR UT363 TAPE
+         BH    ITSBUILT             -NO, THEN VALID
+         CLI   REPTC,C'I'         -ELSE MAKE SURE ITS  A-I
+         BH    CTLER3              -BRANCH IF INVALID
+ITSBUILT LA    CARDB,1(CARDB)     BUMP OVER REPORT CODE
+         CLI   0(CARDB),C','      CHECK FOR COMMA SEPARATOR
+         BNE   CTLER4             BRANCH IF NOT THERE
+COMMAOV  LA    CARDB,1(CARDB)     -BUMP OVER COMMA
+***********************************************************************
+* F I N D  L I N E  P O S I T I O N  1 - 1 0
+***********************************************************************
+         LA    DIGITCNT,2         GET LINE NUMBER WHERE HEADING OR
+         BAL   EXIT,FIND          PAGE NUMBER IS LOCATED
+         LTR   WR1,WR1             -SEE IF  0
+         BZ    CTLER5              -ERROR  IF IT IS
+         CH    WR1,MAXLNSS           -SEE IF TOO BIG
+         BH    CTLER5               -ERROR IF IT IS
+         BCTR  WR1,0              -SAVE AS LINE TO BE COMPARED
+         STC   WR1,TEMPSTR        -THIS VALUE REDUCED TO 0 TO MAXHEAD-1
+***********************************************************************
+* F I N D  P O S I T I O N  W I T H I N  T H E  L I N E
+***********************************************************************
+         LA    DIGITCNT,3         GO FIND WHERE COMPARE SHOULD START
+         BAL   EXIT,FIND          IN HEADING  LINE
+         LA    WR1,5(WR1)          -BUMP BY OVERHEAD FOR POSITION
+         CLI   FORMAT,3            -CHECK FOR FORMAT 3
+         BNE   OFFSET              -BRANCH NOT FORMAT 3
+         BCTR  WR1,0               -ELSE REDUCE BY 1
+OFFSET   STC   WR1,TEMPOS          -SAVE POSITION OF KEY-START
+***********************************************************************
+* C H E C K  O N  C O N T R O L  C A R D  T Y P E
+***********************************************************************
+         CLI   TYPE,X'F0'         CHECK TYPE OF CONTROL CARD
+         BE    PAGEDECD           BRANCH IF PAGE,ELSE DECODE LITERAL
+***********************************************************************
+* D E C O D E  T H E  L I T E R A L  G I V E N
+***********************************************************************
+         CLI   0(CARDB),C''''      -SEE IF VALID DELIMITER
+         BNE   CTLER6              -ERROR IF NOT
+         LA    CARDB,1(CARDB)      -BUMP OVER THE QUOTE
+         LA    EXIT,CARDIN+70     -GET LAST POSSIBLE POSITION FOR QUOTE
+LOOK4IT  CLI   0(EXIT),C''''      -CHECK FOR TERMINATOR
+         BE    ENDIT              -BRANCH IF END OF LITERAL
+         BCT   EXIT,LOOK4IT       -REDUCE COUNT AND LOOK FOR QUOTE
+ENDIT    SR    EXIT,CARDB         -COMPUTE LENGTH OF STRING
+         BNP   CTLER6              -BRANCH INVALID DEFINITION
+         BCTR  EXIT,0             -REDUCE TO VALID LENGTH CODE
+         STC   EXIT,TEMPLEN       -SAVE LITERAL LENGTH
+         B     BLDBLK1             -GO BUILD THE BLOCK
+*
+NOCODE   CLI   FORMAT,X'03'       NO REPORT CODE GIVEN,MUST BE FORMAT3
+         BNE   CTLER3             -ERROR IF NOT
+         MVI   REPORTCT+1,1        -SET COUNT TO 1
+         L     CTAB,STARTAB        -SET TO START OF TABLE
+         LA    WR1,4*CTABLEN(CTAB)  SET UP END OF TABLE
+         ST    WR1,CTABEND        -STORE END
+         B     COMMAOV            -SCAN NEXT
+DEFLT1   LA    DIGITCNT,MAXOUT    SET-UP TO FIND DIGITS
+         LA    CARDB,7(CARDB)     -BUMP OVER KEYWORD
+         BAL   EXIT,NONBLANK      -GO FIND MAXOUT DIGITS
+         BAL   EXIT,FIND          -THIS IS FILE NUMBER
+         STC   WR1,OUTFILE        -STORE FILE NUMBER
+         MVC   FILEN,HOLD+6       -SAVE PACKED FILE NUMBER
+         CLI   FORMAT,3           -TEST FOR NO REPORT CODE TAPE
+         BE    DEFLT3              -BRANCH IF SO
+         MVC   CURCODE(1),0(CARDB) GET REPORT CODE
+         BAL   EXIT,SELECT        -SEE IF SELECTED
+         LTR   CTAB,CTAB          -TEST RESULT
+         BM    CTLER3             -BRANCH IF NOT SELECTED
+SETUPDFL XR    WR1,WR1
+         IC    WR1,OUTFILE        -GET FILE
+         L     WR2,MASK           -SET UP MASK
+         SRL   WR2,0(WR1)         -SHIFT TO FILE POSITION
+         ST    WR2,DEFLTMSK       -SAVE AS DEFAULT PRINT MASK
+         MVI   DEFLTSW,X'FF'      SET SWITCH FOR DEFAULT CARDS
+         B     BUMPCC             GO SET-UP DCB FOR DEFAULT FILE
+DEFLT3   L     CTAB,STARTAB       POINT TO ONLY REPORT CODE ENTRY
+         CLI   DEFLTSW,X'FF'      MAKE SURE NOT ANOTHER DEFAULT
+         BE    CTLER14            -ERROR IF MULTIPLE DEFAULTS FOR FORMA
+         B     SETUPDFL           -GO SET-UP DEFAULT FILE
+***********************************************************************
+* F I N D  N U M B E R  O F  D I G I T S  I N  P A G E  N U M B E R
+***********************************************************************
+PAGEDECD LA    DIGITCNT,1         DECODE PAGE OPTION PARAMETERS
+         BAL   EXIT,FIND           -FIRST,FIND NO. OF DIGITS IN PAGE
+         CH    WR1,=H'5'           -CHECK FOR INVALID COUNT
+         BH    CTLER7              -BRANCH IF ERROR
+         LTR   WR1,WR1            -MAKE SURE VALUE IS GT 0
+         BNP   CTLER7                -BRANCH IF NOT GT 0
+         BCTR  WR1,0                 -REDUCE TO BASE AT 0
+         STC   WR1,TEMPNP          -SAVE NUMBER OF PAGES
+***********************************************************************
+* F I N D  S T A R T I N G  P A G E  N U M B E R
+***********************************************************************
+         LA    DIGITCNT,5         -SET UP TO FIND START PAGE NO.
+         BAL   EXIT,FIND          --GO FIND IT
+         MVC   TEMPBP,HOLD+5      -SAVE IT
+         LR    WR3,WR1            --SAVE FOR PAGES (HOW MANY )
+***********************************************************************
+* F I N D  E N D I N G  P A G E  N U M B E R
+***********************************************************************
+         LA    DIGITCNT,5           -FIND ENDING PAGE NUMBER
+         BAL   EXIT,FIND            -MUST BE  LESS THAN 6 DIGITS
+         CL    WR1,=F'99999'        -CHECK FOR ALL PAGES AFTER START
+         BNE   ENDGIVEN             -BRANCH IF END POINT SPECIFIED
+         MVC   TEMPHM,=X'7FFF'    -SET TO MAX LINES
+         B     BUILDBLK             -GO BUILD THE BLOCK
+***********************************************************************
+* C O M P U T E  N U M B E R  O F  P A G E S  T O  P R I N T
+***********************************************************************
+ENDGIVEN SR    WR1,WR3            --COMPUTE HOW MANY PAGES TO PRINT
+         BM    CTLER8               -ERROR IF NEG.
+         LA    WR1,1(WR1)           -BUMP TO TRUE NUMBER
+         STH   WR1,TEMPHM           -SAVE IT
+***********************************************************************
+* G E T  S T O R A G E  F O R  C O N T R O L  B L O C K  ( P A G E )
+***********************************************************************
+BUILDBLK GETMAIN  R,LV=CBSIZE     BUILD CONTROL BLOCK
+         LR    DIGITCNT,1         -SET UP BASE
+         XC    CURPAGES,CURPAGES  -RESET CURPAGES TO 0
+         MVC   PAGESHM,TEMPHM     -MOVE IN HOW MANY TO PRINT
+         MVC   STARTPG,TEMPBP     -MOVE IN BEGINNING PAGE NUMBER
+         XC    CHARS,CHARS         -RESET CHARS FOUND
+         B     ADDCHAIN            -GO ADD TO THE CHAIN FOR REPORT CODE
+BLDBLK1  STC   EXIT,TEMPLEN       BUILD BLOCK FOR ID TYPE CONTROL BLOCK
+         LA    0,IDOVHEAD+1(EXIT) -BUMP BY OVERHEAD +1(BLOCK LENGTH)
+***********************************************************************
+* G E T  S T O R A G E  F O R  C O N T R O L  B L O C K  ( I D E N T )
+***********************************************************************
+         GETMAIN  R,LV=(0)         -GET STORAGE FOR THE BLOCK
+         LR    DIGITCNT,1         -SET UP BASE
+         EX    EXIT,VARMOV2       -MOVE IN LITERAL
+***********************************************************************
+* F I N I S H  B U I L D I N G  B L O C K
+***********************************************************************
+ADDCHAIN MVC   FILE(4),OUTFILE     -SET UP FILE NUMBER ZERO POINTER
+         MVC   CCNUMBR,CTLCOUNT+1  -SAVE CONTROL CARD NUMBER FOR REF.
+         MVC   TYPC(4),TYPE       -MOVE INCONSTRAINT KEY FIELDS
+         XC    PAGELOST(3),PAGELOST       -RESET PAGES LOST AND FLAGS
+         CLC   MAXLINES,TEMPSTR   SEE IF GT CURRENT  MAXLINES
+         BH    NOTBIG             -BRANCH IF OLD ONE BIGGER
+         MVC   MAXLINES,TEMPSTR    -ELSE MOVE NEW ONE TO BIGGEST
+***********************************************************************
+* A D D  C O N S T R A I N T  B L O C K  T O  C H A I N
+***********************************************************************
+NOTBIG   LA    WR2,POINTER        GET START OF THE CHAIN
+TESTCHAN CLC   1(3,WR2),=XL3'0'   -TEST FOR END OF CHAIN
+         BE    ADDITNOW           -BRANCH IF END
+         L     WR2,0(WR2)         -GET NEXT IN THE CHAIN
+         B     TESTCHAN           -LOOK FOR END TO ADD
+ADDITNOW MVC   1(3,1),1(WR2)      -FLIP POINTERS
+         ST    1,HOLD             -GET NEW ADDRESS CHAINED IN
+         MVC   1(3,WR2),HOLD+1    -MOVE THAT ADDRESS TO OLD BLOCK
+         LTR   CTAB,CTAB           TEST FOR ENTRY JUST BUILT
+         BNM   BUMPCC              -BRANCH ALREADY BUILT
+         LA    WR1,CTABLEN*4(CTAB)  -COMPUTE NEW END
+         ST    WR1,CTABEND          -SAVE ENDOF TABLE
+BUMPCC   XR    WR1,WR1             -CHECK FOR DCB OBTAINED
+         IC    WR1,OUTFILE        -YET
+         MH    WR1,DCBTABLC       COMPUTE TABLE ENTRY
+***********************************************************************
+* G E T  A  D C B  I F  N O T  A L R E A D Y  B U I L T
+***********************************************************************
+         LA    WR1,DCBTAB(WR1)    -WR1=ADDRESS OF DCB POINTER
+         CLC   1(3,WR1),=XL3'0'   -SEE IF DCB ALREADY OBTAINED
+         BNE   GETACARD           -BRANCH IF DCB EXITS
+         GETMAIN  R,LV=DCBLENTH   GET STORAGE FOR DCB
+         O     1,0(WR1)            -GET FLAGS FOR OPEN
+         ST    1,0(WR1)           -SAVE ADDRESS
+***********************************************************************
+* M A K E  A  U N I Q U E  D D N A M E
+***********************************************************************
+         UNPK  DDNAME+5(2),FILEN(2)  -MAKE A DDNAME
+         OI    DDNAME+6,X'F0'     -ZONE IT
+         MVC   0(DCBLENTH,1),ADCB -MOVE IN THE DCB
+         B     GETACARD           -LOOP BACK FOR ANOTHER CARD
+***********************************************************************
+* E N T E R  H E R E O N  E N D  O F  F I L E  C A R D S,
+*   C H E C K  F O R   C O N T R O L  C A R D  E R R O R
+***********************************************************************
+EOFCARD  CLI   RETURNC,X'00'      EOF CARD REACHED ,TEST FOR SYNTAX
+         BNE   BADCC                ERROR ON A CONTROL CARD BRANCH ERR
+***********************************************************************
+* S E T-U P  T R A N S L A T E/T E S T  T A B L E (1 4 0 0  E O M)
+***********************************************************************
+         XC    REPTAB(256),REPTAB        -RESET REPORT CODE TABLE
+         MVI   REPTAB+224,X'E0'      -TABLE FOR 1400 EOM
+***********************************************************************
+* C H E C K  T A P E  R E C F M  A N D  S E T  S W I T C H E S
+***********************************************************************
+         TM    TAPERECF,X'40'     -LOOK FOR U OR V RECORDS
+         BNO   FIXED              -BRANCH IF FIXED
+         TM    TAPERECF,X'80'     -TEST FOR FORMAT U
+         BO    URECF              -BRANCH IF SO
+         MVI   VARSW2+1,WR2       -SET  SWITCH TO ANOP
+URECF    MVI   DUMPIT+1,X'F0'     -MAKE BRANCH AROUND BUMP OF RDW
+         MVI   DUMP8B+1,X'F0'     -MAKE BRANCH AROUND BUMP OF RDW
+         CLI   FORMAT,0
+         BNE   FIXED1             -BRANCH IF NOT A UT363 TAPE
+         MVI   GETAREC+1,X'F0'       SET TO BRANCH POSSIBLE 1400
+         MVI   DUMPIT+1,X'00'      -SET UP FOR BUMP OVER RDW
+         BAL   EXIT,GETAREC       GET FIRST RECORD TO FIND SIZE
+         LH    WR1,INPUT           GET RECORD DESC WORD
+         SH    WR1,=H'4'          -REDUCE BY RDW
+         STH   WR1,ADCBLREC        SET UP LRECL AT 1400 LENGTH
+         B     OPENDCBS               GO OPEN THE DCB'>
+FIXED    CLI   FORMAT,1           -SEE IF UT363 TYPE TAPE
+         BE    OPENDCBS           -BRANCH IF SO
+FIXED1   LA    WR4,INPUT+5        -WR4=POSITION OF CARRIAGE CONTROL
+         CLI   FORMAT,2           -TEST FOR FORMAT 2 B1900
+         BE    FORMAT2            -BRANCH IF IT IS
+         BCTR  WR4,0              -ELSE REDUCE FOR B1900 NO CODE
+         MVI   FORMTSW+1,X'F0'    MAKE A BRANCH FOR FORMAT3
+         B     B1900COM           -SET 1900 SWITCH
+FORMAT2  MVI   REPORTSW+1,X'F0'   -SET UP REP CODE LOCATION BRANCH
+B1900COM MVI   FORMAT2S+1,X'F0'   -SET SWITCH FOR B1900 TYPE TAPE
+CARRCHK  TM    TAPERECF,X'02'     TEST FOR CARRIAGE CONTROL TYPE
+         BO    OPENDCBS             -BRANCH IF MACHINE CODE
+         MVI   ASCIISW+1,X'F0'    --SET TO MAKE ASCII CHECKS
+         MVI   TYPE1900+1,X'F1'   SET UP ASCII CARR CONTROL CHAR
+         MVI   ASCIISW2+1,X'80'    SET ASCII BRANCH EQ SWITCH
+***********************************************************************
+* O P E N  A L L  D C B ' S  T H A T  W E R E  B U I L T
+***********************************************************************
+OPENDCBS LH    WR1,MAXFLS         --SET UP TO OPEN ALL DCB'>
+         LA    WR2,DCBTAB          -GET START OD DCB ADDRESSES
+OPENEM   CLC   1(3,WR2),=XL3'0'    SEE IF DCB SELECTED
+         BE    NOPEN               -IF ZEROES THEN NOT SELECTED
+         OPEN  ,MF=(E,(WR2))       -OPEN THE FILE
+NOPEN    LA    WR2,DCBTABL(WR2)    -BUMP TO NEXT ENTRY
+         BCT   WR1,OPENEM          -LOOP TILL ALL FILES SCANNED
+         L     CTAB,STARTAB        GET START OF REPORT CODE BLOCKS
+***********************************************************************
+* G E T  B U F F E R S  T O  Q U E U E  H E A D I N G  L I N E S
+***********************************************************************
+GETABUFF XR    0,0                  -GET MAXLINES TO DE SAVED
+         IC    0,MAXLINES           -FOR THIS REPORT CODE
+         LTR   0,0                -TEST LINES TO BE SAVED
+         BZ    NOCORE             -BRANH IF NO CORE REQUIRED
+         MH    0,=H'140'            -COMPUTE BUFFER SIZE
+         GETMAIN  R,LV=(0)         -GET CORE
+         ST    1,BUFFER             -SAVE BUFFER ADDRESS
+NOCORE   LA    CTAB,CTABLEN*4(CTAB)   -BUMP TO NEXT ENTRY
+         CL    CTAB,CTABEND        -SEE IF END OF TABLE
+         BL    GETABUFF             -BRANCH IF NOT END OF TABLE
+         L     CTAB,STARTAB       -SET CTAB FOR B1900 NO REPORT CODE
+         CLI   FORMAT,0           -TEST FOR 1400 TYPE TAPE
+         BE    T1400              -BRANCH IF FIRST READ DONE
+***********************************************************************
+* T H I S  I S  T H E  M A I N L O O P  F O R  R E A D I N G  T A P E
+* R E C O R D S  A N D  M A K I N G  C H E C K S  U S I N G  T H E
+* C O N S T R A I N T  B L O C K S  C R E A T E D  F R O M  C A R D S
+* R E A D  A  R E C O R D  ( LRECL )
+***********************************************************************
+MAINLOOP BAL   EXIT,GETAREC       GET THE NEXT RECORD
+***********************************************************************
+* B R A N C H  I F  F O R M A T 3 ( B 1 9 0 0  N O C O D E )
+***********************************************************************
+FORMTSW  NOP   NOWTEST            -BRANCH IF 1900 FORMAT 3
+***********************************************************************
+* B R A N C H  I F  F O R M A T 2 ( B 1 9 0 0  W I T H  C O D E )
+***********************************************************************
+REPORTSW NOP   SET1900             NOP IF UT363 BRANCH IF B1900
+T1400    LA    CARDB,INPUT-2       -SET POINTER TO REPORT CODE
+         AH    CARDB,INPUT        -FIND END -2 REPORT CODE THERE
+         B     CHECKIT
+SET1900  LA    CARDB,INPUT+4      GET REPORT CODE
+CHECKIT  MVC   CURCODE(1),0(CARDB)  -MOVE INCODE
+***********************************************************************
+* S E A R C H  C T A B  T O  F I N D  R E P O R T  C O D E
+***********************************************************************
+         BAL   EXIT,SELECT          -LOOK TO SEE IF SELECTED
+         LTR   CTAB,CTAB            -CTAB MINUS IF NOT SELECTED
+         BM    MAINLOOP             -BRANCH IF NOT SELECTED
+***********************************************************************
+* T E S T  F O R  I N A C T I V E  R E P O R T  C O D E
+***********************************************************************
+         TM    FLAG,INACTIVE      TEST FOR REPORT CODE INACTIVE
+         BO    MAINLOOP           BRANCH IF SO
+***********************************************************************
+* M A K E  H E A D I N G  T E S T  ( T O P - O F - F O R M )
+* S E T  F L A G  I F  N E X T  R E C  I S  A  H E A D E R
+***********************************************************************
+NOWTEST  TM    FLAG,NEXTIME       -TEST FOR HEADING COMING UP
+         BNO   FORMAT2S           - BRANCH IF HEADER NOT FORCED
+         NI    FLAG,255-NEXTIME   -RESET NEXTIME SW
+         OI    FLAG,THISTIME      -SET SW TO FORCE HEADER
+FORMAT2S NOP   TYPE1900           -BRANCH IF B1900 FORMAT 2
+         CLI   AFTER,C'A'          -TEST HEADER NEXT TIME
+         BNE   TESTBFOR            -BRANCH IF NOT
+         OI    FLAG,NEXTIME         -ELSE,SET BIT FOR HEADER TIME
+TESTBFOR CLI   BEFORE,C'1'         -CHECK FOR TOP OF FORM NOW
+         BE    HEADSTRT             -BRANCH IF THIS IS FIRST HEADER
+         B     ACTIVECK             -ELSE, CHECK FOR REPORT ACTIVE
+TYPE1900 CLI   0(WR4),X'8B'       B1900 TYPE SO COMPARE FOR MACHINE
+ASCIISW2 NOP   HEADSTRT           -BRANCH ASCII TO HEADSTRT IF EQUAL
+         BE    HEADSTRT            -OR ASCII TYPE
+ASCIISW  NOP   ACTIVECK           -NOP IF MACHINE BRANCH IF ASCII
+         CLI   0(WR4),X'89'        -CHECK FOR WRITE-SKIP TO 1
+         BNE   ACTIVECK            -BRANCH NOT EQUAL TO ACTIVE CHECK
+HEADNEXT OI    FLAG,NEXTIME       SET FLAG FOR HEADER NEXT TIME
+***********************************************************************
+* T E S T  F O R  H E A D E R  T H I S  T I M E
+***********************************************************************
+ACTIVECK TM    FLAG,THISTIME      -SEE IF THIS IS FIRST LINE HEAD
+         BO    HEADSTRT           -BRANCH IF HEADER THIS TIME
+***********************************************************************
+* S E E  I F  H E A D I N G  A C C U M U L A T I O N  I S  N O W
+* I N  P R O C E S S
+***********************************************************************
+ACCMCK   TM    FLAG,HEADACC       -ELSE ,TEST FOR HEADING ACCUMULATION
+         BO    ACCHEAD            -BARNCH TO ACCUMULATE HEADING
+***********************************************************************
+* O K, N O T  A  H E A D E R  T H E N  S T A R T  S E N D I N G
+* L I N E  T O  A L L  F I L E S  S E L E C T E D
+* W H E N  M A S K  I S  Z E R O  F I L E S  A R E  D O N E
+***********************************************************************
+ACTIVE   L     WR2,PRINTMSK       CHECK FOR REPORT ACTIVE
+         LA    WR1,DCBTAB          -GET START OF DCBS
+         XC    FILENO,FILENO       ZEROISE
+CKDONE   LTR   WR2,WR2              -TEST FOR ACTIVE
+         BNZ   TESTNEXT            -BRANCH NOT DONE
+         MVI   LINES,0            -SET LINES SAVED TO 0
+RECOVER2 NOP   RECOVER3            -BRANCH IF RECOVERY IN PROCESS
+***********************************************************************
+*        SAVE THE LAST 8B RECORD READ IN PUT AREA
+***********************************************************************
+         MVI   SW8B,X'00'           -SET SW 8B REC OFF
+         B     MAINLOOP            -ALL DONE GET ANOTHER REC.
+***********************************************************************
+* I F  F I L E  S E L E C T E D  V A L U E  I S  M I N U S
+***********************************************************************
+TESTNEXT BNM   GETNEXT             -BYPASS THIS OUTPUT FILE
+         L     EXIT,BUFFER           -GET START OF BUFFERS
+         XR    WR3,WR3
+         IC    WR3,LINES             -GET NUMBER LINES
+         MVI   SW8BLOOP,X'FF'     -FIRST TIME OUTPUT LOOP THIS FILE
+LINETEST LTR   WR3,WR3               -TEST FOR END OF QUEUE
+***********************************************************************
+* I F  L I N E S  N E G  T H E N  T H E N  Q U E U E  E M P T Y
+***********************************************************************
+         BM    GETNEXT            -BRANCH IF DONE
+         BNZ   SETEXIT            -IF NOT ZERO  THEN DUMP THE RECORD
+***********************************************************************
+* I F  L I N E S  Z E R O  T H E N  R E C O R D  I N  I N P U T
+***********************************************************************
+RECOVER1 NOP   GETNEXT            -BRANCH IF RECOVERY IN PROCESS
+         LA    EXIT,INPUT            -OUTPUT INPUT RECORD
+SETEXIT  LR    0,EXIT             -SET UP  START OF NEW RECORD
+DUMPIT   NOP   OUTREC             -BRANCH IF VARIABLE FORMAT
+         LA    0,4(EXIT)          -BUMP OVER RDW
+***********************************************************************
+* O U T P U T  R E C O R D  T O  S E L E C T E D  F I L E
+***********************************************************************
+OUTREC   L     1,0(WR1)             -GET DCB ADDRESS
+SWDISTR  B     OUTALINE            BRANCH IF NO 'DISTR' CONTROL CARD
+         L     WR0,FILENO     LOAD FILE NUMBER AND
+         MH    WR0,DISTRLL    MULT BY LENGTH OF A TABLE ELEMENT AND
+         A     WR0,DISTRSAG   ADD START ADDRESS OF TABLE GETMAINED
+         CLI   0(WR0),X'00'   TEST IF DISTR PAGE IS ALREADY PRINTED
+         BNE   OUTALINE       BRANCH IF NO
+         B     WRTDISTR       GO WRITE DISTRIBUTION PAGE
+OUTALINE EQU   *
+***********************************************************************
+*       IF SW8B (8B REC WAIT PUT) & SW8BLOOP (1ST TIME LOOP) ARE ON
+*             THEN PUT 1ST 8B RECORD.
+***********************************************************************
+         CLI   SW8BLOOP,X'FF'     -FIRST TIME LOOP THIS FILE?
+         BNE   PUT8BOK             NO - BYPASS PUT 8B
+         CLI   SW8B,X'FF'         -8B REC TO BE PUT?
+         BNE   PUT8BOK             NO - BYPASS PUT 8B
+***********************************************************************
+*        OUTPUT 8B RECORD FROM IS SAVE INPUT AREA
+***********************************************************************
+         STM   0,10,WTR8BSA        -PRESERVE REGS
+         LA    EXIT,SAVE8B        -OUTPUT 8B RECORD
+         LR    0,EXIT             -SET UP START OF 8B RECORD
+DUMP8B   NOP   OUT8B              -BRANCH IF VARIABLE FORMAT
+         LA    0,4(EXIT)          -BUMP OVER RDW
+OUT8B    PUT   (1),(0)            -OUTPUT A LINE 8B
+         L     WR0,4(WR1)         -BUMP THE COUNT OF
+         LA    WR0,1(WR0)         -RECORDS OUTPUT TO THIS FILE
+         ST    WR0,4(WR1)         -SAVE IT
+         LM    0,10,WTR8BSA        -RESTORE REGS
+         MVI   SW8BLOOP,X'00'     -SET OF 1ST TIME LOOP
+         B     PUT8BOK            -GO OUTPUT OTHER RECORDS
+WTR8BSA  DS    11F                 -SAVE AREA REGS 0-10
+***********************************************************************
+*        PUT HEADING ACCUM & NOHEADER RECORDS
+***********************************************************************
+PUT8BOK  EQU   *
+         PUT   (1),(0)            --OUTPUT  A  LINE
+         L     WR0,4(WR1)         -BUMP  THE COUNT OF
+         LA    WR0,1(WR0)         -RECORDS OUTPUT TO THIS FILE
+         ST    WR0,4(WR1)         -SAVE IT
+***********************************************************************
+* B U M P  T O  N E X T  B U F F E R  R E D U C E  L I N E S
+***********************************************************************
+         LA    EXIT,140(EXIT)      -BUMP BY  RECORD LENGTH
+         BCTR  WR3,0                 -REDUCE COUNT
+         B     LINETEST              -TEST FOR END OF QUEUE
+***********************************************************************
+* B U M P  T O  N E X T  D C B  A D D R E S S  I N  T A B L E
+***********************************************************************
+GETNEXT  LA    WR1,DCBTABL(WR1)    -BUMP TO NEXT DCB ADDRESS
+         L     WR0,FILENO          LOAD PRECEDING FILE NO
+         LA    WR0,1(WR0)          ADD ONE
+         ST    WR0,FILENO          SAVE NEW FILE NO
+         ALR   WR2,WR2             -SHIFT MASK ONE TO THE LEFT
+         B     CKDONE              -GO CKECK FOR PRINT FILES OVER
+***********************************************************************
+* E N T E R  H E R E  T O  P R O C E S S  H E A D I N G  L I N E
+***********************************************************************
+HEADSTRT TM    FLAG,HEADACC       TEST FIRST FOR HEADING IN PROCESS
+         BO    RECOVER             -BRANCH ON, (HOPE ITS NOT)
+***********************************************************************
+*        IF HEADER RECORD = 8B TYPE THEN :
+*              -SAVE THE 8B RECORD
+*              -SET SW8B ON
+*              -INDICATE NEXT RECORD FIRST HEADER
+***********************************************************************
+         CLI   0(WR4),X'8B'        -RECORD TYPE = 8B?
+         BNE   HEAD1ST              NO - CONTINUE NORMAL PROCESSING
+         MVC   SAVE8B,INPUT        -SAVE THE 8B RECORD
+         MVI   SW8B,X'FF'          -INDICATE 8B REC WAITINT PUT
+         OI    FLAG,NEXTIME        -INDICATE NEXT REC 1ST HEADER
+         B     MAINLOOP            -GO READ NEXT RECORD
+***********************************************************************
+*        1ST HEADER RECORD PROCESS
+***********************************************************************
+HEAD1ST  EQU   *
+         MVC   BUFFCUR,BUFFER      -GET FIRST BUFFER ADDRESS
+         NI    FLAG,255-THISTIME  -RESET FORCE HEADING SW
+         OI    FLAG,HEADACC        -SET FLAG FOR HEADING ACCUMULATION
+***********************************************************************
+* E N T E R  H E R E  T O  A C C U M U L A T E  L I N E S
+* I F  E N O U G H  A R E  S A V E D  M A K E  C H E C K S
+***********************************************************************
+ACCHEAD  CLC   MAXLINES,LINES     SEE IF WE HAVE SAVED ENOUGH
+         BE    CONTROL             -YES MAKE ALL CONSTRAINT CHECKS
+***********************************************************************
+* S A V E  T H I S  L I N E  A N D  B U M P  C O U N T
+***********************************************************************
+         XR    WR1,WR1              -ELSE BUMP LINES SAVED
+         IC    WR1,LINES            -AND STORE IT
+         LA    WR1,1(WR1)
+         STC   WR1,LINES            -SAVE LINES STORED
+         L     WR1,BUFFCUR          -GET CURRENT BUFFER ADDRESS
+VARMOVE1 MVC   0(140,WR1),INPUT      -SAVE AN LRECL OF DATA
+         LA    WR1,140(WR1)        -COMPUTE NEXT BUFFER
+         ST    WR1,BUFFCUR          -SAVE NEXT ADDRESS
+         B     MAINLOOP             -RETURN FOR ANOTHER LRECL
+***********************************************************************
+* E N T E R  H E R E  T O  M A K E  C H E C K S  O F  L I N E S
+* S A V E D  A G A I N S T  C O N S T R A I N T  B L O C K S
+***********************************************************************
+CONTROL  L     DIGITCNT,POINTER   GET FIRST CONTROL BLOCK ADDRESS
+***********************************************************************
+* R E S E T  H E A D I N G  A C C U M U L A T I O N  F L A G
+* S E T  R E P O R T  C O D E  B L O C K  I N A C T I V E
+***********************************************************************
+         NI    FLAG,255-HEADACC    -RESET HEADING ACCUMULATION BIT
+         OI    FLAG,INACTIVE       -SET BLOCK INACTIVE
+***********************************************************************
+* R E S E T  P R I N T  M A S K  T H I S  R E P O R T  B L O C K
+***********************************************************************
+         XC    PRINTMSK,PRINTMSK  -SET PRINT MASK TO ALL NO PRINT
+***********************************************************************
+* S E T-U P  F I L E  M A S K  F O R  T H I S  F I L E
+***********************************************************************
+CONTROL2 XR    WR1,WR1            -GET THE FILE NUMBER
+         IC    WR1,FILE            -FROM CONTROL BLOCK
+         L     WR2,MASK            -GET FILE MASK
+         SRL   WR2,0(WR1)          -SHIFT MASK TO FILE POSITION
+         ST    WR2,FILEMASK        -SAVE CURRENT FILE MASK
+***********************************************************************
+* T E S T  F I R S T  F O R  D E A C T I V E  B L O C K
+***********************************************************************
+CONTROL1 TM    FLAGS,DEACTIV      -TEST FOR DEACTIVE CONSTRAINT BLOCK
+         BO    TESTEND            -BRANCH IF SO
+         NI    FLAG,255-INACTIVE  -RESET INACTIVE REPORT CODE BLOCK
+         XR    WR2,WR2             -PICK-UP
+         IC    WR2,LINEPOS         -LINE POSITION
+***********************************************************************
+* B R A N C H  I F  N O T  I N  R E C O V E R Y
+***********************************************************************
+RECOVER4 B     NOCHECKS           -BRANCH IF NO RECOVERY IN PROCESS
+         CLC   LINEPOS,LINES       -CHECK AND SEE IF ENOUGH LINES ARE
+         BH    TESTEND             -AVAILABLE BRANCH IF NOT
+***********************************************************************
+* G E T  L I N E  F O R  C O M P A R E
+***********************************************************************
+NOCHECKS XR    WR3,WR3            SEE IF LOCATED IN THE BUFFER
+         IC    WR3,LINES            GET LINES SAVED
+         CR    WR2,WR3              SEE IF IN BUFFER
+         BNE   INTHEBUF           -BRANCH IF IN BUFFER
+         LA    WR3,INPUT          --LOAD THE START OF THR INPUT BUFFER
+         B     GETPOS             --FIND POSITION IN THE LINE
+INTHEBUF MH    WR2,=H'140'          -COMPUTE START OF BUFFER
+         L     WR3,BUFFER          -GET START OF BUFFERS
+         LA    WR3,0(WR3,WR2)      COMPUTE LINE ADDRESS
+***********************************************************************
+* G E T  T O  P O S I T I O N  W I T H I N  T H E  L I N E
+***********************************************************************
+GETPOS   XR    WR2,WR2            -GET THE
+         IC    WR2,CHARPOS        -POSITION  WITHIN THE LINE
+         LH    1,0(WR3)             -GET LINE LENGTH
+         LA    WR3,0(WR2,WR3)      -GET TO POSITION WITHIN BUFFER
+         IC    WR1,LITLENTH          -GET LENGTH OF LITERAL OR PAGE
+         LA    WR2,1(WR2,WR1)        -GET TO LAST COMPARE POSITION
+***********************************************************************
+* M A K E  S U R E  T H E  L I N E  I S  L O N G  E N O U G H
+***********************************************************************
+         CR    1,WR2                 -MAKE SURE ITS WITHIN THIS LINE
+         BL    WARN2               -- ISSUE WARNING IF LOW
+***********************************************************************
+* T E S T  F O R  T Y P E  O F  C O M P A R E
+***********************************************************************
+         TM    TYPC,X'F0'           -CHECK TYPE OF CONSTRAINT BLOCK
+         BO    PGETYPE              -BRANCH IF PAGE TYPE
+         EX    WR1,LITCOMP        -SEE IF LITERAL MATCH
+***********************************************************************
+* M A K E  L I T E R A L  C O M P A R E
+***********************************************************************
+         BNE   TESTEND               -BRANCH NOT MATCH TO RESET BIT
+***********************************************************************
+* S E T  P R I N T  M A S K  B I T  F O R  T H I S  F I L E
+***********************************************************************
+SETIT    OC    PRINTMSK,FILEMASK   -SET  PRINT MASK  THIS FILE
+***********************************************************************
+* T E S T  F O R  E N D  O F  C H A I N
+***********************************************************************
+TESTEND  CLC   NEXT,=XL3'0'       TEST FOR ENDOF CHAIN
+         BE    ENDCHAIN            -BRANCH IF END
+         L     DIGITCNT,FILE      ELSE GET THE NEXT ONE
+         B     CONTROL2            GO SET UP NEW MASK
+***********************************************************************
+* T E S T  F O R  R E P O R T  C O D E  S T I L L I N A C T I V E
+***********************************************************************
+ENDCHAIN CLC   DEFLTMSK,=XL4'00'  -TEST FOR NO DEFAULT FILE
+         BE    NODEFLT            -BRANCH IF NO DEFAULT
+         CLC   PRINTMSK,=XL4'00'  -SEE IF ANY HIT
+         BNZ   ACTIVE             -BRANCH IF SO
+         MVC   PRINTMSK,DEFLTMSK  -ELSE SET DEFAULT FILE
+         B     ACTIVE
+NODEFLT  TM    FLAG,INACTIVE      -TEST FOR REPORT CODE INACTIVE
+         BNO   ACTIVE             BRANCH IF STILL ACTIVE
+***********************************************************************
+* R E D U C E  N U M B E R  O F  A C T I V E  R E P O R T  C O D E S
+***********************************************************************
+         LH    WR1,REPORTCT        -REDUCE NUMBER OF ACTIVE REPORTS
+         BCTR  WR1,0               -AND  SAVE COUNT
+         STH   WR1,REPORTCT        -CHECK FOR ALL REPORT
+         LTR   WR1,WR1             -CODES INACTIVE
+         BNZ   MAINLOOP            -BRANCH IF SOME STILL ACTIVE
+         B     ALLDONE             -BRANCH ALL REPORTS DONE
+***********************************************************************
+* M A K E  C H E C K  F O R  P A G E  T Y P E  B L O C K
+***********************************************************************
+PGETYPE  LH    WR1,CURPAGES       -PROCESS PAGE TYPE CONSTRAINT BLOCK
+         LTR   WR1,WR1              -TEST FOR START YET
+         BNZ   CHECKFE              -BRANCH IF ALREADY ACTIVE
+         XR    WR2,WR2            GET NUMBER OF DIGITS
+         IC    WR2,PAGELEN         -IN PAGE NUMBER
+         LA    WR2,1(WR2)            -SET UP FOR COUNT OF DIGITS
+         LR    EXIT,WR3              -SAVE IN CAES OF ERROR
+***********************************************************************
+* M A K E  S U R E  T H E R E  I S  N U M E R I C  V A L U E  H E R E
+***********************************************************************
+LEADBLK  LR    WR1,WR3               -SAVE START OF PAGE NO.
+         CLI   0(WR3),C' '           -MUST TOLERATE LEADING BLANKS
+         BNE   BEADIGIT            -NOT BLANKS BETTER BE-A-DIGIT
+         LA    WR3,1(WR3)            -BUMP OVER BLANK
+         BCT   WR2,LEADBLK           -LOOP TILL NUMBER OF DIGITS PASSED
+         B     WARN1                 -ERROR IF ALL BLANKS
+BEADIGIT CLI   0(WR3),C'0'         -CHECK FOR DIGIT
+         BL    WARN1               -REMOVE BLOCK NO DIGITS HERE
+         CLI   0(WR3),C'9'         -CHECK FOR DIGIT
+         BH    WARN1               -ERROR IF NOT A DIGIT
+ENDCK    LA    WR3,1(WR3)          -CUMP TO NEXT DIGIT
+         BCT   WR2,BEADIGIT          -LOOP TILL COUNT GOES TO ZERO
+         SR    WR3,WR1             -COMPUTE LENGTH
+         BZ    WARN1               -ERROR IF NO DIGITS
+         BCTR  WR3,0               -GET LENGTH
+         STC   WR3,PACKIT          -SAVE COUNT
+         OI    PACKIT,X'70'        -SET-UP TOTAL LENGTH CODE
+PACKPAGE PACK  HOLD,0(1,WR1)      -PACK DIGITS
+PACKIT   EQU   PACKPAGE+1
+***********************************************************************
+* C O M P A R E  W I T H  S T A R T  V A L U E
+***********************************************************************
+         CP    HOLD,STARTPG        -COMPARE IT
+         BNE   TESTEND             -IF NOT EQUAL GO TO NEXT BLOCK
+         MVI   CURPAGES+1,1        -SET PAGES PRINTED TO 1
+         B     SETIT               -SET HIT SWITCH GO  TO NEXT FILE
+***********************************************************************
+* B U M P  P A G E S  O U T P U T
+***********************************************************************
+CHECKFE  LA    WR1,1(WR1)         -BUMP   PAGES  PRINTED
+         CH    WR1,PAGESHM          -COMPARE WITH HOW MANY
+         BH    DEACTIVE            -RESET BLOCK ACTIVE IF END
+         STH   WR1,CURPAGES         -SAVE CURRENT NUMBER PRINTED
+         B     SETIT                -GO SET BIT  ACTIVE
+WARN1    XR    WR3,WR3               -GET THE NUMBER OF
+         IC    WR3,PAGELEN           -DIGITS IN THE PAGE
+         EX    WR3,VARMOV3         -MOVE TO BLOCK AND SAVE
+         OI    FLAGS,NOPAGE       SET FLAG FOR NO PAGE FOUND
+DEACTIVE OI    FLAGS,DEACTIV      -SET FLAG FOR DEACTIVE BLOCK
+         B     TESTEND            -GET NEXT BLOCK
+WARN2    OI    FLAGS,LINSHORT     -SET FLAG FOR LINE TOO SHORT
+         LH    WR1,PAGELOST        -BUMP  PAGES LOST
+         LA    WR1,1(WR1)          - BY ONE
+         STH   WR1,PAGELOST
+         B     TESTEND            -GET NEXT BLOCK
+***********************************************************************
+* T A P E  E O F  R E A C H E D  F L U S H  A N Y  P A R T I A L
+* L I N E S  W H I C H  M I G H T  B E  Q U E U E D
+***********************************************************************
+EOF      MVI   RECOVER3+1,X'F0'     -SET SWITCH FOR END OF PROCESSING
+         L     CTAB,STARTAB        -GET START OF REPORT BLOCKS
+TESTACC  TM    FLAG,INACTIVE      -TEST FOR REPORT BLOCK INACTIVE
+         BO    EOFSW              -IGNORE ,IF INACTIVE
+         TM    FLAG,HEADACC       -SEE IF HEADING BEING ACCUMULATED
+         BO    RECOVER             -YES, MAKE CHECKS
+EOFSW    LA    CTAB,CTABLEN*4(CTAB)   --ELSE BUMP TO NEXT ENTRY
+         CL    CTAB,CTABEND        -SEE IF  END OF BLOCKS
+         BNE   TESTACC             -NO , THEN TEST FOR ACCUMULATION
+***********************************************************************
+* P R I N T  E N D  O F  F I L E  M E S S A G E
+***********************************************************************
+         MVC   PRINT(L'MESS1),MESS1   -SET UP EOF MESSAGE
+ALLDONE  MVI   PRNCTL,X'11'       SET TO DOUBLE SPACE
+         BAL   EXIT,WRITE         GO DUMP  THE MESSAGE
+         MVI   PRNCTL,X'09'       SET UP TO SINGLE SPACE
+         MVC   PRINT(L'MESS7),MESS7    -PRINT HEADER
+         BAL   EXIT,WRITE
+         XR    WR1,WR1            -SET FILE NUMBER TO ONE
+         LA    WR2,DCBTAB         -GET START OF DCB'S
+TESTSL   CLC   1(3,WR2),=XL3'0'   -TEST FOR FILE NOT SELECTED
+         BE    NEXTFILE           -BRANCH IF FILE NOT ACTIVE
+         CLOSE ((WR2))             -CLOSE FILE
+***********************************************************************
+* A C C U M U L A T E  A N D  P R I N T  T O T A L S
+***********************************************************************
+         L     WR0,4(WR2)         -GET LINES PRINTED FOR THIS FILE
+         L     WR3,TOTALOUT       -GET TOTAL RECORDS OUTPUT
+         LA    WR3,0(WR3,WR0)      -BUMP TOTAL BY TOTAL THIS FILE
+         ST    WR3,TOTALOUT       -SAVE TOTAL
+         CVD   WR0,HOLD            -CONVERT TO PACKED
+         MVC   TOTF,EDITP          -GET EDIT PATTERN
+         ED    TOTF,HOLD+5         -EDIT TOTAL THIS FILE
+         CVD   WR1,HOLD            -CONVERT FILE NUMBER
+         MVC   FN,EDITP1           -GET EDIT PATTERN
+         ED    FN,HOLD+6           -EDIT FILE NUMBER
+         BAL   EXIT,WRITE          -PRINT FILE NUMBER AND TOTAL
+         L     CTAB,STARTAB         -GET START OF REPORT CODE TABLE
+         STC   WR1,FILECK           -CHECK FOR FILE NUMBER COMPARE
+FIRSTBLK L     DIGITCNT,POINTER     -GET TO FIRST CONSTRAINT BLOCK
+MATCHIT  CLI   FILE,X'00'           -TEST FOR FILE SELECT
+FILECK   EQU   MATCHIT+1
+         BNE   PUSHON               -IF NOT EQUAL GET NEXT FILE
+***********************************************************************
+* T E S T  F O R  W A R N I N G S  N E C E S S A R Y
+***********************************************************************
+         TM    FLAGS,NOPAGE+LINSHORT -TEST ANY WARNINGS REQUIRED
+         BZ    PUSHON
+         MVC   WARMESS,=C'**WARNING CONTROL CARD '  -SET UP MESSAGE
+         XR    WR0,WR0               -FIRST SET UP
+         IC    WR0,CCNUMBR           -CONTROL CARD NUMBER
+         CVD   WR0,HOLD              -CONVERT  IT
+         UNPK  CCNUM,HOLD+6(2)       -UNPACK-IT
+         OI    CCNUM+1,X'F0'         -ZONE IT
+         TM    FLAGS,NOPAGE        -TEST FOR NO PAGE NUMBER
+         BNO   TESTLL             -BRANCH IF NOT PAGE ERROR
+         MVC   WARMESS2,=C'SPECIFIED PAGE NUMBER FOUND '
+         MVC   GARB,CHARS          -MOVE IN THE GARBAGE FOUND
+         BAL   EXIT,WRITE            -WRITE WARNING
+         CLI   RETURNC,0          -TEST FOR RETURN CODE
+         BNE   TESTLL             -SET-UPALREADY
+         MVI   RETURNC,8          -SET RC=8
+TESTLL   TM    FLAGS,LINSHORT     -TEST FOR LINE SHORT CONDITION
+         BNO   PUSHON
+         MVC   WARMESS3,=C'SPECIFIED INVALID POSITION OCCURRED '
+         LH    WR0,PAGELOST        -GET PAGES THAT WERE LOST
+         CVD   WR0,HOLD           -CONVERT IT
+         MVC   TIMES,EDITP           -GET EDIT PATTERN
+         ED    TIMES,HOLD+5          -EDIT VALUE
+         MVC   WARMESS4,=C' TIMES'
+         BAL   EXIT,WRITE            -WRITE WARNING
+         CLI   RETURNC,0          -TEST FOR RETURN CODE
+         BNE   PUSHON             -SET-UP ALREADY
+         MVI   RETURNC,4          -SET RC=4
+PUSHON   CLC   NEXT,=XL3'0'        -TEST FOR END OF CHAIN
+         BE    NEXTREPT             -BRANCH IF END
+         L     DIGITCNT,FILE         -GET NEXT BLOCK ADDDRESS
+         B     MATCHIT              -BRANCH TO LOOP
+NEXTREPT LA    CTAB,CTABLEN*4(CTAB)  -GET NEXT REPORT BLOCK
+         CL    CTAB,CTABEND        -TEST FOR END OF BLOCKS
+         BNE   FIRSTBLK           -BRANCH IF NOT END
+NEXTFILE LA    WR1,1(WR1)         -BUMP FILE COUNT
+         LA    WR2,DCBTABL(WR2)   -BUMP TO NEXT ENTRY IN DCB TAB
+         CH    WR1,MAXFLS            -TEST FOR END OF ALL FILES
+         BNE   TESTSL             -BRANCH IF NOT END  OF ALL FILES
+         MVC   TM1,MESS3          -SET UP TOATL MESSAGES
+         MVC   TM2,MESS4
+         L     WR0,TOTALOUT       CONVERT TOTALS
+         CVD   WR0,HOLD
+         MVC   TOTAL,EDITP2       -EDIT TOTALS
+         ED    TOTAL,HOLD+4
+         BAL   EXIT,WRITE         -PRINT TOTAL
+         MVC   TM1,MESS3            -SET UP  MESSAGE FOR TOTAL IN
+         MVC   TM2,MESS5
+         L     WR0,TOTALIN        -GET TOTALS
+         CVD   WR0,HOLD           -CONVERT
+         MVC   TOTAL,EDITP2
+         ED    TOTAL,HOLD+4       EDIT IT
+         BAL   EXIT,WRITE         WRITE
+         CLOSE (TAPEIN)
+         B     RETURN
+***********************************************************************
+*        'DISTR' KEYWORD
+***********************************************************************
+         SPACE 1
+DISTR1   LH    1,CTLCOUNT          GET CONTROL CARD COUNT
+         BCTR  1,0                 SUB ONE
+         STH   1,CTLCOUNT          STORE COUNT
+         LA    CARDB,5(CARDB)      BUMP OVER KEYWORD
+         LA    DIGITCNT,MAXOUT     SET-UP TO FIND DIGIT(S)
+         BAL   EXIT,NONBLANK       GO FIND NEXT NON BLANK
+         BAL   EXIT,FIND           GO FIND MAXOUT DIGITS
+         STC   WR1,OUTFILE         SAVE VALUE RETURNED
+         CLI   0(CARDB),QUOTE      TEST FOR QUOTE
+         BNE   CTLER6              ERROR IF NOT
+         XR    WR1,WR1             ZEROISE
+         LA    CARDB,1(CARDB)      INCREMENT POINTER
+         ST    CARDB,DISTRSAC      SAVE LITERAL START ADDRESS
+DISTRLP1 CLI   0(CARDB),QUOTE      TEST FOR QUOTE
+         BE    QFOUND              BRANCH IF YES
+DISTR2   LA    WR1,1(WR1)          ADD ONE TO LENGTH OF CURRENT LITERAL
+         LA    CARDB,1(CARDB)      INCREMENT POINTER
+         CL    CARDB,=A(CARDIN+80) TEST IF END OF CARD
+         BL    DISTRLP1            NO - PROCESS NEXT POSITION
+         B     CTLER6              YES - ERROR
+QFOUND   CLC   0(2,CARDB),DOBQUOTE TEST IF TWO QUOTES
+         BNE   *+12                BRANCH IF NO
+         LA    CARDB,1(CARDB)      ADD ONE TO POINTER (FOR FIRST QUOTE)
+         B     DISTR2              GO ADD ONE TO LENGTH OF CURRENT LIT.
+         CL    CARDB,=A(CARDIN+79) TEST IF QUOTE IS IN POSITION 80
+         BL    *+12                NO - BUT BEFORE 80
+         BE    DISTR3              YES
+         BH    CTLER6              NO - ERROR BECAUSE AFTER 80
+         CLI   1(CARDB),BLANK      TEST IF BLANK AFTER QUOTE
+         BNE   CTLER6              NO - ERROR
+DISTR3   LA    WR2,20              LOAD MAXIMUM LENGTH OF LITERAL
+         CR    WR1,WR2             COMPARE WITH TRUE CURRENT ONE
+         BH    CTLER6              ERROR IF GREATER THAN MAX.
+         STC   WR1,DISTRCL         SAVE LENGTH OF CURRENT LITERAL
+SFT      NOP   DISTR5
+         MVI   SFT+1,X'F0'         CHANGE SWITCH FIRST TIME
+         MVI   SWDISTR+1,X'00'     CHANGE SWITCH
+         EXTRACT ADDRTIOT,FIELDS=TIOT   EXTRACT ADDRESS TIOT
+         L     1,ADDRTIOT          LOAD TIOT ADDRESS
+         MVC   WRTLNJOB,0(1)       MOVE JOB NAME
+         UT458 ,                   GET IPL DATE AND TIME
+         MVC   WRTLNDAT,UTREPORT   MOVE DATE
+         MVC   WRTLNHH,UTHHMMSS    MOVE HOUR
+         MVC   WRTLNMM,UTHHMMSS+2  MOVE MINUTE
+         MVC   WRTLNSS,UTHHMMSS+4  MOVE SECONDE
+         L     0,DISTRIG           LOAD LENGTH OF TABLE
+         GETMAIN R,LV=(0)          CORE FOR DISTRIBUTION TABLE
+         ST    1,DISTRSAG          SAVE ADDRESS OF AREA GETMAINED
+         L     0,DISTRIG           LOAD LENGTH OF TABLE
+DISTRLP2 C     0,=F'256'           TEST IF LENGTH > 256
+         BL    DISTR4              BRANCH IF NO
+         XC    0(256,1),0(1)       CLEAR 256 BYTES
+         LA    1,256(1)            INCREMENT TABLE POINTER
+         S     0,=F'256'           DECREMENT 256 TO LENGTH OF TABLE
+         B     DISTRLP2
+DISTR4   LTR   2,0                 LOAD REST OF LENGTH INTO R2
+         BZ    DISTR5              BRANCH IF ZERO
+         BCTR  2,0                 DECRIMENT 1 FOR NEXT XC INTRUCTION
+         STC   2,*+5               STORE LENGTH-1 IN NEXT XC INTRUCTION
+         XC    0(0,1),0(1)         CLEAR END OF TABLE
+DISTR5   XR    WR2,WR2             ZEROISE
+         IC    WR2,OUTFILE         LOAD OUTPUT FILE NUMBER
+         L     WR1,DISTRSAG        LOAD START ADDRESS OF AREA GETMAINED
+         MH    WR2,DISTRLL         GET DISPLACEMENT FOR TABLE
+         LA    WR1,0(WR2,WR1)      ADD DISPLACEMENT TO START ADDRESS
+         CLC   0(3,WR1),=X'000000' TEST IF 'DISTR' ALREADY GIVEN FOR-
+         BNE   CTLER15             YES - ERROR / THIS OUTPUT FILE
+         MVI   1(WR1),BLANK        MOVE BLANK TO THE 20 POSITIONS
+         MVC   2(19,WR1),1(WR1)     OF THE LITERAL OF THIS TABLE ELEMEN
+         L     WR2,DISTRSAC        LOAD START ADDRESS OF LITERAL IN C.
+         XR    WR3,WR3             ZEROISE
+         IC    WR3,DISTRCL         LOAD LENGTH OF CURRENT LITERAL
+         LTR   WR3,WR3             TEST IF ZERO ?
+         BZ    GETACARD            YES - GO READ NEXT CONTROL CARD
+DISTLP3  CLC   0(2,WR2),DOBQUOTE   TEST FOR DOUBLE QUOTE
+         BNE   *+8                 NO - SKIP NEXT INTRUCTION
+         LA    WR2,1(WR2)          YES - INCREMENT CARDIN POINTER
+         MVC   1(1,WR1),0(WR2)     MOVE LITERAL TO TABLE (CH. BY CH.)
+         LA    WR1,1(WR1)          INCREMENT TABLE POINTER
+         LA    WR2,1(WR2)          INCREMENT CARDIN POINTER
+         BCT   WR3,DISTLP3         PROCESS NEXT POSITION
+         B     GETACARD            GO READ NEXT CONTROL CARD
+         SPACE 1
+DISTRLL  DC    H'21'               DISTRIBUTION LITERAL LENGTH + 1
+ADDRTIOT DS    F
+DISTRIG  DC    F'420'    DISTRIBUTION TABLE  TO BE GETMAINED (20E.)
+DISTRSAC DS    F         LITERAL START ADDRESS IN CARDIN
+DISTRSAG DS    F         START ADDRESS OF DISTRIBUTION TABLE GETMAINED
+DISTRCL  DS    X         LENGTH OF CURRENT LITERAL
+BLANK    EQU   X'40'
+QUOTE    EQU   X'7D'
+DOBQUOTE DC    X'7D7D'
+         SPACE 2
+***********************************************************************
+*        WRITE DISTRIBUTION PAGE
+***********************************************************************
+         SPACE 1
+WRTDISTR STM   0,3,WRTLNSA              PRESERVE REGS
+         MVC   WRTLNDIS,1(WR0)          MOVE DISTR. TEXT
+         LA    3,60                     ESTABLISH LOOP
+WRTLOOP  CLC   82(2,1),=H'100'     TEST IF LRECL < 100
+         BL    WDISONLY            BRANCH IF YES
+         PUT   (1),WRTLNWA              WRITE
+         B     WCOMP
+         MVC   WRTLNDIS-1(1),WRTLNWA MOVE CONTROL CHAR.
+WDISONLY PUT   (1),WRTLNDIS-1           WRITE
+WCOMP    L     1,WRTLNSA+4         RESTORE REG.1
+         LTR   3,3                      TEST IF ZERO
+         BZ    WRTEND                   BRANCH IF YES
+         BCT   3,WRTLOOP                GO WRITE NEXT LINE
+         MVI   WRTLNWA,X'89'            ESTABLISH SKIP AFTER WRITE
+         B     WRTLOOP                  GO WRITE
+WRTEND   MVI   WRTLNWA,X'09'           RESTORE SPACE 1 AFTER WRITE
+         MVI   0(WR0),X'FF'
+         LM    0,3,WRTLNSA              RESTORE REGS
+         B     OUTALINE                 RETURN
+         SPACE 1
+FILENO   DS    F
+WRTLNSA  DS    4F                       SAVE AREA REGS 3
+WRTLNWA  DC    X'09'                    WORK
+         DC    C'                  REPORT OF JOB '
+WRTLNJOB DS    CL8
+         DC    C'    DATE '
+WRTLNDAT DS    CL9
+         DC    C'    TIME '
+WRTLNHH  DS    CL2
+         DC    C'.'
+WRTLNMM  DS    CL2
+         DC    C'.'
+WRTLNSS  DS    CL2
+         DC    C'    '
+WRTLNDIS DS    CL20
+         DC    CL80' '
+         SPACE 2
+         EJECT
+***********************************************************************
+*
+* THIS SUBROUTINE IS USED TO FIND NUMERIC VALUES
+*  A MAX OF THE VALUE SPECIFIED BY DIGITCNT ARE PROCESSED
+*  THE VALUE MUST BE TERMINATED BY A BLANK OR COMMA
+*
+***********************************************************************
+FIND     LR    WR2,CARDB          FIND DIGITS -SAVE START
+FINDLOOP CLI   0(CARDB),X'F0'      -SEE IF DIGIT
+         BL    NOMORE              -NOT IF LESS THAN A ZERO
+         CLI   0(CARDB),X'F9'      -CHECK FOR GREATER THAN 9
+         BH    NOMORE              -BRANCH NOT A DIGIT
+         LA    CARDB,1(CARDB)      -BUMP BASE BY 1
+         BCT   DIGITCNT,FINDLOOP   -LOOP TILL NUMBER OF DIGITS FOUND
+NOMORE   CLI   0(CARDB),C','       -BETTER BE A COMMA HERE
+         BE    DELF               -BRANCH IF DELIMITER FOUND
+         CLI   0(CARDB),C' '       SEE IF BLANK IS DELIMITER
+         BNE   CTLER4             -ERROR IF NITHER
+DELF     LR    WR1,CARDB           -SAVE END OF DIGITS
+         LA    CARDB,1(CARDB)      -BUMP OVER COMMA
+         SR    WR1,WR2             -COMPUTE DIGITS FOUND
+         BCTR  WR1,0               -GET LENGTH CODE
+         STC   WR1,PACKCNT         -SAVE PACK COUNT
+         OI    PACKCNT,X'70'       -GET HOLD LENGTH TO LENGTH COUNT
+PACK1    PACK  HOLD,0(1,WR2)      -PACK DIGITS
+PACKCNT  EQU   PACK1+1
+         CVB   WR1,HOLD            -WR1=BINARY VALUE
+         BR    EXIT                -RETURN
+         EJECT
+***********************************************************************
+*
+* THIS ROUTINE SCANS A STRING DEFINED BY CARDB AND
+* RETURNS ON THE FIRST NON-BLANK CHARACTER FOUND
+* ERROR IF THE END-OF-CARD CONDITION IS FOUND BEFORE A NON-BLANK
+* CHARACTER IS ENCOUNTERED
+*
+***********************************************************************
+NONBLANK CLI   0(CARDB),C' '      CHECK FOR CHARACTER SELECTED
+RETRN    BCR   7,EXIT             EXIT ON NON-BLANK
+         LA    CARDB,1(CARDB)     -ELSE BUMP POINTER IN STRING
+         CL    CARDB,=A(CARDIN+80) -CHECK FOR END-OF-CARD
+         BL    NONBLANK            -LOOP TILL END-OF-CARD
+         B     CTLER10             -ERROR IF THERE
+         EJECT
+***********************************************************************
+*
+* THIS ROUTINE IS USED TO SEARCH THE CTAB (REPORT CODE BLOCKS)
+* AND TRIES TO MATCH WITH A GIVEN REPORT CODE (CURCODE)
+* IF A MATCH IS FOUND CTAB POINTS TO THE START OF THE BLOCK
+* IF A MATCH IS NOT FOUND THEN CTAB POINTS TO THE NEXT AVAILABLE
+* ENTRY IN THE TABLE AND CTAB HAS THE HIGH ORDER (SIGN) BIT SET ON
+*
+***********************************************************************
+SELECT   L     CTAB,STARTAB       MATCH REPORT CODE -GET TABLE START
+CKEND    CL    CTAB,CTABEND       CHECK FOR END OF TABLE
+         BL    SEARCH              -BRANCH NOT END OF TABLE
+         O     CTAB,MASK           -SET NOT FOUND BIT
+         BR    EXIT                -RETURN
+SEARCH   CLI   REPTC,X'00'         -TEST FOR MATCH
+CURCODE  EQU   SEARCH+1
+         BCR   8,EXIT              -RETURN IF EQUAL
+         LA    CTAB,CTABLEN*4(CTAB)   -BUMP TO NEXT ENTRY
+         B     CKEND               -CHECK FOR END
+RECOVER3 NOP   EOFSW               -BRANCH IF END OF FILE
+         MVI   RECOVER1+1,X'00'   -RESET BRANCHS TO NOP'S
+         MVI   RECOVER2+1,X'00'
+         MVI   RECOVER4+1,X'F0'   -RESET NOP TO BRANCH
+         B     HEAD1ST            -GO TO ENTRY FIRST HEADER
+RECOVER  MVI   RECOVER1+1,X'F0'   -SETUP SWITCHES TO FORCE CHKS BE MADE
+         MVI   RECOVER2+1,X'F0'
+         MVI   RECOVER4+1,X'00'
+         B     CONTROL            -GO MAKE CHECKS
+         EJECT
+***********************************************************************
+*
+* THIS ROUTINE RETURNS THE NEXT 'LRECL' FROM THE INPUT TAPE
+* IN LOCATION INPUT.
+* THE RECORD IS SET-UP IN INPUT WITH THE FIRST FOUR BYTES AS THE RDW
+* IN CASE THE RECORD IS VARIABLE.
+* THE LOCATION TOTALIN IS BUMPED BY 1 FOR EACH 'LRECL' RETURNED.
+*
+***********************************************************************
+GETAREC  NOP   TAPE1400           BRANCH IF POSSIBLE EMULATION TAPE
+         BAL   WR2,GET             ELSE,READ ARECORD
+CHKLREC  CH    WR1,=H'140'        CHECK TOTAL LENGTH
+         BH    EXECER1             -BRANCH HIGH IF ERROR
+         STH   WR1,INPUT          -SET UP RDW
+         SH    WR1,=H'5'           -REDUCE TO LENGTH CODE VALUE
+         EX    WR1,MOVE1           -EXECUTE VARIABLE MOVE
+         L     WR1,TOTALIN        -GET TOTAL RECORDS PROCESSED
+         LA    WR1,1(WR1)         -BUMP IT
+         ST    WR1,TOTALIN        -SAVE IT
+         BR    EXIT                -RETURN
+MOVE1    MVC   INPUT+4(0),0(1)    MOVE IN AN LRECL
+         EJECT
+***********************************************************************
+*
+* THIS ROUTINE IS ENTERED IF THE TAPE IS UT363 FORMAT AND THE
+* RECFM IS VARIABLE (POSSIBLE 1400 EMULATION TAPES)
+* THE RECORD IS SCANNED AND  'LRECLS' ARE RETURNED THAT ARE
+* TERMINATED BY  X'E0' (1400  RECORD MARK).
+* 1400 TAPEMARKS,1HDR,1EOR,1EOF,AND 9'S RECORDS ARE NOT RETURNED
+* AND ARE PASSED OVER
+*
+***********************************************************************
+TAPE1400 L     WR1,LAST           GET POINTER TO END OF BLOCK
+         L     1,NOW               -WR2=START OF THIS LRECL
+         SR    WR1,1               -SEE IF BUFFER    HAS INFO LEFT
+         BP    MORELEFT             -BRANCH IF SO
+         BAL   WR2,GET              -ELSE, READ A RECORD
+         SH    WR1,=H'4'          -REDUCE BY RDW
+         LA    WR0,0(WR1,1)         -COMPUTE END OF BLOCK
+         ST    WR0,LAST             -AND SAVE IT
+MORELEFT CH    WR1,=H'256'         -CHECK FOR GT  256
+         BL    BLOCKSML            -BRANCH IF LE
+         LA    WR1,255             -ELSE SET TO 255
+BLOCKSML LR    WR2,1              -SAVE START OF THIS LRECL
+         L     1,LAST             -GET LAST POSITION
+         BCTR  1,0                -PUT IT TO THE END
+         EX    WR1,TESTRECM         -TEST FOR RECORD MARK
+         LA    WR0,1(,1)          -POINT OT THE NEW START
+         ST    WR0,NOW              -SAVE NEXT RECORD START
+         LR    WR1,WR0              -COMPUTE LENGTH OF THIS RECORD
+         LR    1,WR2              -RESTORE THE OLD START
+         SR    WR1,1                -START OF NEW - START OF CURRENT
+         CLC   0(4,1),=X'FF000000'  -CHECK FOR 1400 TAPE-MARK
+         BE    TAPE1400              -IF SO IGNORE
+         CLC   0(4,1),=C'1HDR'      -CHECK FOR HEADER
+         BE    TAPE1400              -IF SO IGNORE
+         CLC   0(4,1),=C'1EOR'      -CHECK FOR END OF RECORD
+         BE    TAPE1400              -IF SO IGNORE
+         CLC   0(4,1),=C'1EOF'      -CHECK FOR END OF FILE
+         BE    TAPE1400              -IF SO IGNORE
+         CLC   0(2,1),=C'99'        -CHECK FOR 9'S PADDING
+         BE    TAPE1400              -IF SO IGNORE
+         LA    WR1,4(WR1)         -BUMP BY RDW LWNGTH
+         B     CHKLREC             ELSE, CHECK LRECL
+         EJECT
+***********************************************************************
+* THIS ROUTINE IS THE PHYSICAL GET ROUTINE AND
+* READS ONE RECORD AND RETURNS THE LENGTH IN WR1
+* GET LOCATE IS USED SO REGISTER 1 POINTS TO THE RECORD
+*
+***********************************************************************
+GET      GET   TAPEIN             GET A RECORD
+         LH    WR1,TAPELREC        -SET WR1 TO LRECL
+         LA    WR1,4(WR1)          BUMP BY  RDW
+VARSW2   BR    WR2                -RETURN OR NOP
+         LH    WR1,0(1)            -ELSE, PICK-UP LRECL
+         LA    1,4(1)              -BUMP OVER  RDW ON VARIABLE
+         BR    WR2
+BADCC    MVC   ERRMES(L'ERMS2),ERMS2   FLAG ERROR
+         BAL   EXIT,WRITE
+RETURN   XR    WR1,WR1            -GET RETUN CODE
+         IC    WR1,RETURNC
+         CVD   WR1,HOLD
+         UNPK  CCOUT(2),HOLD+6(2) -UNPACK THE RETURN CODE
+         OI    CCOUT+1,X'F0'      -ZONE IT
+         MVC   MESF,=C'END OF B2784 RETURN CODE = '
+         BAL   EXIT,WRITE         -PRINT MESSAGE
+         CLOSE (LINE,,CARD)
+         LR    15,WR1             -GET CODE TO 15
+         L     13,MYSAVE+4
+         RETURN (14,12),RC=(15)
+EXECER1  MVC   PRINT(L'MESS6),MESS6           SET UP ERROR MESSAGE
+         BAL   EXIT,WRITE         -PRINT IT
+         MVI   RETURNC,12          -SET UP RETURN CODE
+         B     ALLDONE            -GO PRINT TOTALS CLOSE FILES
+TESTRECM TRT   0(0,WR2),REPTAB       -FIND EOM ON 1400 TAPE
+         EJECT
+***********************************************************************
+*
+* THIS IS THE DCB EXIT ROUTINE TO FILL IN PARAMETERS NOT
+* SPECIFIED BY THE USER (BLKSIZE,BLOCKED) FOR FIXED LENGTH RECORDS
+*
+***********************************************************************
+BLKCHK   DC    X'85',AL3(BLKCK)
+BLKCK    CLI   FORMAT,0           -SEE IF UT363 1400 TAPE
+         BNE   TESTFXED           -BRANCH IF NOT
+         MVC   82(2,1),ADCBLREC   -GET LRECL VALUE
+         LH    WR3,=H'15'         -COMPUTE BLKSIZE
+         MH    WR3,ADCBLREC        -USE BLK FACTOR =15
+         STH   WR3,62(1)          -STORE BLKSIZE
+         BR    14                 -RETURN
+TESTFXED TM    36(1),X'80'        -TEST FOR FIXED FORMAT
+         BCR   14,14               EXIT IF NOT FIXED
+         CLC   62(2,1),=XL2'0'     TEST FOR BLKSIZE NOT GIVEN
+         BNE   SETBLK              BRANCH IF USER GAVE SOMETHING
+         MVC   62(2,1),TAPEBLKS    DEFAULT TO TAPE BLKSIZE
+SETBLK   CLC   62(2,1),82(1)       SEE IF RECORDS BLOCKED
+         BCR   8,14                EXIT IF NOT
+         OI    36(1),X'18'        -ELSE SET BLOCKED STANDARD
+         BR    14
+* E N T E R  H E R E  T O  P I C K  O U T  E R R O R  M E S S A G E
+CTLER1   BAL   WR4,CCERROR
+ERRORMS1 DC    C'KEYWORD NOT FOUND  '
+CTLER2   BAL   WR4,CCERROR
+         DC    C'FORMAT NOT VALID   '
+CTLER3   BAL   WR4,CCERROR
+         DC    C'INVALID REPORT CODE'
+CTLER4   BAL   WR4,CCERROR
+         DC    C'NO COMMA OR BLANK  '
+CTLER5   BAL   WR4,CCERROR
+         DC    C'INVALID LINE NUMBER'
+CTLER6   BAL   WR4,CCERROR
+         DC    C'INVALID LITERAL    '
+CTLER7   BAL   WR4,CCERROR
+         DC    C'TOO MANY DIGITS    '
+CTLER8   BAL   WR4,CCERROR
+         DC    C'BEGIN PAGE GT END  '
+CTLER10  BAL   WR4,CCERROR
+         DC    C'EXPECTED NON-BLANK '
+CTLER11  BAL   WR4,CCERROR
+         DC    C'TOO MANY CTL CARDS '
+CTLER12  BAL   WR4,CCERROR
+         DC    C'MUST BE LAST CARDS '
+CTLER13  BAL   WR4,CCERROR
+         DC    C'TOO MANY REPT CODES'
+CTLER14  BAL   WR4,CCERROR
+         DC    C'TOO MANY DEFAULTS  '
+CTLER15  BAL   WR4,CCERROR
+         DC    C'ALREADY IN TABLE   '
+CCERROR  MVI   RETURNC,12         -SET-UP RETURN CODE
+         S     CARDB,=A(CARDIN)   SET POINT OF ERROR
+         LA    CARDB,ERRMES-1(CARDB)  -GET AREA OF PROBLEM
+         MVC   0(3,CARDB),=C'???'    -MOVE IN FLAGS
+         BAL   EXIT,WRITE
+         MVI   PRNCTL,X'11'       -DOUBLE SPACE
+         MVC   ERRMES(L'ERRORMS1),0(WR4)  -MOVE IN ERROR MESSAGE
+         BAL   EXIT,WRITE         -PRINT ERROR MESSAGE
+         MVI   PRNCTL,X'09'       -RESET TO SINGLE
+         B     GETACARD           LOPP ON CONTROL CARDS
+WRITE    PUT   LINE,PRNCTL        DUMP A LINE
+         MVI   PRINT,C' '
+         MVC   PRINT+1(131),PRINT BLANK A LINE
+         BR    EXIT
+*********  ********* VARIABLE LENGTH INSTRUCTIONS
+VARMOV3  MVC   CHARS(0),0(EXIT)      -SAVE GARBAGE FOUND
+LITCOMP  CLC   0(0,WR3),LITERAL    -SEE IF MATCH
+VARMOV2  MVC   IDOVHEAD(0,1),0(CARDB)  -MOVE LITERAL TO CONTROL BLOCK
+MYSAVE   DS    18F                -SAVE AREA
+CTLCOUNT DS    H                  CONTROL CARD COUNT
+CTABEND  DC    F'0'               -END OF REPORT TABLE
+STARTAB  DS    F                  START OF REPORT CODE TABLE
+HOLD     DS    D                  -HOLD WORK AREA
+DCBTAB   DC    (MAXFILE)X'8F00000000000000'
+FILEN    DS    PL2                -FILE NUMBER IN PACKED FORM
+LAST     DC    F'0'               ADDRESS OF END OF BLOCK OF 1400 RECS
+NOW      DC    F'0'               ADDRESS OF CURRENT POINT IN BLOCK
+FILEMASK DS    F                  FILE MASK FOR PRINT FILE
+MASK     DC    XL4'80000000'      SET MASK
+FORMAT   DS    CL1                FORMAT OF TAPE SELECTED
+DEFLTSW  DC    X'00'              DEFAULT SWITCH FOR CONTROL CARD
+REPORTCT DC    H'0'               -REPORT COUNT
+MAXCC    DC    AL2(MAXCTLC)       MAX CONTROL CARDS
+MAXFLS   DC    AL2(MAXFILE)         MAX NUMBER OF OUTPUT FILES
+MAXNREPS DC    AL2(MAXREPT)       -MAX NUMBER OF REPORTS SELECTED
+MAXLNSS  DC    AL2(MAXHEAD)       -MAX HEADING LINE USER CAN SPECIFY
+DCBTABLC DC    AL2(DCBTABL)       -LENGTH OF TABLE ENTRY
+         DS    0F
+SAVE8B   DS    CL140              -8B REC INPUT SAVE AREA
+SW8B     DC    X'00'              -SW 8B READ
+SW8BLOOP DC    X'00'              -SW 8B PUT 1ST LOOP
+         DS    0F
+INPUT    DS    0CL140
+         DC    F'0'               -SPACE RESERVED FOR RDW
+CARDIN   DS    CL80               -CARD INPUT AREA
+         DS    CL56               -REST OF  OF INPUT AREA
+RETURNC  DC    X'00'              CURRENT RETURN CODE
+EDITP    DC    XL6'402020202120'
+EDITP1   DC    XL4'40202120'
+EDITP2   DC    XL8'4020202020202120'
+AFTER    EQU   INPUT+4             -POSITION OF AFTER CARRIAGE CTL
+BEFORE   EQU   INPUT+5             -POSITION OF BEFORECARRIAGE CTL
+PRNCTL   DC    CL1' '             PRINT CONTROL
+PRINT    DS    0CL132             PRINT LINE
+         DS    CL5
+ERRMES   DS    CL128
+REORG    EQU   *
+         ORG   PRINT
+         DS    CL10
+MESF     DS    CL27
+CCOUT    DS    CL2
+         ORG   PRINT
+FN       DS    CL4
+         DS    CL9
+TOTF     DS    CL6
+         DS    CL8
+WARMESS  DS    C'**WARNING CONTROL CARD '
+CCNUM    DS    CL2
+         DS    CL1
+WARMESS2 DS    CL28
+GARB     DS    CL5
+         ORG   WARMESS2
+WARMESS3 DS    CL36
+TIMES    DS    CL6
+WARMESS4 DS    CL6
+         ORG   PRINT
+TM1      DS    CL13
+TM2      DS    CL10
+TOTAL    DS    CL8
+         ORG   REORG
+ERMS     DC    C'CONTROL CARD ERROR'
+ERMS2    DC    C' RUN ABORTED DUE TO CONTROL CARD ERROR'
+MESS1    DC    C'END OF FILE'
+MESS3    DC    C'TOTAL RECORDS'
+MESS4    DC    C' WRITTEN ='
+MESS5    DC    C' READ    ='
+MESS6    DC    C'****PROCESSING ABORTED LRECL GREATER THAN MAX****'
+MESS7    DC    C'FILE       TOTAL RECS'
+TOTALIN  DC    F'0'               -TOTAL INPUT RECORDS
+TOTALOUT DC    F'0'               -TOTAL OUTPUT RECORDS
+CARD     DCB   DSORG=PS,DDNAME=SYSIN,RECFM=FB,LRECL=80,                C
+               MACRF=(GM),EODAD=EOFCARD
+LINE     DCB   DSORG=PS,DDNAME=SYSPRINT,RECFM=FM,LRECL=133,BLKSIZE=133,C
+               MACRF=(PM)
+ADCB     DCB   DSORG=PS,DDNAME=PRINT00,MACRF=(PM),RECFM=F,             C
+               EXLST=BLKCHK
+DDNAME   EQU   ADCB+40
+ADCBLREC EQU   ADCB+82
+ADCBBLKS EQU   ADCB+62
+ADCBRECF EQU   ADCB+36
+TAPEIN   DCB   DSORG=PS,DDNAME=SYSUT1,MACRF=(GL),EODAD=EOF,BFTEK=A
+TAPELREC EQU   TAPEIN+82
+TAPEBLKS EQU   TAPEIN+62
+TAPERECF EQU   TAPEIN+36
+TAPEMACR EQU   TAPEIN+42
+DCBLENTH EQU   X'60'               -LENGTH OF ADCB
+OUTFILE  DC    F'0'                -FILE NUMBER AND ZERO POINTER
+TYPE     DS    CL1                -TYPE OF CONSTRAINT(PAGE OR HEADER)
+TEMPSTR  DS    CL1                -START LINE
+TEMPOS   DS    CL1                -POSITION ON LINE
+TEMPLEN  DS    CL1                -LENGTH OF LITERAL
+         ORG   TEMPLEN
+TEMPNP   DS    CL1                -NUMBER OF DIGITS IN THE PAGE
+TEMPBP   DS    CL3                 BEGINNING PAGE  HIGH ORDER
+TEMPRSP  DS    CL1                -REST OF BEGINNING PAGE LOW ORDER
+TEMPHM   DS    CL2                -HOW MANY PAGES
+         LTORG
+REPTAB   DC    193X'00'            -TRANSLATE
+         DC    C'ABCDEFGHI'         -TABLE
+         DC    7X'00'                -FOR
+         DC    C'JKLMNOPQR'          CHECKING
+         DC    8X'00'               -FOR VALID
+         DC    C'STUVWXYZ'         -REPORT CODES
+         DC    6X'00'
+         DC    C'0123456789'
+         DC    6X'00'
+REPTCTAB DSECT                    DESCRIBES REPORT CODE TABLE ENTRY
+REPTC    DS    CL1                -REPORT CODE
+LINES    DS    CL1                -LINES SAVED
+MAXLINES DS    CL1                -MAX HEADING LINES TO BE SAVED
+FLAG     DS    CL1                -DEFINE ACTIVE/HEADING/HEADING NEXT
+POINTER  DS    CL4                -POINTER TO FIRST CONSTRAINT BLOCK
+PRINTMSK DS    CL4                -MASK FOR OUTPUT FILES (32 FILES)
+BUFFCUR  DS    CL4                -CURRENT BUFFER ADDRESS
+BUFFER   DS    CL4                -BUFFERS FOR LINES
+DEFLTMSK DS    CL4                DEFAULT FILE PRINT MASK
+CONSTAB  DSECT                    DESCRIBES CONSTRAINT TABLE ENTRY
+FILE     DS    CL1                -FILE NUMBER
+NEXT     DS    CL3                -ADDRESS OF NEXT IN CHAIN
+TYPC     DS    CL1                -DEFINES CONSTRAINT TYPE
+LINEPOS  DS    CL1                -WHICH HEADING LINE
+CHARPOS  DS    CL1                -WHICH CHAR POSITION IN LINE
+LITLENTH DS    CL1                -LENGTH OF LITERAL TO BE COMPARED
+PAGELOST DS    CL2                -NUMBER OF PAGES LOST
+FLAGS    DS    CL1                -ACTIVE HEADING ACC HEADING NEXT
+CCNUMBR  DS    CL1                -CARD NUMBER WHICH MADE THIS BLOCK
+LITERAL  DS    CL1                -START OF LITERAL VARIABLE LENGTH
+         ORG   LITLENTH            -REDEFINE FOR PAGE CONSTRAINT
+PAGELEN  DS    CL1                -LENGTH OF PAGE NUMBER
+         DS    CL4                -FLAGS
+STARTPG  DS    CL3                -STARTING PAGE NUMBER KEY
+         DS    CL1                -NOT USED
+PAGESHM  DS    CL2                -HOW MANY TO PRINT
+CURPAGES DS    CL2                -CURRENT NUMBER PRINTED
+CHARS    DS    CL5                -CHARS FOUND IN PLACE OF PAGE NO.
+         DS    CL3

@@ -1,0 +1,1523 @@
+*       PGM=NI27DSG VER=011 VOL=NIBS05 TIME/DATE=68060 22:02:42 BAL
+DPHQ     TITLE 'DATA SET GENERATOR    J.KELLER'
+*        INDICATIVE DOCUMENTATION:
+*
+*
+*
+*        PROGRAM NAME (SOURCE)=DPDSGS
+*        PROGRAM NAME (OBJECT)=DPDSGO
+*        PROGRAM NAME (LOAD)  =DPDSGL
+*
+*        FUNCTION:GENERATE ANY NUMBER OF DATA SETS UP TO 999.
+*
+*        PROGRAMMER=JACK KELLER
+*        DEPT. 681 'PROJECT NIBS'
+*        DATE  OCTOBER 1966
+*
+*        NUMBER OF BASE REGS=3
+*        CORE REQUIRED(EXCLUDING DYNAMIC BUFFERS) 10K.
+*        PROGRAMMING SYSTEM= OS/360
+*        LANGUAGE=BAL.
+*
+*
+*
+*
+*
+*        APPLICATION:    60021
+*
+*        PROJECT:        63604
+*
+*        PGMID:          AOD605
+         EJECT
+UTPTDSGN CSECT
+         USING *,15
+         BC    15,22(0,15)
+         DC    FL1'18'
+         DC    CL9'DSGMAIN'
+         DC    CL8'V'
+         STM   14,12,12(13)
+         ST    13,DSGAREA+4
+         CNOP  0,4
+         BAL   13,DSGAREA+80
+         DROP  15
+         USING *,13,12,11
+         USING IHADCB,4
+DSGAREA  DC    18F'0'
+         DC    AL4(DSGAREA+4096)
+         DC    AL4(DSGAREA+8192)
+         L     15,DSGAREA+4
+         ST    13,8(0,15)
+         L     12,DSGAREA+72
+         L     11,DSGAREA+76
+         L     3,0(0,1)               LOAD PARM LENGTH.
+         CLC   0(2,3),=XL2'0000'      CHECK FOR NO PARM.
+         BC    8,XXXXX
+         MVZ   ABCDE+1(1),=XL1'FF'    NOP THE PRINT ROUTINE
+XXXXX    OPEN  (CARDS,(INPUT))
+         OPEN  (PRINT,(OUTPUT))
+         EJECT
+GETCARD  GET   CARDS,CARDIN
+         AP    CARDNUM(8),=PL1'1'
+*                                       SET SWITCH TO SHOW THAT AT
+OMCK     BC    15,OMMENT
+         MVI   ATLEAST,X'FF'            LEAST ONE CARD HAS BEEN READ.
+FTONLY   BC    15,FIRSTC
+FTONL2   MVZ   FTONLY+1(1),=X'00'
+         CLC   CARDIN(5),=C'*DSG*'      IS THIS A CONTROL CARD??
+         BC    8,CTLCARD                GO TO CONTROL CARD ROUTINE.
+         BC    15,DATACAR               GO TO DATA CARD ROUTINE.
+FIRSTC   CLC   CARDIN(5),=C'*DSG*'      ROUTINE TO MAKE SURE THAT THE
+         BC    7,NGFIRST                VERY FIRST CARD READ IS A CTL
+         MVI   CARDTY,C'D'              CARD.
+         BC    15,FTONL2
+OMMENT   MVC   OMCK+1(1),=X'00'
+         CLC   CARDIN+8(4),=C'PGM='    IS THIS A COMMENT CARD?
+         BC    8,GETCARD
+         CLC   CARDIN+20(4),=C'VER='
+         BC    8,GETCARD
+         CLC   CARDIN+28(4),=C'VOL='
+         BC    8,GETCARD
+         CLC   CARDIN+39(10),=C'TIME/DATE='
+         BC    8,GETCARD
+         BC    15,OMCK
+*                                       CONTROL CARD ROUTINE.
+CTLCARD  CLI   CARDTY,C'D'              WAS THE PREVIOUS CARD A DATA
+         BC    8,ENDINIT                CARD.
+CTLPROC  MVI   CARDTY,C'C'              SET CURRENT CARD SWITCH TO
+NOT1CTL  BC    0,CTLOOP
+         MVZ   NOT1CTL+1(1),=X'FF'
+         SR    3,3                      REG3=FIELD SPEC COUNTER
+         LA    4,TYPTABL           REG 4 POINTS TO TYPE TABLE.
+         LA    5,LENTABL           REG 5 POINTS TO LENGTH TABLE.
+         LA    6,0                 REG 6= TOTAL LENGTH COUNT.
+CTLOOP   LA    7,CARDIN+9          REG 7= INDEX OF CARD INPUT AREA.
+         LA    8,7                 REG 8= COUNTER FOR BCT.
+*
+STEPS    CLC   0(7,7),=CL7' '
+         BC    8,OUTLOP
+         A     3,=F'1'             ADD ONE TO FIELD SPECS ENCOUNTERED.
+         MVC   WORK3(3),4(7)       MOVE LENGTH TO WORK AREA.
+         TR    WORK3(3),TABL2      TRANSLATE LENGTH FOR VALIDITY.
+         CLC   WORK3(3),=CL3' '    VALID NUMERICS TRANSLATE TO BLANKS.
+         BC    7,BADL
+         PACK  WORK8(8),4(3,7)     PACK AND CONVERT THE LENGTH.
+         CVB   9,WORK8
+         AR    6,9
+         BC    15,LENVXT           CKECK FOR MAXIMUM FIELDS LENGTH.
+*        BC    2,TOLONG
+LXJBVZ   STC   9,0(0,5)            STORE LENGTH IN THE LENGTH TABLE.
+         CLC   0(3,7),=C'BIN'      BINARY OUTPUT FIELD?
+         BC    8,BINARY
+         CLC   0(3,7),=C'CHR'
+         BC    8,EBCDIC
+         CLC   0(3,7),=C'PAK'      PACKED OUTPUT FIELD?
+         BC    8,PACKED
+         CLC   0(3,7),=C'HEX'      HEX OUTPUT FIELD?
+         BC    8,HEXDEC
+         CLC   0(3,7),=C'FIL'      FILL CHARACTER FIELD?
+         BC    8,FILLER
+         CLC   0(3,7),=C'BNS'      STEP BINARY OUTPUT FIELD?
+         BC    8,BINARYST
+         CLC   0(3,7),=C'PKS'    STEP PACK DEC?
+         BC    8,PACKSTEP
+         CLC   0(3,7),=C'CAZ'
+         BC    8,CAZSTEP
+         CLC   0(3,7),=C'SKP'
+         BC    8,SKIPTYPE
+         BC    15,TYPERROR         TYPE SPECIFICATION IS IN ERROR.
+BINARY   MVI   0(4),C'A'
+         BC    15,INCRS            A=BINARY
+EBCDIC   MVI   0(4),C'B'           B=EBCDIC
+         BC    15,INCRS            C=PACKED
+PACKED   MVI   0(4),C'C'           D=HEX
+         BC    15,INCRS            E=FILL
+HEXDEC   MVI   0(4),C'D'           F=STEP BINARY
+         BC    15,INCRS            G=STEP PACKED
+FILLER   MVI   0(4),C'E'
+         BC    15,INCRS            ABOVE MOVE IMMEDIATES SET THE TYPE
+BINARYST MVI   0(4),C'F'           SPECIFICATIONS IN THE TYPE TABLE.
+         BC    15,INCRS            (TYPE OF OUTPUT FIELD)
+PACKSTEP MVI   0(4),C'G'
+         BC    15,INCRS
+CAZSTEP  MVI   0(4),C'H'
+         BC    15,INCRS
+SKIPTYPE MVI   0(4),C'I'
+ ST 7,SKPSAVE
+ L 7,SKPCNT
+ LA 7,1(0,7)
+ ST 7,SKPCNT
+ L 7,SKPSAVE
+ BC 15,INCRS
+*        ALL OUTPUT FIELDS MUST BE A MINIMUM OF ONE BYTE.
+*
+*        MAXIMUMS:
+*               BINARY        4
+*               HEXDEC      120
+*               EBCDIC      255
+*               PACKED       16
+*               FILL        255
+*               BINARYST      4
+*               PACKST       16
+*        CARZERO    255
+*
+LENVXT   C     9,=F'1'
+         BC    4,COVERSH           LENGTH LESS THAN 1 BYTE.
+         CLC   0(3,7),=C'BIN'
+         BC    8,JJAA
+         CLC   0(3,7),=C'CHR'
+         BC    8,JJBB
+         CLC   0(3,7),=C'PAK'
+         BC    8,JJCC
+         CLC   0(3,7),=C'HEX'
+         BC    8,JJDD
+         CLC   0(3,7),=C'FIL'
+         BC    8,JJEE
+         CLC   0(3,7),=C'BNS'
+         BC    8,JJFF
+         CLC   0(3,7),=C'PKS'
+         BC    8,JJGG
+         CLC   0(3,7),=C'CAZ'
+         BC    8,JJHH
+ CLC 0(3,7),=C'SKP'
+ BC 7,TYPERROR
+ LA 9,0
+ BC 15,LXJBVZ
+JJAA     C     9,=F'4'
+         BC    2,TOLBIN
+         BC    15,LXJBVZ
+JJBB     C     9,=F'255'
+         BC    2,TOLECD
+         BC    15,LXJBVZ
+JJCC     C     9,=F'16'
+         BC    2,TOPKLNT
+         BC    15,LXJBVZ
+JJDD     C     9,=F'120'
+         BC    2,TOHXLET
+         BC    15,LXJBVZ
+JJEE     C     9,=F'255'
+         BC    2,TOLFEL
+         BC    15,LXJBVZ
+JJFF     C     9,=F'4'
+         BC    2,TOLBINS
+         BC    15,LXJBVZ
+JJGG     C     9,=F'16'
+         BC    2,TOPKLNTS
+         BC    15,LXJBVZ
+JJHH     C     9,=F'255'
+         BC    2,TOLECD
+         BC    15,LXJBVZ
+INCRS    LA    4,1(0,4)            INCREMENT TYPE TABLE ADDR.
+         LA    5,1(0,5)            INCREMENT LENGTH TABLE ADDR.
+         LA    7,10(0,7)           INCREMENT CARD ADDR.
+         BCT   8,STEPS
+OUTLOP   C     3,=F'0'             DID I PROCESS NO FIELD SPECS IN
+         BC    8,NOSPECS           A CTL CARD? (BLANK CTL CARD)
+         ST    3,SPECOUNT          STORE NUMBER OF OUTPUT FIELDS.
+         ST    6,LENTCONT          STORE TOTAL OUTPUT LENGTH.
+ S 3,SKPCNT                            DON'T INCLUDE SKP IN COUNT
+         C     3,=F'255'           MAXIMUM OF 255 OUTPUT FIELDS.
+         L     3,SPECOUNT              RESTORE TRUE TYPE COUNT
+         BC    2,TOOMUCH
+         C     6,=F'4095'          MAXIMUM OF 4095 LOGICAL OUTPUT
+         BC    2,TOLENG            RECORD LENGTH.
+         BC    15,GETCARD
+         EJECT
+*   ENTRY TO DATA CARD ROUTINE
+DATACAR  CLI   CARDTY,C'C'         IS THIS THE FIRST DATA CARD FOR
+         BC    7,DATPRC            THIS DATA SET??
+         OPEN  (OUTPUT,(OUTPUT))
+         MVZ   NOT1CTL+1(1),=X'00'
+DATPRC   CLI   CARDTY,C'C'         THE NEXT DATA SET.
+         BC    8,FRST
+         CLI   DATSW,C'L'          IS THIS THE FIRST CARD OF AN
+         BC    8,FRST              INPUT CARD GROUP?
+         BC    15,OTTFIRT
+FRST     MVI   CARDTY,C'D'         SET THE DATA CARD SWITCH.
+         MVI   DATSW,C'X'          X=THIS IS NOT LAST CARD OF A GROUP.
+         L     6,=A(INAREA)   REGG=INDEX OF INPUT AREA.
+*
+         LA    4,0                 REG4=TOTAL INPUT RECORD LENGTH.
+         LA    5,0                 REG5=NUMBER OF CARDS READ.
+OTTFIRT  MVI   CARDTY,C'D'         SET THE DATA CARD SWITCH.
+         A     4,=F'71'            INCREMENT TOTAL INPUT LENGTH.
+         A     5,=F'1'             COUNT NUMBER OF CARDS FOR GROUP.
+         ST    5,CARGOO
+         C     5,=F'80'            80=MAX CARDS PER GROUP
+         BC    2,TOMXH
+         MVC   0(71,6),CARDIN      MOVE THE DATA TO WORK AREA.
+         LA    6,71(0,6)           INCREMENT INDEX.
+         CLI   CARDIN+71,C' '      IS THIS THE LAST CARD OF AN INPUT
+         BC    7,ENDRCDR           GROUP.
+         BC    15,GETCARD
+ENDRCDR  MVI   DATSW,C'L'          L=LAST CARD OF GROUP.
+         BC    15,EDITNPT
+*
+EDITNPT  LA    5,0                 REG5=NUMBER OF COMMAS FOUND.
+         LA    7,TABLEAX           TABLEAX=COMMA ADDRESS TABLE.
+         L     6,=A(INAREA)
+         CLI   0(6),C'.'
+         BC    8,COMERRX
+         SH    4,=H'1'             NUMBER OF CHARACTERS TO SCAN.
+         AH    6,=H'1'             INDEX INAREA.
+SCANX    CLI   0(6),C'.'
+         BC    8,FIND
+INCNDX   LA    6,1(0,6)            INDEX INPUT AREA.
+         BCT   4,SCANX
+         C     5,SPECOUNT          DO THE NUMBER OF COMMAS FOUND = THE
+         BC    2,ERRORX
+         ST    5,FOUNDCOM
+         C     5,=F'0'                CHECK FOR NO PERIODS FOUND.
+         BC    8,NOZO
+         CP    GROUPNUM(8),=PL1'0'
+         BC    7,EDITFLDS
+         C     5,SPECOUNT
+         BC    7,ERRORX
+         BC    15,EDITFLDS
+COMERRX  CP    GROUPNUM(8),=PL1'0'
+         BC    8,COMERR
+         BC    15,FIND
+DUBLDLIX CP    GROUPNUM(8),=PL1'0'
+         BC    8,DUBLDLIM
+         BC    15,INCNDX
+FIND     ST    6,0(0,7)            STORE THE COMMA ADDR.
+         LA    7,4(0,7)            INDEX COMMA ADDR IN TABLE.
+         LA    5,1(0,5)            ADD ONE TO NUMBER OF COMMAS FOUND.
+         CLI   1(6),C'.'
+         BC    8,DUBLDLIX
+         BC    15,INCNDX
+CKCARNUM L     6,CARGOO
+         C     6,=F'1'
+         BC    7,RIKRAK
+         AP    GROUPNUM(8),=PL1'1'
+         BC    15,PUTREC
+EDITFLDS L     4,SPECOUNT
+         L     5,FOUNDCOM
+         L     3,=A(INAREA)
+         CLC   0(71,3),REPEAATR
+         BC    8,CKCARNUM
+RIKRAK   CR    4,5
+         BC    4,TOMANCOM
+         AP    GROUPNUM(8),=PL1'1'
+         L     2,CURCNTX
+         SR    2,2
+*
+*        FORMAT OF THE MAJOR PROCESSING CTL SAVE AREA:
+*
+*        BIGSAVE+0    SPECIFICATION CTR
+*        BIGSAVE+4    TYPE TABLE
+*        BIGSAVE+8    LENGTH TABLE (OUTPUT)
+*        BIGSAVE+12   DELIMITER LIST (INPUT)
+*        BIGSAVE+16   CURRENT OUTPUT FIELD(HI ORDER)
+*        BIGSAVE+20   CURRENT INPUT FIELD (HI ORDER)
+*
+*
+*
+         ST    2,CURCNTX
+         LA    2,STEPSWCH-1   SET POINTER FOR STEP INIT SWITCHES
+         ST    2,SWCHSTEP
+         L     2,SPECOUNT     TOTAL NUMBER OF FIELDS COUNTER
+         LA    3,TYPTABL      ADDR OF TYPE TABLE
+         LA    4,LENTABL
+         LA    5,TABLEAX      ADDR OF DELIMITER LIST
+         LA    6,OUTAREA      ADDR OF OUTPUT (HI ORDER)
+         L     7,=A(INAREA)   ADDR OF INPUT (HI ORDER)
+         STM   2,7,BIGSAVE    SAVE ALL THE POINTERS
+         CLI   0(7),C'.'
+         BC    8,STBIGRL
+NEXFILDX CLI   0(3),C'A'
+         BC    8,BYVER        GO TO GEN AND VERIFY BINARY
+         CLI   0(3),C'B'
+         BC    8,EBVER        GO TO GEN AND VERIFY EBCDIC
+         CLI   0(3),C'C'
+         BC    8,PKVER        GO TO GEN AND VERIFY PACKED
+         CLI   0(3),C'D'
+         BC    8,HXVER        GO TO GEN AND VERIFY HEXDEC
+         CLI   0(3),C'E'
+         BC    8,FLVER        GO TO GEN A FILL CHARACTER
+         CLI   0(3),C'F'
+         BC    8,BSVER        GO TO GEN AND VERIFY STEP BINARY
+         CLI   0(3),C'G'
+         BC    8,PSVER        GO TO GEN AND VERIFY STEP PACKED
+         CLI   0(3),C'H'
+         BC    8,EBVER
+         CLI   0(3),C'I'
+         BC    8,STBIGRL               DON'T GENERATE OUTPUT FIELD
+         BC    15,BADTYPE
+         EJECT
+*              STEPING ROUTINE TO POINT TO:
+*                   1.NEXT OUTPUT TYPE
+*                   2.NEXT OUTPUT LENGTH
+*                   3.NEXT OUTPUT FIELD ADDR
+*                   4.NEXT COMMA ADDR
+*                   5.NEXT HI ORDER INPUT
+*
+*
+STBIGRL  L     2,CURCNTX
+         A     2,=F'1'        ADD TO FIELD PROCESSING COUNTER
+         ST    2,CURCNTX
+         L     3,FOUNDCOM
+         CR    2,3            SPECIFIED NUMBER OF FIELDS.
+         BC    8,PUTREC
+         L     2,BIGSAVE+4
+         LA    2,1(0,2)       POINT TO NEXT TYPE
+         ST    2,BIGSAVE+4    SAVE TYPE POINTER
+         L     2,BIGSAVE+8
+         LA    2,1(0,2)       POINT TO NEXT LENGTH
+         ST    2,BIGSAVE+8    SAVE LENGTH POINTER
+         L     2,BIGSAVE+12
+         LA    2,4(0,2)       POINT TO NEXT COMMA
+         ST    2,BIGSAVE+12   SAVE NEXT COMMA POINTER
+         SR    2,2
+         L     3,BIGSAVE+8
+         SH    3,=H'1'        POINT TO LAST LENGTH
+         IC    2,0(0,3)       BRING IN LAST LENGTH
+         L     4,BIGSAVE+16
+         AR    4,2            ADD LAST LENGTH TO LAST OUTPUT FIELD
+         ST    4,BIGSAVE+16   ADDRESS TO POINT TO NEXT OUTPUT FIELD.
+         L     3,BIGSAVE+12
+         SH    3,=H'4'        POINT TO LAST COMMA ADDR
+         L     2,0(0,3)       BRING IN THE COMMA ADDR
+         A     2,=F'1'        POINT TO NEXT HI ORDER
+         ST    2,BIGSAVE+20   SAVE NEXT HI ORDER ADDR
+         L     3,BIGSAVE+4    LOAD THE TYPE POINTER
+         CLI   0(2),C'.'
+         BC    8,STBIGRL
+         BC    15,NEXFILDX    GO TO PROCESS NEXT FIELD.
+NOLISTOP AP    RECOUNT(8),=PL1'1'
+         BC    15,GETCARD
+PUTREC   PUT   OUTPUT,OUTAREA
+ABCDE    BC    0,NOLISTOP
+  UNPK KELX08+44(2),FILNUM(3)                     ME=DSGOUT  '
+  MVZ KELX08+45(1),=X'FF'
+         MVC   KELX01(3),=PL3'0'
+         STM   3,8,KELX02
+         LA    8,OUTAREA
+         LA    4,OUTPUT
+    LH   5,DCBLRECL
+         CP    RECOUNT(8),=PL1'0'
+         BC    8,KELX03
+KELX05   AP    RECOUNT(8),=PL1'1'
+KELX11   CP    KELX04(2),=PL2'10'
+         BC    8,KELX06
+         BC    15,KELX07
+KELX03   MVC   KELX04(2),=PL2'10'
+         BC    15,KELX05
+KELX06   BAL   3,BLANKER
+         MVI   ASA,C'1'
+  MVC PRNTOUT+30(46),KELX08
+         BAL   3,WRITEIT
+         MVC   KELX04(2),=PL2'0'
+         BC    15,KELX07
+KELX07   C     5,=F'100'
+         BC    12,KELX10
+         LA    6,KELX11
+         LA    7,99
+         STC   7,KELX42+1
+         STC   7,KELX43+1
+         STC   7,KELX44+1
+         STC   7,KELX45+1
+         STC   7,KELX46+1
+         STC   7,KELX47+1
+KELX14   AP    KELX04(2),=PL1'1'
+         AP    KELX01(3),=PL3'100'
+         BAL   3,BLANKER
+         MVC   PRNTOUT(15),=C'CHARACTER LREC '
+         UNPK  PRNTOUT+15(6),RECOUNT(8)
+         SH    5,=H'100'
+    MVZ  PRNTOUT+20(1),=X'FF'
+KELX42   MVC   PRNTOUT+25(100),0(8)
+         MVI   ASA,C'0'
+         L     7,=A(KELX55)
+KELX43   TR    PRNTOUT+25(100),0(7)
+         BAL   3,WRITEIT
+         BAL   3,BLANKER
+         MVI   ASA,C' '
+         MVC   PRNTOUT(11),=C'HEX ZONES  '
+KELX44   MVC   PRNTOUT+25(100),0(8)
+         L     7,=A(KELX65)
+KELX45   TR    PRNTOUT+25(100),0(7)
+         BAL   3,WRITEIT
+         BAL   3,BLANKER
+         MVC   PRNTOUT(11),=C'HEX DIGIT  '
+KELX46   MVC   PRNTOUT+25(100),0(8)
+         L     7,=A(KELX66)
+KELX47   TR    PRNTOUT+25(100),0(7)
+         BAL   3,WRITEIT
+         BAL   3,BLANKER
+         UNPK  KELX71(4),KELX01(3)
+         MVZ   KELX71+3(1),=X'FF'
+         MVC   PRNTOUT+25(104),KELX70
+         BAL   3,WRITEIT
+         LA    8,100(0,8)
+         BCR   15,6
+KELX10   LA    6,KELX99
+         SH    5,=H'1'
+         STC   5,KELX42+1
+         STC   5,KELX43+1
+         STC   5,KELX44+1
+         STC   5,KELX45+1
+         STC   5,KELX46+1
+         STC   5,KELX47+1
+         BC    15,KELX14
+KELX99   LM    3,8,KELX02
+         BC    15,GETCARD
+KELX01   DC    PL3'0'
+KELX08 DC CL46' *DSG*  GENERATED RECORDS   DS DDNAME=DSGOUT  '
+KELX04   DC    PL2'0'
+KELX02   DC    6F'0'
+KELX70   DC    CL50'.1  .5   .10  .15  .20  .25  .30  .35  .40  .45  .'
+         DC    CL50'50  .55  .60  .65  .70  .75  .80  .85  .90  .95  .'
+KELX71   DC    CL4'0000'
+*
+         EJECT
+*
+*   ROUTINE TO GENERATE FILL OUTPUT.
+*
+FLVER    L     5,BIGSAVE+12        LOAD POINTER TO COMMA ADDR.
+         L     3,0(0,5)            LOAD COMMA ADDR.
+         SH    3,=H'2'             BACK OFF TWO FROM COMMA.
+         MVC   WORK2(2),0(3)       MOVE HEX(EBCDIC) TO WORK.
+         TR    WORK2(2),HEXTABL
+         CLI   WORK2,X'FF'         BAD CHAR=X'FF'
+         BC    8,HEXBAD            GOOD CHAR=X'00'
+         CLI   WORK2+1,X'FF'
+         BC    8,HEXBAD
+         TR    0(2,3),TABRXYZ
+         MVO   IMEID+1(1),0(1,3)
+         MVN   IMEID+1(1),1(3)
+         L     4,BIGSAVE+16        LOAD CURRENT OUTFIELD ADOR.
+IMEID    MVI   0(4),X'00'          MOVE IN FIRST OUTPUT BYTE.
+         L     5,BIGSAVE+8         IFLENGTH OF ONE IS SPECIFIED
+         CLI   0(5),B'00000001'    THEN GO BACK TO NEXT FIELD.
+         BC    8,OUTFILB
+         SR    6,6
+         IC    6,0(0,5)            DECREMENT THE REQUIRED LENGTH TO
+         SH    6,=H'2'             DEVELOPE MACHINE LENGTH OF
+         STC   6,ROLMOV+1          REMAINDER FO FIELD.
+ROLMOV   MVC   1(0,4),0(4)         ROLL THE FIRST CHARACTER THROUGH
+OUTFILB  BC    15,STBIGRL          THE OUTPUT FIELD.
+*
+*   ROUTINE TO GENERATE PACKED DECIMAL OUTPUT.          **PACKED**
+*
+         EJECT
+PKVER    L     2,BIGSAVE+12        LOAD COMMA POINTER.
+         L     3,0(0,2)            LOAD COMMA ADDR.
+         SH    3,=H'1'             BACK OFF FROM COMMA TO CHECK
+*
+*
+         CLI   0(3),C'-'           IF NOT + OR - THEN SIGN IS INVALID.
+         BC    8,INVSIGNX
+         MVI   SIGN,C'+'
+GOORSGN  AH    3,=H'1'             POINT TO COMMA AGAIN.
+         L     4,BIGSAVE+20        LOAD HI ORD ADDR OF INPUT.
+PKXDR    CLI   0(4),C' '           SCAN FOR FIRST NON BLANK.
+         BC    7,CKLTHXYZ
+         AH    4,=H'1'             INCREMENT FOR SCAN.
+         BC    15,PKXDR
+INVSIGNX MVI   SIGN,C'-'
+         BC    15,GOORSGN
+CKLTHXYZ LR    5,3
+         SR    5,4
+         CLI   SIGN,C'-'
+         BC    8,CKMIN
+CKPLUS   C     5,=F'16'
+         BC    2,TOLONGB
+         SH    5,=H'1'
+         BC    15,COMXCC
+CKMIN    C     5,=F'2'
+         BC    4,TOSHORT           A SIGN.  CAN NOT BE GREATER THAN
+         C     5,=F'17'            1L DIGITS AND A SIGN.
+         BC    2,TOLONGB
+         SH    5,=H'2'             MACHINE LENGTH OF ACTUAL DIGITS.
+COMXCC   LR    8,5
+         AH    8,=H'1'             VERIFY THAT ALL INPUT DIGITS ARE
+         LR    9,4                 IN THE RANGE OF 0 TO 9.
+CPGHXK   CLI   0(9),C'0'
+         BC    4,SKRD
+         CLI   0(9),C'9'
+         BC    2,SKRD
+         LA    9,1(0,9)
+         BCT   8,CPGHXK
+         STC   5,SAVEBYT           PLUG INPUT LENGTH INTO PACK INSTR.
+         MVN   XPK+1(1),SAVEBYT
+         L     5,BIGSAVE+8
+         CLI   0(5),B'00010000'    OUTPUT MAXL= 16 BYTES
+         BC    2,TOLNGRY
+         SR    8,8
+         IC    8,0(0,5)            INSERT LENGTH INTO REG 8.OUTPUT.
+         SH    8,=H'1'             DEVELOPE OUTPUT MACHINE LENGTH.
+         STC   8,SAVEBYT
+         MVO   XPK+1(1),SAVEBYT
+         L     7,BIGSAVE+16        PACK THE INPUT FIELD DIRECTLY TO
+XPK      PACK  0(0,7),0(0,4)       THE OUTPUT FIELD.
+         AR    7,8
+         L     4,BIGSAVE+12
+         L     5,0(0,4)            POINT TO THE COMMA.
+         SH    5,=H'1'             POINT TO THE INPUT SIGN.
+         CLI   0(5),C'-'
+         BC    7,FORCPLS
+         MVN   0(1,7),=X'DD'       FORCE A MINUS SIGN.
+         BC    15,STBIGRL
+         EJECT
+*
+*   ROUTINE TO GENERATE HEXADECIMAL OUTPUT.             **HEXADEC**
+*
+FORCPLS  MVN   0(1,7),=X'CC'       FORCE PLUS SIGN.
+         BC    15,STBIGRL
+HXVER    MVI   ZBXWORK,X'F0'
+         MVC   ZBXWORK+1(239),ZBXWORK   CLEAR OUT WORKAREA.
+*        MVI   ZBWRX,X'00'
+*        MVC   ZBWRX+1(119),ZBWRX
+         L     3,BIGSAVE+20        LOAD INPUT HI ORDER ADDR.
+         L     4,BIGSAVE+12
+         L     5,0(0,4)            LOAD ADDR OF COMMA.
+LOXPP    CLI   0(3),C' '           SCAN FOR FIRST NON BLANK.
+         BC    7,FONDIX
+         LA    3,1(0,3)            ADDR OF HI ORDER DIGIT.
+         BC    15,LOXPP
+FONDIX   SR    5,3       ACTUAL LEN: SUBTRACT FIRST SIG CHAR ADDR
+         C     5,=F'1'               FROM THE COMMA ADDR.
+         BC    4,TOSHIRT
+         C     5,=F'240'           INPUT LENGTH MUST BE AT LEAST 1
+         BC    2,TOHEGH            AND NO GREATER THAN 240.
+         SH    5,=H'1'             DEVELOPE MACHINE LENGTH.
+         STC   5,MOVTR+1
+MOVTR    MVC   ZBXWORK(1),0(3)          VERIFY THAT ALL INPUT
+         TR    ZBXWORK(240),HEXTABL     CHARACTERS ARE IN THE RANGE
+         CLC   ZBXWORK(240),=XL240'00'  OF  0-9,A-F.
+         BC    7,BADCHAR
+         STC   5,MOVTR2+1
+         MVI   ZBXWORK,X'F0'
+         MVC   ZBXWORK+1(239),ZBXWORK
+         LA    4,ZBXWORK+239
+         SR    4,5
+MOVTR2   MVC   0(1,4),0(3)
+         TR    ZBXWORK(240),TABRXYZ
+         L     7,BIGSAVE+16
+         L     8,BIGSAVE+8
+         SR    9,9
+   IC  9,0(0,8)
+         C     9,=F'120'
+*
+         SH    7,=H'1'
+         AR    7,9
+         LA    4,ZBXWORK+238
+BAGNAGX  MVO   0(1,7),0(1,4)
+         MVN   0(1,7),1(4)
+         SH    4,=H'2'
+         SH    7,=H'1'
+         BCT   9,BAGNAGX
+         BC    15,STBIGRL
+*                                  TRANSLATED FIELD BY 2.
+*                                  DECREMENT ADDR OF OUTPUT
+*                                  BYTE BY 1.
+*
+*
+*
+         EJECT
+*
+*   ROUTINE TO GENERATE CHARACTER OUTPUT.               **EBCDIC**
+*
+EBVER    L     6,BIGSAVE+20
+VAT02    CLI   0(6),C' '
+         BC    7,VAT01
+         LA    6,1(0,6)
+         BC    15,VAT02
+VAT01    CLI   0(6),C'.'           RG=FIRST NON BLANK
+         BC    8,VAT03             VAT03=BLANKS
+         CLI   0(3),C'H'
+         BC    7,BC7
+         MVI   WORKEB,C'0'
+         MVC   WORKEB+1(254),WORKEB
+         BC    15,BC8
+BC7      MVI   WORKEB,C' '
+         MVC   WORKEB+1(254),WORKEB
+BC8      LR    5,6
+VAT04    LA    5,1(0,5)            REG5=PERIOD
+         CLI   0(5),C'.'
+         BC    7,VAT04
+         SR    5,6             REG5ACTUAL INPUT LENGTH
+         C     5,=F'255'
+         BC    2,TOOOG
+         LA    4,WORKEB+255
+         SR    4,5
+         SH    5,=H'1'          REG 4 = CORRECT WORK ADDR
+         STC   5,VAT05+1
+VAT05    MVC   0(0,4),0(6)     DATA  TO WORK  LOW ORDER
+VAT07    L     4,BIGSAVE+8
+         L     5,BIGSAVE+16
+         SR    6,6
+         IC    6,0(0,4)         OUTPUT LENGTH
+         LA    7,WORKEB+255
+         SR    7,6              POINT TO GOOD  WORK ADDR
+         SH    6,=H'1'
+         STC   6,VAT06+1
+VAT06    MVC   0(0,5),0(7)
+         BC    15,STBIGRL
+VAT03    CLI   0(3),C'H'
+         BC    7,BC77
+         MVI   WORKEB,C'0'
+         MVC   WORKEB+1(254),WORKEB
+         BC    15,VAT07
+BC77     MVI   WORKEB,C' '
+         MVC   WORKEB+1(254),WORKEB
+         BC    15,VAT07
+         EJECT
+*
+*   ROUTINE TO GENERATE BINARY OUTPUT.                  **BINARY**
+*
+BYVER    L     2,BIGSAVE+12        POINT TO COMMA LIST.
+         L     3,0(0,2)            LOAD COMMA ADDR.
+         SH    3,=H'1'             BACK OFF FROM COMMA
+         CLI   0(3),C'-'
+         BC    8,GAZ
+         MVI   SIGN,C'+'
+*
+*
+GOODSIGN AH    3,=H'1'             POINT TO COMMA AGAIN.
+         L     4,BIGSAVE+20        LOAD HI ORDER ADDR INPUT.
+BYVERSN  CLI   0(4),C' '           SCAN FOR FIRST NONBLANK.
+         BC    7,CKLTHXY           IS THIS FIRST NON BLANK?
+         AH    4,=H'1'             POINT TO NEXT CHAR.
+         BC    15,BYVERSN
+GAZ      MVI   SIGN,C'-'
+         BC    15,GOODSIGN
+CKLTHXY  LR    5,3                 COMMA ADDR INTO REG5.
+         SR    5,4
+         CLI   SIGN,C'-'
+         BC    8,IZMIN
+         C     5,=F'16'
+         BC    2,TOLONGBK
+         SH    5,=H'1'
+         BC    15,COGX
+IZMIN    C     5,=F'2'
+         BC    4,TOSHORTK          DIGIT AND A SIGN.
+         C     5,=F'17'
+         BC    2,TOLONGBK          CAN NOT BE GREATER THAN
+         SH    5,=H'2'             16 DIGITS AND A SIGN.
+COGX     LR    8,5
+         AH    8,=H'1'
+         LR    9,4
+RXYZ     CLI   0(9),C'0'
+         BC    4,SKRDX
+         CLI   0(9),C'9'
+         BC    2,SKRDX
+         LA    9,1(0,9)
+         BCT   8,RXYZ
+         STC   5,SAVEBYT
+         MVN   PX+1(1),SAVEBYT
+PX       PACK  WORKXYZ(16),0(0,4)           IS THE VALUE TOO
+         CP    WORKXYZ(16),=P'2147483647'   LARGE TO BE CONVERTED.
+         BC    2,TOBIGBIN
+         SH    3,=H'1'         BACK OFF TO THE SIGN.
+         CLI   0(3),C'-'
+         BC    7,FIXPLUS
+         MVN   WORKXYZ+15(1),=X'DD'
+         BC    15,CONVERT
+FIXPLUS  MVN   WORKXYZ+15(1),=X'CC'
+CONVERT  CVB   6,WORKXYZ+8
+         L     7,BIGSAVE+8         LOAD LENGTH ADDR.
+         L     4,BIGSAVE+16        LOAD OUTPUT FIELD ADDR.
+       ST  6,WORKXYZ
+         CLI   0(7),X'01'
+         BC    8,ONEBIN
+*
+         CLI   0(7),X'02'
+         BC    8,TWOBIN
+         CLI   0(7),X'03'
+         BC    8,THREBIN
+         CLI   0(7),X'04'
+         BC    8,FOURBIN
+         BC    15,INVLDLN
+ONEBIN   MVC   0(1,4),WORKXYZ+3    MOVE DATA TO THE
+         BC    15,STBIGRL          OUTPUT FIELD.
+TWOBIN   MVC   0(2,4),WORKXYZ+2
+         BC    15,STBIGRL
+THREBIN  MVC   0(3,4),WORKXYZ+1
+         BC    15,STBIGRL
+FOURBIN  MVC   0(4,4),WORKXYZ
+         BC    15,STBIGRL
+         EJECT
+*
+*   ROUTINE TO GENERATE STEP BINARY  OUTPUT
+*
+BSVER    L     3,BIGSAVE+16
+         MVC   JXACE(4),0(3)
+         L     4,JXACE
+         MVC   JXACE(16),=16XL1'00'
+         L     3,BIGSAVE+8
+         CLI   0(3),X'01'
+         BC    7,JX1
+         SRA   4,24
+         BC    15,JXACF
+JX1      CLI   0(3),X'02'
+         BC    7,JX2
+         SRA   4,16
+         BC    15,JXACF
+JX2      CLI   0(3),X'03'
+         BC    7,JXACF
+         SRA   4,8
+JXACF    CVD   4,JXACE+8
+         L     2,SWCHSTEP
+         LA    2,1(0,2)
+         ST    2,SWCHSTEP
+         CLI   0(2),X'FF'
+         BC    8,JXACD
+         MVI   0(2),X'FF'
+         MVC   JXACE(16),=16XL1'00'
+         MVN   JXACE+15(1),=X'CC'
+         BC    15,JXACD
+JXACD    L     5,BIGSAVE+20
+JXACJ    CLI   0(5),C' '
+         BC    7,JXACH
+         AH    5,=H'1'
+         BC    15,JXACJ
+JXACH    CLI   0(5),C'R'
+         BC    7,JXACK
+  LA  5,1(0,5)
+         MVC   JXACE(16),=16XL1'00'
+         MVN   JXACE+15(1),=X'CC'
+JXACK    L     7,BIGSAVE+12
+         L     6,0(0,7)
+         SH    6,=H'1'
+         CLI   0(6),C'-'
+         BC    7,JXACL
+         MVI   SIGN,X'DD'
+         SH    6,=H'1'
+         BC    15,JXACLL
+JXACL    MVI   SIGN,X'CC'
+JXACLL   SR    7,7
+         AR    7,6
+         SR    7,5
+         AH    7,=H'1'
+         C     7,=F'16'
+         BC    2,TOLNGXY
+         C     7,=F'1'
+         BC    4,TOSMALXY
+         LR    8,5
+         LR    9,7
+JXACM    CLI   0(8),C'0'
+         BC    4,CONERX
+         CLI   0(8),C'9'
+         BC    2,CONERX
+         LA    8,1(0,8)
+         BCT   9,JXACM
+         SH    7,=H'1'
+         STC   7,LEXBYTE
+         MVO   JXACN+1(1),LEXBYTE(1)
+         MVN   JXACN+1(1),LEXBYTE
+JXACN    PACK  0(0,5),0(0,5)
+         MVN   0(1,6),SIGN
+         LA    9,0
+         SPM   9
+         MVN   JXACP+1(1),LEXBYTE
+JXACP    AP    JXACE(16),0(0,5)
+         BC    1,OVFLOW
+         CP    JXACE(16),=PL16'2147483647'
+         BC    2,OVFLOW
+         CVB   9,JXACE+8
+         BC    1,OVFLOW
+         L     8,JXACE+12
+         ST    9,JXACE+12
+         L     3,BIGSAVE+8
+         SR    4,4
+         IC    4,0(0,3)
+         SH    4,=H'1'
+         LA    5,JXACE+15
+         SR    5,4
+         L     6,BIGSAVE+16
+         STC   4,JXACQ+1
+JXACQ    MVC   0(0,6),0(5)
+         ST    8,JXACE+12
+         BC    15,STBIGRL
+         EJECT
+*
+*   ROUTINE TO GENERATE STEP PACKED OUTPUT
+*
+PSVER    L     2,SWCHSTEP
+         LA    2,1(0,2)
+         ST    2,SWCHSTEP
+         MVC   JACE(16),=16XL1'00'
+         MVN   JACE+15(1),=X'CC'
+         CLI   0(2),X'FF'
+         BC    7,JACD                     4=LENGTH
+*                                         3=WORK PAK
+*
+         L     3,BIGSAVE+8
+         SR    4,4
+         IC    4,0(0,3)       ACTUAL OUTPUT LENGTH
+         SH    4,=H'1'        MACHINE OUTPUT LENGTH
+         L     5,BIGSAVE+16
+         STC   4,JXACE
+         MVN   JACF+1(1),JXACE
+JACF     AP    JACE(16),0(0,5)
+*
+*
+JACD     MVI   0(2),X'FF'                SCAN FOR FIRST
+         L     5,BIGSAVE+20
+JACJ     CLI   0(5),C' '              NON BLANK.
+         BC    7,JACH
+         AH    5,=H'1'                   5=INPUT HI ORD
+         BC    15,JACJ
+JACH     CLI   0(5),C'R'
+         BC    7,JACK
+  LA  5,1(0,5)
+         MVC   JACE(16),=16XL1'00'       STOP RESET LOOP.
+         MVN   JACE+15(1),=X'CC'         RESET REQUEST.
+JACK     L     7,BIGSAVE+12              5=INPUT HI ORD (FSD)
+         L     6,0(0,7)                  6=DELIMIT ADDR
+         SH    6,=H'1'                   POINT TO DELIM-1
+         CLI   0(6),C'-'
+         BC    7,JACL
+         MVI   SIGN,X'DD'
+         SH    6,=H'1'                6= POINT TO LOW DIGIT
+         BC    15,JACLL               7= ACTUAL LENGTH INPUT
+JACL     MVI   SIGN,X'CC'
+JACLL    SR    7,7
+         AR    7,6
+         SR    7,5
+         AH    7,=H'1'                7= ACTUAL LENGTH INPUT
+         C     7,=F'16'
+         BC    2,TOBIGZE
+         C     7,=F'1'            8=WORKING ADDR
+         BC    4,TOSHXRT          9=WORKIN BCT
+         LR    8,5
+         LR    9,7
+JACM     CLI   0(8),C'0'
+         BC    4,TOSMALLZ
+         CLI   0(8),C'9'
+         BC    2,TOBIGGZ
+         LA    8,1(0,8)
+         BCT   9,JACM
+         SH    7,=H'1'             7=MACHINE LENGTH INPUT
+         STC   7,LEXBYTE
+         MVO   JACN+1(1),LEXBYTE(1)
+         MVN   JACN+1(1),LEXBYTE
+JACN     PACK  0(0,5),0(0,5)
+         MVN   0(1,6),SIGN
+         LA    9,0
+         SPM   9
+         MVN   JACP+1(1),LEXBYTE
+JACP     AP    JACE(16),0(0,5)
+         BC    1,OVFLL
+         L     3,BIGSAVE+8         4=OUTLENGTH
+         SR    4,4
+         IC    4,0(0,3)
+         SH    4,=H'1'             4=MACHINE LENGTH OUTPUT.
+         L     7,=F'16'
+         SR    7,4
+         SH    7,=H'2'
+         STC   7,JACR+1
+JACR     CLC   JACE(0),=XL16'00'
+*
+         LA    5,JACE+15
+         SR    5,4                 5=HI ORD WORK ACTUALLY USED
+         L     6,BIGSAVE+16        6=OUTPUT HI ORD
+         STC   4,JACQ+1
+JACQ     MVC   0(0,6),0(5)
+         BC    15,STBIGRL
+         EJECT
+*
+*    CONSTANTS / COUNTERS / SWITCHES / MESSAGES  ******
+*
+*
+HEADER   DC    CL50'**** DATA SET GENERATOR ****  MESSAGES AND ERROR L'
+         DC    CL2'OG'
+GLINE1   DC    CL20'FILE DDNAME=DSGOUT01'
+GLINE2   DC    CL37'NUMBER OF OUTPUT FIELDS SPECIFIED=000'
+GLINE3   DC    CL33'LOGICAL RECORD LENGTH OUTPUT=0000'
+GLINE4   DC    CL46'NUMBER OF LOGICAL RECORDS GENERATED=0000000000'
+GLINE5   DC    CL41'NO ERRORS ENCOUNTERED FOR THIS GENERATION'
+*
+*
+*        THE ABOVE ARE MESSAGES WHICH ARE PRINTED AT
+*        SUCCESSFULL GENERATION OF A DATA SET.
+*        SEE SAMPLE OUTPUT FOR FORMAT SPECS OF THE ABOVE MESSAGES.
+*
+*
+         DS    0D
+CARDIN   DS    CL80
+WORK8    DC    XL8'0'
+*
+RECOUNT  DC    PL8'0'
+DCBNM    DC    CL8'DSGOUT01'
+WORK88   DC    CL8' '
+*
+WORKXYZ  DC    PL16'0'
+BOUNDWK  DC    XL16'0'
+SIXTNWK  DC    CL16'0'
+ZEROS    DC    16C'0'
+JACKKEL  DC    F'0'
+ATLEAST  DC    X'00'
+CARDTY   DC    C'D'
+TYPTABL  DC    260CL1' '
+LENTABL  DC    260XL1'0'
+WORK3    DC    XL3'0'
+TABL2    DC    240XL1'FF'
+         DC    10CL1' '
+         DC    6XL1'FF'
+SPECOUNT DC    F'0'
+LENTCONT DC    F'0'
+TABLEAX  DC    256F'0'
+*                             DELET  UNNECESSARY BLANKS
+FOUNDCOM DC    F'0'
+SIGN     DC    C' '
+CURCNTX  DC    F'0'
+SWCHSTEP DC    F'0'
+BIGSAVE  DC    7F'0'
+BINSTPX  DC    F'0'
+HIINZ    DC    F'0'
+DATSW    DC    CL1'X'
+STEPSWCH DC    256X'00'
+WORK2    DC    XL2'0'
+SAVEBYT  DC    X'00'
+SKPCNT DC F'0'
+SKPSAVE DC F'0'
+ZBXWORK  DC    260XL1'0'
+WORKEB   DC    256CL1' '
+CLOSESW  DC    C'C'
+FIRSET   DC    X'00'
+ERSCN    DC    X'00'
+FILNUM   DC    PL3'1'
+         DS    0D
+ASA      DC    CL1' '
+PRNTOUT  DC    CL133' '
+WORKBYTX DC    CL1' '
+LENSTOR  DC    C' '
+TCTC     DC    C'0'
+INLENT   DC    C' '
+LEXBYTE  DC    C' '
+JACA     DC    X'00'
+TABRXYZ  DC    193XL1'00'
+         DC    XL1'0A'
+         DC    XL1'0B'
+         DC    XL1'0C'
+         DC    XL1'0D'
+         DC    XL1'0E'
+         DC    XL1'0F'
+         DC    41X'00'
+         DC    XL1'00'
+         DC    XL1'01'
+         DC    XL1'02'
+         DC    XL1'03'
+         DC    XL1'04'
+         DC    XL1'05'
+         DC    XL1'06'
+         DC    XL1'07'
+         DC    XL1'08'
+         DC    XL1'09'
+         DC    6X'00'
+REPEAATR DC    CL1'.'
+         DC    70CL1' '
+JACE     DC    PL16'0'
+         DS    0D
+JXACE    DC    PL16'0'
+HEXTABL  DC    193X'FF'
+         DC    6X'00'
+         DC    41X'FF'
+         DC    10X'00'
+         DC    6X'FF'
+ERMSG    DC    CL8'X'
+CERLN    DC    CL60'CONTROL CARD ERROR ENCOUNTERED                     X
+                **ERROR**'
+CERLN2   DC    CL22'CARD NUMBER=0000000000'
+CERLN3   DC    CL47'CARD IMAGE:     ERROR UNDERSCORED WITH ASTERICKS'
+         DC    CL1'S'
+GROUPNUM DC    PL8'0'
+FLDNAM   DC    X'00'
+ERPOINT  DC    CL8' '
+CARDNUM  DC    PL8'0'
+CARGOO   DC    F'0'
+NGFIRST  BAL   3,BLANKER
+         MVI   ASA,C'1'
+         MVC   PRNTOUT(52),HEADER
+         BAL   3,WRITEIT
+         BAL   3,BLANKER
+         MVI   ASA,C'-'
+         MVC   PRNTOUT+10(28),=C'ERROR EXPLAINATION: DSGERR01'
+         BAL   3,WRITEIT
+         BAL   3,BLANKER
+         MVI   ASA,C'-'
+         MVC   PRNTOUT+10(44),=C'DSG PROCESSING TERMINATED DUE TO ABOVEX
+                ERROR'
+         BAL   3,WRITEIT
+*
+         MVI   FIRSET,X'FF'
+GERROR   GET   CARDS,CARDIN
+         BC    15,GERROR
+*
+*        THE ABOVE ROUTINE IS EXECUTED IF THE VERY FIRST CARD READ
+*        IS NOT A CONTROL CARD.  THE ROUTINE CAUSES THE JOB TO BE
+*        TERMINATED.
+*
+*
+*
+         EJECT
+*
+*     DSG  NUMBERED ERROR MESSAGES (CONTROL CARD ERRORS)
+*
+BADL     MVC   ERMSG(8),=C'DSGERR02'
+         BC    15,CTLNORER
+TYPERROR MVC   ERMSG(8),=C'DSGERR03'
+         BC    15,CTLNORER
+COVERSH  CLC   0(3,7),=C'SKP'
+         BC    8,LXJBVZ
+         MVC   ERMSG(8),=C'DSGERR04'
+         BC    15,CTLNORER
+TOLBIN   MVC   ERMSG(8),=C'DSGERR05'
+         BC    15,CTLNORER
+TOLECD   MVC   ERMSG(8),=C'DSGERR06'
+         BC    15,CTLNORER
+TOPKLNT  MVC   ERMSG(8),=C'DSGERR07'
+         BC    15,CTLNORER
+TOHXLET  MVC   ERMSG(8),=C'DSGERR08'
+         BC    15,CTLNORER
+TOLFEL   MVC   ERMSG(8),=C'DSGERR09'
+         BC    15,CTLNORER
+TOLBINS  MVC   ERMSG(8),=C'DSGERR10'
+         BC    15,CTLNORER
+TOPKLNTS MVC   ERMSG(8),=C'DSGERR11'
+         BC    15,CTLNORER
+NOSPECS  MVC   ERMSG(8),=C'DSGERR12'
+         BC    15,CTLNORER
+TOOMUCH  MVC   ERMSG(8),=C'DSGERR13'
+         MVI   JACA,X'FF'
+         BC    15,CTLNORER
+TOLENG   MVC   ERMSG(8),=C'DSGERR14'
+         MVI   JACA,X'FF'
+         BC    15,CTLNORER
+BADMSG   MVC   ERMSG(8),=C'DSGERR31'
+         MVC   SPECR(2),FIXRX
+         BC    15,SKDGR
+FIXRX    BCR   15,6
+SKDGR    LA    6,RETX
+         BC    15,CTLNORER
+         EJECT
+*
+*    STANDARD ERROR OUTPUT FORMAT ROUTINE
+*
+CTLNORER BAL   3,BLANKER
+         MVI   ASA,C'1'
+         MVC   PRNTOUT+10(52),HEADER
+         BAL   3,WRITEIT
+         MVC   GLINE1+12(8),DCBNM
+         BAL   3,BLANKER
+         MVI   ASA,C'0'
+         MVC   PRNTOUT+10(20),GLINE1
+         BAL   3,WRITEIT
+         MVC   PRNTOUT+10(60),CERLN
+         MVI   ASA,C'0'
+         BAL   3,WRITEIT
+         UNPK  CERLN2+12(10),CARDNUM(8)
+         MVZ   CERLN2+21(1),=X'FF'
+         BAL   3,BLANKER
+         MVC   PRNTOUT+10(22),CERLN2
+         MVI   ASA,C' '
+         BAL   3,WRITEIT
+         CLI   JACA,X'FF'
+         BC    8,JACB
+         BAL   3,BLANKER
+         MVC   PRNTOUT+10(48),CERLN3
+         MVI   ASA,C' '
+         BAL   3,WRITEIT
+         BAL   3,BLANKER
+         MVC   PRNTOUT+10(80),CARDIN
+         MVI   ASA,C'-'
+         BAL   3,WRITEIT
+         BAL   3,BLANKER
+         LA    9,CARDIN
+         SR    7,9
+         LA    8,PRNTOUT+10
+         AR    8,7
+         MVC   0(10,8),=C'**********'
+         MVI   ASA,C' '
+         BAL   3,WRITEIT
+JACB     MVI   JACA,X'00'
+         BAL   3,BLANKER
+         MVI   ASA,C'0'
+         MVC   PRNTOUT+10(19),=C'ERROR EXPLAINATION:'
+         MVC   PRNTOUT+30(8),ERMSG
+         BAL   3,WRITEIT
+         BAL   3,BLANKER
+         MVC   PRNTOUT+10(36),=C'NUMBER OF LOGICAL RECORDS GENERATED='
+         MVC   PRNTOUT+46(10),=C'0000000000'
+         MVI   ASA,C'0'
+         BAL   3,WRITEIT
+SPECR    BCR   0,0
+*
+*        RESET COUNTERS/SWITCHES/ NOPS
+*
+*        GO TO SCAN FOR NEXT GOOD CARD
+         MVI   ERSCN,X'FF'
+SCANKER  GET   CARDS,CARDIN
+         AP    CARDNUM(8),=PL1'1'
+         CLC   CARDIN(5),=C'*DSG*'
+         BC    8,SCANKER
+DASCNET  GET   CARDS,CARDIN
+         AP    CARDNUM(8),=PL1'1'
+         CLC   CARDIN(5),=C'*DSG*'
+         BC    7,DASCNET
+OXBLX    MVI   ERSCN,X'00'
+         MVC   RECOUNT(8),=PL8'0'
+         MVC   GROUPNUM(8),=PL8'0'
+         MVZ   NOT1CTL+1(1),=X'00'
+         MVC   SPECOUNT(4),=F'0'
+         MVC   LENTCONT(4),=F'0'
+ MVC SKPCNT(4),=F'0'
+ MVC SKPSAVE(4),=F'0'
+         MVI   DATSW,C'L'
+*
+*
+         CLOSE OUTPUT
+         MVI   CLOSESW,C'C'
+ARGN     MVI   STEPSWCH,X'00'
+         MVC   STEPSWCH+1(255),STEPSWCH
+         BC    15,DCBOVLY
+TOMXH    AP    GROUPNUM(8),=PL1'1'
+         MVC   ERPOINT(8),=C'DSGERR15'
+         MVI   FLDNAM,C'X'              F=YES PRINT FIELD NUMBER.
+         BC    15,COMDATX               X=NO DONT PRINT.
+         EJECT
+*
+*    DSG NUMBERED ERROR MESSAGES (DATA CARD ERRORS)
+*
+COMERR   AP    GROUPNUM(8),=PL1'1'
+         MVC   ERPOINT(8),=C'DSGERR16'
+         MVI   FLDNAM,C'X'
+         BC    15,COMDATX
+NOZO     AP    GROUPNUM(8),=PL1'1'
+         MVC   ERPOINT(8),=C'DSGERR68'
+         MVI   FLDNAM,C'X'
+         BC    15,COMDATX
+ERRORX   AP    GROUPNUM(8),=PL1'1'
+         MVC   ERPOINT(8),=C'DSGERR17'
+         MVI   FLDNAM,C'X'
+         BC    15,COMDATX
+DUBLDLIM AP    GROUPNUM(8),=PL1'1'
+         MVC   ERPOINT(8),=C'DSGERR18'
+         MVI   FLDNAM,C'X'
+         BC    15,COMDATX
+HEXBAD   MVC   ERPOINT(8),=C'DSGERR20'
+         MVI   FLDNAM,C'F'
+         BC    15,COMDATX
+TOSHORT  MVC   ERPOINT(8),=C'DSGERR22'
+         MVI   FLDNAM,C'F'
+         BC    15,COMDATX
+TOLONGB  MVC   ERPOINT(8),=C'DSGERR23'
+         MVI   FLDNAM,C'F'
+         BC    15,COMDATX
+SKRD     MVC   ERPOINT(8),=C'DSGERR24'
+         MVI   FLDNAM,C'F'
+         BC    15,COMDATX
+TOSHIRT  MVC   ERPOINT(8),=C'DSGERR26'
+         MVI   FLDNAM,C'F'
+         BC    15,COMDATX
+TOHEGH   MVC   ERPOINT(8),=C'DSGERR27'
+         MVI   FLDNAM,C'F'
+         BC    15,COMDATX
+BADCHAR  MVC   ERPOINT(8),=C'DSGERR28'
+         MVI   FLDNAM,C'F'
+         BC    15,COMDATX
+TOOOG    MVC   ERPOINT(8),=C'DSGERR29'
+         MVI   FLDNAM,C'F'
+         BC    15,COMDATX
+CONERX   MVC   ERPOINT(8),=C'DSGERR33'
+         MVI   FLDNAM,C'F'
+         BC    15,COMDATX
+TOSHORTK MVC   ERPOINT(8),=C'DSGERR34'
+         MVI   FLDNAM,C'F'
+         BC    15,COMDATX
+TOLONGBK MVC   ERPOINT(8),=C'DSGERR35'
+         MVI   FLDNAM,C'F'
+         BC    15,COMDATX
+SKRDX    MVC   ERPOINT(8),=C'DSGERR36'
+         MVI   FLDNAM,C'F'
+         BC    15,COMDATX
+TOBIGBIN MVC   ERPOINT(8),=C'DSGERR37'
+         MVI   FLDNAM,C'F'
+         BC    15,COMDATX
+TOSMALXY MVC   ERPOINT(8),=C'DSGERR40'
+         MVI   FLDNAM,C'F'
+         BC    15,COMDATX
+TOLNGXY  MVC   ERPOINT(8),=C'DSGERR41'
+         MVI   FLDNAM,C'F'
+         BC    15,COMDATX
+TOGREAT  MVC   ERPOINT(8),=C'DSGERR42'
+         MVI   FLDNAM,C'F'
+         BC    15,COMDATX
+OVFLOW   MVC   ERPOINT(8),=C'DSGERR44'
+         MVI   FLDNAM,C'F'
+         BC    15,COMDATX
+TOSHXRT  MVC   ERPOINT(8),=C'DSGERR46'
+         MVI   FLDNAM,C'F'
+         BC    15,COMDATX
+TOBIGZE  MVC   ERPOINT(8),=C'DSGERR47'
+         MVI   FLDNAM,C'F'
+         BC    15,COMDATX
+TOMANCOM MVC   ERPOINT(8),=C'DSGERR67'
+         MVI   FLDNAM,C'X'
+         BC    15,COMDATX
+TOSMALLZ MVC   ERPOINT(8),=C'DSGERR48'
+         MVI   FLDNAM,C'F'
+         BC    15,COMDATX
+TOBIGGZ  MVC   ERPOINT(8),=C'DSGERR49'
+         MVI   FLDNAM,C'F'
+         BC    15,COMDATX
+OVFLL    MVC   ERPOINT(8),=C'DSGERR50'
+         MVI   FLDNAM,C'F'
+         BC    15,COMDATX
+DACERR   MVC   FIXIK(2),ENCKRR
+         MVC   ERPOINT(8),=C'DSGERR32'
+         MVI   FLDNAM,C'X'
+         BC    15,FXLDRN
+ENCKRR   BCR   15,6
+FXLDRN   LA    6,RETX
+         BC    15,COMDATX
+BADBAD   BAL   3,BLANKER
+         MVI   ASA,C'1'
+         MVC   PRNTOUT+9(30),=C'DSG ERROR  ***  NO INPUT CARDS'
+         BAL   3,WRITEIT
+  L  13,DSGAREA+4
+  LM  2,12,28(13)
+  L  14,12(0,13)
+  LA  15,16
+  MVI  12(13),X'FF'
+  BR  14
+COMDATX  MVI   ASA,C'1'
+         BAL   3,BLANKER
+         MVC   PRNTOUT+9(52),HEADER
+         BAL   3,WRITEIT
+         BAL   3,BLANKER
+         MVC   PRNTOUT+9(12),=C'FILE DDNAME='
+         MVC   PRNTOUT+22(8),DCBNM
+         MVI   ASA,C'0'
+         BAL   3,WRITEIT
+         BAL   3,BLANKER
+         MVI   ASA,C'0'
+         MVC   PRNTOUT+9(28),=C'DATA CARD ERROR ENCOUNTERED.'
+         MVC   PRNTOUT+61(9),=C'**ERROR**'
+         BAL   3,WRITEIT
+         BAL   3,BLANKER
+         MVI   ASA,C' '
+         MVC   PRNTOUT+9(24),=C'INPUT CARD GROUP NUMBER='
+         UNPK  PRNTOUT+33(6),GROUPNUM(8)
+         MVZ   PRNTOUT+38(1),=X'FF'
+         MVC   PRNTOUT+40(19),=C'(FOR THIS DATA SET)'
+         BAL   3,WRITEIT
+         CLI   FLDNAM,C'F'
+         BC    7,SKIPFNUM     DONT PRINT OUT THE FIELD NUMBER
+         BAL   3,BLANKER
+         MVI   ASA,C' '
+         MVC   PRNTOUT+9(48),=C'FIELD NUMBER=XXX (OF CURRENT INPUT RECOX
+               RD GROUP)'
+         L     5,CURCNTX
+         LA    5,1(0,5)
+         CVD   5,WORK88
+         MVN   WORK88+7(1),=X'FF'
+         UNPK  PRNTOUT+22(3),WORK88(8)
+         BAL   3,WRITEIT
+SKIPFNUM BAL   3,BLANKER
+         MVI   ASA,C'0'
+         MVC   PRNTOUT+9(19),=C'ERROR  EXPLANATION:'
+         MVC   PRNTOUT+29(8),ERPOINT
+         BAL   3,WRITEIT
+         BAL   3,BLANKER
+         MVI   ASA,C'0'
+         MVC   PRNTOUT+9(36),=C'NUMBER OF LOGICAL RECORDS GENERATED='
+         MVN   RECOUNT+7(1),=X'FF'
+         UNPK  PRNTOUT+45(10),RECOUNT(8)
+         BAL   3,WRITEIT
+         BAL   3,BLANKER
+         MVI   ASA,C'0'
+         MVC   PRNTOUT+9(34),=C'GENERATION TERMINATED DUE TO ERROR'
+         BAL   3,WRITEIT
+FIXIK    BCR   0,0
+         MVI   ERSCN,X'FF'
+GERCARS  GET   CARDS,CARDIN
+         AP    CARDNUM(8),=PL1'1'
+         CLC   CARDIN(5),=C'*DSG*'
+         BC    7,GERCARS
+         BC    15,OXBLX
+EOCARD   CLI   FIRSET,X'FF'     GO OUT BECAUSE VERY FIRST
+         BC    8,RETX           CARD WAS IN ERROR.
+*
+*
+         CLOSE OUTPUT
+CKMOX    CLI   ERSCN,X'FF'      AM I IN AN ERROR SCAN??
+         BC    8,RETX
+         CLI   ATLEAST,X'FF'    SEE IF NO CARDS WERE READ.
+         BC    7,BADBAD
+         CLC   CARDIN(5),=C'*DSG*'  WAS LAST CARD READ A GOOD
+         BC    8,BADMSG             CONTROL CARD?
+         CLI   DATSW,C'L'
+         BC    7,DACERR
+*
+         MVZ   EXCLST+1(1),=X'00'   OPEN END OF DCB OVERLAY ROUTINE.
+         BC    15,GOODWRAP
+RETX  EQU  *
+  L  13,DSGAREA+4
+  LM  2,12,28(13)
+  L  14,12(0,13)
+  LA  15,0
+  MVI  12(13),X'FF'
+  BR  14
+         EJECT
+*
+*    ROUTINE TO HANDLE DCB OVERLAY AND HOUSEKEEPING FOR
+*    MULTI-FILE GENERATION.
+*
+ENDINIT  BC    15,ONESK
+         CLOSE OUTPUT
+         MVI   CLOSESW,C'C'
+         BC    15,GOODWRAP
+DCBOVLY  AP    FILNUM(3),=PL1'1'
+         UNPK  DCBNM+6(2),FILNUM(3)
+         MVZ   DCBNM+7(1),=X'FF'
+         MVC   OUTPUT(93),DSDUMY
+         MVC   OUTPUT+40(8),DCBNM
+EXCLST   BC    15,CTLPROC
+         BC    15,RETX
+BLANKER  MVI   PRNTOUT,X'40'
+         MVC   PRNTOUT+1(131),PRNTOUT
+         BCR   15,3
+WRITEIT  PUT   PRINT,ASA
+         BCR   15,3
+ONESK    MVZ   ENDINIT+1(1),=X'00'
+         BC    15,CTLPROC
+         EJECT
+GOODWRAP BAL   3,BLANKER
+         MVI   ASA,C'1'                 SET UP AND WRITE OUT
+         MVC   PRNTOUT+11(52),HEADER    THE HEADER LINE.
+         BAL   3,WRITEIT
+         BAL   3,BLANKER
+         MVC   GLINE1+12(8),DCBNM       SET UP AND WRITE OUT
+         MVC   PRNTOUT+11(20),GLINE1    THE DDNAME.
+         MVI   ASA,C'0'
+         BAL   3,WRITEIT
+         BAL   3,BLANKER                SET UP AND WRITE OUT
+         L     4,SPECOUNT               THE NUMBER OF FIELDS.
+         CVD   4,WORK88
+         UNPK  GLINE2+34(3),WORK88(8)
+         MVZ   GLINE2+36(1),=X'FF'
+         MVC   PRNTOUT+11(37),GLINE2
+         MVI   ASA,C' '
+         BAL   3,WRITEIT
+         BAL   3,BLANKER                SET UP AND WRITE OUT
+         MVI   ASA,C' '                 THE LOGICAL RECORD LENGTH.
+         L     4,LENTCONT
+         CVD   4,WORK88
+         UNPK  GLINE3+29(4),WORK88(8)
+         MVZ   GLINE3+32(1),=X'FF'
+         MVC   PRNTOUT+11(33),GLINE3
+         BAL   3,WRITEIT
+         BAL   3,BLANKER
+         MVI   ASA,C' '
+*        L     4,GENRECS
+*        CVD   4,WORK88
+         UNPK  GLINE4+36(10),RECOUNT(8)
+         MVZ   GLINE4+45(1),=X'FF'
+         MVC   PRNTOUT+11(46),GLINE4
+         BAL   3,WRITEIT
+         BAL   3,BLANKER
+         MVI   ASA,C'0'
+         MVC   PRNTOUT+11(41),GLINE5
+         BAL   3,WRITEIT
+         MVZ   NOT1CTL+1(1),=X'00'
+         MVC   SPECOUNT(4),=F'0'
+         MVC   LENTCONT(4),=F'0'
+         MVI   DATSW,C'L'
+         MVI   ERSCN,X'00'
+         MVI   STEPSWCH,X'00'
+         MVC   STEPSWCH+1(255),STEPSWCH
+         MVC   GROUPNUM(8),=PL8'0'
+         MVC   RECOUNT(8),=PL8'0'
+*
+*
+         BC    15,DCBOVLY
+         EJECT
+*  DCB FOR PRINTER  OUT  PUT
+*
+*
+PRINT    DCB   DSORG=PS,MACRF=(PM),DDNAME=DSGPRINT,RECFM=FA,           X
+               LRECL=133,BLKSIZE=133,BFTEK=S,BUFNO=2,BFALN=D,          X
+               EROPT=ABE
+*
+         EJECT
+*
+* DCB FOR  CARD INPUT
+*
+CARDS    DCB   DSORG=PS,MACRF=(GM),DDNAME=SYSIN,RECFM=FB,LRECL=80,     X
+               BLKSIZE=80,BFTEK=S,BUFNO=16,BFALN=D,EODAD=EOCARD
+*
+         EJECT
+*
+*
+* DCB FOR  GENERATED OUTPUT
+*
+OUTPUT   DCB   DSORG=PS,MACRF=(PM),DDNAME=DSGOUT01,BFTEK=S,BUFNO=2
+*
+         EJECT
+*
+* DCB FOR DCB OVERLAY/MODIFY ROUTINE
+*
+DSDUMY   DCB   DSORG=PS,MACRF=(PM),DDNAME=DSGOUT01,BFTEK=S,BUFNO=2
+*
+         EJECT
+INVLDLN  BC    15,INTERER
+SLIXERR  BC    15,INTERER
+BADTYPE  BC    15,INTERER
+TOLNGRY  BC    15,INTERER
+ERSTOR   BC    15,INTERER
+INTERER  BAL   3,BLANKER
+         MVI   ASA,C'1'
+         MVC   PRNTOUT+15(32),=C'INTERNAL ERROR **DSG PGM ERROR**'
+         BAL   3,WRITEIT
+  L  13,DSGAREA+4
+  LM  2,12,28(13)
+  L  14,12(0,13)
+  LA  15,16
+  MVI  12(13),X'FF'
+  BR  14
+         EJECT
+         LTORG
+         DS    0D
+OUTAREA  DS    CL4095
+     DCBD  DSORG=(QS)
+INAREA   CSECT
+         DS    CL5680
+KELX66   CSECT
+         DC    16CL16'0123456789ABCDEF'
+KELX55   CSECT
+         DC    75CL1' '
+         DC    CL5'.<(+|'
+         DC    10CL1' '
+         DC    CL8'!$*); -/'
+         DC    CL9' '
+         DC    CL5',%->?'
+         DC    CL10' '
+         DC    CL6':#@ = '
+         DC    CL65' '
+         DC    CL9'ABCDEFGHI'
+         DC    CL7' '
+         DC    CL9'JKLMNOPQR'
+         DC    CL8' '
+         DC    CL8'STUVWXYZ'
+         DC    CL22'      0123456789'
+KELX65   CSECT
+         DC    16CL1'0'
+         DC    16CL1'1'
+         DC    16CL1'2'
+         DC    16CL1'3'
+         DC    16CL1'4'
+         DC    16CL1'5'
+         DC    16CL1'6'
+         DC    16CL1'7'
+         DC    16CL1'8'
+         DC    16CL1'9'
+         DC    16CL1'A'
+         DC    16CL1'B'
+         DC    16CL1'C'
+         DC    16CL1'D'
+         DC    16CL1'E'
+         DC    16CL1'F'
+         END

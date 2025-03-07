@@ -1,0 +1,319 @@
+//JEAILJN1 JOB (1140,5),'J ABBEY',CLASS=N,NOTIFY=JEA
+/*ROUTE  PRINT LOCAL
+// EXEC LIBRARYN,FILE=MVS,BLKSIZE=6480
+//SYSIN DD DATA,DLM='??'
+-OPT NOLIST,EXEC
+-DLM SRLREAD,SRLR
+-ADD SRLREAD,SRLR
+-PGMR JEABBEY
+-DESC SELF REORGANISING FILE READER
+***********************************************************************
+*                         S R L R E A D
+*
+*            THIS ROUTINE WILL READ A MEMBER OF A SELF REORGANISING
+*        DATA SET INTO THE EDIT IN-CORE DATA STACK ACCORDING TO
+*        START RECORD NUMBER AND RECORD COUNT FIELDS ENTERED BY THE
+*        USER OF SUPREDIT.
+*
+*            ON ENTRY TO THE ROUTINE, REGISTER ONE WILL ADDRESS A
+*        PARAMETER LIST OF TWO ENTRIES:
+*
+*        1)    THE ADDRESS OF THE STACK ENTRY AFTER WHICH THE NEW
+*              DATA IS TO BE PLACED.
+*        2)    THE ADDRESS OF THE USER PARAMETER DEFINITION AREA
+*              CONTAINING THE START RECORD NUMBER AND THE NUMBER OF
+*              RECORDS TO READ.
+*
+*        ON EXIT FROM THE ROUTINE, THE DATA WILL HAVE BEEN LOADED
+*        INTO THE IN-CORE STACK ACCORDING TO THE SELECTION PARAMETERS
+*        SPECIFIED BY THE USER WHEN HE ENTERED A 'GET' COMMAND
+*
+***********************************************************************
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING
+***********************************************************************
+         SPACE 2
+SRLREAD  ZCSECT 12,GETMAIN=1,WKLEN=SRLWKLEN
+         USING SRLWORK,REG13       ADDRESSABILITY FOR WORK AREA
+         LM    REG8,REG9,0(REG1)   LOAD UP THE PASSED PARAMETERS
+         USING USERPARM,REG9       ADDRESSABILITY FOR IT
+         L     REG10,UPEDITWK      ADDRESS OF EDIT WORK AREA
+         USING WDSECT,REG10        ADDRESSABILITY FOR IT
+         EJECT
+***********************************************************************
+*        OPEN AND INITIALISE THE PHYSICAL FILE
+***********************************************************************
+         SPACE 2
+         MVC   SYSUT2(104),BDAMDUMY SET UP A BDAM DCB
+         MVC   DECB1(32),BDAMDECB  AND A BDAM DECB
+         MVC   DECB2(32),BDAMDECB  AND A BDAM DECB
+         LA    REG1,DECB1          ADDRESS OF FIRST DECB
+         ST    REG1,DECB2+CHAINL   INITIALISE DECB CHAINING
+         LA    REG1,DECB2          LOAD ADDRESS OF SECOND DECB
+         ST    REG1,DECB1+CHAINL   AND COMPLETE ROUND ROBIN CHAIN
+         OI    OPENLIST,X'80'      TURN ON END-OF-LIST
+         OPEN  (SYSUT2,INPUT),MF=(E,OPENLIST) OPEN THE BDAM FILE
+         EJECT
+***********************************************************************
+*        READ THE DATA SET HEADER INTO CORE
+***********************************************************************
+         SPACE 2
+         XC    BLOCKID,BLOCKID     ASSUME FIRST IS FILE CONTROL AREA
+         READ  DECB1,DI,SYSUT2,'S','S',0,BLOCKID+1,MF=E READ FRST BLOCK
+         CHECK DECB1               WAIT FOR IT TO ARRIVE
+         L     REG2,DECB1+12       ADDRESS OF BUFFER
+         LA    REG3,CNTLPARM       ADDRESS OF RECEIVING FIELD
+         CALL  EXPAND,((9),(2),(3)),VL,MF=(E,CALLLIST)
+         LA    REG1,CNTLMAP        LOAD ADDRESS OF CONTROL BIT MAP
+         ST    REG1,CURNTMAP       AND SAVE ITS ADDRESS
+         FREEDBUF DECB1,D,SYSUT2   FREE THE DYNAMIC BUFFER
+         MVI   DECB1,X'EE'         SIGNAL DECB NOT READ YET
+         MVI   DECB2,X'EE'         SIGNAL DECB NOT READ YET
+         LA    REG7,DECB1          INITIALISE CHAIN POINTER
+         XC    BLOCKID,BLOCKID     CLEAR THE CURRENT BLOCK ID
+         LA    REG1,BLOCKID        BORROW ADDRESS OF A NULL FIELD
+         ST    REG1,NEXTREC        MAKE NEXT RECORD LOOK LIKE EOB
+         EJECT
+***********************************************************************
+*        CHECK FOR REQUEST TO EDIT DIRECTORY
+***********************************************************************
+         SPACE 2
+         CLC   EDITNAME,DRTYNAME   HAS HE ENTERED A SPECIAL NAME
+         BNE   GONORMAL            NO. CARRY ON AS NORMAL
+         LA    REG0,FILEPARM       ADDRESS OF USUAL PARM FIELD
+         LA    REG1,CNTLLEN        LOAD LENGTH OF A COMPLETE ENTRY
+         LA    REG14,CNTLPARM      ADDRESS OF SOURCE FIELD
+         LR    REG15,REG1          SECOND LENGTH FIELD
+         MVCL  REG0,REG14          SET UP AS IF IT WAS READ
+         LH    REG1,CNTLRECL       LOAD ITS RECORD LENGTH
+         STH   REG1,LRECL          AND SAVE IN WORK AREA
+         B     GODRCTRY            AND GO WITH THE DIRECTORY
+         EJECT
+***********************************************************************
+*        SEARCH FOR AND LOCATE THE LOGICAL FILE HEADER
+***********************************************************************
+         SPACE 2
+GONORMAL EQU   *
+IDLOOP   EQU   *
+         BAL   REG11,READREC       GO FETCH NEXT HEADER
+         LR    REG2,REG1           LOAD CALL REGISTER
+         LA    REG3,FILEPARM       ADDRESS OF RECEIVING FIELD
+         CALL  EXPAND,((9),(2),(3)),VL,MF=(E,CALLLIST)
+         CLC   EDITNAME,FILEID     FILE HE WANTS ?
+         BE    GOTFILE             YES. GO INTIIALISE IT
+         CLC   LASTENTY,FILEID     END OF THE NAMES ?
+         BNE   IDLOOP              NO. KEEP LOOKING AT THEM
+         B     CLOSE2              YES. RETURN NOTHING
+GOTFILE  EQU   *
+         LH    REG1,FILERECL       LOAD LRECL FOR THE FILE
+         STH   REG1,LRECL          AND SAVE IT IN EDIT WORK AREA
+         EJECT
+***********************************************************************
+*        INITIALISE FOR THE READ OF ALL HIS DATA
+***********************************************************************
+         SPACE 2
+         FREEDBUF (7),D,SYSUT2     FREE CURRENT BUFFER
+         L     REG7,CHAINL(REG7)   LOAD ADDRESS OF OUTSTANDING READ
+         CLI   0(REG7),X'FF'       WAS ANOTHER RECORD READ
+         BE    BYPASS1             NO. THERE IS NO OUTSTANDING READ
+         CHECK (7)                 WAIT FOR IT TO COMPLETE
+         FREEDBUF (7),D,SYSUT2     AND FRRE THAT BUFFER TOO
+BYPASS1  EQU   *
+GODRCTRY EQU   *
+         MVI   DECB1,X'EE'         SIGANL NO OUTSTANDING READ
+         MVI   DECB2,X'EE'         SIGANL NO OUTSTANDING READ
+         XC    BLOCKID,BLOCKID     CLEAR THE CURRENT BLOCK ID
+         LA    REG1,BLOCKID        BORROW ADDRESS OF A NULL FIELD
+         ST    REG1,NEXTREC        MAKE NEXT RECORD LOOK LIKE EOB
+         LA    REG1,FILEMAP        LOAD ADDRESS OF USER BIT MAP
+         ST    REG1,CURNTMAP       AND UPDATE WORK AREA
+         EJECT
+***********************************************************************
+*        RETURN ALL THE 'RECORDS' TO HIS STORAGE STACK
+***********************************************************************
+         SPACE 2
+READLOOP EQU   *
+         BAL   REG11,READREC       GO READ NEXT RECORD
+         BAL   REG11,STACKIT       GO PUT RECORD ON THE STACK
+         B     READLOOP            PROCESS ALL BLOCKS
+         EJECT
+***********************************************************************
+*        FILE DOES NOT EXIST. RETURN SUITABLE INDICATION
+***********************************************************************
+         SPACE 2
+CLOSE2   DS    0H
+         MVC   LRECL,DEFAULT       SET UP A DEFAULT RECORD LENGTH
+         CLOSE (SYSUT2),MF=(E,OPENLIST) CLOSE THE FILE
+         ZRETURN RC=4              GIVE A RETURN CODE OF FOUR
+         EJECT
+***********************************************************************
+*        CLOSE THE FILE
+***********************************************************************
+         SPACE 2
+CLOSE    DS    0H
+         CLOSE (SYSUT2),MF=(E,OPENLIST) CLOSE THE FILE
+         EJECT
+***********************************************************************
+*        RETURN TO CALLER
+***********************************************************************
+         SPACE 2
+EXITPGM  EQU   *
+         ZRETURN
+         EJECT
+***********************************************************************
+*        LOCATE THE NEXT LOGICAL RECORD
+***********************************************************************
+         SPACE 2
+READREC  DS    0H
+         L     REG1,NEXTREC        ADDRESS OF NEXT RECORD
+         LH    REG15,0(REG1)       LENGTH OF THE NEXT RECORD
+         LA    REG2,0(REG15,REG1)  AND ADDRESS OF ONE AFTER THAT
+         ST    REG2,NEXTREC        UPDATE CONTROL FIELD
+         LTR   REG15,REG15         IS THIS REALLY A VALID RECORD ?
+         BNZ   0(REG11)            YES. RETURN TO CALLER WITH IT
+         EJECT
+***********************************************************************
+*        EXTRACT THE NEXT BLOCK NUMBER FROM THE BIT MAP
+***********************************************************************
+         SPACE 2
+FINDABIT DS    0H
+         L     REG3,BLOCKID        LOAD ID OF LAST BLOCK READ
+         XR    REG2,REG2           CLEAR TOP OF DOUBLE REGISTER
+         LA    REG0,8              NUMBER OF BITS PER BYTE
+         DR    REG2,REG0           GET OFFSET INTO BIT MAP
+         L     REG4,CURNTMAP       LOAD ADDRESS OF BIT MAP IN USE
+         LA    REG4,0(REG4,REG3)   ADDRESS OF BYTE WITH THIS BIT IN IT
+         ICM   REG15,8,0(REG4)     LOAD THAT BYTE INTO WORK REGISTER
+         SLDL  REG14,1(REG2)       SHIFT OUT TO CORRECT PLACE
+         XR    REG14,REG14         CLEAR BITS WORK REGISTER
+BITLOOP  EQU   *
+         LA    REG2,1(REG2)        ADD ONE FOR NEXT BIT
+         CR    REG2,REG0           GONE INTO NEXT BYTE
+         BL    SAMEBYTE            NO. CONTINUE WITH SAME BYTE
+NEWBYTE  EQU   *
+         LA    REG3,1(REG3)        INCREMENT BYTE OFFSET
+         CH    REG3,CNTLBITS       OFF THE END OF BIT MAP ?
+         BNL   NOMORE              YES. NO MORE BITS AVAILABLE
+         L     REG4,CURNTMAP       LOAD ADDRESS OF BIT MAP IN USE
+         LA    REG4,0(REG4,REG3)   ADDRESS OF NEXT BYTE
+         CLI   0(REG4),0           ANY BITS ON IN THIS BYTE
+         BE    NEWBYTE             NO. FETCH NEXT ONE THEN
+         ICM   REG15,8,0(REG4)     AND RELOAD WORK REGISTER
+         XR    REG2,REG2           CLEAR THE 'BIT COUNTER'
+SAMEBYTE EQU   *
+         SLDL  REG14,1             SHIFT OUT NEXT BIT
+         LTR   REG14,REG14         ANYTHING THERE ?
+         BZ    BITLOOP             NO. TRY NEXT BIT
+         LR    REG15,REG2          SAVE THE BIT OFFSET
+         MR    REG2,REG0           GET BYTES TIMES EIGHT
+         AR    REG15,REG3          AND LOAD NEW RECORD ID
+         ST    REG15,BLOCKID       AND UPDATE CONTROL FIELDS
+         EJECT
+***********************************************************************
+*        READ AHEAD THE NEXT BLOCK
+***********************************************************************
+         SPACE 2
+         CLI   0(REG7),X'EE'       UNREAD BUFFER ?
+         BE    NOFREE              YES. DO NOT FREE DYNAMIC BUFFER
+         FREEDBUF (7),D,SYSUT2     FREE DYNAMICALLY AQUIRED BUFFER
+NOFREE   EQU   *
+         READ  (7),DI,SYSUT2,'S','S',0,BLOCKID+1,MF=E READ NEXT BLOCK
+CHECKLST EQU   *
+         L     REG7,CHAINL(REG7)       LOAD ADDRESS OF PREVIOUS READ
+         CLI   0(REG7),X'FF'       WAS THAT A LOGICAL END OF FILE
+         BE    CLOSE               YES. TERMINATE PROCESSING
+         CLI   0(REG7),X'EE'       IS THAT BLOCK UNREAD AS YET ?
+         BE    FINDABIT            YES. THIS IS FIRST ENTRY
+         CHECK (7)                 OTHERWISE CHECK COMPLETION
+         L     REG1,12(REG7)       LOAD ADDRESS OF DATA
+         ST    REG1,NEXTREC        UPDATE CONTROL FIELDS
+         B     READREC             AND START ALL OVER AGAIN
+         SPACE 2
+NOMORE   EQU   *
+         MVI   0(REG7),X'FF'       SIGNAL DECB NOT USED
+         B     CHECKLST            AND CONTINUE
+         EJECT
+***********************************************************************
+*        INVOKE THE DATA STACK ROUTINE
+***********************************************************************
+         SPACE 2
+STACKIT  DS    0H
+         LR    REG2,REG1           SAVE ADDRESS OF THE DATA
+         CALL  GETDATAQ,((8),(9)),VL,MF=(E,CALLLIST)
+         LR    REG8,REG1           SAVE ADDRESS FOR NEXT CALL
+         L     REG3,0(REG1)        LOAD ADDRESS OF DATA AREA
+         CALL  EXPAND,((9),(2),(3)),VL,MF=(E,CALLLIST) UNPACK DATA
+         CLC   EDITNAME,DRTYNAME   IS THIS A DIRECTORY ENTRY
+         BE    FORMATDY            YES. GO FORMAT IT
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        FORMAT THE DIRECTORY ENTRY
+***********************************************************************
+         SPACE 2
+FORMATDY DS    0H
+         LH    REG1,LRECL          LOAD THE LENGTH OF THE HEADER
+         LA    REG0,L'EDITNAME     LOAD THE LENGTH OF A NAME FIELD
+         SR    REG1,REG0           LENGTH OF WHAT'S LEFT
+         AR    REG0,REG3           ADDRESS OF REST OF DATA
+         XR    REG14,REG14         CLEAR A WORK REGISTER
+         XR    REG15,REG15         CLEAR A WORK REGISTER
+         ICM   REG15,8,=C' '       LOAD A PADDING CHARACTER
+         MVCL  REG0,REG14          CLEAR THE REST OF THE FIELD
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        CONSTANTS NOT CHANGED BY THE PROGRAM
+***********************************************************************
+         SPACE 2
+BDAMDUMY DCB   DDNAME=SYSUT2,DSORG=DA,BUFNO=2,MACRF=(RICS),OPTCD=R,    X
+               EXLST=EXLST
+         READ  BDAMDECB,DI,0,0,0,0,0,MF=L
+LASTENTY DS    0CL16               IDENTIFIES LAST ENTRY
+         DC    16X'FF'
+DRTYNAME DC    CL16'?'             SPECIAL FILE NAME
+DEFAULT  DC    H'80'               DEFAULT LOGICAL RECORD LENGTH
+         LTORG
+         EJECT
+***********************************************************************
+*        BDAM DCB OPEN EXIT
+***********************************************************************
+         SPACE 2
+EXLST    DS    0F
+         DC    X'85'               DCB OPEN EXIT
+         DC    AL3(DCBEXIT)        ADDRESS OF THE ROUTINE
+         PUSH  USING
+DCBEXIT  DS    0H
+         USING *,REG15
+         USING IHADCB,REG1         ADDRESSABILITY FOR THE DCB
+         LH    REG0,DCBBLKSI       LOAD BLOCKLENGTH
+         STH   REG0,DCBBUFL        AND UPDATE THE BUFFER LENGTH FIELD
+         BR    REG14               RETURN TO CALLER
+         DROP  REG1                RELEASE ADDRESSABILITY
+         POP   USING               RESTORE NORMAL PROGRAM ADDRESSABILIT
+         EJECT
+***********************************************************************
+*        WORK AREAS USED BY THE PROGRAM
+***********************************************************************
+         SPACE 2
+         USERPARM
+         SPACE 2
+         EDITWK2
+         SPACE 2
+         SRLDSECT
+         SPACE 2
+         PRINT NOGEN
+         DCBD DSORG=QS,DEVD=DA
+         END
+??
+// EXEC ASMFCL,L=H
+//SYSLIB DD DSN=JEA.MACLIB,DISP=SHR
+//       DD DSN=SYS2.MACLIB,DISP=SHR
+// DD    DSN=SYS1.MACLIB,DISP=SHR
+//SYSIN DD DSN=&OSJOB,DISP=(OLD,DELETE)
+//LKED.SYSLMOD DD DSN=JEA.LOADLIB,DISP=SHR
+ INCLUDE SYSLMOD(MOPE)
+ ENTRY MOPE
+ NAME MOPE(R)
+/*

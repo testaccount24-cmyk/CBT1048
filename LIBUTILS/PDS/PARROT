@@ -1,0 +1,2126 @@
+ PARROT:  PROC OPTIONS(MAIN);
+
+          DCL
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* THE FIVE FILES DECLARED HERE ARE MANDATORY FOR ALL          */
+     /* APPLICATIONS. THE FILES ARE:                                */
+     /*                                                             */
+     /*   SYSUT1    - THE INPUT DATA SET TO BE REPORTED ON.         */
+     /*               THIS MUST BE A SEQUENTIAL FILE, EITHER        */
+     /*               WITH FIXED OR VARYING RECORD LENGTH, AND      */
+     /*               CURRENTLY HAS A MAXIMUM LOGICAL RECORD        */
+     /*               LENGTH OF 600 BYTES.                          */
+     /*                                                             */
+     /*   SYSIN     - INPUT CONTROL CARDS. THIS WILL USUALLY BE     */
+     /*               A DD * FILE, BUT CAN BE CARD IMAGES ON TAPE/  */
+     /*               DISK. LOGICAL RECORD LENGTH MUST BE 80 BYTES. */
+     /*                                                             */
+     /*   PRINT     - THE OUTPUT REPORT FILE. THIS CAN GO EITHER    */
+     /*               DIRECT TO PRINTER, OR TO SPOOL, BUT IN        */
+     /*               EITHER CASE THE FULL DCB                      */
+     /*                 (RECFM=FBA,LRECL=133,BLKSIZE=133)           */
+     /*                       MUST BE SPECIFIED. (IF THE PRINT IS   */
+     /*               BEING SPOOLED, THE ATTRIBUTE 'A' IN THE       */
+     /*               RECFM PARAMETER IS TO BE ENTERED WHEN THE     */
+     /*               PRINT IS TAKEN OFF THE SPOOL).                */
+     /*                                                             */
+     /*   SYSLIN    - AN INPUT DATA SET CONTAINING PRINT-LINE       */
+     /*               IMAGES OF THE PICTURE OF A PARROT WHICH IS    */
+     /*               PRINTED BETWEEN THE CONTROL STATEMENTS AND    */
+     /*               THE START OF THE REPORT.  THE FULL DCB IS     */
+     /*                      DCB=(RECFM=FBA,LRECL=133,BLKSIZE=133)  */
+     /*                                                             */
+     /*   TW80      - THE OUTPUT RANGE ANALYSIS REPORT. ALL THE     */
+     /*               NOTES UNDER 'PRINT' APPLY HERE.               */
+     /*                                                             */
+     /* *********************************************************** */
+
+          SYSUT1 FILE RECORD SEQUENTIAL,
+          SYSIN  FILE RECORD SEQUENTIAL,
+          SYSLIN FILE RECORD SEQUENTIAL,
+          TW80   FILE RECORD SEQUENTIAL,
+          PRINT  FILE RECORD SEQUENTIAL;
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* OTHER FILES WHICH SHOULD BE ENTERED IN DD STATEMENTS IN THE */
+     /* JCL ARE:                                                    */
+     /*                                                             */
+     /*   SYSPRINT  - A PL/1 REQUIREMENT FOR MESSAGES FROM THE      */
+     /*               ERROR HANDLER ROUTINE.                        */
+     /*                                                             */
+     /* AND, IF AN INTERNAL SORT OF THE INPUT DATA IS REQUESTED,    */
+     /*                                                             */
+     /*   SYSOUT    - REQUIRED FOR MESSAGES FROM THE SORT PACKAGE.  */
+     /*   SORTLIB   - THE SYSTEM SORT LIBRARY.                      */
+     /*   SORTWKNN  - SORT WORK AREAS.                              */
+     /*                                                             */
+     /* NOTE THAT SORTIN AND SORTOUT ARE NOT REQUIRED, AND THAT     */
+     /* THE SYSIN DATA SET TO THE SORT IS INCLUDED IN THE CONTROL   */
+     /* CARDS TO THIS PROGRAM.                                      */
+     /*                                                             */
+     /* *********************************************************** */
+
+
+          DCL
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* 'INREC' IS THE DATA AREA WHEREIN THE CURRENT SYSUT1 RECORD  */
+     /* IS BEING PROCESSED.                                         */
+     /*                                                             */
+     /* *********************************************************** */
+
+          INREC CHAR (600) VARYING STATIC EXTERNAL,
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* 'INCARD' IS THE RECEIVING AREA FPR THE CONTROL CARDS INTO   */
+     /* THE PROGRAM, AND DEFINED ON THIS STRING ARE THE STRUCTURES  */
+     /* FOR EACH INDIVIDUAL CARD TYPE.                              */
+     /* THE CARD TYPES, WITH REQUIREMENTS AND DESCRIPTION, ARE:     */
+     /*                                                             */
+     /*    1-4   MIN MAX  DESCRIPTION.                              */
+     /*                                                             */
+     /*    GR01   0   5   MAKE UP THE 3 LINES OF THE REPORT HEADING */
+     /*    GR02   0  20   GIVE CRITERIA FOR SELECTING RECORDS.      */
+     /*    GR03   1   1   SPECIFY THE KEY FIELDS FOR TOTALS, ETC.   */
+     /*    GR04   1   9   SPECIFY THE VALUE FIELDS ON THE FILE THAT */
+     /*                   WILL BE PROCESSED / PRINTED.              */
+     /*    GR05   0   1   IF PRESENT, INDICATES THAT ALL DETAIL     */
+     /*                   RECORDS ARE TO BE PRINTED.                */
+     /*    GR06   0   1   IF PRESENT, WILL CAUSE THE RECORDS TO BE  */
+     /*                   SORTED BEFORE BEING PROCESSED.            */
+     /*    GR07   0  20   AVAILABLE FOR USER-CODED ARITHMETIC.      */
+     /*    GR08   1   1   SPECIFIES WHICH VALUES (FIELDS FROM FILE  */
+     /*                   OR ARITHMETIC RESULTS) ARE TO BE PRINTED. */
+     /*    GR09   0  20   SPECIFIES THE RANGES FOR 2080 ANALYSES    */
+     /*                                                             */
+     /* *********************************************************** */
+
+          INCARD CHAR (80),
+
+          1 GR01 DEFINED INCARD,
+            3 DES_GR01   CHAR (4),
+            3 BYTE_GR01  CHAR (1),
+            3 TITLE_GR01 CHAR (75),
+
+          1 GR02 DEFINED INCARD,
+            3 DES_GR02   CHAR (4),
+            3 FIL_GR02   (4),
+              5 CPOS_GR02 PIC '999',
+              5 CLEN_GR02 PIC '99',
+              5 CPAK_GR02 CHAR (1),
+              5 CTYP_GR02 CHAR (2),
+              5 CLIT_GR02 CHAR (11),
+
+          1 GR03 DEFINED INCARD,
+            3 DES_GR03   CHAR (4),
+            3 FIL_GR03   (4),
+              5 CPOS_GR03 PIC '999',
+              5 CLEN_GR03 PIC '99',
+              5 CPAK_GR03 CHAR (1),
+              5 CTOT_GR03 CHAR (1),
+              5 CPAG_GR03 CHAR (1),
+              5 CNAM_GR03 PIC '999',
+              5 CNML_GR03 PIC '99',
+              5 CTW8_GR03 CHAR (1),
+              5 CFIL_GR03 CHAR (5),
+
+          1 GR04 DEFINED INCARD,
+            3 DES_GR04   CHAR (4),
+            3 CFLD_GR04  CHAR (2),
+            3 CPOS_GR04  PIC '999',
+            3 CLEN_GR04  PIC '99',
+            3 CPAK_GR04  CHAR (1),
+            3 CDEC_GR04  PIC '9',
+            3 CFIL_GR04  CHAR (67),
+
+          1 GR05 DEFINED INCARD,
+            3 DES_GR05   CHAR (4),
+            3 CPOS_GR05  PIC '999',
+            3 CLEN_GR05  PIC '99',
+            3 CFIL_GR05  CHAR (71),
+
+          1 GR06 DEFINED INCARD,
+            3 DES_GR06   CHAR (4),
+            3 SORT_GR06  CHAR (76),
+
+          1 GR07 DEFINED INCARD,
+            3 DES_GR07   CHAR (4),
+            3 CFLD_GR07  CHAR (2),
+            3 CARI_GR07  CHAR (73),
+            3 CTOT_GR07  CHAR (1),
+
+          1 GR08 DEFINED INCARD,
+            3 DES_GR08   CHAR (4),
+            3 CPRT_GR08 (5),
+              5 CFLD_GR08  CHAR (2),
+              5 CDEC_GR08  PIC '9',
+            3 CTW8_GR08  CHAR (2),
+            3 CDES_GR08  CHAR (59),
+
+          1 GR09 DEFINED INCARD,
+            3 DES_GR09   CHAR (4),
+            3 FILA_GR09  CHAR (6),
+            3 CVAL_GR09  PIC '999999999R',
+            3 FILB_GR09  CHAR (60);
+
+
+
+          DCL
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* THE FOLLOWING ARE INSERTED HERE AS AN AMENDMENT TO THE      */
+     /* ORIGINAL PROGRAM, TO INTRODUCE INTO IT THE TWENTY-EIGHTY    */
+     /* RANGE ANALYSIS FACILITY. TO SIMPLIFY RECOGNISING THESE      */
+     /* FIELDS IN THE PROGRAM, THEY ARE ALL PREFIXED WITH 'TW'.     */
+     /* THEY ARE:                                                   */
+     /*                                                             */
+     /*   HEADA,B.. - THE 4 HEADING LINES FOR THE REPORT.           */
+     /*   LINEA     - THE DETAIL REPORT LINE.                       */
+     /*   ARRAY     - CONTAINING THE VALUES, COUNTS AND RANGES      */
+     /*               FOR EACH KEY BREAK, EACH RANGE.               */
+     /*   TW80SW    - SWITCH SET ON IF ANALYSIS REQUIRED.           */
+     /*   TW80VAL   - SUBSCRIPT OF VARIABLE TO BE ANALYSED.         */
+     /*   PRRA,B,C  - THE FIELDS FOR SETTING 'RANGE A TO B' IN      */
+     /*               THE PRINT LINE.                               */
+     /*   PAGE      - PAGE NUMBER FOR HEADINGS.                     */
+     /*   SUBSW     - SWITCH IF SUBANALYSIS (MAJOR KEY) WANTED.     */
+     /*   RNGES     - A COUNT OF THE NUMBER OF GR09 CARDS.          */
+     /*   INTPCT  |                                                 */
+     /*   TOTENT  |                                                 */
+     /*   TOTVAL  |                                                 */
+     /*   CUMENT  | - INTERMEDIATE WORK AREAS USED WHEN PREPARING   */
+     /*   CUMVAL  |   A LINE FOR PRINT OUTPUT.                      */
+     /*   INTENT  |                                                 */
+     /*   INTVAL  |                                                 */
+     /*                                                             */
+     /* *********************************************************** */
+
+          1 TWHEADA,
+            3 TWBYTE_HEADA CHAR (20) INIT('1RANGE ANALYSIS.'),
+            3 TWHEAD_HEADA CHAR (75),
+            3 TWFILE_HEADA CHAR (11) INIT('      DATE'),
+            3 TWDATE_HEADA CHAR (9),
+            3 TWFILB_HEADA CHAR (11) INIT('      PAGE'),
+            3 TWPAGE_HEADA PIC 'ZZZ9BBB',
+
+          1 TWHEADB,
+            3 TWBYTE_HEADB CHAR (1)  INIT('0'),
+            3 TWHED1_HEADB CHAR (60),
+            3 TWFILA_HEADB CHAR (42) INIT
+                   ('             RANGE ANALYSIS FOR VARIABLE: '),
+            3 TWVARB_HEADB CHAR (30),
+
+          1 TWHEADC,
+            3 TWFILA_HEADC CHAR (73)  INIT('0'),
+            3 TWFILB_HEADC CHAR (60)
+                           INIT ('-----------CUMULATIVE-----------'),
+
+          1 TWHEADD,
+            3 TWFILA_HEADD CHAR (32)  INIT('            RANGE'),
+            3 TWFILB_HEADD CHAR (41)
+                           INIT (' ENTRIES    %          VALUE   %'),
+            3 TWFILC_HEADD CHAR (60)
+                           INIT ('ENTRIES    %           VALUE   %'),
+
+          1 TWLINEA,
+            3 TWBYTE_LINEA CHAR(1) INIT('0'),
+            3 TWRNGE_LINEA CHAR(32),
+            3 TWENTA_LINEA PIC 'ZZZZZZ9',
+            3 TWEPCA_LINEA PIC 'ZZZZ9V.99',
+            3 TWVALA_LINEA PIC 'ZZZZZZZZZZ9-',
+            3 TWVPCA_LINEA PIC 'ZZZ9V.99-',
+            3 TWENTB_LINEA PIC 'ZZZZZZZZZZZ9',
+            3 TWEPCB_LINEA PIC 'ZZZZ9V.99',
+            3 TWVALB_LINEA PIC 'ZZZZZZZZZZZ9-',
+            3 TWVPCB_LINEA PIC 'ZZZ9V.99-',
+            3 TWFILA_LINEA CHAR(24) INIT(' '),
+
+
+          1 TWARRAY (21),
+            3 TWARQTY (2) FIXED (7)    INIT((42)0),
+            3 TWARVAL (2) FIXED (15,4) INIT((42)0),
+            3 TWARNGE      FIXED (11),
+
+          TW80SW  BIT(1) INIT('0'B),
+          TW80VAL FIXED(3),
+
+          TWPRRA CHAR(27),
+          1 TWPRA   DEFINED TWPRRA,
+            3 TWPRAX CHAR(16),
+            3 TWPRAY PIC 'ZZZZZZZZZ9-',
+          TWPRRB CHAR(27),
+          1 TWPRB   DEFINED TWPRRB,
+            3 TWPRBX PIC 'ZZZZZZZZZ9-',
+            3 TWPRBY CHAR (5),
+            3 TWPRBZ PIC 'ZZZZZZZZZ9-',
+          TWPRRC CHAR(27),
+          1 TWPRC   DEFINED TWPRRC,
+            3 TWPRCX PIC 'ZZZZZZZZZ9-',
+            3 TWPRCY CHAR(16),
+
+          TWPAGE    FIXED(3) INIT(0),
+          TWSUBSW   BIT(1)   INIT('0'B),
+          TWRNGES   FIXED(3) INIT(0),
+
+          TWINTPCT FIXED (7,3),
+          TWTOTENT FLOAT DECIMAL (16),
+          TWTOTVAL FLOAT DECIMAL (16),
+          TWCUMENT FLOAT DECIMAL (16),
+          TWCUMVAL FLOAT DECIMAL (16),
+          TWINTENT FLOAT DECIMAL (16),
+          TWINTVAL FLOAT DECIMAL (16);
+
+
+          DCL
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* NEXT WE HAVE THE VARIOUS AREAS FOR THE REPORT LINES. THERE  */
+     /* ARE FOUR OF THESE, THE THREE HEADING LINES (HEADA, HEADBX,  */
+     /* AND HEADCX), AND ONE 'GENERALISED' DETAIL LINE, LINEA.      */
+     /* 'CNT_LINE' IS THE POSITION ON THE LINE OF THE RECORD COUNT, */
+     /* WHEN PRINTED.                                               */
+     /*                                                             */
+     /* *********************************************************** */
+
+          1 HEADA,
+            3 BYTE_HEADA CHAR (20) INIT ('1'),
+            3 HEAD_HEADA CHAR (75),
+            3 FILE_HEADA CHAR (11) INIT ('     DATE'),
+            3 DATE_HEADA CHAR (9),
+            3 FILB_HEADA CHAR (11) INIT ('     PAGE'),
+            3 PAGE_HEADA PIC 'ZZZ9BBB',
+
+          1 HEADBX CHAR (133),
+          1 HEADB  DEFINED HEADBX,
+            3 BYTE_HEADB CHAR (1),
+            3 HED1_HEADB CHAR (75),
+            3 HED2_HEADB CHAR (57),
+
+          1 HEADCX CHAR (133),
+          1 HEADC  DEFINED HEADCX,
+            3 BYTE_HEADC CHAR (1),
+            3 HED1_HEADC CHAR (75),
+            3 HED2_HEADC CHAR (57),
+
+          1 LINEA,
+            3 BYTE_LINE  CHAR (1) INIT (' '),
+            3  KEY_LINE  CHAR (36),
+            3 NAME_LINE  CHAR (26),
+            3 VALUEX_LINE CHAR (70),
+
+          CNT_LINE PIC 'ZZZZ9BB' DEFINED LINEA POSITION (57),
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* THE FIVE VALUES TO BE PRINTED ARE RIGHT-ALIGNED ON THE      */
+     /* SIGN, AND CAN HAVE THE DECIMAL POINT IN VARYING POSITIONS   */
+     /* ALONG THE VALUE (MAX = 4D.P.S, MIN = NONE). THE 'LVAL'      */
+     /* FIELDS ARE USED TO PUT THE VALUES IN THE CORRECT PLACE ON   */
+     /* THE PRINT LINE.                                             */
+     /*                                                             */
+     /* *********************************************************** */
+
+          1 VALUES_LINE DEFINED LINEA POSITION (64),
+            3 VAL_LINE (5) CHAR(14),
+
+          LVALX CHAR (16),
+          LVAL PIC 'ZZZZZZZZZZZV9999-' DEFINED LVALX,
+          1 LVAL_FIL DEFINED LVALX,
+            3 LVAL_UNITS CHAR (11),
+            3 LVAL_DECS  CHAR (4),
+            3 LVAL_SIGN  CHAR (1),
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* THE 'DATE' NAMES FOLLOWING ARE USED TO TRANSLATE THE IBM    */
+     /* DATE FORMAT YYMMDD INTO THE MORE READABLE FORM  DD MMM YY.  */
+     /*                                                             */
+     /* *********************************************************** */
+
+          1 XDATE    CHAR (6),
+          1 XDTE     DEFINED XDATE,
+            3 XYEAR  CHAR (2),
+            3 XMONTH PIC '99',
+            3 XDAY   CHAR (2),
+          1 YDATE     CHAR (9),
+          1 YDTE     DEFINED YDATE,
+            3 YDAY   CHAR (2),
+            3 YFILA  CHAR (1),
+            3 YMONTH CHAR (3),
+            3 YFILB  CHAR (1),
+            3 YYEAR  CHAR (2),
+          1 ZMONTH   (12) CHAR (3) INIT ('JAN','FEB','MAR','APR',
+                                         'MAY','JUN','JUL','AUG',
+                                         'SEP','OCT','NOV','DEC'),
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* FINALLY, AS FAR AS PRINTING GOES, SOME MISCELLANEOUS FIELDS */
+     /*                                                             */
+     /*   BLANKLINE - WHEN NECESSARY TO SPACE OUT LINES, AND ALSO   */
+     /*               USED TO PRINT THE CONTROL CARDS ON INPUT.     */
+     /*   KEYX_LINE - FOR PACKING THE FOUR VARIABLE-LENGTH KEYS.    */
+     /*   CBYT      - FOR HOLDING THE REQUESTED SPACING OF LINES.   */
+     /*   LINECT    - )                                             */
+     /*   PAGENO    - ) TO CONTROL PAGE SKIPPING.                   */
+     /*                                                             */
+     /* *********************************************************** */
+
+          1 BLANKLINE CHAR (133) INIT (' '),
+          KEYX_LINE CHAR(36) VARYING STATIC,
+          CBYT    CHAR(1) INIT(' '),
+          LINECT FIXED (3) INIT (60),
+          PAGENO PIC '9999';
+
+
+          DCL
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* THE VARIOUS DATA NAMES REQUIRED BY THE PL/1 SORT INTERFACE: */
+     /*                                                             */
+     /*   SORTSW    - SWITCH WHETHER THE SORT IS REQUIRED OR NOT.   */
+     /*   SRTCNTIN  - ) COUNTS OF THE RECORDS INTO AND OUT OF THE   */
+     /*   SRTCNTOUT - ) SORT, SO THAT THE 'SORTOUT' PROCEDURE CAN   */
+     /*                 NOTIFY THE SORT WHEN NO MORE RECORDS ARE    */
+     /*                 REQUIRED.                                   */
+     /*   COREVAL   - ) FIELDS USED IN CALLING THE SUB-MODULE       */
+     /*   PARM      - ) 'CORECHK', WHICH ASCERTAINS HOW MUCH CORE   */
+     /*                 IS AVAILABLE. THUS A VALUE CAN BE PASSED TO */
+     /*                 THE SORT IN 'SRTCORE', ALLOWING THE PROGRAM */
+     /*                 TO OPTIMISE ON TIME.                        */
+     /*                                                             */
+     /* ALL OTHER DATA NAMES IN THIS SECTION ARE USED EXACTLY AS    */
+     /* DESCRIBED IN THE SORT INTERFACE SECTION (PAGE 184) OF THE   */
+     /* PL/1 PROGRAMMER'S GUIDE.                                    */
+     /*                                                             */
+     /* *********************************************************** */
+
+          SORTSW BIT(1) INIT('0'B),
+          IHESRTD ENTRY (CHAR(76),CHAR(35),FIXED BIN(31),
+                         FIXED BIN(31),ENTRY,ENTRY),
+          IHESARC ENTRY (FIXED BIN(31)),
+          SRTIN   ENTRY RETURNS (CHAR(600) VARYING),
+          SRTOUT  ENTRY,
+          RETCOD  FIXED BIN(31),
+          SRTCNTIN  FIXED(7) INIT(0),
+          SRTCNTOUT FIXED(7) INIT(0),
+          SRTCORE FIXED BIN(31),
+          COREVAL PIC'99999999',
+          PARM    FIXED(1) BASED (Q),
+          SRTFLD  CHAR(76),
+          SRTYPE  CHAR(35) INIT(' RECORD TYPE=V,LENGTH=(600,,,,100) ');
+
+
+          DCL
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* FIELDS WHICH ARE USED IN THE USER-CODED ARITHMETIC SECTION  */
+     /* OF THE PROGRAM. THESE ARE:                                  */
+     /*                                                             */
+     /*   VALUES    - OF THE 27-FOLD ARRAY, ELEMENTS 1 TO 9 ARE FOR */
+     /*               FILE VALUES (FIELDS F1 TO F9), ELEMENTS 10 TO */
+     /*               18 ARE FOR EXTRA FILE VALUES (G1 TO G9),      */
+     /*               ELEMENTS 19 TO 27 ARE FOR ARITHMETIC RESULTS  */
+     /*               (W1 TO W9).                                   */
+     /*   VALUE   |                                                 */
+     /*   VALUE1  |                                                 */
+     /*   VALUE2  |                                                 */
+     /*   VALUED  | - TEMPORARY WORK AREAS.                         */
+     /*   VALUEP  |                                                 */
+     /*   VALIT     - 22-FOLD ARRAY FOR CONSTANT LITERALS.          */
+     /*   CONST     - A POINTER TO THE LAST-USED IN THE CONSTANTS   */
+     /*               SECTION OF THE ARRAY 'VALIT'.                 */
+     /*   FLDDES    - A STRING USED IN CONJUNCTION WITH THE BUILTIN */
+     /*               FUNCTION INDEX TO TRANSLATE, FOR EXAMPLE, THE */
+     /*               FIELD NAME 'W1' INTO THE SUBSCRIPT 19.        */
+     /*   ARITHMETIC- AN ARRAY CONTAINING THE TRANSLATED VERSION OF */
+     /*               THE USER-CODED ARITHMETIC. FOR EACH GR07 CARD */
+     /*               THERE IS ONE ELEMENT IN THIS ARRAY.           */
+     /*   ARIFD     - THE RECEIVING FIELD (WX) IN SUBSCRIPT FORM.   */
+     /*   ARIOP   - ) ONE OF EACH OF THESE THREE FOR EACH OPERATOR  */
+     /*   ARISN   - ) ACROSS THE GR07 CARD. 'OP' IS ONE OF +,-,*,/, */
+     /*   ARINO   - ) 'SN' IS '-' IF THIS OPERAND HAD A MINUS       */
+     /*               PREFIX, AND 'NO' IS THE SUBSCRIPT OF THE      */
+     /*               FIELD NUMBER / NUMERIC LITERAL IN 'VALUES'.   */
+     /*   ARICN   - ) SWITCH SET IF OPERAND IS CONSTANT IN 'VALIT'. */
+     /*   ARITT     - SWITCH SET IF ARITHMETIC IS TOTAL-TIME.       */
+     /*   ARILN     - THE NUMBER OF OPERATORS ACROSS THIS CARD.     */
+     /*                                                             */
+     /*   ARIFX     - A TEMPORARY AREA FOR HOLDING FIELD NUMBER.    */
+     /*   NOARI     - THE TOTAL NUMBER OF GR07 CARDS READ.          */
+     /*   NOFLD     - THE TOTAL NUMBER OF GR04 CARDS READ.          */
+     /*   BLARITH - )                                               */
+     /*   BLBYTES - ) THE ARITHMETIC ON A GR07 CARD.                */
+     /*   NBLARI    - THE SAME, WITH ALL BLANKS STRIPPED OUT, AND   */
+     /*               PREFIXED WITH A '+'. (FIRST OPERATOR).        */
+     /*                                                             */
+     /* *********************************************************** */
+
+          VALUES (0:27,6) FIXED(15,4) INIT((168)0),
+          VALUE         FLOAT(6),
+          VALUE1        FLOAT(6),
+          VALUE2        FLOAT(6),
+          VALUED        FIXED(15,4),
+          VALUEP        FIXED(15,4),
+          VALIT (23)    FIXED(15,4) INIT((23)0),
+          CONST         FIXED(3) INIT(0),
+          FLDDES CHAR(54) INIT
+    ('F1F2F3F4F5F6F7F8F9G1G2G3G4G5G6G7G8G9W1W2W3W4W5W6W7W8W9'),
+          1 ARITHMETIC (20),
+            3 ARIFD FIXED BIN(3),
+            3 ARIOP (20) CHAR (1),
+            3 ARISN (20) CHAR (1),
+            3 ARINO (20) FIXED BIN(3),
+            3 ARICN (20) BIT(1),
+            3 ARITT BIT(1),
+            3 ARILN FIXED(3) INIT((20)0),
+          ARIFX CHAR (2),
+          NOARI FIXED (3) INIT(0),
+          NOFLD FIXED (3) INIT(0),
+          BLARITH CHAR (74),
+          BLBYTES (74) CHAR(1) DEFINED BLARITH,
+          NBLARI  CHAR(75) VARYING STATIC;
+
+
+          DCL
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* VARIOUS ARRAYS AND ACCUMULATORS USED IN THE PROGRAM.        */
+     /*                                                             */
+     /*   ARRAY1  - USED TO STORE THE SELECTION TESTS ON THE GR02   */
+     /*             CARDS. MAX 20 CARDS, UP TO 4 TESTS ON EACH.     */
+     /*             TEST VALUE IS EITHER CHARACTER, WHEN ARN = 1    */
+     /*             AND ARLIT IS USED, OR NUMERIC, ARN = 0 AND      */
+     /*             ARNUM HOLDS THE VALUE.                          */
+     /*                                                             */
+     /*   ARRAY2  - NO LONGER EXISTS.                               */
+     /*                                                             */
+     /*   ARRAY3  - HOLDS DATA FOR THE 4 KEYS FROM THE GR03 CARD.   */
+     /*                                                             */
+     /*   ARRAY4  - HOLDS THE SELECTED RECORD COUNT FOR EACH OF THE */
+     /*             FIVE TOTALS (4 KEYS & GRAND).                   */
+     /*                                                             */
+     /*   ARRAY5  - HOLDS THE FIELD DESCRIPTIONS FROM THE POSSIBLE  */
+     /*             EIGHTEEN GR04 CARDS.                            */
+     /*                                                             */
+     /*   ARRAY6  - HOLDS THE 5 FIELD NAMES THAT ARE TO BE PRINTED. */
+     /*                                                             */
+     /* *********************************************************** */
+
+          1 ARRAY1 (20,4),
+            3 ARPOS FIXED (3),
+            3 ARLEN FIXED (2),
+            3 ARPAK CHAR (1),
+            3 ARTYP CHAR (2) INIT((80)(2)' '),
+            3 ARN   BIT (1),
+            3 ARLIT CHAR (11),
+            3 ARNUM FIXED (11),
+
+          1 ARRAY3 (4),
+            3 ARPOS_GR03 FIXED (3),
+            3 ARLEN_GR03 FIXED (2),
+            3 ARPAK_GR03 CHAR (1),
+            3 ARTOT_GR03 CHAR (1),
+            3 ARPAG_GR03 CHAR (1),
+            3 ARNAM_GR03 FIXED (3),
+            3 ARNML_GR03 FIXED (3),
+
+          1 ARRAY4 (5),
+            3 ARCNT FIXED(5) INIT((5)0),
+
+          1 ARRAY5 (18),
+            3 ARFLD_GR04 CHAR (2),
+            3 ARPOS_GR04 FIXED (3),
+            3 ARLEN_GR04 FIXED (2),
+            3 ARPAK_GR04 CHAR (1),
+            3 ARDEC_GR04 FIXED (1),
+
+          1 ARRAY6 (5),
+            3 ARFLD_GR08 FIXED (3),
+            3 ARDEC_GR08 FIXED (1);
+
+
+          DCL
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* THE NEXT BATCH OF DATA-NAMES ARE USED FOR UNPACKING AND     */
+     /* FORMATTING 1) ALPHA / NUMERIC LITERALS FROM THE GR02 CARDS  */
+     /*            2) PACKED / KEX KEYS AND VALUES FROM THE FILE.   */
+     /*                                                             */
+     /* *********************************************************** */
+
+          XLIT  CHAR (11),
+          NLIT  PIC '9999999999R' DEFINED XLIT,
+          XREC  CHAR (11),
+          NREC  PIC '9999999999R' DEFINED XREC,
+          ZREC  CHAR (6),
+          PREC  FIXED (11) BASED (P),
+          PLIT FIXED (11),
+
+ /* *************************************************************** */
+ /*                                                                 */
+ /*      THE FOLLOWING FIELDS ARE USED TO ACCUMULATE THE            */
+ /*       NUMBER OF ERRORS ENCOUNTERED, AND TO INDICATE             */
+ /*       THESE AT THE END OF THE REPORT.                           */
+ /*                                                                 */
+ /* *************************************************************** */
+
+      ERRORSW BIT(1) INIT('0'B),
+         LITESW BIT(1) INIT('0'B),
+          LIT20SW BIT(1) INIT('0'B),
+          ERR0DIV BIT(1) INIT('0B'),
+          ZERO_DIVIDE_COUNT FIXED (15) INIT(0),
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* FINALLY, A MISCELLANY OF ODD DATA NAMES WITH VARIOUS USES.  */
+     /*                                                             */
+     /*   DREC    - ) USED TO POSITION THE DECIMAL POINT            */
+     /*   DECR    - ) IN THE PRINTED VALUES.                        */
+     /*   ABIT      - HOLDS THE CURRENT VALUE OF THE GR02           */
+     /*               ALPHA/NUMERIC SWITCH ARN(I,J) IN ARRAY1.      */
+     /*   LTOTSW    - SET ON WHEN A TOTAL HAS JUST BEEN PRINTED,    */
+     /*               OVERRIDING LINE SPACING ON NEXT DETAIL LINE.  */
+     /*   EOFSW     - IS SET ON ENDFILE OF THE INPUT DATA FILE.     */
+     /*   NAMESW    - IS SET ON IF THERE IS A GR05 CARD.            */
+     /*   NAMEPOS - )                                               */
+     /*   NAMELEN - ) ARE THE DETAILS ON THAT CARD.                 */
+     /*   LASTREC   - IS NEEDED FOR THE NAMES ON A TOTAL LINE, AND  */
+     /*               HOLDS THE PREVIOUSLY-PROCESSED RECORD.        */
+     /*   KEY1,2..  - ARE THE FOUR CURRENT KEYS.                    */
+     /*   LASTKEY1..- ARE THE FOUR PREVIOUS KEYS.                   */
+     /*   PRIME     - USED TO TEST FOR ALPHA LITERALS ON GR02 CARD. */
+     /*   LABL      - THE GR02 TEST, HOLDS ONE OF EQ, NE, LT, GT.   */
+     /*   FIRST_TIME                                                */
+     /*   NOKEYS    - NUMBER OF KEYS ON THE GR03 CARD.              */
+     /*   NOVALS    - NUMBER OF VALUES TO BE PRINTED.               */
+     /*   MIDVAL  - )                                               */
+     /*   MIDVAX  - ) TEMPORARY WORK AREAS.                         */
+     /*   TN        - USED TO OVERCOME A BUG IN PL/1 WHEN           */
+     /*               EXPONENTIATING HALFWORD BINARY NUMBERS        */
+     /*               WITH SUBSCRIPTED EXPONENTS.                   */
+     /*   REXIT     - LABEL FOR CALLING MAJOR SUBROUTINES.          */
+     /*   LEXIT     - LABEL FOR CALLING NESTED SUBROUTINES.         */
+     /*                                                             */
+     /* *********************************************************** */
+
+          DREC CHAR (15),
+          DECR PIC '999999999V999999' DEFINED DREC,
+          ABIT BIT (1),
+          LTOTSW  BIT(1),
+          EOFSW   BIT(1) INIT('0'B),
+          NAMESW  BIT(1) INIT('0'B),
+          NAMEPOS FIXED(3),
+          NAMELEN FIXED(2),
+
+          LASTREC CHAR(600),
+          KEY1     CHAR (28) VARYING STATIC,
+          KEY2     CHAR (28) VARYING STATIC,
+          KEY3     CHAR (28) VARYING STATIC,
+          KEY4     CHAR (28) VARYING STATIC,
+          LASTKEY1 CHAR (28) VARYING STATIC,
+          LASTKEY2 CHAR (28) VARYING STATIC,
+          LASTKEY3 CHAR (28) VARYING STATIC,
+          LASTKEY4 CHAR (28) VARYING STATIC,
+
+          PRIME CHAR (1) INIT (''''),
+          LABL  CHAR (2),
+          FIRST_TIME BIT (1) INIT ('1'B),
+
+          NOKEYS FIXED (1) INIT (0),
+          NOVALS FIXED (1) INIT (0),
+          MIDVAL FIXED (15,4),
+          MIDVAX FIXED (15,5),
+          TN FIXED (3) INIT (10),
+
+          LEXIT LABEL,
+          REXIT LABEL;
+
+          P = ADDR(ZREC);
+                                        /* CONVERT THE IBM DATE     */
+                                        /* INTO REPORT FORMAT       */
+          XDATE  = DATE;
+          YYEAR  = XYEAR;
+          YDAY   = XDAY;
+          YMONTH = ZMONTH(XMONTH);
+          YFILA  = ' ';
+          YFILB  = ' ';
+          DATE_HEADA = YDATE;
+          TWDATE_HEADA = YDATE;
+          TWPRAX = '      LESS THAN';
+          TWPRBY = '  TO';              /* RANGE ANALYSIN LINES.    */
+          TWPRCY = '  AND OVER';
+
+
+          PAGENO = 0;
+                                        /* ICARD IS A COUNT OF THE  */
+                                        /* NUMBER OF GR02 (SELECT)  */
+                                        /* CARDS READ.              */
+          ICARD = 0;
+                                        /* ISW IS USED TO CALL      */
+                                        /* SELECTED SUBMODULES OF   */
+                                        /* PROCEDURE SRTOUT AFTER   */
+                                        /* END-OF-FILE IS REACHED.  */
+          ISW = 0;
+
+          HEAD_HEADA = ' ';
+          HEADBX = ' ';
+          HEADCX = ' ';
+
+          KEY1 = ' ';
+          KEY2 = ' ';
+          KEY3 = ' ';
+          KEY4 = ' ';
+
+                                        /* INITIALISE, OPEN FILES,  */
+                                        /* SET CONDITIONS.          */
+          ON ENDFILE(SYSIN) GO TO E1;
+          OPEN FILE(SYSIN) INPUT;
+          OPEN FILE(PRINT) OUTPUT;
+                                        /* HEADING FOR LISTING OF   */
+                                        /* CONTROL CARDS.           */
+          BLANKLINE = '1CONTROL CARD LISTING';
+          WRITE FILE(PRINT) FROM(BLANKLINE);
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* IN THIS FIRST SECTION OF MAINSTREAM LOGIC, THE CONTROL      */
+     /* CARDS ARE READ AND PROCESSED. THE ACTUAL READ IS IN MODULE  */
+     /* R1, WHICH ALSO LISTS THE CARDS ON ENTRY.                    */
+     /*     THE STATEMENTS INCLUDED IN THE 'A' LABELS READ THROUGH  */
+     /* THE GR01 CARDS AND SET UP THE HEADING LINES FOR THE REPORT. */
+     /*                                                             */
+     /* *********************************************************** */
+
+          REXIT = A1;
+          GO TO R1;
+
+ A1:      IF DES_GR01 ^= 'GR01' THEN GO TO B2;
+          IF BYTE_GR01 = '2' THEN CBYT = '0';
+          IF BYTE_GR01 = '3' THEN CBYT = '-';
+          HEAD_HEADA = TITLE_GR01;
+          TWHEAD_HEADA = TITLE_GR01;
+          REXIT = A2;
+          GO TO R1;
+
+ A2:      IF DES_GR01 ^= 'GR01' THEN GO TO B2;
+          IF BYTE_GR01 = '2' THEN BYTE_HEADB = '0';
+          IF BYTE_GR01 = '3' THEN BYTE_HEADB = '-';
+          HED1_HEADB = TITLE_GR01;
+          REXIT = A3;
+          GO TO R1;
+
+ A3:      IF DES_GR01 ^= 'GR01' THEN GO TO B2;
+          HED2_HEADB = TITLE_GR01;
+          REXIT = A4;
+          GO TO R1;
+
+ A4:      IF DES_GR01 ^= 'GR01' THEN GO TO B2;
+          IF BYTE_GR01 = '2' THEN BYTE_HEADC = '0';
+          IF BYTE_GR01 = '3' THEN BYTE_HEADC = '-';
+          HED1_HEADC = TITLE_GR01;
+          REXIT = A5;
+          GO TO R1;
+
+ A5:      IF DES_GR01 ^= 'GR01' THEN GO TO B2;
+          HED2_HEADC = TITLE_GR01;
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* THIS SECOND SECTION, WITH LABELS 'B', READS THE GR02 CARDS  */
+     /* AND SETS UP THE RELEVANT DATA IN ARRAY1.                    */
+     /*                                                             */
+     /* *********************************************************** */
+
+ B1:      REXIT = B2;
+          GO TO R1;
+
+ B2:      IF DES_GR02 ^= 'GR02' THEN GO TO C1;
+                                        /* AUGMENT COUNT OF GR02'S  */
+          ICARD = ICARD + 1;
+                                        /* SCAN ACROSS THE 4 TESTS, */
+                                        /* MOVING THE DATA, IF      */
+                                        /* THERE, INTO THE ARRAY.   */
+          DO I = 1 TO 4;
+             IF CTYP_GR02(I) = '  ' THEN GO TO B1;
+             ARPOS(ICARD,I) = CPOS_GR02(I);
+             ARLEN(ICARD,I) = CLEN_GR02(I);
+             ARPAK(ICARD,I) = CPAK_GR02(I);
+             ARTYP(ICARD,I) = CTYP_GR02(I);
+                                        /* FIND OUT IF CONSTANT ON  */
+                                        /* CARD IS IN QUOTES OR NOT */
+             XLIT = CLIT_GR02(I);
+             K = INDEX(XLIT,PRIME);
+
+             IF K = 0
+                                        /* IF NOT, MOVE NUMERIC TO  */
+                                        /* 'ARN' & LITERAL TO ARRAY */
+             THEN DO;
+                     ARNUM(ICARD,I) = NLIT;
+                     ARN(ICARD,I) = '0'B;
+                  END;
+                                        /* IF THERE IS A QUOTE,     */
+                                        /* LOCATE THE SECOND ONE    */
+                                        /* AND MOVE THE IN-BETWEEN  */
+                                        /* VALUE TO THE ARRAY.      */
+             ELSE DO;
+                     SUBSTR(XLIT,K,1) = '*';
+                     L = INDEX(XLIT,PRIME);
+                     L1 = K + 1;
+                     L2 = L - K - 1;
+                     ARLIT(ICARD,I) = SUBSTR(XLIT,L1,L2);
+                                        /* SIGNIFY ALPHA IN 'ARN'   */
+                     ARN(ICARD,I) = '1'B;
+                  END;
+          END;
+                                        /* GET NEXT GR02 RECORD.    */
+          GO TO B1;
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* THIS SECTION UNPACKS THE GR03 CARD, UNLOADING THE DATA FOR  */
+     /* THE (UP TO) FOUR KEYS INTO ARRAY3. IT ALSO COUNTS HOW MANY  */
+     /* KEYS ARE IN FACT USED.                                      */
+     /*                                                             */
+     /* *********************************************************** */
+
+ C1:      IF DES_GR03 ^= 'GR03' THEN GO TO D1;
+          DO I = 1 TO 4;
+             ARPOS_GR03(I) = CPOS_GR03(I);
+             ARLEN_GR03(I) = CLEN_GR03(I);
+             ARPAK_GR03(I) = CPAK_GR03(I);
+             ARTOT_GR03(I) = CTOT_GR03(I);
+             ARPAG_GR03(I) = CPAG_GR03(I);
+             ARNAM_GR03(I) = CNAM_GR03(I);
+             ARNML_GR03(I) = CNML_GR03(I);
+             IF ARPOS_GR03(I) ^= 0 THEN NOKEYS = NOKEYS + 1;
+          IF CTW8_GR03 (1) ^= ' ' THEN TWSUBSW = '1'B;
+          END;
+
+          REXIT = D1;
+          GO TO R1;
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* THIS SECTION UNPACKS THE GR04 CARDS, PUTTING THE DATA FOR   */
+     /* THE (UP TO) NINE FIELDS INTO ARRAY5. IT COUNTS HOW MANY     */
+     /* FIELDS ARE SPECIFIED.                                       */
+     /*                                                             */
+     /* *********************************************************** */
+
+ D1:      IF DES_GR04 ^= 'GR04' THEN GO TO D5;
+          NOFLD = NOFLD + 1;
+          ARPOS_GR04 (NOFLD) = CPOS_GR04;
+          ARLEN_GR04 (NOFLD) = CLEN_GR04;
+          ARPAK_GR04 (NOFLD) = CPAK_GR04;
+          ARDEC_GR04 (NOFLD) = CDEC_GR04;
+          ARFLD_GR04 (NOFLD) = CFLD_GR04;
+
+          REXIT = D1;
+          GO TO R1;
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* IF A GR05 CARD IS READ, 'NAMESW' IS SET TO SIGNIFY PRINTING */
+     /* OF ALL DETAIL RECORDS, AND THE DATA FOR THE DETAIL NAME IS  */
+     /* STORED.                                                     */
+     /*                                                             */
+     /* *********************************************************** */
+
+ D5:      IF DES_GR05 ^= 'GR05' THEN GO TO D7;
+          NAMESW = '1'B;
+          NAMEPOS = CPOS_GR05;
+          NAMELEN = CLEN_GR05;
+
+          REXIT = D7;
+          GO TO R1;
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* IF A GR06 CARD IS READ, 'SORTSW' IS SET TO SIGNIFY THAT THE */
+     /* SELECTED RECORDS HAVE TO BE SORTED, AND THE 'SORT FIELDS='  */
+     /* DATA IS STORED TO PASS TO THE SORT INTERFACE.               */
+     /*                                                             */
+     /* *********************************************************** */
+
+ D7:      IF DES_GR06 ^= 'GR06' THEN GO TO D8;
+          SORTSW = '1'B;
+          SRTFLD = SORT_GR06;
+
+          REXIT = D8;
+          GO TO R1;
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* THE NEXT SECTION, THRU TO LABEL D89, DEALS WITH UNPACKING   */
+     /* THE ARITHMETIC CARDS GR07. EACH FIELD NAME HAS TO BE        */
+     /* TRANSLATED INTO A SUBSCRIPT FOR THE ARRAY 'VALUES', EACH    */
+     /* LITERAL CONSTANT MUST BE PLACED IN THE ARRAY 'VALIT', & THE */
+     /* WHOLE ARITHMETIC STATEMENT CODED INTO THE ARRAY             */
+     /* 'ARITHMETIC'.                                               */
+     /*    FOUR POINTERS, K1 THRU K4, ARE INTRODUCED. K1 WILL POINT */
+     /* TO THE OPERATOR CURRENTLY BEING PROCESSED, K2 TO THE NEXT   */
+     /* ONE (OR OFF THE END OF THE STATEMENT). K3 IS USED TO SKIP   */
+     /* OVER A NEGATIVE PREFIX, AND K4 TO SCAN FOR A DECIMAL POINT  */
+     /* IN A LITERAL CONSTANT.                                      */
+     /*                                                             */
+     /* *********************************************************** */
+
+ D8:      IF DES_GR07 ^= 'GR07' THEN GO TO D9;
+                                        /* AUGMENT COUNT OF GR07'S  */
+          NOARI = NOARI + 1;
+                                        /* SUBSCRIPT OF RECEIVING   */
+                                        /* FIELD & PLACE IN ARRAY.  */
+          J = (INDEX(FLDDES,CFLD_GR07) + 1) / 2;
+          ARIFD(NOARI) = J;
+                                        /* PREFIX STATEMENT WITH +  */
+                                        /* AND STRIP OUT BLANKS.    */
+          BLARITH = CARI_GR07;
+          NBLARI = '+';
+          DO J = 1 TO 74;
+             IF BLBYTES(J) ^= ' ' THEN NBLARI = NBLARI || BLBYTES(J);
+          END;
+          IF CTOT_GR07 = ' '            /* SET TOTAL-TIME SWITCH    */
+          THEN ARITT(NOARI) = '0'B;
+          ELSE ARITT(NOARI) = '1'B;
+
+          L = LENGTH(NBLARI);
+          BLARITH = NBLARI;
+                                        /* PUT POINTERS TO FIRST    */
+                                        /* OPERAND, SCAN K2 TO GET  */
+                                        /* TO NEXT ONE.             */
+          K1, K2 = 1;
+ D81:     K2 = K2 + 1;
+                                        /* K2 OFF END OF STATEMENT  */
+          IF K2 > L THEN GO TO D82;
+                                        /* K2 AT NEXT OPERAND.      */
+          IF BLBYTES(K2) = '+' | BLBYTES(K2) = '*' | BLBYTES(K2) = '/'
+          THEN GO TO D82;
+                                        /* (BEWARE OF - PREFIXES).  */
+          IF BLBYTES(K2) = '-' & K2 ^= K1+1
+          THEN GO TO D82;
+          GO TO D81;
+                                        /* POINT K3 AT THE PREFIX.  */
+ D82:     IF BLBYTES(K1+1) = '-' THEN K3 = K1 + 1;
+                                 ELSE K3 = K1;
+                                        /* IS OPERAND A FIELD NAME? */
+          IF BLBYTES(K3+1) = 'F' | BLBYTES(K3+1) = 'W'
+                                 | BLBYTES(K3+1) = 'G'
+          THEN DO;
+                  ARIFX = SUBSTR(BLARITH,K3+1,2);
+                                        /* PUT INTO SUBSCRIPT FORM. */
+                  J = (INDEX(FLDDES,ARIFX) + 1) / 2;
+                  K = ARILN(NOARI) + 1;
+                  ARICN(NOARI,K) = '0'B;     /* SIGNAL VARIABLE     */
+                                        /* AUGMENT COUNTER OF NO.   */
+                                        /* OF OPERTRS IN STATEMENT. */
+ D83:             ARILN(NOARI) = ARILN(NOARI) + 1;
+                  IF K > 20
+                  THEN DO;
+                      LIT20SW = '1'B;
+                      ERRORSW = '1'B;
+                      GO TO D89;
+                  END;
+                  ARINO(NOARI,K) = J;
+                                        /* LOAD OPERAND TO ARRAY.   */
+                  ARIOP(NOARI,K) = SUBSTR(BLARITH,K1,1);
+                                        /* LOAD PREFIX TO ARRAY.    */
+                  IF K1 = K3 THEN ARISN(NOARI,K) = ' ';
+                             ELSE ARISN(NOARI,K) = '-';
+                  IF K2 < L
+                                        /* MORE OPERATIONS. SET K1  */
+                                        /* TO NEXT ONE & REPEAT.    */
+                  THEN DO;
+                          K1 = K2;
+                          GO TO D81;
+                       END;
+                                        /* END OF CARD. GET NEXT.   */
+                  GO TO D89;
+               END;
+                                        /* ENTRY HERE IF OPERAND    */
+                                        /* NUMERIC LITERAL.         */
+          DECR = 0;
+                                        /* SCAN FOR DECIMAL POINT.  */
+          K4 = 0;
+          DO K = K3 TO K2;
+             IF BLBYTES(K) = '.' THEN K4 = K;
+          END;
+                                        /* PUT LITERAL INTO 'DREC'. */
+          IF K4 = 0
+          THEN SUBSTR(DREC,11+K3-K2,K2-K3-1) =
+                         SUBSTR(BLARITH,K3+1,K2-K3-1);
+          ELSE DO;
+                  SUBSTR(DREC,11+K3-K4,K4-K3-1) =
+                         SUBSTR(BLARITH,K3+1,K4-K3-1);
+                  SUBSTR(DREC,10,K2-K4-1) =
+                         SUBSTR(BLARITH,K4+1,K2-K4-1);
+               END;
+                                        /* FIND NEXT SLOT IN        */
+                                        /* 'VALUES', INSERT LITERAL */
+                                        /* & SET SUBSCRIPT IN J.    */
+         DO J = 1 TO CONST;
+               IF VALIT (J) = DECR
+               THEN GO TO D85;
+         END;
+          CONST = CONST + 1;
+          VALIT(CONST) = DECR;
+         J = CONST;
+         IF J > 22
+         THEN DO;
+              J = 23;
+              CONST = 22;
+             ERRORSW = '1'B;
+             LITESW  = '1'B;
+         END;
+ D85:    K = ARILN(NOARI) + 1;
+         IF K > 20
+         THEN DO;
+             LIT20SW = '1'B;
+             ERRORSW = '1'B;
+             GO TO D83;
+         END;
+          ARICN(NOARI,K) = '1'B;             /* SIGNAL CONSTANT LIT.*/
+                                        /* STORE OPERATION IN       */
+                                        /* ARITHMETIC ARRAY.        */
+          GO TO D83;
+
+ D89:
+          REXIT = D8;
+          GO TO R1;
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* THE LAST REMAINING CARD TYPE IS THE 'GR08', PRINT REQUEST   */
+     /* CARD. WE PLACE THE VALUES FROM THE CARD INTO ARRAY6,        */
+     /* KEEPING A COUNT OF HOW MANY VALUES ARE REQUESTED PRINTED.   */
+     /*                                                             */
+     /* *********************************************************** */
+
+ D9:      IF DES_GR08 ^= 'GR08' THEN GO TO D92;
+          DO I = 1 TO 5;
+             J = (INDEX(FLDDES,CFLD_GR08(I)) + 1) / 2;
+             ARFLD_GR08(I) = J;
+             ARDEC_GR08 (I) = CDEC_GR08(I);
+             IF CFLD_GR08 (I) ^= ' ' THEN NOVALS = NOVALS + 1;
+          END;
+
+          IF CTW8_GR08 ^= ' '
+          THEN DO;
+                  J = (INDEX(FLDDES,CTW8_GR08) + 1) / 2;
+                  TW80VAL = J;
+                  TW80SW  = '1'B;
+                  TWVARB_HEADB = CDES_GR08;
+               END;
+          REXIT = D92;
+          GO TO R1;
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* LATE ADDITION TO THE PROGRAM. THE NEXT BLOCK OF CODING      */
+     /* READS THE 'GR09' CARDS, COUNTS THEM, AND STORES THE VALUES  */
+     /* IN THE TW-ARRAY.                                            */
+     /*                                                             */
+     /* *********************************************************** */
+
+ D92:     IF DES_GR09 ^= 'GR09' THEN GO TO E1;
+          TWRNGES = TWRNGES + 1;
+          TWARNGE(TWRNGES) = CVAL_GR09;
+
+          REXIT = D92;
+          GO TO R1;
+
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* THE NEXT 20-ODD LINES OF CODING DO THE MAJOR PROCESSING OF  */
+     /* THE FILE, BY CALLING SEPARATLY THE INTERNAL PROCEDURES      */
+     /* SRTIN, WHICH READS THE INPUT FILE AND PERFORMS THE          */
+     /* SELECTION TESTS ON EACH RECORD, AND SRTOUT, WHICH PROCESSES */
+     /* THE RECORDS, TAKING OFF THE VALUES, MATCHING KEYS, AND      */
+     /* PRINTING THE REPORT.                                        */
+     /*                                                             */
+     /*     THERE ARE TWO POSSIBLE INVOCATIONS:                     */
+     /*                                                             */
+     /*   1) IF A SORT IS REQUIRED (SORTSW IS ON BY A GR06 CARD),   */
+     /*      THE PROCEDURE IHESRTD IS INVOKED, WHICH CALLS RECORDS  */
+     /*      FROM SRTIN UNTIL ENDFILE, SORTS THEM, AND THEN PASSES  */
+     /*      THEM ONE AT A TIME TO SRTOUT.                          */
+     /*                                                             */
+     /*   2) IF SORTSW HAS NOT BEEN SET, WE GO DOWN TO LABEL E15,   */
+     /*      AND LOOP THROUGH 3 INSTRUCTIONS, GETTING RECORDS ONE   */
+     /*      AT A TIME FROM SRTIN AND PASSING THEM TO SRTOUT.       */
+     /*                                                             */
+     /*     IN EITHER CASE, WHEN ALL PROCESSING HAS BEEN FINISHED,  */
+     /* WE GO TO THE LABEL Z1 FOR OUR END-OF-JOB CLEARUP.           */
+     /*                                                             */
+     /* *********************************************************** */
+
+ E1:      CLOSE FILE(SYSIN);
+                                                /* THE FOLLOWING CODE */
+                                                /* PRINTS A PARROT AT */
+                                                /* THE HEAD OF THE    */
+                                                /* REPORT             */
+          OPEN FILE(SYSLIN) INPUT;
+          ON ENDFILE(SYSLIN) GO TO ENDLOGO;
+ LOGO:    READ FILE(SYSLIN) INTO(BLANKLINE);
+          WRITE FILE(PRINT) FROM(BLANKLINE);
+          GO TO LOGO;
+ ENDLOGO: CLOSE FILE(SYSLIN);
+          BLANKLINE = '0                   '
+                      || HEAD_HEADA
+                      || FILE_HEADA
+                      || DATE_HEADA;
+          WRITE FILE(PRINT) FROM(BLANKLINE);
+
+          OPEN FILE(SYSUT1) INPUT;
+          IF TW80SW THEN OPEN FILE(TW80) OUTPUT;
+                                        /* RESET BLANK LINE HAVING  */
+                                        /* FINISHED PRINTING CARDS. */
+          BLANKLINE = ' ';
+
+          IF SORTSW
+                                        /* SORT REQUIRED.           */
+          THEN DO;
+                                        /* ASCERTAIN HOW MUCH CORE  */
+                                        /* IS AVAILABLE FOR SORT.   */
+                  Q = ADDR(COREVAL);
+                  CALL CORECHK(PARM);
+                  SRTCORE = COREVAL;
+                  SRTCORE = SRTCORE - 6144;
+                  CALL IHESRTD(SRTFLD,SRTYPE,SRTCORE,RETCOD,
+                                SRTIN,SRTOUT);
+                  IF RETCOD = 16 THEN PUT SKIP EDIT ('SORT FAILED')(A);
+                  SORTSW = '0'B;
+                                        /* GO TO END-OF-JOB CLEARUP */
+                  GO TO Z1;
+               END;
+                                        /* SORT NOT REQUIRED.       */
+                                        /* LOOP ROUND PROCEDURES.   */
+ E15:     CALL SRTIN;
+          IF EOFSW THEN GO TO Z1;
+          CALL SRTOUT(INREC);
+          GO TO E15;
+
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* THIS SMALL SUBROUTINE MERELY READS IN THE CONTROL CARDS,    */
+     /* PRINTS THEM, AND RETURNS TO THE INVOCATION POINT.           */
+     /*                                                             */
+     /* *********************************************************** */
+
+ R1:      READ FILE(SYSIN) INTO(INCARD);
+          BLANKLINE = ' ' || INCARD;
+          WRITE FILE(PRINT) FROM(BLANKLINE);
+          GO TO REXIT;
+
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* END-OF-JOB CLEARUP ROUTINE. AT THIS POINT WE HAVE JUST      */
+     /* PRINTED THE LAST DETAIL RECORD, BUT HAVE YET TO PRINT THE   */
+     /* TOTALS FOR THE LAST KEY.                                    */
+     /*     WE DO THIS BY CALLING SUBROUTINES OF SRTOUT, USING ISW  */
+     /* TO SIGNIFY THAT WE DO NOT WANT THE COMPLETE PROCESSING OF   */
+     /* THAT PROCEDURE, MERELY PART OF IT.                          */
+     /*                                                             */
+     /*     HAVING PRINTED THE TOTALS FOR THE FOUR KEYS, WE THEN    */
+     /* PRINT A GRAND TOTAL FOR THE FILE, AGAIN USING A SUBROUTINE  */
+     /* OF SRTOUT. THEN WE CLOSE THE FILES AND END THE JOB.         */
+     /*                                                             */
+     /* *********************************************************** */
+
+ Z1:      ISW = 2;
+          CALL SRTOUT (INREC);
+          ISW = 3;
+          CALL SRTOUT (INREC);
+          ISW = 4;
+          CALL SRTOUT (INREC);
+          ISW = 5;
+          CALL SRTOUT (INREC);
+                                        /* SET UP GRAND TOTAL LINE. */
+ Z5:      KEY_LINE  = 'GRAND TOTAL FOR FILE:';
+          NAME_LINE = '*********    COUNT=';
+                                        /* TOTAL RECORD COUNT.      */
+          CNT_LINE = ARCNT (5);
+          BYTE_LINE = '-';
+                                        /* PRINT LINE.              */
+          ISW = 6;
+          CALL SRTOUT (INREC);
+
+          IF TW80SW                     /* OVERALL RANGE ANALYSIS   */
+          THEN DO;                      /*                          */
+                  ISW = 7;              /* SIGNAL TO SRTOUT         */
+                  J = 1;
+                  CALL SRTOUT (INREC);
+               END;
+
+                                     /* TELL OF ERRORS FOUND        */
+      IF ERRORSW
+      THEN DO;
+          BYTE_LINE = '-';
+          KEY_LINE = ' ';
+          NAME_LINE = ' ';
+          VALUEX_LINE = ' ';
+          WRITE FILE(PRINT) FROM(LINEA);
+          KEY_LINE = 'WARNING : ERRORS FOUND';
+          WRITE FILE(PRINT) FROM(LINEA);
+             IF LITESW
+             THEN DO;
+                 BYTE_LINE = ' ';
+                 KEY_LINE = 'TOO MANY NUMERIC LITERALS';
+                 VALUEX_LINE = '( EXCESS FIELDS SET TO 0 )';
+                 WRITE FILE(PRINT) FROM(LINEA);
+             END;
+          BYTE_LINE = ' ';
+             IF LIT20SW
+             THEN DO;
+                 BYTE_LINE = ' ';
+                 KEY_LINE = 'MORE THAN 20 OPERANDS IN 1 GR07';
+                 VALUEX_LINE = '( EXCESS OPERANDS IGNORED )';
+                 WRITE FILE(PRINT) FROM(LINEA);
+             END;
+             IF ERR0DIV
+             THEN DO;
+          KEY_LINE = '  NO. OF ATTEMPTS TO DIVIDE BY 0 :';
+          NAME_LINE = '             COUNT=';
+          VALUEX_LINE = '( RESULT FIELDS SET TO 0 )';
+          CNT_LINE = ZERO_DIVIDE_COUNT;
+          WRITE FILE(PRINT) FROM(LINEA);
+             END;
+      END;
+
+                                        /* CLOSE FILES - END JOB.   */
+ Z6:      CLOSE FILE(SYSUT1);
+          CLOSE FILE(PRINT);
+          IF TW80SW THEN CLOSE FILE(TW80);
+
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* THE NEXT PROCEDURE, SRTIN, READS THROUGH THE INPUT DATA     */
+     /* FILE, AND PERFORMS THE SELECTION TESTS SPECIFIED ON THE     */
+     /* GR02 CARDS.                                                 */
+     /*    THESE LATTER ARE ON AN 'OR' BASIS, WITH THE TESTS ON     */
+     /* EACH CARD BEING 'AND'. THAT IS, IF ANY ONE OF THE SELECTION */
+     /* CARDS OK'S A RECORD, THE RECORD IS ACCEPTED; BUT FOR A      */
+     /* RECORD TO BE OK IT MUST PASS EVERY TEST ON THE CARD.        */
+     /*    SO, THROUGHOUT THE CODING, THE POINTER 'I' IS SCANNING   */
+     /* DOWN THE GR02 CARDS, AND WITHIN EACH CARD, THE POINTER 'J'  */
+     /* SCANS ACROSS THE FOUR TESTS.                                */
+     /*    ON ENDFILE OF THE INPUT DATA, WE EITHER CALL IHESARC,    */
+     /* TO TELL THE SORT THERE ARE NO MORE RECORDS, OR SET EOFSW ON */
+     /* DEPENDING ON WHETHER OR NOT THE RECORDS ARE TO BE SORTED.   */
+     /*                                                             */
+     /* *********************************************************** */
+
+ SRTIN:   PROC RETURNS(CHAR(600) VARYING);
+
+          ON ENDFILE(SYSUT1)
+          BEGIN;
+                IF SORTSW THEN CALL IHESARC(8);
+                          ELSE EOFSW = '1'B;
+                GO TO ENDIN;
+          END;
+
+                                        /* READ NEXT DATA RECORD.   */
+ E2:      READ FILE(SYSUT1) INTO(INREC);
+                                        /* IF NO TESTS, PASS RECORD */
+          IF ICARD = 0 THEN GO TO RETREC;
+                                        /* SCAN THROUGH CARDS       */
+          DO I = 1 TO ICARD;
+                                        /* SCAN TESTS ON CARD.      */
+             DO J = 1 TO 4;
+                                        /* ALL TESTS OK-PASS RECORD */
+                IF ARTYP(I,J) = '  ' THEN GO TO RETREC;
+                                        /* LENGTH & POSN OF TEST.   */
+                L = ARLEN(I,J);
+                M = ARPOS(I,J);
+
+                IF ARPAK(I,J) = 'P'
+                                        /* FIELD ON FILE IS PACKED. */
+                                        /* UNPACK VIA PREC TO NREC. */
+                THEN DO;
+                        PREC = 0;
+                        L1 = 7 - L;
+                        SUBSTR(ZREC,L1,L) = SUBSTR(INREC,M,L);
+                        NREC = PREC;
+                        GO TO E3;
+                     END;
+
+                IF ARN(I,J)
+                                        /* FIELD HEX AND ALPHA,     */
+                                        /* PUT STRAIGHT INTO XREC.  */
+                THEN DO;
+                        XREC = SUBSTR(INREC,M,L);
+                     END;
+                                        /* FIELD HEX AND NUMERIC.   */
+                                        /* RIGHT-ALIGN IN NREC.     */
+                ELSE DO;
+                      XREC = '00000000000';
+                        L1 = 12 - L;
+                        SUBSTR(XREC,L1,L) = SUBSTR(INREC,M,L);
+                     END;
+
+ E3:            ABIT = ARN(I,J);
+                                        /* IF ALPHA, SET TEST VALUE */
+                                        /* IN XLIT. IF NUMERIC, SET */
+                                        /* IT IN PLIT.              */
+                IF ABIT
+                THEN XLIT = ARLIT(I,J);
+                ELSE DO;
+                        PREC = NREC;
+                        PLIT = ARNUM(I,J);
+                     END;
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* AT THIS POINT, THE FILE VALUE IS IN XREC/PREC, AND THE GR02 */
+     /* TEST VALUE IN XLIT/PLIT, DEPENDING ON ALPHA/NUM. WE NOW     */
+     /* PUT THE TEST VALUE (EQ, NE, GT, LT) IN 'LABL' AND MAKE THE  */
+     /* TEST. FOR EXAMPLE, WITH THE 'EQ' TEST (THE OTHERS ARE       */
+     /* ANALOGOUS), LEQ TESTS THE NUMERIC, LEQ1 THE ALPHA VALUES.   */
+     /* IF THE TEST IS PASSED, WE GO TO JEX AND RETURN FOR THE NEXT */
+     /* TEST ON THE CARD. IF FAILED, IEX TAKES US TO THE NEXT CARD. */
+     /*                                                             */
+     /* *********************************************************** */
+
+                LABL = ARTYP(I,J);
+
+                IF LABL = 'EQ' THEN GO TO LEQ;
+                IF LABL = 'NE' THEN GO TO LNE;
+                IF LABL = 'GT' THEN GO TO LGT;
+                IF LABL = 'LT' THEN GO TO LLT;
+
+ LEQ:           IF ABIT THEN GO TO LEQ1;
+                IF PLIT = PREC THEN GO TO JEX;
+               GO TO IEX;
+ LEQ1:          IF XLIT = XREC THEN GO TO JEX;
+               GO TO IEX;
+ LNE:           IF ABIT THEN GO TO LNE1;
+                IF PLIT = PREC THEN GO TO IEX;
+               GO TO JEX;
+ LNE1:          IF XLIT = XREC THEN GO TO IEX;
+               GO TO JEX;
+ LGT:           IF ABIT THEN GO TO LGT1;
+                IF PLIT < PREC THEN GO TO JEX;
+               GO TO IEX;
+ LGT1:          IF XLIT < XREC THEN GO TO JEX;
+               GO TO IEX;
+ LLT:           IF ABIT THEN GO TO LLT1;
+                IF PLIT > PREC THEN GO TO JEX;
+               GO TO IEX;
+ LLT1:          IF XLIT > XREC THEN GO TO JEX;
+               GO TO IEX;
+
+ JEX:        END;
+                                        /* IF WE DROP PAST HERE,    */
+                                        /* ALL 4 TESTS ON CARD OK,  */
+                                        /* SO PASS RECORD OUT.      */
+             GO TO RETREC;
+
+ IEX:     END;
+                                        /* IF WE DROP PAST HERE, NO */
+                                        /* CARD OK'D THE RECORD, SO */
+                                        /* DROP IT & READ THE NEXT. */
+          GO TO E2;
+
+ RETREC:  IF SORTSW
+                                        /* IF SORT, COUNT RECORDS & */
+                                        /* TELL SORT ITS OK.        */
+          THEN DO;
+                  SRTCNTIN = SRTCNTIN + 1;
+                  CALL IHESARC(12);
+               END;
+                                        /* PASS THE RECORD ACROSS.  */
+          RETURN (INREC);
+                                        /* END OF PROCEDURE SRTIN.  */
+ ENDIN:   END SRTIN;
+
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* THE NEXT PROCEDURE, SRTOUT, PROCESSES EACH RECORD PASSED.   */
+     /*                                                             */
+     /* THE MAINSTREAM CODING IS IN LABELS F2 THRU I2, WHICH .....  */
+     /*   1) UNPACKS THE KEYS FROM THE RECORD.                      */
+     /*   2) CHECKS IF THE SAME KEYS AS PREVIOUS RECORD (WITH       */
+     /*      NORMAL FIRST-TIME SAFEGUARDS).                         */
+     /*   3) PRINTS THE PREVIOUS KEYS TOTALS IF THEY DIFFER.        */
+     /*   4) UNPACKS THE VALUE FIELDS FROM THE RECORD.              */
+     /*   5) PERFORMS THE REQUIRED ARITHMETIC ON THESE FIELDS.      */
+     /*   6) PRINTS THE RECORD DETAIL IF REQUIRED.                  */
+     /*                                                             */
+     /* ADDITIONALLY, THERE ARE SEVERAL INTERNAL SUBROUTINES CALLED */
+     /*                                                             */
+     /*   T1    UNPACKS THE KEYS FROM THE FILE.                     */
+     /*   TOTS  SETS UP THE KEY TOTAL BREAKS FOR PRINTING.          */
+     /*   P1    PRINTS THE PAGE HEADING.                            */
+     /*   S1    PRINTS A DETAIL/TOTAL LINE.                         */
+     /*   AUG1  ADDS THE KEY TOTALS INTO THE NEXT LEVEL UP.         */
+     /*                                                             */
+     /* *********************************************************** */
+
+ SRTOUT:  PROC (INREC);
+
+          DCL INREC CHAR(600) VARYING;
+
+                                        /* COUNT RCDS OUT FROM SORT */
+          SRTCNTOUT = SRTCNTOUT + 1;
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* IT HAS BEEN MENTIONED THAT THE END-OF-JOB ROUTINE USES      */
+     /* SUBROUTINES OF THIS PROCEDURE. SO ON ENTRY WE FIRST TEST    */
+     /* ISW. IF ZERO, THE WHOLE SRTOUT PROCEDURE IS REQUIRED & WE   */
+     /* PASS TO F1. IF NON-ZERO, WE SET THE ROUTINE EXIT LABELS     */
+     /* REXIT AND LEXIT TO THE END OF SRTOUT, AND PASS TO THE       */
+     /* REQUIRED ROUTINE.                                           */
+     /*                                                             */
+     /* *********************************************************** */
+
+          IF ISW = 0 THEN GO TO F1;
+                                        /* SET LABELS TO END SRTOUT */
+          REXIT = NEXTREC;
+          LEXIT = NEXTREC;
+                                        /* GO TO RELEVANT ROUTINE.  */
+          I = ISW;
+          IF I = 6 THEN DO;
+              LEXIT = F0;
+              GO TO P1;
+ F0:          LEXIT = NEXTREC;
+              GO TO S1;
+          END;
+          IF I = 7 THEN GO TO O1;
+                   ELSE GO TO TOTS;
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* THE NEXT SECTION, WITH LABELS 'F', UNPACKS THE KEYS FROM    */
+     /* THE RECORD, CALLING THE SUBROUTINE T1 WHICH PUTS THE I'TH   */
+     /* KEY INTO VARIABLE KEY4. IT ONLY UNPACKS AS MANY KEYS AS ARE */
+     /* REQUIRED (NOKEYS), PASSING TO LABEL G1 WHEN THIS IS DONE.   */
+     /*                                                             */
+     /* *********************************************************** */
+
+ F1:      I = 1;
+                                        /* UNPACK FIRST KEY (I = 1) */
+          REXIT = F2;
+          GO TO T1;
+                                        /* SET IN 'KEY1'.           */
+ F2:      KEY1 = KEY4;
+                                        /* IF ONLY ONE KEY, GO OUT. */
+          IF NOKEYS = 1 THEN GO TO G1;
+                                        /* REPEAT FOR SECOND KEY.   */
+          I = 2;
+          REXIT = F3;
+          GO TO T1;
+ F3:      KEY2 = KEY4;
+          IF NOKEYS = 2 THEN GO TO G1;
+                                        /* REPEAT FOR THIRD KEY.    */
+          I = 3;
+          REXIT = F4;
+          GO TO T1;
+ F4:      KEY3 = KEY4;
+          IF NOKEYS = 3 THEN GO TO G1;
+                                        /* REPEAT FOR LAST KEY.     */
+          I = 4;
+          REXIT = G1;
+          GO TO T1;
+     /* *********************************************************** */
+     /*                                                             */
+     /* THE LABELS 'G' TEST THE CURRENT KEY VALUES AGAINST THE      */
+     /* PREVIOUS ONES. IF THEY DIFFER, 'TOTS' IS CALLED TO PRINT    */
+     /* THE PREVIOUS KEYS TOTALS, IF REQUIRED.                      */
+     /*                                                             */
+     /*    AS THERE ARE NO PREVIOUS KEYS FOR THE FIRST RECORD, THE  */
+     /* LASTKEYS ARE SET EQUAL, TO BYPASS THE TOTALS.               */
+     /*                                                             */
+     /*    IN CALLING 'TOTS', THE PARAMETER I PASSED POINTS TO THE  */
+     /* ACCUMULATOR IN ARRAY2 WHICH HOLDS THE RELEVANT VALUES. SO   */
+     /* I = 2 FOR KEY4, 3 FOR KEY3, 4 FOR KEY2, 5 FOR KEY1 (MAJOR). */
+     /*                                                             */
+     /* *********************************************************** */
+
+ G1:      IF FIRST_TIME
+                                        /* RESET SWITCH & MOVE KEYS */
+          THEN DO;
+                  FIRST_TIME = '0'B;
+                  LASTKEY1 = KEY1;
+                  LASTKEY2 = KEY2;
+                  LASTKEY3 = KEY3;
+                  LASTKEY4 = KEY4;
+               END;
+
+          IF KEY1 ^= LASTKEY1
+                                        /* MAJOR KEY CHANGE.        */
+          THEN DO;
+                  REXIT = G2;
+                                        /* ALL FOUR KEY TOTALS.     */
+                  DO I = 2 TO 5;
+                     GO TO TOTS;
+ G2:              END;
+                  GO TO H1;
+               END;
+
+          IF KEY2 ^= LASTKEY2
+                                        /* KEY2 CHANGE              */
+          THEN DO;
+                  REXIT = G3;
+                                        /* TOTALS FOR KEYS 4, 3 & 2 */
+                  DO I = 2 TO 4;
+                     GO TO TOTS;
+ G3:              END;
+                  GO TO H1;
+               END;
+
+          IF KEY3 ^= LASTKEY3
+                                        /* KEY3 CHANGE              */
+          THEN DO;
+                  REXIT = G4;
+                                        /* TOTALS FOR KEYS 4 & 3.   */
+                  DO I = 2 TO 3;
+                     GO TO TOTS;
+ G4:              END;
+                  GO TO H1;
+               END;
+
+          IF KEY4 ^= LASTKEY4
+                                        /* KEY4 CHANGE, TOTAL KEY4. */
+          THEN DO;
+                  REXIT = H1;
+                  I = 2;
+                  GO TO TOTS;
+               END;
+
+          GO TO H2;
+
+ H1:      LASTKEY1 = KEY1;
+          LASTKEY2 = KEY2;
+          LASTKEY3 = KEY3;
+          LASTKEY4 = KEY4;
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* THE NEXT BLOCK OF CODING UNPACKS THE VALUE FIELDS (AS       */
+     /* SPECIFIED IN THE GR04 CARDS) FROM THE RECORD, AND PLACES    */
+     /* THEM IN THEIR CORRECT PLACE IN THE ARRAY 'VALUES'.          */
+     /*                                                             */
+     /* *********************************************************** */
+
+ H2:      DO I = 1 TO NOFLD;
+                                        /* LENGTH & POSITION.       */
+             L = ARLEN_GR04(I);
+             M = ARPOS_GR04(I);
+
+             IF ARPAK_GR04(I) = 'P'
+                                        /* PACKED NUMERIC -         */
+                                        /* TO MIDVAL VIA PREC.      */
+             THEN DO;
+                     PREC = 0;
+                     L1 = 7 - L;
+                     SUBSTR(ZREC,L1,L) = SUBSTR(INREC,M,L);
+                     MIDVAL = PREC;
+                  END;
+                                        /* UNPACKED NUMERIC -       */
+                                        /* TO MIDVAL VIA NREC.      */
+             ELSE DO;
+                     NREC = 0;
+                     L1 = 12 - L;
+                     SUBSTR(XREC,L1,L) = SUBSTR(INREC,M,L);
+                     MIDVAL = NREC;
+                  END;
+
+             IF ARDEC_GR04(I) ^= 0
+                                        /* IMPLIED DECIMALS IN FLD. */
+             THEN DO;
+                                        /* 'TN' = 10.               */
+                     MIDVAX = MIDVAL / TN ** ARDEC_GR04(I);
+                     MIDVAL = ROUND(MIDVAX,4);
+                  END;
+                                        /* SUBSCRIPT OF FIELD NAME  */
+             J = (INDEX(FLDDES,ARFLD_GR04(I)) + 1) / 2;
+                                        /* INSERT FIELD IN ARRAY.   */
+             VALUES(J,1) = MIDVAL;
+                                        /* REPEAT FOR NEXT FIELD.   */
+          END;
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* NOW THE ARITHMETIC REQUIRED IS PERFORMED ON THESE FIELDS.   */
+     /*                                                             */
+     /* *********************************************************** */
+
+          IF NOARI = 0 THEN GO TO H9;
+
+                                        /* FOR EACH ARITH STATEMENT */
+          DO I = 1 TO NOARI;
+                                        /* RECEIVING FIELD ZEROED.  */
+             IF ARITT(I) THEN GO TO H23;
+             VALUED = 0;
+                                        /* FOR EACH OPERATOR ....   */
+             DO J = 1 TO ARILN(I);
+                                        /* SUBSCRIPT OF OPERAND     */
+                K1 = ARINO(I,J);
+                IF ARICN(I,J)
+                THEN VALUEP = VALIT(K1);     /* CONSTANT OR VARIABLE? */
+                ELSE VALUEP = VALUES(K1,1);
+                IF ARISN(I,J) = '-'          /* IF NEGATIVE PREFIX.   */
+                THEN VALUEP = -VALUEP;
+                IF ARIOP(I,J) = '+' THEN VALUED = VALUED + VALUEP;
+                IF ARIOP(I,J) = '-' THEN VALUED = VALUED - VALUEP;
+                IF ARIOP(I,J) = '*'
+                THEN DO;                     /* PERFORM ARITHMETIC.   */
+                        VALUE1 = VALUED;
+                        VALUE2 = VALUEP;
+                        VALUE = VALUE1 * VALUE2;
+                        VALUED = ROUND(VALUE,4);
+                     END;
+            IF ARIOP(I,J) = '/'
+            THEN DO;
+                IF VALUEP ^= 0 THEN GO TO H21;
+                VALUED = 0;
+                ZERO_DIVIDE_COUNT = ZERO_DIVIDE_COUNT + 1;
+                ERRORSW = '1'B;
+          ERR0DIV = '1'B;
+                GOTO H22;
+ H21:           VALUE1 = VALUED;
+                VALUE2 = VALUEP;
+                VALUE = VALUE1 / VALUE2;
+                VALUED = ROUND(VALUE,4);
+ H22:
+            END;
+
+                                        /* GET NEXT OPERAND.        */
+             END;
+             K = ARIFD(I);
+             VALUES(K,1) = VALUED;
+ H23:
+                                        /* TO NEXT ARITH STATEMENT. */
+          END;
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* HAVING FINALLY ARRIVED AT THE RESULT VALUES,                */
+     /* WE NEXT AUGMENT THE LOWEST LEVEL                            */
+     /* RECORD COUNT. THIS FINISHES THE CURRENT PROCESSING OF       */
+     /* INREC, AND WE STORE IT IN LASTREC IN CASE KEY TOTAL         */
+     /* BREAKS NEED TO TAKE NAMES FROM IT.                          */
+     /*                                                             */
+     /*     THEN IF A RANGE ANALYSIS WAS REQUIRED, WE ADD THE       */
+     /* VALUE INTO THE CORRECT SLOT (BY RANGE) IN THE TW-ARRAY,     */
+     /* AND AUGMENT THE CORRESPONDING RECORD COUNT.                 */
+     /*                                                             */
+     /*     WE THEN TEST NAMESW TO TEST IF THE DETAIL LINE HAS TP   */
+     /* BE PRINTED, AND SET THE LINE UP FOR PRINTING IN S1.         */
+     /*                                                             */
+     /*     FINALLY, ADD THE DETAIL LEVEL ACCUMULATORS UP TO        */
+     /* THE NEXT (KEY4) LEVEL, AND RETURN FOR THE NEXT RECORD.      */
+     /*                                                             */
+     /* *********************************************************** */
+
+ H9:
+                                        /* AUGMENT RECORD COUNT.    */
+          ARCNT(1) = ARCNT(1) + 1;
+                                        /* STORE CURRENT RECORD.    */
+          LASTREC = INREC;
+
+          IF TW80SW
+          THEN DO;
+                  MIDVAL = VALUES(TW80VAL,1);
+                  DO I = 1 TO TWRNGES;
+                     IF MIDVAL <= TWARNGE(I) THEN GO TO H95;
+                  END;
+ H95:             TWARQTY(I,2) = TWARQTY(I,2) + 1;
+                  TWARVAL(I,2) = TWARVAL(I,2) + MIDVAL;
+              END;
+
+                                        /* SIGNAL DETAIL LINE.      */
+          I = 1;
+                                        /* IS DETAIL PRINT REQUIRED */
+          IF ^NAMESW THEN GO TO I2;
+                                        /* IS NEW PAGE NEEDED?      */
+          IF LINECT > 55
+          THEN DO;
+                  LEXIT = I1;
+                  GO TO P1;
+               END;
+                                        /* SET UP KEYS IN LINE.     */
+ I1:      KEYX_LINE = KEY1 || '  ';
+          IF NOKEYS > 1 THEN KEYX_LINE = KEYX_LINE || KEY2 || '  ';
+          IF NOKEYS > 2 THEN KEYX_LINE = KEYX_LINE || KEY3 || '  ';
+          IF NOKEYS > 3 THEN KEYX_LINE = KEYX_LINE || KEY4;
+          KEY_LINE = KEYX_LINE;
+                                        /* TOTAL JUST PRINTED, SKIP */
+          IF LTOTSW THEN BYTE_LINE = '-';
+                    ELSE BYTE_LINE = CBYT;
+                                        /* RESET TOTAL SWITCH.      */
+          LTOTSW = '0'B;
+                                        /* NAME ASSCTD WITH DETAIL? */
+          IF NAMEPOS ^= 0
+          THEN NAME_LINE = SUBSTR(INREC,NAMEPOS,NAMELEN);
+          ELSE NAME_LINE  = ' ';
+                                        /* GO TO PRINT LINE.        */
+          LEXIT = I2;
+          GO TO S1;
+                                        /* SET EXIT FOR NEXT RECORD */
+ I2:      LEXIT = NEXTREC;
+          J = 2;
+                                        /* ADD UP ACCUMULATORS.     */
+          GO TO AUG1;
+
+
+
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* THE FOLLOWING SUBROUTINE, T1, UNPACKS THE I'TH KEY FROM     */
+     /* THE RECORD, WHERE 'I' IS THE RECEIVED PARAMETER.            */
+     /*                                                             */
+     /* *********************************************************** */
+
+ T1:
+                                        /* LENGTH & POSITION OF KEY */
+          L = ARLEN_GR03(I);
+          M = ARPOS_GR03(I);
+
+          IF ARPAK_GR03(I) = 'P'
+                                        /* PACKED - TO PREC, NREC   */
+                                        /* & FINALLY TO KEY4.       */
+          THEN DO;
+                  PREC = 0;
+                  L1 = 7 - L;
+                  SUBSTR(ZREC,L1,L) = SUBSTR(INREC,M,L);
+                  NREC = PREC;
+                  L1 = (2 * L) - 1;
+                  L2 = 12 - L1;
+                  KEY4 = SUBSTR(XREC,L2,L1);
+               END;
+                                        /* HEX - STRAIGHT TO KEY4.  */
+          ELSE DO;
+                  KEY4 = SUBSTR(INREC,M,L);
+               END;
+                                        /* END OF SUBROUTINE T1.    */
+          GO TO REXIT;
+
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* THE FOLLOWING SUBROUTINE, LABELS 'TOTS' THRU 'TOTEX1',      */
+     /* IS CALLED WHENEVER ONE OF THE FOUR KEYS CHANGES VALUE.      */
+     /* IT COMPRISES SOME OF THE MOST COMPLEX LOGIC IN THE ENTIRE   */
+     /* PROGRAM, AND THE PRECISE FLOW THROUGH THE ROUTINE DEPENDS   */
+     /* ON SEVERAL TESTS:                                           */
+     /*                                                             */
+     /* 1) IS THIS THE LOWEST KEY LEVEL?      NOKEY = 6-I           */
+     /* 2) HAVE DETAIL LINES BEEN PRINTED?    NAMESW                */
+     /* 3) IS A NEW PAGE NEEDED?              LINECT > 55           */
+     /* 4) IS A TOTAL REQUESTED FOR THIS KEY? ARTOT_GR03(6-I) = 'T' */
+     /* 5) IS THERE A NAME FOR THIS KEY?      ARNAM_GR03(6-I)^= 0   */
+     /* 6) IS A PAGE BREAK WANTED FOR IT?     ARPAG_GR03(6-I)^= ' ' */
+     /*                                                             */
+     /* DEPENDING ON THESE TESTS, IT WILL PRINT THE KEY VALUES IN   */
+     /* ONE OF THE FOLLOWING FORMATS (IF AT ALL):                   */
+     /*    (A):                                                     */
+     /*   -------KEY-------   --------KEY-NAME--------  ---VALUES-> */
+     /* OR (B):                                                     */
+     /*   -------KEY-------           (SPACES)          ---VALUES-> */
+     /* OR (C):                                                     */
+     /*   -------KEY-------   TOTAL **    COUNT=NNNNN   ---VALUES-> */
+     /* OR (D):                                                     */
+     /*   -------KEY-------   --------KEY-NAME--------  ---VALUES-> */
+     /*                       TOTAL **    COUNT=NNNNN               */
+     /*                                                             */
+     /*   JUST TO ADD TO THE DIFFICULTY, THE NUMBER OF ASTERISKS    */
+     /* AFTER 'TOTAL' VARIES WITH THE KEY LEVEL.                    */
+     /*                                                             */
+     /* STARTING SIMPLY, BRANCH OUT IF THE KEY DOESN'T EXIST,       */
+     /* AND GO TO ADD UP THE VALUE ACCUMULATORS.                    */
+     /*   THEN WE TEST IF A NEW PAGE IS NEEDED. WE WILL ONLY PRINT  */
+     /* A NEW PAGE BEFORE A LOWEST-LEVEL BREAK, SO THAT ALL TOTALS  */
+     /* GO ON THE SAME PAGE AS THEIR DETAIL LINES. THEREFORE, FOR A */
+     /* NEW PAGE, WE REQUIRE THAT THIS IS THE LOWEST LEVEL KEY, AND */
+     /* THAT NO DETAIL LINES ARE BEING PRINTED.                     */
+     /*                                                             */
+     /* *********************************************************** */
+
+ TOTS:    IF NOKEYS < 6-I THEN GO TO TOTEX;
+                                        /* NEW PAGE NEEDED?         */
+          IF NOKEYS = 6-I & ^NAMESW & LINECT > 55
+          THEN DO;
+                  LEXIT = TOTS0;
+                  GO TO P1;
+ TOTS0:        END;
+                                        /* NO TOTAL PRINT- GO OUT.  */
+          IF ARTOT_GR03(6-I) ^= 'T' THEN GO TO TOTEX;
+                                        /* SET UP KEY FLDS ON LINE. */
+          KEYX_LINE = LASTKEY1 || '  ';
+          IF I < 5 THEN KEYX_LINE = KEYX_LINE || LASTKEY2 || '  ';
+          IF I < 4 THEN KEYX_LINE = KEYX_LINE || LASTKEY3 || '  ';
+          IF I < 3 THEN KEYX_LINE = KEYX_LINE || LASTKEY4;
+          KEY_LINE = KEYX_LINE;
+                                        /* IS THIS LOWEST LEVEL?    */
+          IF NOKEYS = 6-I & ^NAMESW
+                                        /* SET LINE SPACING-DETAIL. */
+          THEN DO;
+                  IF LTOTSW THEN BYTE_LINE = '-';
+                            ELSE BYTE_LINE = CBYT;
+                  LTOTSW = '0'B;
+               END;
+                                        /* SET LINE SPACING - TOTAL */
+          ELSE DO;
+                  IF CBYT = ' ' THEN BYTE_LINE = '0';
+                                ELSE BYTE_LINE = '-';
+                  LTOTSW = '1'B;
+               END;
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* NOW WE TEST IF A NAME EXISTS. IF SO, WE CAN PRINT A LINE    */
+     /* OF TYPE 'A', WHICH MAY TURN OUT TO BE THE FIRST LINE OF 'D' */
+     /*                                                             */
+     /* *********************************************************** */
+
+          IF ARNAM_GR03(6-I) ^= 0
+
+          THEN DO;
+                                        /* PUT NAME INTO LINE.      */
+                  NAME_LINE = SUBSTR(LASTREC,ARNAM_GR03(6-I),
+                                             ARNML_GR03(6-I));
+                                        /* PRINT LINE.              */
+                  LEXIT = TOTS1;
+                  GO TO S1;
+               END;
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* IF THIS IS NOT THE LOWEST LEVEL, WE NOW SET THE 'TOTAL **'  */
+     /* UP IN THE NAME POSITION OF THE LINE. IF IT IS, HOWEVER,     */
+     /* WE EITHER HAVE ALREADY PRINTED THE TYPE 'A' LINE, AND WE    */
+     /* EXIT, OR WE SET THE NAME POSITION BLANK FOR A TYPE 'B'.     */
+     /*                                                             */
+     /* *********************************************************** */
+
+ TOTS1:   IF NOKEYS ^= 6-I | NAMESW
+                                        /* NOT LOWEST LEVEL.        */
+          THEN DO;
+                  NAME_LINE = 'TOTAL        COUNT=';
+                  CNT_LINE = ARCNT(I-1);
+                  SUBSTR(NAME_LINE,7,I-1) = '****';
+               END;
+                                        /* IS LOWEST LEVEL PRINT.   */
+          ELSE DO;
+                  IF ARNAM_GR03(6-I) = 0
+                                        /* BLANK NAME (TYPE 'B').   */
+                  THEN NAME_LINE = ' ';
+                                        /* TYPE 'A' - ALREADY DONE. */
+                  ELSE GO TO TOTEX;
+               END;
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* IF THERE WAS NO NAME, WE HAVE EITHER A TYPE 'B' OR 'C'      */
+     /* SET UP, SO WE PRINT IT AND GO OUT TO TOTEX.                 */
+     /*                                                             */
+     /* *********************************************************** */
+
+          IF ARNAM_GR03(6-I) = 0
+          THEN DO;
+                  LEXIT = TOTEX;
+                  GO TO S1;
+               END;
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* HAVING GOT THIS FAR, WE ARE CERTAIN THAT IT IS A TYPA 'D',  */
+     /* AND WE HAVE MERELY TO PRINT THE SECOND LINE, FIRST BLANKING */
+     /* OUT EVERYTHING BAR THE NAME.                                */
+     /*                                                             */
+     /* *********************************************************** */
+
+          BYTE_LINE = ' ';
+          KEY_LINE = ' ';
+          VALUEX_LINE = ' ';
+          WRITE FILE(PRINT) FROM(LINEA);
+          LINECT = LINECT + 1;
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* HAVING PRINTED THE TOTAL LINE, WE TEST IF A NEW PAGE        */
+     /* IS WANTED AFTER THIS KEY BREAK, AND IF SO SIGNAL SUCH TO    */
+     /* THE NEXT LOWEST-LEVEL PRINT.                                */
+     /*                                                             */
+     /*    THEN WE HAVE TO TEST IF THIS IS A MAJOR KEY, AND A       */
+     /* RANGE SUBANALYSIS IS REQUIRED FROM IT.                      */
+     /*                                                             */
+     /*    WE THEN ADD THE PRINT VALUES FOR THIS KEY INTO THOSE     */
+     /* OF THE NEXT HIGHEST, AND EXIT.                              */
+     /*                                                             */
+     /* *********************************************************** */
+
+ TOTEX:   IF ARPAG_GR03(6-I) ^= ' ' THEN LINECT = 80;
+
+          IF I ^= 5   THEN GO TO TOTEXA;
+          IF ^TW80SW  THEN GO TO TOTEXA;
+
+          J = 2;
+          LEXIT = TOTEXA;
+          IF TWSUBSW THEN GO TO O1;     /* IF SUBANALYSIS NOT REOD  */
+                     ELSE GO TO O9;     /* GO TO ADD UP ARRAY VALUES*/
+ TOTEXA:
+                                        /* SIGNAL NEXT TOTAL LEVEL. */
+          J = I + 1;
+          LEXIT = TOTEX1;
+                                        /* ADD UP PRINT VALUES.     */
+          GO TO AUG1;
+                                        /* END OF SUBROUTINE TOTS.  */
+ TOTEX1:  GO TO REXIT;
+
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* THIS NEXT SUBROUTINE, P1, PRINTS THE PAGE HEADING, CLEARS   */
+     /* THE SWITCH THAT SIGNALS A TOTAL HAS JUST BEEN PRINTED,      */
+     /* RESETS THE LINE COUNT, AND EXITS.                           */
+     /*                                                             */
+     /* *********************************************************** */
+
+ P1:      PAGENO = PAGENO + 1;
+          PAGE_HEADA = PAGENO;
+          WRITE FILE(PRINT) FROM(HEADA);
+          WRITE FILE(PRINT) FROM(HEADBX);
+          WRITE FILE(PRINT) FROM(HEADCX);
+          WRITE FILE(PRINT) FROM(BLANKLINE);
+
+          LTOTSW = '0'B;
+          LINECT = 10;
+          GO TO LEXIT;
+
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* FOR ALL LEVELS OF DETAIL AND TOTAL PRINT (STIPULATED BY     */
+     /* THE RECEIVED PARAMETER 'I'), THE NEXT ROUTINE (S1 & S2)     */
+     /* SETS UP THE VALUES IN THE PRINT LINE, WRITES THE LINE OUT,  */
+     /* AND AUGMENTS THE LINE COUNT.                                */
+     /*                                                             */
+     /* *********************************************************** */
+
+ S1:         IF I = 1 THEN GO TO S19;        /* NOT TOTAL - NO ARITH  */
+             IF NOARI = 0 THEN GO TO S19;
+             DO N1 = 1 TO NOARI;
+                IF ARITT(N1) ^= '1'B
+                THEN GO TO S18;                 /* STMT NOT AT TOTALS */
+                VALUED = 0;                  /* INIT WORK FIELD       */
+                DO N2 = 1 TO ARILN(N1);      /* FOR EACH OPERATOR     */
+                   K1 = ARINO(N1,N2);        /* SUBSCRIPT OF OPERAND  */
+                   IF ARICN(N1,N2)
+                   THEN VALUEP = VALIT(K1);  /* CONSTANT OR VARIABLE? */
+                   ELSE VALUEP = VALUES(K1,I);
+                   IF ARISN(N1,N2) = '-'
+                   THEN VALUEP = -VALUEP;    /* NEGATIVE PREFIX.      */
+                   IF ARIOP(N1,N2) = '+' THEN VALUED = VALUED + VALUEP;
+                   IF ARIOP(N1,N2) = '-' THEN VALUED = VALUED - VALUEP;
+                   IF ARIOP(N1,N2) = '*'
+                   THEN DO;
+                           VALUE1 = VALUED;
+                           VALUE2 = VALUEP;
+                           VALUE = VALUE1 * VALUE2;
+                           VALUED = ROUND(VALUE,4);
+                        END;
+                   IF ARIOP(N1,N2) = '/'     /* CHECK FOR ZERODIVIDE  */
+                   THEN DO;
+                           IF VALUEP ^= 0 THEN GO TO S11;
+                           VALUED = 0;
+                           ZERO_DIVIDE_COUNT = ZERO_DIVIDE_COUNT + 1;
+                           ERRORSW = '1'B;
+          ERR0DIV = '1'B;
+                           GO TO S12;
+ S11:                      VALUE1 = VALUED;
+                           VALUE2 = VALUEP;
+                           VALUE = VALUE1 / VALUE2;
+                           VALUED = ROUND(VALUE,4);
+ S12:                   END;
+                END;                    /* GET NEXT OPERAND */
+                N2 = ARIFD(N1);
+                VALUES(N2,I) = VALUED;
+ S18:        END;                       /* GET NEXT ARITH STATEMENT */
+ S19:     DO K = 1 TO 5;
+             VAL_LINE(K) = ' ';         /* CLEAR VALUE ON PRINT LINE  */
+             N1 = ARFLD_GR08(K);
+             LVAL = VALUES(N1,I);
+             IF LVAL = 0 THEN GO TO S2;
+                                        /* NUMBER OF DECIMALS TO BE */
+                                        /* PRINTED. TAKE FROM LVAL. */
+             L = ARDEC_GR08 (K);
+             IF L = 0
+             THEN VAL_LINE(K) = '  ' || LVAL_UNITS || LVAL_SIGN;
+             ELSE VAL_LINE(K) = SUBSTR(LVAL_UNITS,L,12-L) || '.' ||
+                                SUBSTR(LVAL_DECS,1,L) || LVAL_SIGN;
+ S2:      END;
+
+          WRITE FILE(PRINT) FROM(LINEA);
+
+          LINECT = LINECT + 1;
+          IF BYTE_LINE  = '0' THEN LINECT = LINECT + 1;
+          IF BYTE_LINE  = '-' THEN LINECT = LINECT + 2;
+          GO TO LEXIT;
+
+     /* *********************************************************** */
+     /*                                                             */
+     /*     IF A RANGE ANALYSIS WAS REQUESTED, THIS NEXT SECTION    */
+     /* IS USED TO PRINT IT.                                        */
+     /*     THE RECEIVED PARAMETER IS J, WHICH HAS A VALUE OF 1     */
+     /* FOR THE OVERALL FILE ANALYSIS, OR 2 FOR A SUBANALYSIS ON    */
+     /* MAJOR KEY BREAK.                                            */
+     /*     WE FIRST PRINT THE HEADINGS, THEN ONE LINE FOR EACH     */
+     /* REQUESTED RANGE.                                            */
+     /*     IN O9, WE AUGMENT THE ACCUMULATOR ARRAYS, AND EXIT.     */
+     /*                                                             */
+     /* *********************************************************** */
+
+ O1:      TWPAGE = TWPAGE + 1;
+          TWPAGE_HEADA = TWPAGE;
+          WRITE FILE(TW80) FROM(TWHEADA);
+
+          IF J = 1
+          THEN TWHED1_HEADB = 'OVERALL FILE ANALYSIS.';
+          ELSE DO;
+                  IF ARNAM_GR03(1) = 0
+                  THEN TWHED1_HEADB = 'SUB-ANALYSIS FOR MAJOR KEY '
+                                      || LASTKEY1;
+                  ELSE TWHED1_HEADB = 'SUB-ANALYSIS FOR MAJOR KEY '
+                                      || LASTKEY1 || ' - '
+                                      || SUBSTR(LASTREC,ARNAM_GR03(1),
+                                                ARNML_GR03(1));
+               END;
+                                        /* COMPLETE HEADINGS        */
+          WRITE FILE(TW80) FROM(TWHEADB);
+          WRITE FILE(TW80) FROM(TWHEADC);
+          WRITE FILE(TW80) FROM(TWHEADD);
+          TWTOTENT = 0;                 /* INITIALISE WORK VARIABLS */
+          TWTOTVAL = 0;
+          TWCUMENT = 0;
+          TWCUMVAL = 0;                 /* SUM TOTAL ENTRIES < VALS */
+          DO ITW = 1 TO TWRNGES + 1;
+             TWTOTENT = TWTOTENT + TWARQTY(ITW,J);
+             TWTOTVAL = TWTOTVAL + TWARVAL(ITW,J);
+          END;
+          DO ITW = 1 TO TWRNGES + 1;    /* FOR EACH RANGE ....      */
+             TWCUMENT = TWCUMENT + TWARQTY(ITW,J);
+             TWCUMVAL = TWCUMVAL + TWARVAL(ITW,J);
+             IF ITW = 1                 /* CUMULATE ENTRIES < VALS  */
+             THEN DO;
+                     TWPRAY = TWARNGE(1);
+                     TWRNGE_LINEA = TWPRRA;
+                     GO TO O2;
+                  END;                  /* SET UP CORRECT RANGE     */
+             IF ITW = TWRNGES + 1       /* DESCRIPTION IN LINE      */
+             THEN DO;
+                     TWPRCX = TWARNGE(TWRNGES);
+                     TWRNGE_LINEA = TWPRRC;
+                     GO TO O2;
+                  END;
+             TWPRBX = TWARNGE(ITW-1);
+             TWPRBZ = TWARNGE(ITW);
+             TWRNGE_LINEA = TWPRRB;
+ O2:         TWENTA_LINEA = TWARQTY(ITW,J);
+             TWVALA_LINEA = TWARVAL(ITW,J);
+             TWENTB_LINEA = TWCUMENT;
+             TWVALB_LINEA = TWCUMVAL;   /* START LOADING VALUES     */
+             IF TWTOTENT = 0            /* INTO PRINT LINE          */
+             THEN DO;
+                     TWINTENT = 0;
+                     TWINTVAL = 0;
+                  END;
+             ELSE DO;
+                     TWINTENT = 100 * TWARQTY(ITW,J) / TWTOTENT;
+                     TWINTVAL = 100 * TWCUMENT       / TWTOTENT;
+                  END;
+          TWINTPCT = TWINTENT;
+          TWEPCA_LINEA = ROUND(TWINTPCT,2);
+          TWINTPCT = TWINTVAL;
+          TWEPCB_LINEA = ROUND(TWINTPCT,2);
+             IF TWTOTVAL = 0
+             THEN DO;
+                     TWINTENT = 0;
+                     TWINTVAL = 0;
+                  END;
+             ELSE DO;
+                     TWINTENT = 100 * TWARVAL(ITW,J) / TWTOTVAL;
+                     TWINTVAL = 100 * TWCUMVAL       / TWTOTVAL;
+                  END;
+          TWINTPCT = TWINTENT;
+          TWVPCA_LINEA = ROUND(TWINTPCT,2);
+          TWINTPCT = TWINTVAL;
+          TWVPCB_LINEA = ROUND(TWINTPCT,2);
+                                     /* COMPLETES THE LINE - WRITE. */
+
+             WRITE FILE(TW80) FROM(TWLINEA);
+          END;                          /* SET UP NEXT LINE.        */
+
+ O9:      IF J = 1 THEN GO TO LEXIT;
+          DO ITW = 1 TO 21;
+             TWARQTY(ITW,1) = TWARQTY(ITW,1) + TWARQTY(ITW,2);
+             TWARVAL(ITW,1) = TWARVAL(ITW,1) + TWARVAL(ITW,2);
+             TWARQTY(ITW,2) = 0;
+             TWARVAL(ITW,2) = 0;        /* AUGMENT & CLEAR ARRAYS.  */
+          END;
+
+          GO TO LEXIT;
+
+
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* THIS FINAL SUBROUTINE ADDS THE PRINT VALUES AT LEVEL I      */
+     /* INTO THOSE OF LEVEL J, AND, FOR I NOT = 1, ADDS THE RECORD  */
+     /* COUNT OF LEVEL I-1 INTO THAT OF LEVEL J-1,RESETTING THE     */
+     /* SOURCE TO ZERO IN EACH CASE.                                */
+     /*                                                             */
+     /* *********************************************************** */
+
+ AUG1:    DO K = 0 TO 27;
+             VALUES(K,J) = VALUES(K,J) + VALUES(K,I);
+             VALUES(K,I) = 0;
+          END;
+          IF  I = 1 THEN GO TO LEXIT;
+          ARCNT(J-1) = ARCNT(J-1) + ARCNT(I-1);
+          ARCNT(I-1) = 0;
+          GO TO LEXIT;
+
+
+     /* *********************************************************** */
+     /*                                                             */
+     /* WE FINALLY ARRIVE AT THE END OF THE PROCEDURE SRTOUT.       */
+     /* IF THIS PROCEDURE IS BEING USED BY THE SORT, WE TEST THE    */
+     /* COUNTS OF RECORDS INTO AND OUT OF THE SORT, AND SIGNAL      */
+     /* WHETHER OR NOT TO PASS ANY MORE RECORDS.                    */
+     /*                                                             */
+     /* *********************************************************** */
+
+ NEXTREC: IF SORTSW
+          THEN DO;
+                  IF SRTCNTIN = SRTCNTOUT
+                  THEN CALL IHESARC(8);
+                  ELSE CALL IHESARC(4);
+               END;
+
+          RETURN;
+                                        /* END OF PROCEDURE SRTOUT. */
+          END SRTOUT;
+
+
+          END;      /* GROPE */
+

@@ -1,0 +1,649 @@
+//AUXCMM06 JOB (1586,5),'** FOR J. NOLS **',CLASS=N
+//STEP01       EXEC GENASMOD
+***********************************************************************
+*                    A U X C M M 0 6                                  *
+*                                                                     *
+*        THIS ROUTINE HANDLES THE OPERATOR COMMAND #D CPU             *
+*        IT IS ATTACHED BY THE COMMAND PROCESSOR AUXCMM01 AS A SUB-   *
+*        TASK OF THE COMMUNICATIONS TASK.                             *
+*          THE ROUTINE INITIALISES ITSELF BY BUILDING A TABLE OF      *
+*        ENTRIES FOR ALL POSSIBLE ADDRESS SPACES AND ISSUING A        *
+*        STIMER WAIT FOR 1/100TH OF A SECOND. AT EACH INTERVAL, THE   *
+*        ROUTINE 'SAMPLES' THE ACTIVITY IN THE SYSTEM BY DOING TWO    *
+*        THINGS:                                                      *
+*          1)  THE EXTERNAL OLD PSW IS EXAMINED TO SEE WHAT PROTECT   *
+*              KEY WAS IN CONTROL IMMEDIATELY PRIOR TO THE TIMER      *
+*              INTERRUPT OR WHETHER THE MACHINE WAS IN A WAIT.        *
+*          2)  THE ASCB CHAIN IS SCANNED FROM THE TOP TO DETERMINE    *
+*              WHICH ADDRESS SPACE IS GOING TO BE DISPATCHED NEXT.    *
+*              THIS ADRESS IS TAKEN TO BE THE ONE WHICH WOULD BE      *
+*              EXECUTING IF THIS SAMPLE ROUTINE WERE NOT.             *
+*        THE COLLECTED FIGURES REPRESENT A ROUGH 'HEAD COUNT' OF      *
+*        CPU USAGE BY THE VARIOUS JOB IN THE SYSTEM.                  *
+*                                                                     *
+****     TO CHANGE THE NUMBER OF SAMPLES TAKEN, ALTER THE EQUATE      *
+*        CALLED 'SMPLCNT' IN THE EQUATES SECTION. THIS SHOULD BE A    *
+*        MULTIPLE OF 100 TO AVOID ROUNDING ERRORS. TO ALTER THE       *
+*        INTERVAL BETWEEN SAMPLES, ALTER THE FULLWORD CALLED WAITTIME *
+*        AT THE END OF THE SECTION CALLED 'SETTIMER'. THIS IS IN      *
+*        HUNDREDTHS OF A SECOND. (LESS THAN 2 SEEMS TO BE PRETTY      *
+*        UNSATISFACTORY AND INTERFERES SOMETIMES WITH NORMAL OPERATION*
+*        OF THE SYSTEM).                                              *
+*                                                                     *
+*        ATTRIBUTES. REENTRANT, REUSABLE, SUPERVISOR MODE.            *
+*                                                                     *
+*        REGISTER USAGE                                               *
+*        REG0  PARAMETER REGISTER, WORK REGISTER                      *
+*        REG1  PARAMETER REGISTER, WORK REGISTER                      *
+*        REG2  WORK REGISTER                                          *
+*        REG3  ADDRESS INTERNAL WORK AREA                             *
+*        REG4  ADDRESS OF ASVT ENTRY LIST                             *
+*        REG5  NUMBER REMAINING POSSIBLE ADDRESS SPACES TO LOOK AT    *
+*        REG6  ADDRESS CURRENT ASCB                                   *
+*        REG7  ADDRESS CURRENT OUCB                                   *
+*        REG8                                                         *
+*        REG9  ADDRESS OF CURRENT OUTPUT ELEMENT
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        DSECTS USED IN THIS MODULE                                   *
+***********************************************************************
+         SPACE 2
+WKAREA   DSECT ,                   INTERNAL WORK AREA
+GETMNLEN DS    F                   SAVED DETAILS FOR FREEMAIN
+CHAINHDR DS    F                   START OF OUTPUT CHAIN
+OPERAND  DS    D                   WORK AREA FOR OPERAND SCAN ROUTINES
+WKPSW    DS    0D                  SAVE AREA FOR EXTERNAL PSW
+         DS    X                   CHANNEL MASKS
+PSWCMWP  DS    X                   PK AND WAIT BIT ETC
+         DS    XL6                 REST OF PSW
+DBLWORD  DS    D                   WORK AREA FOR UNPACK
+ADDFLAG  DS    X                   FLAG FOR TOTAL ADDITION
+CID      DS    X                   ID OF CONSOLE ISSUING COMMAND
+WORKFLAG DS    XL2                 FLAGS FOR OUTPUT REQUIRED
+BEACON   DS    XL2                 FLAGS FOR WHAT TYPE THIS LINE IS
+MSGAREA  DS    0CL50               OUTPUT AREA FOR MESSAGES
+CLRLINE  DS    0CL50               REFERENCE FOR BUFFER CLEARING
+ENDLINE  DS    0CL30               TEXT AREA FOR LAST LINE
+ERRORMSG DS    0CL40               OUTPUT AREA FOR ERROR MESSAGES
+SYSLIT   DS    0CL16               TIME SPENT IN LITERAL
+ASID     DS    0CL4                ADDRESS SPACE ID
+ASIDTEXT DS    CL4                 'ASID' TEXT
+         DS    CL2                 PADDING
+JOBNAME  DS    0CL8                NAME OF JOB
+JOBNTEXT DS    CL8                 JOB NAME TEXT
+         DS    CL2                 PADDING
+SYSNAME  DS    0CL8                SYSTEM COMPONENT IDENTIFIER
+STEPNAME DS    0CL8                STEP NAME
+SNAMTEXT DS    CL8                 STEP NAME LITERAL
+         DS    CL2                 PADDING
+INFO     DS    0CL30               INFORMATION ABOUT ADDRESS SPACE
+OUTERROR DS    0CL8                RETURN AREA FOR INVALID OPERAND
+PCENTTXT DS    0CL4                CPU% LITERAL
+PRTPCENT DS    CL3                 OUTPUT PERCENT
+         DS    CL21                PADDING
+FRSTSTOR DS    0PL6                START OF ACCUMULATORS
+ACCSYS   DS    PL6                 SYSTEM EXECUTION COUNT
+ACCALLSY DS    PL6                 TOTAL SYSTEM EXECUTION
+ACCJOBS  DS    PL6                 TOTAL CPU IN PROBLEM PROGRAM
+ACCSRB   DS    PL6                 EXECUTION IN SRB MODE
+ACCWAIT  DS    PL6                 WAIT OBSERVATION COUNT
+ACCIMS   DS    PL6                 IMS CPU ACCUMULATOR
+ACCDATA  DS    PL6                 DATA MANAGEMENT CPU ACCUMULATOR
+ACCTCAM  DS    PL6                 TCAM USAGE ACCUMULATOR
+TOTPCENT DS    PL6                 TOTAL USAGE ACCUMULATOR
+ACCASCB1 DS    PL6                 FIRST ACCUMULATOR FOR ADDRESS SPACE
+         DS    24PL6               ACCUMULATORS FOR ALL OTHER A.S'S
+INTVLCNT DS    PL2                 COUNT OF SAMPLES TAKEN
+LASTSTOR EQU   *                   END OF ACCUMULATORS
+WKARELEN EQU   *-WKAREA            LENGTH FOR GETMAIN
+         PRINT NOGEN
+         IHAASCB
+         PRINT GEN
+         EJECT
+***********************************************************************
+*        EQUATES USED IN THE MODULE                                   *
+***********************************************************************
+         SPACE 2
+CVTASVT  EQU   X'22C'              OFFSET TO ASVT ADDRESS IN CVT
+CVTGSMQ  EQU   X'264'              GLOBAL SERVICE MANAGER Q
+CVTLSMQ  EQU   X'268'              ADDRESS LOCAL SERVICE MANAGER Q
+CVTGSPL  EQU   X'26C'              GLOBAL SERVICE PRIORTY Q
+CVTASCBH EQU   X'234'              ADDRESS OF HIGHEST PRIORITY A.S.
+ASVTENTY EQU   X'210'              OFFSET TO ASID ENTRIES IN ASVT
+ASVTMAXU EQU   X'204'              OFFSET TO MAX USERS FIELD IN ASVT
+SMPLCNT  EQU   100                 NO OF SAMPLES TO TAKE
+FLCEOPSW EQU   X'18'               ADDRESS OF EXTERNAL OLD PSW
+WAITING  EQU   X'02'               MASK FOR PSWCMWP. ON = WAITING
+PSWSYSPK EQU   X'F0'               MASK FOR PSWCMWP. STORAGE PK
+IMSKEY   EQU   X'70'               PROTECT KEY FOR IMS JOBS
+DATAKEY  EQU   X'50'               PROTECT KEY FOR DATA MANAGEMENT
+TCAMKEY  EQU   X'60'               PROTECT KEY FOR TCM AND VTAM
+MSGLEN   EQU   L'MSGAREA           USED AS LENGTH OPERAND IN LOADMSG
+CHSTEP   EQU   X'40'               ADDRESS OF STEP NAME IN CSCB
+CHCLS    EQU   X'10'               ADDRESS OF JOBNAME IN CSCB
+CHKEY    EQU   X'08'               ADDRESS OF JOBNAME IN CSCB
+*
+*        THE NEXT EQUATES RELATE TO WORKFLAG AND SET THE OPTIONS FOR
+*        WHAT INFORMATION IS TO BE OUTPUT
+*
+FLGALLSY EQU   X'0100'             OUTPUT TOTAL SYSTEM TIME
+FLGSYS   EQU   X'0080'             OUTPUT SYSTEM CPU TIME
+FLGJOBS  EQU   X'0040'             OUTPUT PROBLEM PROGRAM CPU TIME
+FLGSRB   EQU   X'0020'             OUTPUT SRB TIME
+FLGPROB  EQU   X'0010'             OUTPUT TOTAL PROBLEM PROGRAM TIME
+FLGIMS   EQU   X'0008'             OUTPUT IMS CPU TIME
+FLGDATA  EQU   X'0004'             OUTPUT DATA MANAGEMENT CPU TIME
+FLGTCAM  EQU   X'0002'             OUTPUT TCAM CPU TIME
+FLGWAIT  EQU   X'0001'             OUTPUT WAIT TIME
+*        TOTAL CPU UTILISATION IS ALWAYS OUTPUT
+*
+*        THE NEXT EQUATES RELATES TO THE ACCUMULATOR ADDITION FLAG
+*
+ADDTOJOB EQU   X'80'               THIS TO BE ADDED TO TOTAL JOB TIME
+ADDTOSYS EQU   X'40'               THIS TO BE ADDED TO TOTAL SYS TIME
+ADDTOTOT EQU   X'20'               THIS TO BE ADDED TO OVERALL TOTAL
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING                                   *
+***********************************************************************
+         SPACE 2
+AUXCMM06 ZCSECT GETMAIN=1
+         LR    REG4,REG1           LOAD ADDRESS SCAN DESCR BLK CHAIN
+         ESTAE STAEXIT             EXIT TO TRAP ABENDS
+         EJECT
+***********************************************************************
+*        GETMAIN CORE FOR WORK AREA & INITIALISE ACCUMULATORS         *
+***********************************************************************
+         SPACE 2
+         USING WKAREA,REG3
+         LA    REG0,WKARELEN       LOAD LENGTH FOR GETMAIN
+         O     REG0,SUBPOOL        LOAD SUBPOOL ID
+         GETMAIN R,LV=(0)          GETMAIN THE CORE
+         LR    REG3,REG1           LOAD BASE ADDRESS
+         ST    REG0,GETMNLEN       SAVE DETAILS FOR FREEMAIN
+         SPACE 2
+         STCM  REG4,8,CID          SAVE ID OF ISSUING CONSOLE
+         LA    REG4,0(REG4)        STRIP OFF TOP BYTE
+         XC    ADDFLAG,ADDFLAG     ZEROISE  THE ADDITION FLAG
+         LA    REG2,FRSTSTOR       LOAD ADDRESS OF FIRST ACCUMULATOR
+         LA    REG14,L'FRSTSTOR    LOAD LENGTH FOR BXLE
+         LA    REG15,LASTSTOR-1    LOAD ADDRESS END OF TABLE
+CLRLOOP  ZAP   0(L'FRSTSTOR,REG2),PZERO INITIALISE ACCUMULATOR TO ZERO
+         BXLE  REG2,REG14,CLRLOOP  LOOP FOR ALL ACCUMULATORS
+         B     PARMS               BRANCH TO NEXT ROUTINE
+         SPACE 2
+PZERO    DC    P'0'                USED TO ZEROISE PACKED DECIMAL ACCUM
+         EJECT
+***********************************************************************
+*        ANALYSE INPUT PARMS & TEST VALIDITY                          *
+***********************************************************************
+         SPACE 2
+PARMS    DS    0H
+         LTR   REG4,REG4           TEST FOR PRESCENCE OF OPERANDS
+         LA    REG11,HEADER        PRELOAD THE LINK REGISTER
+         BZ    SETJOBS             NO OPERANDS. ASSUME DD CPU,JOBS
+         XR    REG5,REG5           CLEAR LENGTH REGISTER
+         IC    REG5,4(REG4)        LOAD LENGTH OF OPERAND
+         L     REG6,4(REG4)        LOAD ADDRESS OF OPERAND
+         LA    REG1,TABLE1         LOAD ADDRESS OF OPERAND TABLE
+         LA    REG0,TABLE1ND       LOAD ADDRESS OF END OF TABLE
+         BAL   REG11,SCANTABL      BRANCH TO TABLE SCAN ROUTINE
+         BAL   REG11,0(REG1)       BRANH TO APPROPRIATE ROUTINE
+         B     HEADER              BRANCH TO NEXT ROUTINE
+         SPACE 2
+TABLE1   DS    0D                  TABLE OF VALID OPERANDS
+         B     AUXCMMZZ            QUERY RESPONSE ROUTINE
+         DC    CL8'?'
+         B     SETALL              ALL OUTPUT IS REQUIRED
+         DC    CL8'ALL'
+         B     SETJOBS             ONLY INFO ON JOBS IS REQUIRED
+         DC    CL8'JOBS'
+         B     SETSYS              ONLY SYSTEM INFORMATION IS REQUIRED
+         DC    CL8'SYS'
+TABLE1ND B     ERROR               INVALID OPERAND
+         SPACE 2
+SETALL   DS    0H                  ALL CPU UTILISATION FLAGS SET
+         MVC   WORKFLAG,=XL2'FFFF'
+         BR    REG11
+SETJOBS  DS    0H                  PROBLEM PROBLEM CPU UTILISATION SET
+         MVC   WORKFLAG,=AL2(FLGJOBS+FLGWAIT+FLGALLSY)
+         BR    REG11
+SETSYS   DS    0H                  SYSTEM COMPONENT CPU UTILISATION SET
+         MVC   WORKFLAG,=AL2(FLGSYS+FLGSRB+FLGPROB+FLGIMS+FLGDATA+FLGTCA
+               AM+FLGWAIT)
+         BR    REG11
+         EJECT
+***********************************************************************
+*        THIS ROUTINE SCANS A TABLE OF OPERANDS                       *
+***********************************************************************
+         SPACE 2
+SCANTABL DS    0H
+         MVC   OPERAND,=CL8' '     MOVE BLANKS TO WORK AREA
+         BCT   REG5,*+10           SUBTRACT ONE FROM THE LENGTH
+         MVC   OPERAND(0),0(REG6)  MOVE THE OPERAND TO WORK AREA
+         N     REG5,MAXLEN         LIMIT LENGTH TO A MAXIMUM
+         EX    REG5,*-10           EXECUTE THE MOVE
+SCANLOOP CR    REG0,REG1           HAVE WE HIT END OF TABLE
+         BE    SCANEXIT            YES. RETURN TO CALLER
+         CLC   OPERAND,4(REG1)     IS THIS THE OPERAND
+         BE    SCANEXIT            YES. RETURN TO CALLER
+         LA    REG1,12(REG1)       STEP TO NEXT TABLE ENTRY
+         B     SCANLOOP            LOOP TO END OF TABLE
+SCANEXIT BR    REG11               RETURN TO CALLER
+         SPACE 2
+MAXLEN   DC    F'7'                MAXIMUM LENGTH OF INPUT OPERAND
+         EJECT
+***********************************************************************
+*        PREPARE & INITIALISE THE HEADING LINE FOR OUTPUT             *
+***********************************************************************
+         SPACE 2
+HEADER   DS    0H
+         LOADMSG DATA=TITLE,LENGTH=TITLLEN,TYPE=C
+         ST    REG1,CHAINHDR       INITIALISE START OF OUTPUT CHAIN
+         LR    REG9,REG1           LOAD NEXT ELEMENT ADDRESS
+         XC    CLRLINE,CLRLINE     CLEAR OUTPUT BUFFER
+         MVC   ASIDTEXT,ASIDLIT    IDENTIFY THIS OUTPUT FIELD
+         MVC   JOBNTEXT,JOBNLIT    IDENTIFY THIS OUTPUT FIELD
+         MVC   SNAMTEXT,SNAMLIT    IDENTIFY THIS OUTPUT FIELD
+         MVC   PCENTTXT,PCENTLIT   IDENTIFY THIS OUTPUT FIELD
+         LOADMSG DATA=MSGAREA,LENGTH=MSGLEN,TYPE=L
+         ST    REG1,0(REG9)        CHAIN THIS ELEMENT TO OTHERS
+         LR    REG9,REG1           RETAIN ADDRESS OF LAST ELEMENT
+         B     SETTIMER            BRANCH TO NEXT ROUTINE
+         SPACE 2
+TITLE    DC    C'ANALYSIS OF CPU UTILISATION'
+TITLLEN  EQU   L'TITLE
+ASIDLIT  DC    CL(L'ASIDTEXT)'ASID'
+JOBNLIT  DC    CL(L'JOBNTEXT)'JOBNAME'
+SNAMLIT  DC    CL(L'SNAMTEXT)'STEPNAME'
+PCENTLIT DC    CL(L'PCENTTXT)'CPU%'
+         EJECT
+***********************************************************************
+*        SET UP THE TIME INTERVAL FOR ANALYSIS                        *
+***********************************************************************
+         SPACE 2
+SETTIMER DS    0H
+         CHAP  9,'S'               MAKE THIS TASK V. HIGH PRIORITY
+         ZAP   INTVLCNT,=P'-1'     INITIALISE SAMPLE COUNTER
+         LA    REG8,SMPLCNT+1      LOAD NUMBER OF SAMPLES TO TAKE
+TIMELOOP STIMER WAIT,BINTVL=WAITTIME WAIT FOR ALLOTED TIME
+         AP    INTVLCNT,=P'1'      INCREMENT COUNT OF SAMPLES TAKEN
+         BCT   REG8,OPSWSRCH       GO START SAMPLE
+         B     PREPRSLT            GO PPREPARE THE RESULTS
+         SPACE 2
+WAITTIME DC    F'2'                TIME INTERVL FOR SAMPLING
+         EJECT
+***********************************************************************
+*        LOCATE THE EXTERNAL OLD PSW & EXAMINE THE STATUS OF IT       *
+***********************************************************************
+         SPACE 2
+OPSWSRCH DS    0H
+         MVC   WKPSW,FLCEOPSW      MOVE OLD PSW TO WORK AREA
+         TM    PSWCMWP,WAITING     WAS MACHINE WAITING ?
+         BZ    TESTPKEY            NO. GO TEST FOR SPECIFIC PSW KEYS
+         AP    ACCWAIT,=P'1'       INCREMENT NUMBER OF TIMES M/C WAITS.
+         B     TIMELOOP            GO SET NEXT INTERVAL
+TESTPKEY NI    PSWCMWP,X'F0'       TURN OFF LOW 4 BITS OF PK/CMWP FIELD
+         CLI   PSWCMWP,IMSKEY      IMS IN CONTROL ?
+         BNE   PKEYTST2            NO TEST NEXT VALUE
+         AP    ACCIMS,=P'1'        INCREMENT ACCUMULATOR FOR IMS
+         B     TIMELOOP            LOOP FOR NEXT TIME INTERVAL
+PKEYTST2 CLI   PSWCMWP,DATAKEY     DATA MANAGEMENT IN CONTROL ?
+         BNE   PKEYTST3            NO. GO MAKE NEXT TEST
+         AP    ACCDATA,=P'1'       INCREMENT DATA MGMT ACCUMULATOR
+         B     TIMELOOP            LOOP FOR NEXT TIME INTERVAL
+PKEYTST3 CLI   PSWCMWP,TCAMKEY     TCAM IN CONTROL ?
+         BNE   TESTJOBS            NO. GO MAKE NEXT TEST
+         AP    ACCTCAM,=P'1'       ADD ONE TO TCAM ACCUMULATOR
+         B     TIMELOOP            LOOP FOR NEXT TIME INTERVAL
+         EJECT
+***********************************************************************
+*        LOOK AT EACH ADDRESS SPACE INTURN & FIND OUT IF IT WILL RUN  *
+***********************************************************************
+         SPACE 2
+         USING ASCB,REG6
+TESTJOBS DS    0H
+         L     REG1,16             LOAD ADDRESS OF CVT
+         L     REG2,CVTGSMQ(REG1)  LOAD ADDRESS SRB Q1
+         CLC   NONE,0(REG2)        TEST FOR SRB'S READY
+         BNE   ADDSRBS             YES. THESE WILL GO NEXT. ADD IN
+         L     REG2,CVTGSPL(REG1)  LOAD ADDRESS SERVICE PRIORITY LIST
+         CLC   NONE,0(REG2)        TEST FOR SRBS ALREADY ON Q
+         BNE   ADDSRBS             YES. GO ADD THEM IN
+         CLC   NONE,8(REG2)        TEST FOR ANY SYSTEM LEVEL SRBS
+         BNE   ADDSRBS             YES. GO ADD THEM IN
+         L     REG6,CVTASCBH(REG1) LOAD ADDRESS HIGH PRIORITY A.S
+         B     *+8                 JUMP OVER NEXT LOAD INSTR
+ASCBLOOP L     REG6,ASCBFWDP       LOAD ADDRESS NEXT ADDRESS SPACE C.B
+         LTR   REG6,REG6           TEST FOR END OF ADDRESS SPACES
+         BNZ   NXTASCB             NOT END OF CHAIN. CARRY ON.
+         TM    PSWCMWP,PSWSYSPK    WERE WE IN THE SYSTEM ?
+         BNZ   ADDAWAIT            NO. ADD TO WAIT ACCUM.
+         AP    ACCSYS,=P'1'        INCREMENT SYSTEM ACCUM.
+         B     TIMELOOP            GO SET NEXT WAIT INTERVAL
+ADDAWAIT AP    ACCWAIT,=P'1'       ASSUME MACHINE IS WAITING.
+         B     TIMELOOP            GO SET NEXT TIME INTERVAL
+NXTASCB  L     REG2,ASCBSPL        LOAD ADDRESS SERVICE PRIORITY LIST
+         CLC   NONE,0(REG2)        TEST FOR SRB'S HERE
+         BNE   ADDSRBS             SOME READY. GO ADD IN
+         CLC   NONE,8(REG2)        TEST FOR SYSTEM LEVEL SRBS
+         BNE   ADDSRBS             YES. GO ADD THEM IN
+         TM    ASCBDSP1,ASCBNOQ+ASCBFAIL IS ADDRESS ON DISPATCHER Q ?
+         BNZ   ASCBLOOP            NO. GO GET NEXT ADDRESS SPACE
+         TM    ASCBRCTF,ASCBOUT    IS ADDRESS SPACE IN OR OUT ?
+         BO    ASCBLOOP            OUT. GO GET NEXT ADDRESS SPACE
+         CLC   ASCBTCBS,NONE       TEST NUMBER OF READY TCB'S IN A.S.
+         BE    ASCBLOOP            NONE. GO GET NEXT ADDRESS SPACE
+         TM    ASCBRCTF,ASCBTMNO+ASCBWAIT+ASCBTMLW ANY PROBLEMS HERE ?
+         BNZ   ASCBLOOP            YES. GET NEXT ADDRESS SPACE
+         TM    ASCBFLG1,ASCBSTND   ANY TCB'S NON-DISPATCHABLE ?
+         BO    ASCBLOOP            YES. LEAVE IT ALONE
+         CLC   ASCBASID,=H'1'      IS THIS THE MASTER SCHEDULER
+         BNE   NORMADDR            NO. TREAT IT NORMALLY
+         CLC   ASCBTCBS,TWO        MUST HAVE TWO READY TCBS
+         BL    ASCBLOOP            NO. M/S NOT ELIGEABLE
+NORMADDR LH    REG15,ASCBASID      LOAD ADDRESS SPACE ID
+         TM    PSWCMWP,PSWSYSPK    WERE WE IN SUP MODE ?
+         BNZ   ADDADDSS            NO. GO ADD 1 TO ADDRESS SPACE ACCUM.
+         CLC   ASCBLOCK,FREE       IS LOCAL LOCK FREE ?
+         BNE   ADDADDSS            NO. GO ADD 1 TO ADDRESS ACCUMULATOR
+ADDASYS  AP    ACCSYS,=P'1'        INCREMENT SYSTEM ACCUMULATOR
+         B     TIMELOOP            GO SET NEXT TIMER WAIT
+ADDADDSS LA    REG1,L'FRSTSTOR     LOAD LENGTH OF ACCUMULATORS
+         MR    REG14,REG1          MUTLIPLY UP ADDRESS SPACE ID
+         LA    REG10,ACCASCB1-L'FRSTSTOR(REG15) INDEX TO ACCUMULATOR
+         AP    0(L'FRSTSTOR,REG10),=P'1' ADD TO APPROPRIATE ACCUM.
+         B     TIMELOOP            GO SET NEXT INTERVAL
+         SPACE 2
+ADDSRBS  AP    ACCSRB,=P'1'        INCREMENT SYSTEM COUNT FOR SRBS
+         B     TIMELOOP            LOOP TO NEXT INTERVAL
+NONE     DC    F'0'                USED TO TEST NUMBER READY TCBS
+TWO      DC    F'2'                MIN NUMBER READY TCBS FOR M/SCH
+FREE     DC    F'0'                USED TO TEST LOCAL LOCK
+         EJECT
+***********************************************************************
+*        STATS ARE COLLECTED. PREPARE OUTPUT SUMMARY                  *
+***********************************************************************
+         SPACE 2
+PREPRSLT DS    0H
+         L     REG1,16             LOAD ADDRESS OF CVT
+         L     REG1,CVTASVT(REG1)  LOAD ADDRESS ADDR.SPACE VECTOR TABLE
+         LA    REG4,ASVTENTY(REG1) LOAD ADDRESS ADDRESS SPACE ENTRIES
+         L     REG5,ASVTMAXU(REG1) LOAD MAXIMUM NUMBER USERS
+         LA    REG10,ACCASCB1-L'FRSTSTOR LOAD START ADDRESS ACCUM'S
+XSCBSTRT L     REG6,0(REG4)        LOAD ADDRESS NEXT ADDRESS SPACE C.B
+         LA    REG10,L'FRSTSTOR(REG10) STEP TO NEXT/FIRST ACCUM
+         LTR   REG6,REG6           TEST FOR ACTIVE ENTRY
+         BNP   XSCBLOOP            ENTRY NOT ACTIVE. FIND NEXT
+         BAL   REG11,LINEUP        FORMAT JOBNAME, ASID ETC.
+         MVC   BEACON,=AL2(FLGJOBS) TELL ROUTINE WHO I AM
+         OI    ADDFLAG,ADDTOJOB+ADDTOTOT  ACCUMULATION CONDITIONS
+         BAL   REG11,LOADIT        GO PREPARE OUTPUT LINE
+XSCBLOOP LA    REG4,4(REG4)        ADDRESS NEXT ADDRESS SPACE ENTRY
+         BCT   REG5,XSCBSTRT       LOOP FOR ALL POSSIBLE ENTRIES
+         B     DOSYSTEM            BRANCH TO NEXT ROUTINE
+         EJECT
+***********************************************************************
+*        THE DETAILS FOR SYSTEM & WAIT CPU USAGE AREA PREPARED HERE   *
+***********************************************************************
+         SPACE 2
+DOSYSTEM DS    0H
+         XC    CLRLINE,CLRLINE     MAKE SURE OUTPUT AREA IS CLEAR
+         MVC   SYSLIT,SYSTEXT      MOVE SYSTEM STATS IDENTIFIER
+         MVC   SYSNAME,SYSTEM      MOVE SYSTEM ID TO PRINT LINE
+         LA    REG10,ACCSYS        LOAD ADDRESS SYSTEM ACCUMULATOR
+         MVC   BEACON,=AL2(FLGSYS) TELL ROUTCNE WHO I AM
+         OI    ADDFLAG,ADDTOSYS+ADDTOTOT  ADD TO TOT SYSTEM
+         BAL   REG11,LOADIT1       LOAD OUTPUT AREA
+         SPACE 2
+         MVC   SYSNAME,SRBTIME     MOVE SRB IDENTIFIER TO OUTPUT
+         LA    REG10,ACCSRB        LOAD ADDRESS SRB ACCUMULATOR
+         MVC   BEACON,=AL2(FLGSRB) TELL ROUTINE WHO I AM
+         OI    ADDFLAG,ADDTOSYS+ADDTOTOT  ADD TO TOT SYSTEM
+         BAL   REG11,LOADIT1       GO PREPARE OUTPUT AREA & CALCS
+         SPACE 2
+         MVC   SYSNAME,IMS         IDENTIFY THIS OUTPUT FIELD
+         LA    REG10,ACCIMS        LOAD ADDRESS OF IMS ACCUMULATOR
+         MVC   BEACON,=AL2(FLGIMS) TELL ROUTINE WHO I AM
+         OI    ADDFLAG,ADDTOSYS+ADDTOTOT  ADD TO TOT SYSTEM
+         BAL   REG11,LOADIT1       GO DO CALCS AND PREPARE OUTPUT
+         SPACE 2
+         MVC   SYSNAME,DATAMGMT    IDENTIFY DATA MANAGEMENT OUTPUT
+         LA    REG10,ACCDATA       LOAD ADDRESS OF ACCUMULATOR
+         MVC   BEACON,=AL2(FLGDATA) TELL ROUTINE WHO I AM
+         OI    ADDFLAG,ADDTOSYS+ADDTOTOT  ADD TO TOT SYSTEM
+         BAL   REG11,LOADIT1       GO PREPARE OUTPUT
+         SPACE 2
+         MVC   SYSNAME,TCAM        IDENTIFY THIS OUTPUT DATA
+         LA    REG10,ACCTCAM       LOAD ADDRESSOF ACCUMULATOR
+         MVC   BEACON,=AL2(FLGTCAM) TELL ROUTINE WHO I AM
+         OI    ADDFLAG,ADDTOSYS+ADDTOTOT  ADD TO TOT SYSTEM
+         BAL   REG11,LOADIT1       GO PREPARE OUTPUT DATA
+         SPACE 2
+         MVC   SYSNAME,PROBLEM     IDENTIFY PROBLEM PROGRAM CPU
+         LA    REG10,ACCJOBS       LOAD ADDRESS OF ACCUMULATOR
+         MVC   BEACON,=AL2(FLGPROB) TELL ROUTINE WHO I AM
+         BAL   REG11,LOADIT1       GO PREPARE OUTPUT DATA
+         SPACE 2
+         MVC   SYSNAME,ALLSYSTM    IDENTIFY TOTAL SYSTEM TIME
+         LA    REG10,ACCALLSY      LOAD ADDRESS OF ACCUMULATOR
+         MVC   BEACON,=AL2(FLGALLSY) TELL ROUTINE WHO I AM
+         BAL   REG11,LOADIT1       GO PREPARE OUTPUT DATA
+         SPACE 2
+         MVC   SYSNAME,WAIT        MOVE WAIT TIME IDENTIFIER TO OUTPUT
+         LA    REG10,ACCWAIT       LOAD ADDRESS WAIT TIME ACCUM
+         MVC   BEACON,=AL2(FLGWAIT) TELL ROUTINE WHO I AM
+         BAL   REG11,LOADIT1       DO CALCS AND PREPARE OUTPUT
+         B     DOENDING            PREPARE FINAL LINE
+         SPACE 2
+SYSTEXT  DC    CL(L'SYSLIT)'TIME SPENT IN - '
+ALLSYSTM DC    CL8'SYSTEM'
+SYSTEM   DC    CL8'SUPERVSR'
+WAIT     DC    CL8'WAITING'
+SRBTIME  DC    CL8'SRB MODE'
+PROBLEM  DC    CL8'P/PROGRM'
+IMS      DC    CL8'IMS'
+DATAMGMT DC    CL8'DATA MGR'
+TCAM     DC    CL8'TCAM'
+         EJECT
+***********************************************************************
+*        THIS IS THE COMMON I/O LOAD ROUTINE                          *
+***********************************************************************
+         SPACE 2
+LOADIT   DS    0H
+         CLC   JOBNAME,INIT        IS THIS AN INITIATOR ?
+         BNE   LOADCALC            NO. CARRY ON WITH CALCULATION
+         CP    0(L'FRSTSTOR,REG10),=P'0' HAS IT ANY CPU ?
+         BNE   LOADCALC            YES. GO TREAT AS NORMAL JOB
+         ZAP   0(L'FRSTSTOR-L'INTVLCNT,REG10),=P'0' SIMULATE DIVIDE
+         XC    ADDFLAG,ADDFLAG     CLEAR ADDITION LOGIC FLAG
+         B     LOADEXIT            RETURN TO CALLER
+LOADIT1  DS    0H                  ENTRY WITHOUT INITIATOR TEST
+LOADCALC MP    0(L'FRSTSTOR,REG10),=P'100' MULTIPLY TO GIVE PERCENTAGE
+         DP    0(L'FRSTSTOR,REG10),INTVLCNT DIVIDE BY NUMBER SAMPLES.
+         TM    ADDFLAG,ADDTOTOT    THIS FIGURE TO BE ADDED OVERALLTOTAL
+         BZ    NOTOTADD            NO. BYPASS ADD TO TOTAL JOB
+         AP    TOTPCENT,0(L'FRSTSTOR-L'INTVLCNT,REG10) ADD TO TOTAL
+NOTOTADD TM    ADDFLAG,ADDTOSYS    THIS FIGUE TO BE ADDED TO SYS TOTAL
+         BZ    NOSYSADD            NO. BYPASS ADD TO SYS TOTAL
+         AP    ACCALLSY,0(L'FRSTSTOR-L'INTVLCNT,REG10) ADD TO SYS TOT
+NOSYSADD TM    ADDFLAG,ADDTOJOB    THIS FIGURE TO BE ADDED TO JOB TOTAL
+         BZ    NOJOBADD            NO. BYPASS THE ADDITION
+         AP    ACCJOBS,0(L'FRSTSTOR-L'INTVLCNT,REG10) ADD TO JOB TOT
+NOJOBADD XC    ADDFLAG,ADDFLAG     CLEAR THE ADDITION LOGIC FLAG
+         NC    BEACON,WORKFLAG     SEE IF THIS OUTPUT NEEDED
+         BZ    LOADEXIT            NO. THIS OUTPUT NOT NEEDED.
+         UNPK  PRTPCENT,0(L'FRSTSTOR-L'INTVLCNT,REG10) UNPACK NUMBER
+         OI    PRTPCENT+L'PRTPCENT-1,X'F0' MAKE LAST BYTE PRINTABLE
+         MVI   PRTPCENT+L'PRTPCENT,C'%' SHOW UNITS OF MEASUREMENT
+         LOADMSG DATA=MSGAREA,LENGTH=MSGLEN,TYPE=D
+         ST    REG1,0(REG9)        CHAIN THIS ELEMENT ONTO OUTPUT CHAIN
+         LR    REG9,REG1           MAKE THIS THE LAST ENTRY
+LOADEXIT BR    REG11               RETURN TO CALLER
+         SPACE 2
+INIT     DC    CL8'INIT'           INITIATOR'S JOBNAME
+         EJECT
+***********************************************************************
+*        COMMON OUTPUT AREA PREPARATION                               *
+***********************************************************************
+         SPACE 2
+LINEUP   DS    0H
+         XC    CLRLINE,CLRLINE     CLEAR MOST OF OUTPUT BUFFER
+         LH    REG15,ASCBASID      LOAD ADDRESS SPACE ID
+         CVD   REG15,DBLWORD       CONVERT IT TO DECIMAL
+         UNPK  ASID,DBLWORD+6(2)   MOVE ADDRESS SPACE ID TO OUTPUT
+         OI    ASID+L'ASID-1,X'F0' MAKE FINAL BYTE PRINTABLE
+         L     REG1,ASCBJBNI       LOAD ADDRESS JOBNAME FIELD
+         LA    REG2,CHSTEP-CHKEY(REG1) LOAD ADDRESS STEPNAME
+         LTR   REG1,REG1           TEST FOR PRESCENCE JOB NAME
+         BNZ   MVCJNAME            STEP OVER NEXT LOAD IF FOUND
+         L     REG1,ASCBJBNS       LOAD NAME OF SYSTEM COMPONENT
+         CLC   MASTNAME,0(REG1)    IS THIS MASTER SCHEDULER ?
+         BE    LOADBLNK            YES. NO STEPNAME AVAILABLE
+         LA    REG2,CHSTEP-CHCLS(REG1) LOAD ADDRESS STEPNAME
+         LTR   REG1,REG1           SYSTEM NAME PRESENT YET
+         BNZ   MVCJNAME            YES. GO MOVE TO OUTPUT AREA
+         LA    REG1,STARTING       LOAD ADDRESS DUMMY NAME
+LOADBLNK LA    REG2,BLNKNAME       LOAD ADDRESS BLANK STEP NAME
+MVCJNAME MVC   JOBNAME,0(REG1)     MOVE JOBNAME TO OUTPUT
+         MVC   STEPNAME,0(REG2)    MOVE STEPNAME TO OUTPUT
+         BR    REG11               RETURN TO CALLER
+         SPACE 2
+STARTING DC    CL8'STARTING'
+BLNKNAME DC    CL8' '              DUMMY STEP NAME FIELD
+MASTNAME DC    CL8'*MASTER*'       MASTER SCHEDULER NAME
+         EJECT
+***********************************************************************
+*        ALL USAGES REPORTED. PREPARE FINAL SUMMARY LINE              *
+***********************************************************************
+         SPACE 2
+DOENDING DS    0H
+         XC    CLRLINE,CLRLINE     CLEAR THE OUTPUT LINE
+         MVC   ENDLINE,ENDTEXT     MOVE SUITABLE MESSAGE IN
+         UNPK  PRTPCENT,TOTPCENT   UNPACK TOTAL CPU USAGE
+         OI    PRTPCENT+L'PRTPCENT-1,X'F0' MAKE LAST DIGIT PRINTABLE
+         MVI   PRTPCENT+L'PRTPCENT,C'%' SHOW UNITS OF MEASUREMENT
+         LOADMSG DATA=MSGAREA,LENGTH=MSGLEN,TYPE=E
+         ST    REG1,0(REG9)        CHAIN THIS BLOCK ONTO OTHERS
+         B     MSGOUT              GO HAVE OUTPUT DONE
+         SPACE 2
+ENDTEXT  DC    CL(L'ENDLINE)'TOTAL CPU UTILISATION:-'
+         EJECT
+***********************************************************************
+*        MESSAGES ARE PREPARED. INVOKE OUTPUT PROCESSOR               *
+***********************************************************************
+         SPACE 2
+MSGOUT   DS    0H
+         OUTPUT CHAINHDR,UCMID=CID HAVE ALL READY MESSAGES OUTPUT
+         B     EXITPGM             RETURN TO CALLER
+         SPACE 2
+         EJECT
+***********************************************************************
+*        COMMON PROGRAM EXIT ROUTINES                                 *
+***********************************************************************
+         SPACE 2
+EXITPGM  DS    0H
+         LA    REG15,0             SIGNAL GOOD RETURN
+         SPACE 2
+ZRETURN  LR    REG11,REG15         SAVE RETURN CODE
+         L     REG0,GETMNLEN       LOAD FREEMAIN DETAILS
+         LR    REG1,REG3           LOAD ADDRESS OF WORK AREA
+         FREEMAIN R,LV=(0),A=(1)   FREE UP THE WORK AREA
+         LR    REG15,REG11         RESTORE RETURN CODE
+         ZRETURN RC=(15)
+         EJECT
+***********************************************************************
+*        INVALID OPERAND MESSAGE PROCESSOR                            *
+***********************************************************************
+         SPACE 2
+ERROR    DS    0H
+         XC    CLRLINE,CLRLINE     CLEAR OUTPUT BUFFER
+         MVC   ERRORMSG,ERRORTXT   MOVE DETAILS OF ERROR
+         MVC   OUTERROR,OPERAND    MOVE INVALID OPERAND TO O/P
+         LOADMSG DATA=MSGAREA,LENGTH=MSGLEN,TYPE=E
+         ST    REG1,CHAINHDR       INITIALISE START OUTPUT CHAIN
+         B     MSGOUT              GO OUTPUT ERROR MESSAGE
+         SPACE 2
+ERRORTXT DC    CL(L'ERRORMSG)'INVALID OR MISSING OPERAND     -'
+         EJECT
+***********************************************************************
+*        COMMAND QUERY RESPONSE ROUTINE                               *
+***********************************************************************
+         SPACE 2
+AUXCMMZZ DS    0H
+         LA    REG9,CHAINHDR       LOAD ADDRESS HEAD OF OUTPUT QUEUE
+         LOADMSG DATA=QUERYTOP,LENGTH=LENQUTOP,TYPE=L
+         ST    REG1,0(REG9)        CHAIN THIS ELEMENT TO ROOT
+         LR    REG9,REG1           SAVE ADDRESS OF LAST ENTRY
+         LA    REG6,L'LINE1        LOAD LENGTH OF OUTPUT LINES
+         LA    REG8,LINE1          LOAD ADDRESS FIRST LINE
+         LA    REG7,LINEX          LOAD ADDRESS OF LAST LINE
+ZZLOOP   LOADMSG DATA=(REG8),LENGTH=L'LINE1,TYPE=D
+         ST    REG1,0(REG9)        CHAIN THIS ELEMENT TO OTHERS
+         LR    REG9,REG1           SAVE ADDRESS OF END OF CHAIN
+         BXLE  REG8,REG6,ZZLOOP    LOOP FOR ALL OUTPUT LINES
+         LH    REG15,8(REG9)       RELOAD LENGTH OF WTO PARMS
+         LA    REG15,8(REG15,REG9) LOAD ADDRESS OF DESCR CODES
+         OI    0(REG15),X'10'      TURN ON END OF MLWTO
+         B     MSGOUT              BRANCH TO OUTPUT ROUTINE
+         SPACE 2
+LINE1    DC    CL70'DD CPU,-  ENTER ''ALL'' FOR A LIST OF ALL CPU UTILIX
+               SATION'
+         DC    CL(L'LINE1)'DD CPU,-  ENTER ''JOBS'' FOR A LIST OF CPU UX
+               TILISATION BY JOBS'
+         DC    CL(L'LINE1)'DD CPU,-  ENTER ''SYS'' FOR A LIST OF CPU UTX
+               ILISATION BY SYSTEM'
+LINEX    DC    CL(L'LINE1)'DD CPU -  ENTER THE COMMAND WITHOUT OPERANDSX
+                TO DEFAULT ''DD CPU,JOBS'''
+QUERYTOP DC    C'DD CPU - OPERAND SUMMARY'
+LENQUTOP EQU   L'QUERYTOP
+         EJECT
+***********************************************************************
+*        THIS IS THE ESTAE EXIT ROUTINE FOR ABENDS                    *
+***********************************************************************
+         SPACE 2
+STAEXIT  DS    0H
+         BALR  REG11,0             GET BASIC ADDRESSABILITY
+         USING *,REG11             SET BASE ADDRESS REGISTER
+         LR    REG2,REG1           LOAD ADDRESS OF STAE DIAGNOSTIC W/A
+         L     REG4,4(REG2)        LOAD ABEND CODE
+         LA    REG4,0(REG4)        STRIP OFF TOP BYTE
+         ST    REG4,DBLWORD        STORE OUT TO WORK AREA
+         UNPK  WTOCODE(3),DBLWORD+1(2) UNPACK CODE TO OUT AREA
+         OI    WTOCODE+2,X'F0'     MAKE LAST DIGIT HIGH VALUE ZONE
+         TR    WTOCODE(3),TRTABLE-240 CONVERT TO PRINTABLE FORM
+STAEWTO  WTO   'DD CPU; COMMAND ABENDED              ',ROUTCDE=1
+WTOCODE  EQU   STAEWTO+34          ADDRESS IN WTO FOR ABEND CODE
+         SDUMP HDR='DD CPU  COMMAND FAILURE',                          X
+               SDATA=(SQA,PSA,NUC,LSQA,RGN,LPA)
+         LTR   REG15,REG15         TEST RETURN FROM SDUMP
+         BNZ   DUMPFAIL            DUMP DID NOT WORK
+         WTO   'SVC DUMP TAKEN',ROUTCDE=1
+EXITSTAE XR    REG15,REG15         SIGNAL ABEND TO CONTINUE
+         BR    REG14               RETURN TO CALLER
+DUMPFAIL WTO   'COMMAND PROCESSOR UNABLE TO DUMP',ROUTCDE=1
+         B     EXITSTAE            EXIT FROM STAE
+         SPACE 2
+TRTABLE  DC    C'0123456789ABCDEF'  TRANSLATE TABLE FOR ABEND CODE
+         EJECT
+***********************************************************************
+*        ODD CONSTANTS AND LITERALS                                   *
+***********************************************************************
+SUBPOOL  DS    0F                  USED TO LOAD SUBPOOL ID
+         DC    AL1(0)
+         DC    AL3(0)              PADDING
+         END
+//LKED.SYSIN   DD   *
+ SETCODE AC(1)
+ NAME AUXCMM0F(R)
+ INCLUDE MLPALIB(AUXCOMM)
+ INCLUDE MLPALIB(AUXCMM0F)
+ ENTRY AUXCOMM
+ ALIAS AUXCMM10
+ ALIAS AUXCMM06
+ SETCODE AC(1)
+ NAME AUXCOMM(R)
+/*

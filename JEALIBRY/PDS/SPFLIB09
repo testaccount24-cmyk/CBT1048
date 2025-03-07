@@ -1,0 +1,107 @@
+//JEASPF09 JOB (1330,5),'J ABBEY',CLASS=N,NOTIFY=JEA
+//SPFLIB09 EXEC LIBRARYN,FILE=TESTLIB,BLKSIZE=800
+-OPT NOLIST,EXEC
+-DLM SPFLIB09,SPF9
+-ADD SPFLIB09,SPF9
+-PGMR JEABBEY
+-DESC SPF/LIBRARYN INTERFACE - ALLOC MASTER
+***********************************************************************
+*                     S P F L I B 0 9                                 *
+*                                                                     *
+*            THIS ROUTINE IS A COMMON SERVICE UTILITY FOR THE         *
+*        MONSANTO SPF/LIBRARYN INTERFACE ROUTINE. IS IS INVOKED TO    *
+*        DELETE THE SPF SOURCE DATA AFTER IT HAS BEEN LOADED          *
+*        INTO A LIBRARYN MASTER FILE.                                 *
+*            ON ENTRY TO THIS ROUTINE, REGISTER 1 CONTAINS THE        *
+*        ADDRESS OF THE COMMON DATA AREA.                             *
+*            THE ROUTINE OPERATES BY PERFORMING THE FOLLOWING         *
+*        THE FOLLOWING STEPS:                                         *
+*                                                                     *
+*        1)    TEST FOR A PDS OR SEQUENTIAL FILE.                     *
+*        2)    FOR A PDS, ISSUE A STOW MACRO TO DELETE THE MEMBER     *
+*        3)    FOR A SEQUENTIAL FILE, ISSUE THE SCRATCH MACRO.        *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING
+***********************************************************************
+         SPACE 2
+SPFLIB09 ZCSECT
+         LR    REG10,REG1          ADDRESS OF COMMON WORK AREA
+         USING DATAAREA,REG10      ADDRESSABILITY FOR IT
+         EJECT
+***********************************************************************
+*        TEST FOR A PARTITIONED OR SEQUENTIAL FILE
+***********************************************************************
+         SPACE 2
+         TM    WRKFLAG2,OSDSPS     IS IT A SEQUENTIAL FILE
+         BO    SCRATCH             YES. GO SCRATCH IT
+         B     PDSSTOW             NO. GO ISSUE A STOW MACRO
+         EJECT
+***********************************************************************
+*        FOR A PDS MEMBER, OPEN A PO DCB AND ISSUE A STOW MACRO
+***********************************************************************
+         SPACE 2
+PDSSTOW  DS    0H
+         LA    REG2,POOUTPUT       ADDRESS OF THE DCB
+         OPEN  ((2),OUTPUT)        OPEN THE DCB
+         STOW  POOUTPUT,JFCBELNM,D DELETE THE MEMBER
+         LR    REG3,REG15          SAVE THE STOW RETURN CODE
+         CLOSE ((2))               AND CLOSE THE PO DCB
+         LR    REG15,REG3          RESTORE THE STOW RETURN CODE
+         B     EXITPGM             GO RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        FOR A SEQUENTIAL FILE, ISSUE A SCRATCH MACRO
+***********************************************************************
+         SPACE 2
+SCRATCH  DS    0H
+         TM    WRKFLAG2,OSDSOPEN   IS THE OS FILE STILL OPEN ?
+         BZ    NOCLOSE             NO. O.K. FOR DELETE
+         LA    REG2,OSOUTPUT       ADDRESS OF THE DCB
+         CLOSE ((2))               CLOSE THE FILE
+         NI    WRKFLAG2,255-OSDSOPEN TURN OFF THE LOGIC FLAG
+NOCLOSE  EQU   *
+         DEVTYPE COPYDCB+40,CAMDEVT GET DEVICE TYPE
+         MVC   CAMSER,JFCBVOLS     SET UP VOLUME SERIAL
+         TM    WRKFLAG2,OSDSALLC   OS FILE IS ALLOCATED ?
+         BZ    NOFREE              NO. NO NEED TO DE-ALLOCATE IT
+         LINK  EP=UT501,PARAM=(OSDSJCL,AFUNCT,RETCODE,X1,X2),VL=1,     X
+               MF=(E,CALLLIST) FREE THE DD NAME
+         NI    WRKFLAG2,255-OSDSALLC AND TURN OFF THE LOGIC FLAG
+NOFREE   EQU   *
+         XR    REG0,REG0           CLEAR UCB ADDRESS REGISTER
+         SCRATCH CAMLIST2          ISSUE THE SCRATCH
+         LTR   REG15,REG15         WAS SCRATCH SUCCESSFUL ?
+         BNZ   EXITPGM             NO. RETURN TO CALLER
+         CATALOG CAMLIST3          YES. UNCATALOG THE DATA SET
+         B     EXITPGM             AND RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        RETURN TO THE CALLER OF THIS ROUTINE
+***********************************************************************
+         SPACE 2
+EXITPGM  DS    0H
+         ZRETURN RC=(15)           RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        CONSTANTS AND WORK AREAS
+***********************************************************************
+         SPACE 2
+         LTORG
+         DATAAREA
+         END
+-EMOD
+-END
+//SPFLIB09 EXEC ASMFCL,L=H,LOPT=RENT
+//SYSLIB DD DSN=JEA.MACLIB,DISP=SHR
+// DD DSN=SYS1.MACLIB,DISP=SHR
+// DD DSN=SYS2.MACLIB,DISP=SHR
+// DD DSN=SYS1.AMODGEN,DISP=SHR
+//SYSIN DD DSN=&&OSJOB,DISP=(OLD,DELETE)
+//LKED.SYSLMOD DD DSN=JEA.LOADLIB,DISP=SHR
+ INCLUDE SYSLMOD(SPFLIB01)
+ ENTRY SPFLIB01
+ NAME SPFLIB01(R)
+/*

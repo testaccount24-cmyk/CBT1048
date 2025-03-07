@@ -1,0 +1,1810 @@
+//JEAEDIT JOB (1140,5),'JEA SUPREDIT',CLASS=N,NOTIFY=JEA
+// EXEC LIBRARYN,FILE=MVS,BLKSIZE=6480
+//SYSIN DD DATA,DLM='??'
+-OPT NOLIST,EXEC
+-DLM SUPREDIT,XTSO
+-ADD SUPREDIT,XTSO
+-PGMR JEABBEY
+-DESC SUPER TSO EDITOR !
+EDIT     ZCSECT 12,9,8
+         EJECT
+***********************************************************************
+*        FIRST ESTABLISH THE NAME OF THE DATA SET                     *
+***********************************************************************
+         SPACE 2
+RETRYDSN TPUT  NAMEQERY,NAMEQLEN,FULLSCR,WAIT
+         XC    DSNERR1,DSNERR1      CLEAR DSN ERROR AREA
+         MVC   DSNAME,=120C' '     CLEAR THE DATA SET NAME AREA
+         TGET  DSNAME,80,EDIT,WAIT
+         LTR   REG1,REG1           WAS RESPONSE A NULL LINE ?
+         BZ    SETNULLF            YES. GO EDIT A NULLFILE FOR HIM
+         OC    DSNAME,=120C' '
+         CLC   DSNAME(5),=CL5'EXIT ' REQUEST TO TERMINATE EDIT ?
+         BE    EXIT                GO TO PROGRAM EXIT IF YES
+         CLC   DSNAME(2),=C'E '    TEST FOR ABBREVIATED VERSION
+         BE    EXIT                YES. GO TO PROGRAM EXIT
+DSNSET   EQU   *
+         MVC   JCLDSN,DSNAME       MOVE IT TO JCL
+DSNNORM  LINK  PARAM=(,FUNCTION,,,),MF=(E,UT501D),SF=(E,UT501S)
+         CLI   RETCODE,0           TEST FOR GOOD RETURN CODE
+         BE   OPENFILE              YES. ALLOCATION SUCCESSFUL
+         MVC   DSNERR1(L'DSNERROR),DSNERROR  MOVE ERROR TEXT IN
+         B     RETRYDSN            GO TRY AGAIN FOR ANOTHER
+SETNULLF EQU   *
+         MVC   DSNAME(8),=C'NULLFILE' TAKE 'NULLFILE' AS DSN
+         B     DSNSET              GO CARRY ON AS NORMAL
+         EJECT
+***********************************************************************
+*        OPEN THE DATA SET TO BE EDITED                               *
+***********************************************************************
+         SPACE 2
+OPENFILE EQU   *
+         LA    REG2,SYSUT1         LOAD ADDRESS OF THE DCB
+         USING IHADCB,REG2         ADDRESSABILITY FOR THE DCB
+         MVC   DCBEODA,=AL3(EODAD) SET UP THE EODAD ADDRESS
+         MVC   DCBEXLSA,=AL3(EXLST) SET UP THE OPEN EXIT ADDRESS
+         DROP  REG2                RELEASE THAT ADDRESSABILITY
+         OPEN  ((2),INPUT),MF=(E,OPENLIST) OPEN THE FILE
+         LH    REG1,SYSUT1+X'52'   LOAD THE LENGTH OF A RECORD
+         STH   REG1,LRECL          SAVE FOR LATER PROCESIING
+         EJECT
+**********************************************************************
+*        GETMAIN AND PREPARE THE SCREEN AREA
+**********************************************************************
+         SPACE 2
+         GETMAIN R,LV=SCLENGTH    GETMAIN SOME CORE
+         STM   REG0,REG1,SCRNREGS  SAVE GETMAIN REGISTERS
+         ST    REG1,SCREEN         SAVE ADDRESS OF THE SCREEN
+         L     REG0,SCREEN         PREPARE FOR CLEAR
+         LA    REG1,SCLENGTH       PREPARE FOR CLEAR
+         XR    REG14,REG14         PREPARE FOR CLEAR
+         XR    REG15,REG15         PREPARE FOR CLEAR
+         MVCL  REG0,REG14          CLEAR THE ENTIRE SCREEN AREA
+         L     REG1,SCREEN         RELOAD ADDRESS OF SCREEN AREA
+         MVC   0(9,REG1),=X'40115D7F1140401DE8' IDENTIFY FIELD
+         LA    REG1,9(REG1)        ADDRESS OF FIRST FIELD
+         ST    REG1,ERRMSG         SAVE ITS ADDRESS
+         LA    REG1,20(REG1)       ADDRESS OF NEXT AREA
+         MVC   0(5,REG1),=X'1140D41DE8' IDENTIFY DSNAME FIELD
+         LA    REG1,5(REG1)        STEP OVER THE CONTROL CHARS
+         ST    REG1,DSNAREA        SAVE ADDRESS OF DSNAME AREA
+         LA    REG1,138(REG1)      ADDRESS OF DATA AREA
+         MVC   0(5,REG1),=X'11C25F1D60' IDENTIFY DATA FIELD
+         LA    REG1,5(REG1)        STEP OVER THE CONTROL CHARS
+         ST    REG1,DATAAREA       SAVE ADDRESS OF DATA AREA
+         A     REG1,SCREENLN       ADDRESS OF END OF FIELD
+         MVC   0(6,REG1),=X'115B5F1DC913' IDENTIFY COMMAND FIELD
+         LA    REG1,6(REG1)         LOAD ADDRESS OF THE BUFFER ADDRESS
+         ST    REG1,CMNDLINE       SAVE ADDRESS OF COMMAND AREA
+         LA    REG1,120(REG1)      EMD OF COMMAND AREA
+         MVC   0(5,REG1),=X'115DD71D60' FINAL FIELD
+         LA    REG1,45(REG1)       ADDRESS OF END OF AREA
+         S     REG1,SCREEN         GET LENGTH OF THAT AREA
+         ST    REG1,TPUTLEN        AND SAVE IT FOR TPUT
+         L     REG15,DSNAREA       LOAD ADDRESS OF DATA SET NAME AREA
+         MVC   0(54,REG15),DSNAME  MOVE DATA SET NAME TO OUT AREA
+         EJECT
+***********************************************************************
+*        GETMAIN AND INITIALISE THE CONSOLE STACK
+***********************************************************************
+         SPACE 2
+         GETMAIN R,LV=STACKLEN
+         STM   REG0,REG1,STACKREG  SAVE GETMAIN REGISTERS
+         ST    REG1,FREESTAK       INITIALISE THE FREE STACK
+         AR    REG0,REG1           CALCULATE ADDRESS OF END OF AREA
+INITLOOP LA    REG14,STKLENTH(REG1)   ADDRESS OF NEXT ENTRY
+         CR    REG14,REG0          END OF AREA REACHED YET
+         BNL   INITENDS            YES. TERMINATE INITIALISATION
+         ST    REG14,0(REG1)       UPDATE CHAIN POINTER THIS AREA
+         LR    REG1,REG14          ADDRESS OF NEXT BUFFER
+         B     INITLOOP            PROCESS THE WHOLE AREA
+INITENDS XC    0(4,REG1),0(REG1)   CLEAR THE LAST POINTER
+         XC    STACKTOP,STACKTOP   'EMPTY' THE CONSOLE STACK
+         EJECT
+***********************************************************************
+*        LOAD THE DATA INTO GOTTEN AREA                               *
+***********************************************************************
+         SPACE 2
+         LA    REG1,DUMMY          LOAD ADDRESS OF DUMMY STAK ENTRY
+         XC    0(4,REG1),0(REG1)  SET IT TO ZEROS
+         ST    REG1,4(REG1)        MAKE ME POINT TO ME
+         ST    REG1,8(REG1)        AND MAKE ME POINT TO ME
+         XC    DATASTAK,DATASTAK   CLEAR THE STACK POINTER
+READLOOP EQU   *
+         XAL   REG11,GETDATAQ      GO FETCH A DATA Q ELEMENT
+         STM   REG14,REG0,CURRENT  MAKE NEW BLOCK CURRENT BLOCK
+         LR    REG2,REG14          LOAD AREA ADDRESS
+         GET   SYSUT1,(2)          READ FIRST RECORD INTO BLOCK
+         LM    REG1,REG3,CURRENT   LOAD CURRENT BLOCK DETAILS
+         L     REG1,4(REG3)        LOAD ADDRESS OF CURRENT BLOCK
+         B     READLOOP           READ THE WHOLE FILE
+EODAD    EQU   *                   END OF DATA ROUTINE
+         LM    REG1,REG3,CURRENT   CURRENT BLOCK DETAILS
+         MVC   0(1,REG2),=X'FF'    THAT SHOULD BE TOP OF FILE
+         LM    REG1,REG3,0(REG2)   LOAD TOP OF FILE DETAILS
+         MVC   0(1,REG3),=X'EE'    THAT SHOULD BE END OF FILE
+         STM   REG1,REG3,CURRENT   MAKE TOP OF FILE CURRENT
+         LA    REG2,SYSUT1         LOAD ADDRESS OF THE DCB
+         CLOSE ((2)),MF=(E,CLOSLIST)  CLOSE THE INPUT FILE
+         FREEPOOL SYSUT1            FREE UP THE BUFFER POOL
+         EJECT
+***********************************************************************
+*        DEALLOCATE THE DATA SET BEFORE PROCEEDING
+***********************************************************************
+         SPACE 2
+         LINK  PARAM=(,FUNCTIO2,,,),MF=(E,UT501D),SF=(E,UT501S)
+         EJECT
+***********************************************************************
+*        WRITE OUT THE FIRST SCREEN OF DATA AND PROCESS EACH INPUT CMD*
+***********************************************************************
+         SPACE 2
+         XAL   REG11,OUTPUTIT      CALL SERVICE ROUTINE
+REREAD   L     REG1,STACKTOP       LOAD ADDRESS OF NEXT STACK ENTRY
+         LTR   REG1,REG1           ANYTHING IN IT
+         BNZ   GOTSTACK            YES. GO PROCESSIT
+         XAL   REG11,CONSREAD      NO. GO READ ANOTHER COMMAND
+         B     REREAD              AND GO PROCESSIT
+GOTSTACK MVC   STACKTOP,0(REG1)    UPDATE THE STACK CHAIN
+         LR    REG3,REG1           LOAD A MORE PERMANENT BASE
+         USING STKENTRY,REG3       AND GET ADDRESSABILITY FOR IT
+         MVC   COMMANDX,STKAID     MOVE ALL THE DATA TO A WORK AREA
+         MVC   DATALNTH,STKLEN     THEN UNLOAD THE LENGTH OF THIS FIELD
+         MVC   0(4,REG3),FREESTAK  UPDATE MY CHAIN POINTER
+         ST    REG3,FREESTAK       AND UPDATE THE FREE STACK
+         XAL   REG11,PROCSTAK      GO PROCESS THE STACK ENTRY
+         B     REREAD              AND THEN FETCH THE NEXT ONE
+         EJECT
+***********************************************************************
+*        ANALYSE THE INPUT COMMAND                                    *
+***********************************************************************
+         SPACE 2
+ANALCMND DS    0H
+         LA    REG1,COMMAND        LOAD START ADDRESS OF COMMAND
+         ST    REG1,ERROPNDS       UPDATE START OF OPERANDS FIELD
+         L     REG1,=A(CMDTABLE)   LOAD ADDRESS OF COMMAND TABLE
+CMDLOOP  CLI   0(REG1),X'FF'       TEST FOR END OF TABLE
+         BE    INVLDCMD            YES. COMMAND NOT KNOWN
+         XR    REG15,REG15         CLEAR LENGTH REGISTER
+         IC    REG15,0(REG1)       LOAD LENGTH OF ID
+         LA    REG1,1(REG1)        ADDRESS OF COMMAND ID
+         BCT   REG15,*+10          SUBTRACT 1 FROM LENGTH
+         CLC   0(0,REG1),COMMAND   TEST FOR THIS COMMAND
+         EX    REG15,*-6           EXECUTE THE COMPARE
+         BE    FOUNDCMD            YES. GO PROCESS IT
+         LA    REG1,3+1(REG15,REG1) UPDATE TO NEXT ENTRY
+         B     CMDLOOP             PROCESS ALL THE ENTRIES
+FOUNDCMD LA    REG14,COMMAND+1(REG15) LOAD ADDRESS OF OPERANDS
+         ST    REG14,OPERANDS      SAVE ADDRESS OF OPERAND FIELD
+         ST    REG14,ERROPNDS      SAVE ADDRESS OF OPERAND FIELD
+         CLI   COMMAND,C'='        IS THIS A REPEAT REQUEST ?
+         BE    *+10                YES. THEN DONT SAVE IT
+         MVC   SAVECMND,COMMAND    SAVE THE COMMAND AREA
+         LA    REG1,1(REG15,REG1)  LOAD ADDRESS OF PROCESSOR ADDRESS
+         ICM   REG1,7,0(REG1)      LOAD ADDRESS OF THE ROUTINE
+         XAL   REG11,0(REG1)       AND PASS CONTROL TO IT
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        PROCESS '=' COMMAND BY RESTORING PREVIOUS COMMAND
+***********************************************************************
+         SPACE 2
+SAMAGAIN DS    0H
+         L     REG3,FREESTAK       LOAD THE ADDRESS OF A STAK ELEMENT
+         USING STKENTRY,REG3       ADDRESSABILITY FOR IT
+         MVC   FREESTAK,0(REG3)    UPDATE THE CHAIN
+         MVC   STKAID,AID          GIVE IT SOME CTL INFO
+         MVC   STKDATA,SAVECMND    MOVE THE SAVED COMMAND TO IT
+         LA    REG1,80             SIMULATE A LENGTH
+         STH   REG1,STKLEN         AND SAVE THAT
+         MVC   0(4,REG3),STACKTOP  CHAIN REST OF CONSOLE STACK TO THIS
+         ST    REG3,STACKTOP       AND PUT THIS AT TOP
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        PROCESS THE 'NEXT' COMMAND'                                  *
+***********************************************************************
+         SPACE 2
+NEXT     DS    0H
+         LA    REG10,1             LOAD THE DEFAULT
+         XAL   REG11,NUMBERS       GO FETCH THE NUMBR COUNT
+         LM    REG2,REG4,CURRENT   LOAD CURRENT RECORD DETAILS
+NEXTLOOP EQU   *
+         CLM   REG2,8,=X'EE'       END OF DATA ?
+         BE    NEXIT               YES. TERMINATE
+         LM    REG2,REG4,0(REG3)   LOAD DETAILS NEXT RECORD
+         BCT   REG1,NEXTLOOP       NO. KEEP GOING
+NEXIT    EQU   *
+         STM   REG2,REG4,CURRENT   MAKE THIS THE CURRENT RECORD
+         XAL   REG11,OUTPUTIT      AND SHOW HIM THE RESULT
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        PROCESS THE UP COMMAND                                       *
+***********************************************************************
+         SPACE 2
+UP       DS    0H
+         LA    REG10,1             LOAD THE DEFAULT
+         XAL   REG11,NUMBERS       GO FETCH THE NUMBR COUNT
+         LM    REG2,REG4,CURRENT   LOAD CURRENT RECORD DETAILS
+UPLOOP   EQU   *
+         CLM   REG2,8,=X'FF'       TOP OF DATA ?
+         BE    UPEXIT              YES. TERMINATE
+         LM    REG2,REG4,0(REG4)   LOAD DETAILS PREVIOUS RECORD
+         BCT   REG1,UPLOOP         NO. KEEP GOING
+UPEXIT   EQU   *
+         STM   REG2,REG4,CURRENT   MAKE THIS THE CURRENT RECORD
+         XAL   REG11,OUTPUTIT      AND SHOW HIM THE RESULT
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        PROCESS THE DELETE COMMAND                                  *
+*********************************************************************
+         SPACE 2
+DELETE   DS    0H
+         CLI   CURRENT,X'FF'       ARE WE AT THE TOP OF THE FILE
+         BNE   DELNOTOP            NO. CARRY ON NORMALLY
+         L     REG1,CURRENT+4      OTHERWISE LOAD ADDRESS OF NEXT REC
+         MVC   CURRENT(12),0(REG1) AND MAKE THIS THE CURRENT
+DELNOTOP EQU   *
+         CLI   CURRENT,X'EE'       ARE WE AT END OF FILE ?
+         BE    DELEXIT             YES. RETURN TO CALLER IMMEDIATELY
+         LA    REG10,1             LOAD DEFAULT NUMBER TO DELETE
+         XAL   REG11,NUMBERS       GO EXTRACT THE REQUESTED REANGE
+         LR    REG7,REG1           AND LOAD UP A WORK REGISTER
+         L     REG3,CURRENT+8      SAVE ADDRESS OF PREVIOUS RECORD
+         L     REG4,4(REG3)        REAL ADDRESS OF 1ST AFFECTED RECORD
+         LA    REG1,CURRENT        PREPARE FOR NEXT LITTLE LOOP
+DELOOP   EQU   *                   BUZZ DOWN CHAIN FOR RECS TO BE DLTD
+         L     REG1,4(REG1)        ADDRESS OF NEXT RECORD DOWN CHAIN
+         CLI   0(REG1),X'EE'       HAVE WE HIT END OF FILE
+         BE    DLOOPEND            YES. STOP GOING DOWN CHAIN
+         BCT   REG7,DELOOP         BUZZ DOWN AS MANY AS TO BE DELETED
+DLOOPEND EQU   *                   R1 POINTS AT REC AFTER LAST 2B DELTD
+         L     REG2,4(REG1)        SAVE ONE AFTER THAT FOR 'CURRENT'
+         ST    REG1,4(REG3)        CHAIN THIS ONE TO VERY FIRST ONE
+         L     REG5,8(REG1)        LOAD ADDRESS OF LAST BLK BEING DLTD
+         ST    REG3,8(REG1)        CHAIN FIRST BLK TO THIS END BLK
+         L     REG1,0(REG1)        ADDRESS OF DATA FOR NEW 'CURRENT'
+         STM   REG1,REG3,CURRENT   UPDATE THE LOCATION COUNTER
+         CR    REG5,REG3           IF THESE EQUAL, NO DATA WAS REMOVED
+         BE    DELEXIT             YES. RETURN TO CALLER
+         MVC   4(4,REG5),DATASTAK  CHAIN FREE STAK ONTO LAST DLTD BLK
+         ST    REG4,DATASTAK       AND MAKE 1ST BLK NEW TOP OF STAK
+DELEXIT  EQU   *
+         XAL   REG11,OUTPUTIT      GO SHOW HIM THE RESULT
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*         PROCESS THE INPUT COMMAND
+***********************************************************************
+         SPACE     2
+INPUT    DS        0H
+         L     REG1,OPERANDS       LOAD START ADDRESS OF ANY OPERANDS
+         XAL   REG11,SETDELIM      GO FIND END ADDRESS OF OPERANDS
+         L     REG1,OPERENDS       LOAD ADDRESS OF END OF DATA
+         MVI   0(REG1),C' '        BLANK OUT THE ARTIFICIAL DELIM
+         CLC   OPERANDS,OPERENDS   ANY OPERANDS EXIST IN FACT ?
+         BNL   INSBLOCK            NO. HE WANTS BLOCK INSERT
+         OI    WORKFLAG,IN1LINE    SIGNAL INPUT FOR 1 LINE
+         L     REG1,OPERANDS       LOAD ADDRESS OF FIRST BYTE
+         CLI   0(REG1),C' '        IS IT A BLANK ?
+         BNE   INNOSUBT            NO. ASSUME IT IS START OF DATA
+         LA    REG1,1(REG1)        OTHERWISE START AT NEXT ADDRESS
+INNOSUBT EQU   *
+         MVC   COMMAND,0(REG1)     EXTRACT THE INPUT DATA
+         B     IN1LINEX            GO START PROCESSING OF THE LINE
+INSBLOCK EQU   *
+         L     REG5,ERRMSG         LOAD ADDRESS OF SCREEN MSG AREA
+         MVC   0(5,REG5),=C'INPUT' IDENTIFY THIS AS INPUT MODE
+         XAL   REG11,OUTPUTIT      REWRITE A COMPLETE SCREEN
+INREADLP XAL   REG11,READSTAK      GO FETCH NEXT STACK ENTRY
+         CLI   AID,X'7D'           WAS THAT NORMAL INPUT ?
+         BE    INGOESON            YES. CONTINUE
+         XAL   REG11,PROCSTAK      NO. GO PROCESS WHATEVER IT WAS
+         B     INREADLP            AND GO TRY AGAIN
+INGOESON EQU   *
+         NC    DATALNTH,DATALNTH   IS THIS AN END OF BLOCK
+         BZ    INSENDS             CERTAINLY IS. EXIT QUICK
+         L     REG5,ERRMSG         LOAD ADDRESS OF SCREEN MESSAGE AREA
+         MVC   0(5,REG5),=C'INPUT' IDENTIFY THIS AS STILL INPUT MODE
+IN1LINEX EQU   *
+         LM    REG1,REG3,CURRENT   LOAD CURRENT LINE DETAILS
+         L     REG1,4(REG3)        LOAD ADDRESS OF CURRENT LINE
+         XAL   REG11,GETDATAQ      LOCATE A DATA Q ENTRY
+         STM   REG14,REG0,CURRENT  UPDATE THE CURRENT LOCATION ADDRESS
+         L     REG0,CURRENT        LOAD ADDRESS OF THE CURRENT ENTRY
+         LH    REG1,LRECL          LOAD THE LENGTH OF A RECORD
+         AR    REG1,REG0           ADDRESS OF END OF RECORD
+         A     REG0,COLSTART       ADD THE STAR ADDRESS
+         SR    REG1,REG0           LENGTH OF REST OF RECORD
+         C     REG1,=F'80'         IS THERE 80 BYTES LEFT ?
+         BNH   INNOT80             NO. TAKE WHAT LENGTH THERE IS
+         LA    REG1,80             OTHERWISE JUST TAKE 80
+INNOT80  EQU   *
+         LA    REG14,COMMAND       LOAD ADDRESS OF INPUT DATA
+         L     REG15,ENDZONE       LOAD LENGTH HE WANTS CHANGED
+         ICM   REG15,8,=C' '       LOAD A PADDING CHARACTER
+         MVCL  REG0,REG14          MOVE HIS DATA TO FILE AREA
+         TM    WORKFLAG,IN1LINE    WAS THAT A SINGLE INSERT
+         BO    INSENDS             YES. RETURN TO CALLER
+         XAL   REG11,OUTPUTIT      LET HIM SEE THE NEW LINE
+         B     INREADLP            GO FETCH NEXT INPUT RECORD
+INSENDS  XAL   REG11,OUTPUTIT      GIVE HIM ONE LAST LOOK
+         NI    WORKFLAG,255-IN1LINE RESET THE LOGIC FLAG
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        PROCESS THE TOP AND BOTTOM COMMANDS                          *
+***********************************************************************
+         SPACE 2
+TOPOFIT  DS    0H
+         LM    REG14,REG0,DUMMY    LOAD UP TOF DETAILS
+         STM   REG14,REG0,CURRENT  UPDATE CURRENT POINTER
+         XAL   REG11,OUTPUTIT      GO WRITE OUT THE SCREEN
+         BR    REG11
+         SPACE 2
+BOT      DS    0H
+         L     REG1,DUMMY+8        LOAD ADDRESS OF LAST  ENTRY
+         LM    REG14,REG0,0(REG1)  LOAD UP LAST RECORD DETAILS
+         STM   REG14,REG0,CURRENT  MAKE LAST RECORD CURRENT RECORD
+         XAL   REG11,OUTPUTIT      GO WRITE OUT THE SCREEN
+         BR    REG11               RETURN  TO CALLER
+         EJECT
+***********************************************************************
+*        PROCESS THE LEFT AND RIGHT COMMANDS
+***********************************************************************
+         SPACE 2
+LEFT     DS    0H
+         LA    REG10,999           LOAD THE DEFAULT SHIFT LEFT
+         XAL   REG11,NUMBERS       GO FETCH THE OPERAND
+         L     REG15,COLSTART      LOAD THE CURRENT DISPLAY COLUMN
+         SR    REG15,REG1          AND SUBTRACT HIS SHIFT
+         BP    SUBTROK             OK STILL GOT A POSITIVE NUMBER
+         LA    REG15,0             NOT OK. RESET TO START OF RECORD
+SUBTROK  EQU   *
+         ST    REG15,COLSTART      UPDATE THE CONTROL AREA
+         XAL   REG11,OUTPUTIT      SHOW HIM THE RESULT
+         BR    REG11               AND RETURN TO CALLER
+         SPACE 2
+RIGHT    DS    0H
+         LA    REG10,999           LOAD DEFAULT SHIFT RIGHT
+         XAL   REG11,NUMBERS       GO FIND THE VALUE CODED
+         L     REG15,COLSTART      LOAD THE CURRENT VALUE
+         AR    REG15,REG1          CALCULATE THE NEW VALUE
+         CH    REG15,LRECL         HAS HE GONE OFF END OF RECORD ?
+         BL    NOTOFFND            NO. ALL IS OK
+         LH    REG15,LRECL         YES. THEN GIVE HIM LAST BYTE
+         BCTR  REG15,0             ALLOW FOR OFFSET EFFECT
+NOTOFFND EQU   *
+         ST    REG15,COLSTART      UPDATE THE CONTROL AREA
+         XAL   REG11,OUTPUTIT      SHOW HIM THE RESULT
+         BR    REG11               AND RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        PROCESS THE CHANGE DATA COMMANDS                             *
+***********************************************************************
+         SPACE 2
+CHANGE   DS    0H
+         LA    REG1,1              LOAD DEFAULT FOR OPTIONAL FIELDS
+         ST    REG1,CARDCNT        SET DEFAULT CHANGES PER CARD
+         ST    REG1,RECCNT         SET DEFAULT RECORDS TO CHANGE
+         L     REG5,ERRMSG         LOAD ADDRESS OF MSG AREA
+         MVC   0(20,REG5),=CL20'NOT FOUND????' PREPARE A MESSAGE
+         L     REG1,OPERANDS       LOAD ADDRESS OF OPERAND STRING
+CHLOOP1  CLI   0(REG1),C' '        BLANK CHARACTER ?
+         BNE   GOTSTART            GO PROCESS THE CHANGE PARAMETERS
+         LA    REG1,1(REG1)        ADDRESS OF NEXT BYTE
+         C     REG1,=A(COMMAND+L'COMMAND) END OF INPUT AREA
+         BNL   OVLYMODE            YES. HE WANTS TO OVERLAY IT
+         B     CHLOOP1             NO. CONTINUE LOOPING
+GOTSTART XAL   REG11,SETDELIM      GO SUPPLY ANY MISSING DELIMITERS
+         LR    REG14,REG1          LOAD WORK REGISTER
+         IC    REG15,0(REG14)      LOAD HIS DELIMITER CH
+         LA    REG14,1(REG14)      ADDRESS FIRST DATA BYTE
+         ST    REG14,INSTRING      SAVE IST ADDRESS
+         XR    REG1,REG1           CLEAR LENGTH REGISTER
+         ST    REG14,ERROPNDS      UPDATE OPERAND ERR POINTER
+LOOP1    EX    REG15,CLIINST       TEST FOR DELIMITER
+         BE    FOUNDIT             YES END OF ARGUMENT STRING
+         LA    REG1,1(REG1)        INCREMENT DATA COUNT
+         LA    REG14,1(REG14)      ADDRESS NEXT BYET
+         C     REG14,=A(COMMAND+L'COMMAND) END OF DATA ?
+         BNL   CHERROR2            YES. OPERANDS MISSING
+         B     LOOP1               RETURN FOR NEXT BYTE
+FOUNDIT  EQU   *
+         ST    REG1,INLENGTH       SAVE LENGTH OF INPUT DATA
+         L     REG1,ENDZONE        LOAD END ZONE OFFSET
+         S     REG1,STRTZONE       GET LENGTH OF ZONE FIELD
+         C     REG1,INLENGTH       WILL THAT FIT ANYWAY
+         BL    ZONERR              NO. ZONE ERROR
+         XR    REG1,REG1           CLEAR LENGTH REGISTER
+         LA    REG14,1(REG14)      FIRST BYTE OF REPLACE DATA
+         ST    REG14,OUSTRING      SAVE ITS ADDRESS
+LOOP2    EX    REG15,CLIINST       TESTFOR FINAL DELIMITER
+         BE    FOUNDIT2            YES. THERE IT IS
+         LA    REG1,1(REG1)        NO.INCREMENT DATA COUNT
+         LA    REG14,1(REG14)      ADDRESS NEXT INPUT BYET
+         C     REG14,=A(COMMAND+L'COMMAND) END OF DATA ?
+         BNL   CHERROR2            OPERAND OR DELIMITER MISSING
+         B     LOOP2               PROCESS REST OF DATA
+FOUNDIT2 EQU   *
+         ST    REG1,OULENGTH       SAVE LENGTH OF OUTPUT STRING
+         L     REG1,ENDZONE        LOAD OFFSET TO END ZONE
+         S     REG1,STRTZONE       GET LENGTH OF ZONE FIELD
+         C     REG1,OULENGTH       WILL OUTPUT DATA FIT ?
+         BL    ZONERR              NO. ZONE ERROR
+         L     REG3,OPERENDS       LOAD ADDRESS OF STORED DELIMITER
+         MVI   0(REG3),C' '        RESTORE INPUT TO WHAT IT WAS
+         SPACE 3
+         LA    REG14,1(REG14)      ADDRESS OF FIELD AFTER DELIMITER
+         ST    REG14,OPERANDS      SAVE START ADDRESS OF ANY OPERANDS
+         LA    REG10,1             LOAD DEFAULT FOR OCCURRENCES
+         XAL   REG11,NUMBERS       GO FETCH OCCURRENCE COUNT
+         ST    REG1,CARDCNT        AND UPDATE CONTROL FIELD
+         LA    REG10,1             DEFAULT NUMBER OF CARDS TO DO
+         XAL   REG11,NUMBERS       GO FETCH NUMBER OF CARDS
+         ST    REG1,RECCNT         AND UPDATE CONTROL FIELD
+         SPACE 3
+CHNORMAL L     REG7,RECCNT         LOAD NUMBER OF RECORDS TO DO
+         B     INITIAL             START PROCESSING ON THIS CARD
+RECLOOP  EQU   *
+         L     REG1,CURRENT+4      ADDRESS OF NEXT RECORD
+         MVC   CURRENT(12),0(REG1) UPDATE THE POINTER
+INITIAL  EQU   *
+         L     REG1,CURRENT        LOAD START ADDRESS OF RECORD
+         A     REG1,COLSTART       LOAD START ADDRESS OF REAL AREA
+         A     REG1,STRTZONE       CALCULATE START ADDRESS OF CHANGE
+         ST    REG1,RESTART        UPDATE RESTART ADDRESS POINTER
+         L     REG6,CARDCNT        LOAD NUMBER OF OCCURRENCES
+CARDLOOP EQU   *
+         L     REG14,INSTRING      LOAD ADDRESS OF INPUT STRING
+         L     REG3,CURRENT        LOAD START ADDRESS OF RECORD
+         CLM   REG3,8,=X'FF'       ARE WE AT TOP OF FILE ?
+         BE    RECLEND               YES. CANNOT CHANGE HERE
+         CLM   REG3,8,=X'EE'       ARE WE AT THE VERY END
+         BE    CHEXIT              YES. CANNOT CHANGE HERE
+         A     REG3,COLSTART       ADD START OF 'SCREEN RECORD'
+         A     REG3,ENDZONE        DETERMINE FINAL LIMITS OF CHANGE
+         S     REG3,INLENGTH       TERMINATE SCAN AT END POINT
+         L     REG4,RESTART        START ADDRESS FOR NEW COMPARE
+         CR    REG4,REG3           HAVE WE HIT END OF CARD YET
+         BH    RECLEND             YES. NO POINT CONTINUING
+LOOP3    L     REG15,INLENGTH      LOAD LENGTH OF INPUT DATA
+         LR    REG1,REG15          LOAD CLCL REGISTER 1
+         LR    REG0,REG4           LOAD CLCL REGISTER 2
+         L     REG14,INSTRING      LOAD ADDRESS OF INPUT STRING
+         CLCL  REG0,REG14          TEST FOR IN STRING
+         BE    GOTSTRNG              YES. GO PROCESS IT
+         LA    REG4,1(REG4)        ADDRESS NEXT BYET
+         CR    REG4,REG3           GONE OFF THE END OF RECORD
+         BNH   LOOP3               NO. TRY AGAIN
+         B     RECLEND             DATA IS NOT FOUND
+GOTSTRNG ST    REG4,POINT          AND SET UP ADDRESS OF FOUND DATA
+         L     REG5,ERRMSG         LOAD ADDRESS OF ERROR MSG AREA
+         MVC   0(20,REG5),=120C' ' CLEAR THE ERROR MESSAGE AREA
+         LR    REG14,REG4          LOAD MVCL REGISTER
+         A     REG14,INLENGTH      ADDDRESS OF 'REST' OF CARD
+         L     REG15,ENDZONE       LOAD LENGTH OF 'RECORD'
+         A     REG15,COLSTART      ADD OFFSET TO REAL RECORD ADDRESS
+         A     REG15,CURRENT       ADDRESS OF END OF RECORD
+         SR    REG15,REG14         LENGTH OF REST OF DATA
+         LA    REG0,WORKAREA       ADDRESS OF DATA SAVE AREA
+         LA    REG1,L'WORKAREA     LENGTH OF SAVE AREA
+         ICM   REG15,8,=C' '       LOAD PADDING CHARACTER
+         MVCL  REG0,REG14          MOVE OUT REST OF CARD
+         L     REG0,POINT          LOAD ADDRESS OF INPUT AREA
+         L     REG1,CURRENT        LOAD ADDRESS OF RECORD
+         A     REG1,COLSTART       START OF SCREEN RECORD
+         A     REG1,ENDZONE        ADDRESS OF END OF ACTIVE AREA
+         SR    REG1,REG0           LENGTH OF SPACE REMAINING IN ZONE
+         C     REG1,OULENGTH       IS THIS LESS THAN DATA TO GO IN
+         BL    TRUNCATE            YES. JUST LEAVE IT AS THE LENGTH
+         L     REG1,OULENGTH       OTHERWISE LET HIM HAVE HIS OWN
+TRUNCATE EQU   *
+         L     REG14,OUSTRING      LOAD ADDRESS OF OUTPUT STRING
+         LR    REG15,REG1          LOAD SECOND LENGTH REGISTER
+         MVCL  REG0,REG14          MOVE IN REPLACE DATA
+         ST    REG0,RESTART        SAVE START ADDRESS OF NEXT COMPARE
+         L     REG1,CURRENT        RELOAD ADDRESS OF CARD
+         A     REG1,COLSTART       ADDRESS OF SCREEN RECORD
+         A     REG1,ENDZONE        LOAD ADDRESS OF END OF CARD
+         SR    REG1,REG0           LENGTH REMAIN ON CARD
+         LA    REG14,WORKAREA      ADDRESS OF DATA REMOVED
+         LA    REG15,L'WORKAREA    LENGTH OF WORK AREA
+         ICM   REG15,8,=C' '       LOAD A PADDING CHARACTER
+         MVCL  REG0,REG14          REPLACE REST OF DATA
+CARDLEND BCT   REG6,CARDLOOP       PROCESS ALL REQUIRED OCCURRENCES
+RECLEND  BCT   REG7,RECLOOP        PROCESS ALL REQUIRED OCCURRENCES
+CHEXIT   EQU   *
+         XAL   REG11,OUTPUTIT      SHOW HIM THE NEW CARD
+         BR    REG11               RETURN TO CALLER
+         SPACE 2
+         EJECT
+***********************************************************************
+*        PROCESS THE OVERLAY MODE FORM OF CHANGE
+***********************************************************************
+         SPACE 2
+OVLYMODE DS    0H
+         L     REG5,ERRMSG         LOAD ADDRESS OF MESSAGE AREA
+         CLI   CURRENT,X'FF'       ARE WE AT TOP ?
+         BE    MINEMINE            THATS MINE. LEAVE IT ALONE
+         CLI   CURRENT,X'EE'       ARE WE AT END OF DATA
+         BE    MINEMINE            SO'S THAT YOU BRUTE
+         MVC   0(19,REG5),=CL19'CHANGE RECORD'
+         L     REG1,CMNDLINE       LOAD ADDRESS OF COMMAND LINE ON SCR
+         XC    0(120,REG1),0(REG1) CLEAR THIS AREA TO NULLS
+         L     REG14,CURRENT       LOAD ADDRESS OF CURRENT LINE
+         A     REG14,COLSTART      LOAD START ADDRESS FOR SCREEN DATA
+         LH    REG15,LRECL         LOAD THE LENGTH OF A RECORD
+         A     REG15,CURRENT       GET ADDRESS OF END OF RECORD
+         SR    REG15,REG14         LENGTH OF REMAINING DATA
+         C     REG15,=A(80)        MORE THEN 80 BYTES
+         BNH   CHNOTO80            NO. LEAVE IT ALONE
+         LA    REG15,80            YES. JUST TAKE 80 BYTES
+CHNOTO80 EQU   *
+         ICM   REG15,8,=C' '       LOAD A PADDING CHARACTER
+         L     REG0,CMNDLINE       LOAD ADDRESS OF COMMAND LINE
+         LA    REG1,80             LOAD LENGTH OF COMMAND LINE
+         MVCL  REG0,REG14          AND MOVE THAT DATA TO IT
+         XAL   REG11,OUTPUTIT      GO WRITE OUT THE SCREEN
+CHREADLP XAL   REG11,READSTAK      GO IDENTIFY THE NEXT INPUT
+         CLI   AID,X'7D'           NORMAL INPUT ?
+         BE    CHGOESON             YES. CARRY ON WITH IT
+         XAL   REG11,PROCSTAK      NO. GO PROCESS WHATEVER IT WAS
+         B     CHREADLP            AND START AGAIN
+CHGOESON EQU   *
+         NC    DATALNTH,DATALNTH   ANYTHIN THERE TO CHANGE
+         BZ    OVLYEXIT            NO. RETURN TO CALLER
+         L     REG0,CURRENT        LOAD ADDRESS OF CURRENT RECORD
+         A     REG0,COLSTART       CALCULATE THE REAL START ADDRESS
+         LH    REG1,LRECL          LOAD LENGTH OF DATA
+         A     REG1,CURRENT        END ADDRESS OF RECORD
+         SR    REG1,REG0           LENGTH OF RECORD REMAINING
+         L     REG14,ENDZONE       LOAD LENGTH TO BE CHANGED
+         CR    REG1,REG14          WHICH OF THESE IS GREATER
+         BL    OVTAKEIT            REG14. TAKE THE REMAINING LENGTH
+         LR    REG1,REG14          REG1. TAKE THE DEFINED ZONES
+OVTAKEIT EQU   *
+         LA    REG14,COMMAND       ADDRESS OF SOURCE DATA
+         LA    REG15,L'COMMAND     LENGTH OF SOURCE DATA
+         MVCL  REG0,REG14          REPLACE THE INPUT DATA
+OVLYEXIT L     REG1,CMNDLINE       LOAD ADDRESS OF COMMAND AREA
+         XC    0(120,REG1),0(REG1) CLEAR THE COMMAND AREA
+         L     REG5,ERRMSG         LOAD ADDRESS OF MESSAGE AREA
+         MVC   0(20,REG5),=120C' ' CLEAR THE MESSAGE AREA
+         B     OUTPUTIT            OUTPUT THE NEW DATA
+         EJECT
+***********************************************************************
+*        PROCESS ABBREVIATED FORM OF LOCATE
+***********************************************************************
+         SPACE 1
+*        THIS ROUTINE IS A PRE-PROCESSOR FOR THE
+*         ABBREVIATED VERSION OF LOCATE WHEREBY THE CHARACTER '/' IS
+*         BOTH THE LOCATE OPERATION CODE AND THE FIRST STRING DELIMITER
+         SPACE 1
+MINILOC  DS    0H
+         L     REG1,OPERANDS       LOAD ADDRESS OF OPERAND STRING
+         BCTR  REG1,0              DECREMENT TO PREVIOUS BYTE
+         ST    REG1,OPERANDS       PRESERVE UPDATED OPERAND ADDRESS
+         ST    REG1,ERROPNDS       ALOS UPDATE ERROR OPERAND FIELD
+         B     LOCATE              GO TO NORMAL LOCATE PROCESSING
+         EJECT
+***********************************************************************
+*        PROCESS THE LOCATE COMMAND
+***********************************************************************
+         SPACE 2
+LOCATE   DS    0H
+         L     REG1,OPERANDS       LOAD ADDRESS OF OPERAND STRING
+         XAL   REG11,SETDELIM      GO INSERT FINAL DELIMITER
+         L     REG1,CURRENT+4      LOAD ADDRESS OF NEXT LINE AREA
+         MVC   CURRENT(12),0(REG1) UPDATE LOCATION POINTER
+         CLI   CURRENT,X'EE'       ARE WE AT END OF FILE
+         BNE   NOTATEND            NO. CARRY ON AS NORMAL
+         L     REG1,CURRENT+4      LOAD ADDRESS OF NEXT (TOP) RECORD
+         L     REG1,4(REG1)        JUMP PAST THE TOF MARKER
+         MVC   CURRENT(12),0(REG1) AND REPOSITION TO TOF
+NOTATEND L     REG14,OPERANDS      LOAD START ADDRESS OF OPERAND
+         IC    REG15,0(REG14)      LOAD HIS DELIMITER CHARACTER
+         LA    REG14,1(REG14)      FIRST BYTE OF ARGUMENT
+         ST    REG14,LOCDATA       SAVE ADDRESS OF LOCATE DATA
+         XR    REG1,REG1           CLEAR LENGTH REGISTER
+CNTLOOP  EX    REG15,CLIINST       TEST FOR END OF ARGUMENT
+         BE    GOTLSTR             FOUND IT. GO PROCESS
+         LA    REG1,1(REG1)        INCREMENT LENGTH REGISTER
+         LA    REG14,1(REG14)      LOAD ADDRESS NEXT DATA BYTE
+         C     REG14,=A(COMMAND+L'COMMAND) END OF INPUT DATA ?
+         BNL   LCERROR1            YES. ERROR CONDITION
+         B     CNTLOOP             GO TRY NEXT BYTE
+GOTLSTR  ST    REG1,LOCLENTH       SAVE LENGTH OF DATA STRING
+LOOP6    L     REG14,LOCDATA       LOAD ADDRESS OF INPUT DATA
+         L     REG4,CURRENT        LOAD ADDRESS OF CURRENT CARD
+         A     REG4,COLSTART       ADDRESS OF SCREEN RECORD
+         LR    REG3,REG4           LOAD SECOND REGISTER
+         A     REG3,ENDZONE        CALCULATE END ADDRESS OF COMPARE
+         A     REG4,STRTZONE       CALCULATE START ADDRESS OF SCAN
+         S     REG3,LOCLENTH       TERMINATE SCAN AT END POINT
+LOOP5    L     REG15,LOCLENTH      LOAD LENGTH OF INPUT DATA
+         LR    REG1,REG15          LOAD CLCL REGISTER 1
+         LR    REG0,REG4           LOAD CLCL REGISTER 2
+         L     REG14,LOCDATA       LOAD ADDRESS OF INPUT DATA
+         CLCL  REG0,REG14          TEST FOR DATA FOUND
+         BE    LOCGOTIT            YES. GO PROCESS
+         LA    REG4,1(REG4)      LOAD ADDRESS FOR NEXT COMPARE
+         CR    REG4,REG3           END OF CARD YET
+         BNH   LOOP5               NO. CONTINUE
+         L     REG1,CURRENT+4      ADDRESS OF NEXT RECORD
+         MVC   CURRENT(12),0(REG1) UPDATE CURRENT POINTER
+         CLI   CURRENT,X'EE'       END OF DATA DETECTED
+         BNE   LOOP6               NO. GO PROCESS NEXT CARD
+LOCGOTIT XAL   REG11,OUTPUTIT      GO SHOW HIM HIS DATA
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        DUPLICATE A NUMBER OF LINES
+***********************************************************************
+         SPACE 2
+$DUP     DS    0H
+         CLI   CURRENT,X'FF'       ARE WE AT TOP OF FILE
+         BE    MINEMINE            YES. GO COMPLAIN AT HIM
+         CLI   CURRENT,X'EE'       ARE WE AT END OF DATA
+         BE    MINEMINE            YES. GO COMPLAIN AT HIM
+         LA    REG10,1             LOAD THE DEFAULT NUMBER OF DUP'S
+         XAL   REG11,NUMBERS       GO EXTRACT NUMBER TO DUP
+         LTR   REG1,REG1           CHACK FOR ZERO COUNT
+         BZ    DUPEXIT             YES. RETURN IMMEDIATELY
+         LR    REG5,REG1           LOAD THE COUNT OF DUP'S
+DUPLOOP  EQU   *
+         LM    REG15,REG1,CURRENT  LOAD CURRENT LINE DETAILS
+         L     REG1,4(REG1)        LOAD ADDRESS OF CURRETN LINE
+         XAL   REG11,GETDATAQ      OBTAIN A NEW DATA Q ELEMENT
+         STM   REG14,REG0,CURRENT  AND MAKE THIS A CURRENT ENTRY
+         L     REG1,CURRENT+8      LOAD ADDRESS OF CURRENT DATA
+         L     REG0,0(REG1)        ADDRESS OF OLD DATA AREA
+         LH    REG1,LRECL          LOAD THE LENGTH OF DATA
+         LR    REG15,REG1          LOAD MVCL SECOND REGISTER
+         MVCL  REG14,REG0          COPY THE RECORD TO THIS AREA
+         BCT   REG5,DUPLOOP        AND REPEAT
+DUPEXIT  XAL   REG11,OUTPUTIT      GO SHOW HIM THE RESULT
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        MOVE A RANGE OF LINES
+***********************************************************************
+         SPACE 2
+$DUPMOVE DS    0H
+         NI    $DPFLAG,255-$DPMOVE SHOW THAT NO MOVE REQUIRED
+         B     $DPSTART            GO ENTER THE MAIN ROUTINE
+$MOVE    DS    0H
+         OI    $DPFLAG,$DPMOVE     SET FLAG TO SHOW MOVE OPERATION
+$DPSTART EQU   *
+         CLI   CURRENT,X'FF'       ARE WE AT TOP
+         BNE   $MNOTTOP            NO. CARRY ON THEN
+         L     REG1,CURRENT+4      ADDRESS OF NEXT RECORD
+         MVC   CURRENT(12),0(REG1) AND UPDATE THE LOCATION
+$MNOTTOP EQU   *
+         CLI   CURRENT,X'EE'       ARE WE AT END ?
+         BE    GENERAL             YES. STUPID
+         XAL   REG11,SKIPBLNK      LOCATE START OF FIRST OPERAND
+         XAL   REG11,NUMBERS       GO FETCH RECORD COUNT
+         LR    REG7,REG1           SAVE THAT COUNT
+         XAL   REG11,SKIPBLNK      LOCATE DIRECTION
+         LA    REG14,8             LOAD UP OFFSET
+         CLC   0(2,REG1),=C'U '    IS IT TO BE UP ?
+         BE    GOTDIRCT            YES. GOT THE DIRECTION
+         LA    REG14,4             GET DOWN OFFSET
+         CLC   0(2,REG1),=C'D '    IS IT DOWN THEN ?
+         BE    GOTDIRCT            YES. GO PROCESS
+         B     $DPERR              AH SHAME
+GOTDIRCT EQU   *
+         ST    REG14,$DPOFFST      SAVE THE DIRECTION INDICATOR
+         LA    REG1,1(REG1)        STEP OVER THE NEXT CHARACTER
+         ST    REG1,OPERANDS       AND UPDATE THE OPERAND ADDRESS
+         LA    REG10,1             LOAD DEFAULT DISTANCE TO MOVE
+         XAL   REG11,NUMBERS       GO FETCH THE DISTANCE
+         LR    REG6,REG1           AND SAVE IT
+         L     REG3,CURRENT+8      ADDRESS OF THE RECORD BEFORE
+         L     REG4,4(REG3)        ADDRESS OF FIRST RECORD AFFECTED
+         LA    REG1,CURRENT        SET UP FOR THE LOOP
+$MLOOP1  EQU   *                   BUZZ DOWN TO THE LAST RECORD WANTED
+         L     REG1,4(REG1)        ADDRESS OF NEXT RECORD AREA
+         CLI   0(REG1),X'EE'       END OF FILE
+         BE    $MLOOP1X            YES. EXIT FROM THE LOOP
+         BCT   REG7,$MLOOP1        NO. KEEP GOING DOWN THE RECORDS
+$MLOOP1X EQU   *
+         L     REG5,8(REG1)        ADDRESS OF LAST RECORD TO BE MOVED
+         TM    $DPFLAG,$DPMOVE     IS THIS REALLY A MOVE ?
+         BZ    $MNOMVE1            NO. LEAVE CURRENT CHAINING
+         ST    REG1,4(REG3)        UPDATE THE CHAIN TO REMOVE BLOCKS
+         ST    REG3,8(REG1)        UPDATE THE CHAIN TO REMOVE BLOCKS
+$MNOMVE1 EQU   *
+         LR    REG1,REG3           AND GO BACK TO THAT RECORD
+         L     REG14,$DPOFFST      RESTORE THE DIRECTION INDICATOR
+$MLOOP2  EQU   *
+         TM    0(REG1),X'80'       IS THIS THE TOP OR THE BOTTM ?
+         BNZ   $MLOOP2X            ONE OR THE OTHER. EXIT FROM LOOP
+         L     REG1,0(REG14,REG1)  LOAD ADDRESS OF NEXT BLOCK UP OR DN
+         BCT   REG6,$MLOOP2        FIND THE INSERT POINT
+$MLOOP2X EQU   *
+         CLI   0(REG1),X'EE'       HAVE WE ARRIVED AT END OF FILE ?
+         BNE   *+8                 NO. INSERT POINT IS OK
+         L     REG1,8(REG1)        YES. GO BACK 1. DO NOT COLLECT $200
+         TM    $DPFLAG,$DPMOVE     IS THIS A MOVE OR A DUPMOVE
+         BZ    $MNOMVE2            DUPMOVE GO TO COPY ROUTINE
+         L     REG2,4(REG1)        ADDRESS OF RECORD AFTER INSERT POINT
+         ST    REG4,4(REG1)        LINK THE NEW BLOCK IN AT TOP
+         ST    REG1,8(REG4)        AND THE BACK POINTER AT TOP
+         ST    REG2,4(REG5)        LINK THE NEW BLOCK IN AT BOTTOM
+         ST    REG5,8(REG2)        AND THE BACK POINTRE AT BOTTOM
+         MVC   CURRENT(12),0(REG4) SET UP NEW LOCATION POINTER
+$DPEXIT  EQU   *
+         NI    $DPFLAG,255-$DPMOVE RESET THE FLAG
+         XAL   REG11,OUTPUTIT      SHOW HIM THE RESULT
+         BR    REG11               RETURN TO CALLER
+$MNOMVE2 EQU   *
+         MVC   CURRENT(12),0(REG1) MAKE INSERT POINT CURRENT FOR NOW
+$MLOOP3  EQU   *
+         XAL   REG11,GETDATAQ      GET A FREE DATA BLOCK
+         L     REG1,8(REG15)       RESET READY FOR NEXT GETDATAQ
+         LH    REG15,LRECL         LOAD LENGTH OF DATA
+         L     REG6,0(REG4)        ADDRESS OF SOURCE DATA
+         LR    REG7,REG15          SECOND LENGTH REGISTER
+         MVCL  REG14,REG6          COPY THE CURRENT RECORD
+         CR    REG4,REG5           ANY MORE TO COPY
+         BE    $MLOOP3X            NO. TERMINATE THE COPY
+         L     REG4,4(REG4)        ADDRESS OF NEXT BLOCK
+         B     $MLOOP3             AND CONTINUE
+$MLOOP3X EQU   *
+         L     REG1,CURRENT+4      ADDRESS OF FIRST NEW RECORD
+         MVC   CURRENT(12),0(REG1) UPDATE CURRENT LOCATION COUNTER
+         B     $DPEXIT             RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        RENUMBER THE ENTIRE FILE
+***********************************************************************
+         SPACE 2
+RENUM    DS    0H
+         LA    REG10,100           LOAD THE DEFAULT
+         XAL   REG11,NUMBERS       GO GET START NUMBER
+         LR    REG2,REG1           LOAD WORK REGISTER
+         LA    REG10,100           LOAD THE DEFAULT
+         XAL   REG11,NUMBERS       GO GET INCREMENT
+         LR    REG3,REG1           LOAD WORK REGISTER
+         LA    REG10,73            LOAD DEFAULT START COL
+         XAL   REG11,NUMBERS       GO LOAD THE NUMBER
+         LR    REG4,REG1           LOAD WORK REGISTER
+         LA    REG10,8             LOAD DEFAULT LENGTH
+         XAL   REG11,NUMBERS       GO LOAD THE NUMBER
+         LR    REG5,REG1           LOAD WORK REGISTER
+         BCTR  REG4,0              CONVERT COL NUMBER TO OFFSET
+         BCTR  REG5,0              EXECUTABLE LENGTH
+         L     REG7,CURRENT+8      ADDRESS OF PREVIOUS RECORD
+         L     REG7,4(REG7)        SAVE ADDRESS OF THE CURRENT ENTRY
+         MVC   CURRENT(12),DUMMY   GO TO THE TOP OF THE DATA
+         L     REG1,CURRENT+4      FIND NEXT LINE PARAMTER
+         MVC   CURRENT(12),0(REG1) UPDATE THE WORK AREA
+         CLI   CURRENT,X'EE'       SNEAKY ONE WITH A NULLFILE ?
+         BE    RENEXIT             SURE IS. THAT FOOLED YA.
+         L     REG6,CURRENT        ADDRESS OF ALL THAT DATA
+RENLOOP  CVD   REG2,DBLWORD        CONVERT FIRST NUMBER TO DECIMAL
+         OI    DBLWORD+L'DBLWORD-1,X'0F' LAST SIGN BYTE A GUDUN
+         UNPK  RENWORK,DBLWORD+3(5) UNPACK THAT NUMBER
+         LA    REG1,RENWORK+L'RENWORK-1 LAST BYTE OF NUMBER
+         SR    REG1,REG5           START ADDRESS OF NUMBER
+         LA    REG15,0(REG4,REG6)  START ADDRESS OF NUMBER COL
+         EX    REG5,RENMVC         MOVE NUMBER TO CARD
+         L     REG1,CURRENT+4      FETCH NEXT RECORD PARM
+         MVC   CURRENT(12),0(REG1) UPDATE THE CURRENT LOCATION
+         L     REG6,CURRENT        AND LOAD WORK REGISTER
+         CLI   CURRENT,X'EE'       END OF FILE REACHED ?
+         BE    RENEXIT             YES. EXIT FROM LOOP
+         AR    REG2,REG3           CALCULATE NEXT LINE NUMBER
+         B     RENLOOP             PROCESS ALL THE RECORDS
+RENEXIT  EQU   *
+         MVC   CURRENT(12),0(REG7) RESET CURRENT RECORD ADDRESS
+         XAL   REG11,OUTPUTIT      GO SHOW HIM THE SCREEN
+         BR    REG11               RETURN TO CALLER
+RENMVC   MVC   0(0,REG15),0(REG1)  MOVE NUMBER TO CARD
+         EJECT
+***********************************************************************
+*        INITIALISE THE ZONE RANGES
+***********************************************************************
+         SPACE 2
+ZONE     DS    0H
+         XAL   REG11,NUMBERS       LOCATE FIRST NUMBER
+         CH    REG1,=H'80'         IS IT A RIDICULOUS NUMBER
+         BH    ZONERR              YES GIVE HIM AN ERROR
+         BCTR  REG1,0              CONVERT TO AN OFFSET
+         ST    REG1,STRTZONE       SAVE START ZONE
+         XAL   REG11,NUMBERS       GET NEXT ZONE FIELD
+         CH    REG1,=H'80'         RIDICULOUS NUMBER AGAIN
+         BH    ZONERR              YES. GO TELL HIM ABOUT IT
+         ST    REG1,ENDZONE        SAVE ENDING ZONE ADDRESS
+         CLC   STRTZONE,ENDZONE    SEE IF THE VALUES MAKE SENSE
+         BNL   ZONERR
+         B     OUTPUTIT            GO SHOW HIM THE SCREEN
+         EJECT
+***********************************************************************
+*        PROCESS THE TAB KEY
+***********************************************************************
+         SPACE 2
+TAB      DS    0H
+         NC    DATALNTH,DATALNTH   DID ANY DATA COME IN WITH THAT ?
+         BZ    NOTBDATA            NO. NONE EXISTS SO FAR
+         OI    WORKFLAG,DANGER     YES. SO TURN ON A FLAG
+         MVC   IOAREA,COMMAND      MOVE ANY DATA READ BACK TO IO AREA
+NOTBDATA EQU   *
+         LA    REG3,4(REG3)        STEP OVER THE TAB KEYWORD
+         MVC   COMMAND,=120C' '     CLEAR THE COMMAND AREA
+         MVC   COMMAND(76),0(REG3)  MOVE THE OPERANDS TO COMMAND AREA
+         LA    REG1,COMMAND          LOAD ADDRESS OF SIRST OPERAND
+         ST    REG1,OPERANDS        AND UPDATE THE 'NUMBERS' POINTER
+         LA    REG1,CURSORID        LOAD ADDRESS OF CURRENT CURSOR ADDR
+         XAL   REG11,GETOFFST       AND CONVERT THAT TO AN OFFSET
+         LR    REG3,REG1           LOAD A WORK REGISTER
+         S     REG3,=A(80*22-1)     IS THAT CURSOR IN RANGE
+         BP    YESITIS              YESITIS
+         XR    REG3,REG3           PRETEND THAT ITS IN RANGE
+YESITIS  EQU   *
+         OI    WORKFLAG,TABCOL1    SET ON FLAG JUST IN CASE
+TABLOOP  XR    REG10,REG10          SET DEFAULT REGISTER
+         XAL   REG11,NUMBERS        GO FETCH FIRST  TAB COLUMN
+         LTR   REG1,REG1           ANY MORE POSITIONS TO TEST
+         BZ    INSERTIT            NO. GO INSERT THE CURSOR
+         BCTR  REG1,0               SUBTRACT 1 FOR AN INSERT
+         CR    REG1,REG3            IS THAT BEYOND OUR CURRENT ADDRESS
+         BL    TABLOOP              NO. TRY THE NEXT ONE
+         NI    WORKFLAG,255-TABCOL1 RESET THE FLAG WHICH SAYS COL 1
+INSERTIT EQU   *                    SET UP PARAMETER REGISTER
+         XAL   REG11,GETBUFF        GO RECONVERT TO A BUFFER ADDRESS
+         STCM  REG1,3,CURSLOC       SET UP THE INSERT CURSOR SBA ADDRES
+         LA    REG3,INCURS          LOAD ADDRESS OF COMMAND STRING
+         LA    REG4,INCURLEN        LOAD THE LENGTH OF IT
+         TPUT  (3),(4),FULLSCR,WAIT GO INSERT THE CURSOR
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        CALCULATE A BUFFER OFFSET FROM A BUFFER ADDRESS
+***********************************************************************
+         SPACE 2
+GETOFFST DS    0H
+         XR    REG14,REG14         CLEAR WORK REGISTER
+         XR    REG15,REG15         CLEAR WORK REGISTER
+         IC    REG14,0(REG1)        LOAD FIRST PART OF ADDRESS
+         IC    REG15,1(REG1)        LOAD SECOND PART OF ADDRESS
+         N     REG14,=F'63'         STRIP ALL BUT LAST SIX BITS
+         N     REG15,=F'63'         STRIP ALL BUT LAST SIX BITS
+         SLL   REG14,6              MOVE HIGH ORDER BITS OVER
+         AR    REG14,REG15          AND ADD THEM TOGETHER
+         LR    REG1,REG14           LOAD INTO RETURN REGISTER
+         BR    REG11                RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        CONVERT AN OFFSET TO A COMMAND LINE ADDRESS
+***********************************************************************
+         SPACE 2
+GETBUFF  DS    0H
+         L     REG15,=A(BUFFTABL)   LOAD ADDRESS OF BUFFER ADDRESS TAB
+         SLL   REG1,1            MULTIPLY BY 2
+         LA    REG1,0(REG1,REG15)   ADDRESS OF THE APPROPRIATE ENTRY
+         ICM   REG1,3,0(REG1)       LOAD UP THE BUFFER ADDRESS
+         BR    REG11                RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        INITIALISE THE PROGRAM FUNCTION KEYS
+***********************************************************************
+         SPACE 2
+SET      DS    0H
+         XAL   REG11,SKIPBLNK      FIND FIRST OPERAND
+         CLC   0(2,REG1),=C'PF'    PFK IDENTIFIER ?
+         BNE   SETERROR            INVALID PARMS
+         LA    REG1,2(REG1)        OK. STEP OVER IT
+         ST    REG1,OPERANDS        AND UPDATE THE OPERAND POINTER
+         XR    REG10,REG10         CLEAR DEFAULT REGISTER
+         XAL   REG11,NUMBERS       EXTRACT THE PFK NUMBER
+         LR    REG2,REG1           SAVE PFK ID
+         LTR   REG1,REG1           TEST FOR INVALID ENTRY
+         BZ    SETERROR            YES. SIGNAL THE ERROR
+         CH    REG1,=H'24'         HIGHER THAN MAXIMUM ALLOWED
+         BH    SETERROR             SORRY. NOCANDO
+         XAL   REG11,SKIPBLNK      FIND NEXT OPERAND
+         MH    REG2,=AL2(AIDTLEN)    OFFSET TO AID TABLE ENTRY
+         L     REG15,=A(PFKAREA-AIDTLEN) LOAD START ADDRESS OF ENTRIES
+         LA    REG15,0(REG2,REG15) ADDRESS OF CORRECT ENTRY
+         NI    1(REG15),255-PFKIMM-TABKEY  RESET IMMEDIATE FLAG
+         CLC   0(4,REG1),=C'IMM '  IMMEDIATE EXECUTION REQUIRED
+         BNE   SETNOFLG            NO. CARRY ON
+         OI    1(REG15),PFKIMM      SET ON IMMEDIATE EXECUTION FLAG
+         LA    REG1,4(REG1)         AND STEP OVER THE OPERAND
+         ST    REG1,OPERANDS        AND UPDATE OPERAND START ADDRESS
+SETNOFLG EQU   *
+         XAL   REG11,SKIPBLNK      FIND START OF OPERANDS
+         CLC   0(4,REG1),=C'TAB '  IS THIS A TAB KEY ?
+         BNE   NOTATAB             NO. CARRY ON
+         OI    1(REG15),TABKEY     SIGNAL THAT THIS IS A TAB KEY
+NOTATAB  EQU   *
+         OI    1(REG15),PFKSTAK     SIGNAL THAT PFK IS SET
+         L     REG2,1(REG15)       LOAD ADDRESS OF THE BUFFER
+         LA    REG2,0(REG2)        STRIP OFF THE TOP BYTE
+         LR    REG3,REG2             LOAD A SECOND REGISTER
+         SH    REG3,=H'4'           GO BACK FOUR PLACES
+         MVC   0(4,REG3),=120C' '   RESET THE IMM 'RESET' FACILITY
+         TM    1(REG15),PFKIMM      IS IT AN IMMEDIATE PFK
+         BZ   NOTIMM                NO. CARRY ON AS NORMAL
+         MVC    0(4,REG3),=C'IMM ' SET UP AUTOMATIC COMMAND
+NOTIMM   EQU   *
+         LA    REG3,80               LENGTH OF PFK AREA
+         LR    REG0,REG1           LOAD ADDRESS OF SOURCE FIELD
+         LA    REG1,COMMAND+L'COMMAND END OF REMAINING SOURCE DATA
+         SR    REG1,REG0             GET LENGTH OF REMAINING DATA
+         ICM   REG1,8,=C' '        AND SET UP A PADDING CHARACTER
+         MVCL  REG2,REG0            MOVE THE COMMAND STRING TO BUFFER
+SETEXIT  L     REG5,ERRMSG         LOAD ADDRESS OF MESSAGE AREA
+         MVC   0(20,REG5),=CL20'PFK IS SET.' TELL HIM ITS DONE
+         B     OUTPUTIT            AND SHOW HIM A NEW SCREEN
+         EJECT
+***********************************************************************
+*        DISPLAY ALL THE PFK'S READY FOR CHANGE
+***********************************************************************
+         SPACE 2
+PFK      DS    0H
+         LM    REG3,REG4,PFKREGS   LOAD THE ADDRESS AND LENGTH OF SCRN
+         TPUT  (3),(4),FULLSCR,WAIT AND WRITE IT OUT TO HIM
+         B     REREAD              AND GO READ HIS RESPONSE
+         EJECT
+***********************************************************************
+*        SUPPLY ANY MISSING DELIMITERS
+***********************************************************************
+         SPACE 2
+SETDELIM DS    0H
+         IC    REG15,0(REG1)       LOAD THE SPECIFIED DELIMITER
+         LA    REG3,COMMAND+L'COMMAND END OF INPUT DATA
+DLMLOOP  BCTR  REG3,0              ADDRESS PREVIOUS BYTE
+         CLI   0(REG3),C' '        STILL BLANK DATA
+         BE    DLMLOOP             YES. KEEP LOOPING
+         LA    REG3,1(REG3)        GO BACK TO THAT BLANK
+         STC   REG15,0(REG3)       ADD A DELIMITER JUST IN CASE
+         ST    REG3,OPERENDS       SAVE EFFECTIVE END OF OPERANDS
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        WRITE A FULL SCREEN OF DATA                                  *
+***********************************************************************
+         SPACE 2
+OUTPUTIT DS    0H
+         NC    STACKTOP,STACKTOP   TEST FOR ANY MORE COMMANDS TO DO
+         BNZ   OUTPEXIT            YES. WAIT BEFORE REWRITE
+         L     REG14,DATAAREA      LOAD ADDRESS OF SCREEN DATAAREA
+         L     REG15,SCREENLN      LOAD THE LENGTH OF IT
+         XR    REG0,REG0           CLEAR A WORK REGISTER
+         XR    REG1,REG1           CLEAR A WORK REGISTER
+         MVCL  REG14,REG0          SET THE SCREEN AREA TO NULLS
+         SPACE 2
+         MVC   SCSAVECR(12),CURRENT SAVE CURRENT LOCATION
+         L     REG5,DATAAREA       LOAD ADDRESS OF SCREEN DATA AREA
+         LR    REG7,REG5           PREPARE BXLE END REGISTER
+         A     REG7,SCREENLN       ADDRESS OF END OF THE AREA
+         BCTR  REG7,0              SUBTRACT 1 TO ADDRESS LAST BYTE
+         A     REG5,MIDPOINT       ADDRESS OF CURRENT LINE AREA
+         LA    REG6,80             LOAD AN INCREMENT REGISTER
+         B     SCLOOP1X            JUMP OVER FIRST LOAD
+SCLOOP1  EQU   *
+         XAL   REG11,SCLOADUP      LOAD UP THIS AREA
+SCLOOP1X EQU   *
+         CLI   CURRENT,X'EE'       ARE WE AT END OF DATA ?
+         BE    SCDOTOP             YES. GO PROCESS TOP OF SCREEN
+         L     REG1,CURRENT+4      ADDRESS NEXT RECORD AREA
+         MVC   CURRENT(12),0(REG1) TEMPORARY UPDATE TO CURRENT ADDRESS
+         BXLE  REG5,REG6,SCLOOP1   FILL IN THE BOTTOM OF SCREEN
+SCDOTOP  EQU   *
+         MVC   CURRENT(12),SCSAVECR RESET CURRENT LOCATION
+         L     REG5,DATAAREA       LOAD ADDRESS OF SCREEN AREA
+         LR    REG7,REG5           LOAD BXH END REGISTER
+         BCTR  REG7,0              SUBTRACT 1 FOR LAST BYTE AREA ABOVE
+         A     REG5,MIDPOINT       ADDRESS OF CURRENT MIDPOINT
+         LNR   REG6,REG6           MAKE +80 INTO -80
+SCLOOP2  EQU   *
+         XAL   REG11,SCLOADUP      GO LOAD UP THIS AREA
+         CLI   CURRENT,X'FF'       ARE WE AT TOP OF FILE
+         BE    LOADENDS            YES. FINISHED LOADING SCREEN
+         L     REG1,CURRENT+8      ADDRESS OF PREVIOUS DATA
+         MVC   CURRENT(12),0(REG1) UPDATE LOCATION COUNTER
+         BXH   REG5,REG6,SCLOOP2   PROCESS AL THE WAY TO TOP
+LOADENDS MVC   CURRENT(12),SCSAVECR RESTORE THE CURRENT LOCATION POINTE
+         L     REG3,SCREEN         RELOAD FOR SECOND WRITE
+         L     REG4,TPUTLEN        LOAD LENGTH OF SCREEN DATA
+         TPUT  (3),(4),FULLSCR,WAIT   REWRITE ALL BUT LAST LINE
+         L     REG1,ERRMSG         LOAD ADDRESS OF ERROR MESSAGE AREA
+         XC    0(20,REG1),0(REG1)  CLEAR THE ERROR MESSAGE AREA
+         L     REG1,CMNDLINE       LOAD ADDRESS OF THE COMMAND LINE
+         XC    0(120,REG1),0(REG1) AND SET IT TO NULLS
+         MVC    0(80,REG1),=120C' ' SET UP 80 BYTES OF BLNKS
+OUTPEXIT BR    REG11               RETURN TO CALLER
+         SPACE 2
+SCLOADUP DS    0H                  SUB-SUBROUTINE OF OUTPUTIT
+         CLI   CURRENT,X'FF'       TOP OF FILE ?
+         BE    SCTOPS              YES. GO ENTER THE TOF MARK
+         CLI   CURRENT,X'EE'       END OF FILE ?
+         BE    SCEOFS              YES. GO ENTER THE EOFMARK
+         L     REG1,CURRENT        LOAD DATA ADDRESS
+         A     REG1,COLSTART       ADD OFFSET TO PART WE ARE USING
+         LH    REG3,LRECL          LOAD THE LENGTH OF A RECORD
+         S     REG3,COLSTART       GET LENGTH OF DATA AFTER THAT
+         CH    REG3,=H'80'         IS THERE ENOUGH TO FILL A SCREEN ?
+         BL    SCRSHORT            NO. JUST TAKE THAT LENGTH
+         LA    REG3,80             OTHERWISE TAKE THE NEXT 80 BYTES
+SCRSHORT EQU   *
+         BCT   REG3,*+10           SUBTRACT 1 FOR EXECUTE
+         MVC   0(0,REG5),0(REG1)   MOVE THE DATA TO SCREEN
+         EX    REG3,*-6            EXECUTE THE MOVE
+         BR    REG11               RETURN TO CALLER
+SCTOPS   EQU   *
+         MVC   0(L'TOFMARK,REG5),TOFMARK LOAD UP THE TOF MARKER
+         BR    REG11               RETURN TO CALLER
+SCEOFS   EQU   *
+         MVC   0(L'EOFMARK,REG5),EOFMARK LOAD UP THE END OF FILE MARK
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        READ IN ALL OR PART OF ANOTHER FILE
+***********************************************************************
+         SPACE 2
+GET      DS    0H
+         XAL   REG11,SKIPBLNK      LOCATE START OF DATA SET NAME
+         LR    REG2,REG1           SAVE THIS ADDRESS
+         LA    REG1,1(REG1)        ADDRESS OF NEXT BYTE
+         CLI   0(REG1),C' '        END OF DATA SET NAME
+         BNE   *-8                 NO. KEEP LOOPING
+         ST    REG1,OPERANDS       AND UPDATE THE WORK AREA
+         SR    REG1,REG2           GET LENGTH OF DATA SET NAME
+         SLL   REG1,24             MOVE TO TOP BYTE
+         OR    REG2,REG1           PUT LENGTH IN TOP OF REG2
+         LA    REG10,1             LOAD DEFAULT STATR RECORD NUMBER
+         XAL   REG11,NUMBERS       GO FETCH NEXT OPERAND
+         LR    REG3,REG1           START RECORD NUMBER IN THE FILE
+         XR    REG10,REG10         SET NULL DEFAULT PARAMETER
+         XAL   REG11,NUMBERS       GO FETCH NUMBER OF RECORDS TO COPY
+         LR    REG4,REG1           NUMBER OF RECORDS TO READ FROM IT
+         LA    REG1,WDSECT         LOAD ADDRESS OF WORK AREA
+*        R1=WORKAREA; R2=ADDRESS+LENGTH OF DSN; R3=START REC; R4=NUMBER
+         LINK  EP=EDITCOPY         GO READ IN THAT DATA
+         LTR   REG15,REG15         GOOD RETURN CODE ?
+         BNZ   GETERROR            NO. ALLOCATION FAILED (?)
+         XAL   REG11,OUTPUTIT      SHOW HIM THE RESULT
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*    REPLACE THE DATA ON FILE
+***********************************************************************
+         SPACE 2
+SAVE     DS    0H                  BORROW SOME CODE FROM FILE
+         OI    WORKFLAG,SAVEFLG    SIGNAL THAT SAVE IS IN PROGRESS
+FILE     DS    0H
+         L     REG1,OPERANDS       LOAD ADDRESS OF ANY OPERANDS
+         XAL   REG11,SETDELIM      FIND THE END OF THEM
+         CLC   OPERANDS,OPERENDS   TEST FOR PRESCENCE OF THEM
+         BNL   SFNORMAL            NONE SAVE/FILE IS NORMAL
+         TM    WORKFLAG,SUBMTFLG   IS THIS A SUBMIT OPERATION
+         BO    GENERAL             SIGNAL AN ERROR
+         XAL   REG11,SKIPBLNK      FIND START OF OPERANDN
+         MVC   JCLDSN,0(REG1)      MOVE IN DATA SET NAME
+SFNORMAL LINK  MF=(E,UT501D),SF=(E,UT501S),PARAM=(,FUNCTION,,,,)
+         CLI   RETCODE,0            ALLOCATION SATISFACTORY
+         BNE   SFERROR              HELP. NOTHING THERE TO SAVE ON
+         LA    REG2,SYSUT1         LOAD ADDRESS OF THE DCB
+         OPEN  ((2),OUTPUT),MF=(E,OPENLIST) OPEN OUTPUT FILE
+         MVC   SFSAVECR(12),CURRENT SAVE CURRENT LOCATION
+         MVC   CURRENT(12),DUMMY   SET CURRENT LOCATION AT TOP
+OUTLOOP  EQU   *
+         L     REG1,CURRENT+4      ADDRESS OF NEXT LINE
+         MVC   CURRENT(12),0(REG1) GET NEXT LINE AFTER FIRST
+         CLI   CURRENT,X'EE'       IS THAT END OF FILE
+         BE    ENDITALL            YES. FINISH THE OUTPUT
+         L     REG2,CURRENT        ADDRESS OF THE RECORD
+         PUT   SYSUT1,(2)          WRITE THE RECORD
+         B     OUTLOOP             PROCESS ALL THE DATA
+ENDITALL EQU   *
+         MVC   CURRENT(12),SFSAVECR RESTORE CURRENT RECORD LOCATION
+         LA    REG2,SYSUT1         LOAD ADDRESS OF THE DCB
+         CLOSE ((2)),MF=(E,CLOSLIST)  CLOSE THE OUTPUT FILE
+         FREEPOOL SYSUT1           FREE UP THE BUFFER POOL
+         LINK  MF=(E,UT501D),SF=(E,UT501S),PARAM=(,FUNCTIO2,,,,)
+         MVC   JCLDSN,DSNAME        RESTORE THE REAL DATA SET NAME
+         TM    WORKFLAG,SUBMTFLG  IS THIS A SUBMIT IN FACT
+         BO    0(REG11)            YES. RETURN TO IT THENCT
+         TM    WORKFLAG,SAVEFLG     WAS THAT A SAVE OR A FILE
+         BZ    QUIT                 FILE. GO RETURN TO CALLER
+         NI    WORKFLAG,255-SAVEFLG RESET THE SAVE FLAG
+         L     REG5,ERRMSG         LOAD ADDRESS OF MESSAGE AREA
+         MVC   0(20,REG5),=CL20'SAVED:' TELL HIM WHAT I'VE DONE
+         XAL   REG11,OUTPUTIT      GO DISPLAY THE AREA
+         BR    REG11               RETURN TO CALLER
+         EJECT
+**********************************************************************
+*        FREE THE FILE, WORK AREAS, AND RETURN                       *
+**********************************************************************
+         SPACE 2
+QUIT     DS    0H
+         FREEMAIN R,SP=120         FREE UP THE CORE
+         LM    REG0,REG1,STACKREG  RELOAD GETMAIN REGISTERS FROM GETMN
+         FREEMAIN R,LV=(0),A=(1)   FREE UP THE CONSOLE STACK
+         LM    REG0,REG1,SCRNREGS  LOAD GATMAIN REGISTERS
+         FREEMAIN R,LV=(0),A=(1)   FREEMAIN THE SCREEN AREA
+         CLC   COMMAND(5),=C'EXIT ' REQUEST TO TERMINATE ?
+         BNE   RETRYDSN            LOOP BACK TO ASK FOR NEXT FILE NAME
+EXIT     EQU   *
+         TPUT  CLOSEDWN,CLOSELEN,FULLSCR,WAIT
+         ZRETURN RC=0
+         EJECT
+***********************************************************************
+*        SPOOL HIS FILE TO INTERNAL READER
+***********************************************************************
+         SPACE 2
+SUBMIT   DS    0H
+         OI    WORKFLAG,SUBMTFLG   SIGNAL SUBMIT IN PROGRESS
+         MVC   SYSUT1+X'28'(8),=CL8'INTRDR' SET UP INTRDR DDNAME
+         XAL   REG11,SAVE          GO PERFORM A SAVE OPERATION
+         MVC   SYSUT1+X'28'(8),=CL8'SYSUT1' RESTORE HIS DD NAME
+         L     REG5,ERRMSG         ADDRESS OF MESSAGE AREA
+         MVC   0(19,REG5),=CL19'JOB SUBMITTED:' TELL HIM
+         NI    WORKFLAG,255-SUBMTFLG-SAVEFLG
+         B     OUTPUTIT            GO OUTPUT A SCREEN
+         EJECT
+***********************************************************************
+*        ALLOCATE A DATA Q ELEMENT
+***********************************************************************
+         SPACE 2
+GETDATAQ DS    0H
+         CLI   0(REG1),X'EE'       ARE WE AT END OF FILE ?
+         BNE   *+8                 NO. INSERT POINT IS VALID
+         L     REG1,8(REG1)        OTHERWISE LOAD ADDRESS OF PREVIOUS
+         ST    REG1,GETSAVE        SAVE THE EDDRESS OF INSERT POINT
+DQLOOP1  EQU   *
+         L     REG14,DATASTAK      LOAD TOP OF PREBUILT STAK
+         LTR   REG14,REG14         ANYTHING THERE ?
+         BNZ   GETGOON             YES. CARRY ON AND PROCESS
+         XAL   REG11,BUILDAGN      NO. GO FETCH A NEW BLOCK
+         B     DQLOOP1             AND START ALL OVER AGAIN
+GETGOON  EQU   *
+         L     REG1,GETSAVE        RELOAD ADDRESS OF INSERTION POINT
+         MVC   DATASTAK,4(REG14)   UPDATE THE STACK
+         LA    REG15,12(REG14)     ADDRESS OF DATA PORTION
+         ST    REG15,0(REG14)      UPDATE START OF THIS BLOCK
+         L     REG15,4(REG1)       LOAD CURRENT DOWN POINTER
+         ST    REG14,4(REG1)       CHAIN ME ONTO HIS DOWN POINTER
+         ST    REG14,8(REG15)      CHAIN UP CHAIN TO ME
+         ST    REG15,4(REG14)      PUT REST OD DOWN CHAIN ON ME
+         ST    REG1,8(REG14)       MAKE HIM MY UP CHAIN POINTER
+         L     REG14,0(REG14)      LOAD ADDRESS OF DATA AREA
+         LH    REG15,LRECL         LOAD LENGTH OF DATA PART
+         XR    REG0,REG0           CLEAR A WORK REGISTER
+         XR    REG1,REG1           CLEAR A WORK REGISTER
+         MVCL  REG14,REG0          CLEAR THE AREA
+         L     REG1,GETSAVE        RELOAD ADDRESS OF INSERT POINT
+         L     REG1,4(REG1)        LOAD ADDRESS OF THE NEW ELEMENT
+         LM    REG14,REG0,0(REG1)  LOAD ALL THE DETAILS
+         BR    REG11               RETURN TO CALLER
+BUILDAGN EQU   *
+         LH    REG1,LRECL          LOAD THE LENGTH OF A RECORD
+         LA    REG1,12(REG1)       ADD LENGTH OF CONTROL FIELDS
+         MH    REG1,=H'100'        GET LENGTH FOR 100 RECORDS
+         GETMAIN R,LV=(1),SP=120   GETMAIN THE CORE FOR IT
+         ST    REG1,DATASTAK       UPDATE TOP OF STACK ADDRESS
+         AR    REG0,REG1           ADDRESS OF END OF AREA
+AGNLOOP  EQU   *
+         LA    REG14,12(REG1)      LOAD WORK REGISTER
+         AH    REG14,LRECL         ADDRESS OF NEXT ENTRY IN THAT AREA
+         CR    REG14,REG0          ARE WE AT END OF AREA
+         BNL   AGNEXIT             YES. RETURN TO RETRY GETDATAQ
+         ST    REG14,4(REG1)       MAKE LAST ONE POINT AT THIS ONE
+         LR    REG1,REG14          AND UPDATE START ADDRESS
+         B     AGNLOOP             KEEP DOING THAT THING
+AGNEXIT  EQU   *
+         XC    4(4,REG1),4(REG1)   CLEAR THE LAST CHAIN POINTER
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        GENERAL NUMERIC CONVERSION AND TEST                          *
+***********************************************************************
+         SPACE 2
+NUMBERS  DS    0H
+         L     REG1,OPERANDS       LOAD ADDRESS OF OPERAND FIELD
+         ST    REG1,ERROPNDS       UPDATE THE ERROR FIELD POINTER
+         LTR   REG1,REG1           TEST FOR ANY MORE DATA FIELDS
+         BZ    SETDEFLT            NONE SET A DEFAULT VALUE
+         B     ENDTEST             CHECK FOR INVALID CALL FIRST
+NUMLOOP  CLI   0(REG1),C' '        FILLING CHARACTER HERE   ?
+         BNE   STARTSCN            NO. GO START EXTRACTING DATA
+         LA    REG1,1(REG1)        ADDRESS NEXT BYTE OF DATA
+ENDTEST  C     REG1,=A(COMMAND+L'COMMAND) END OF ALL DATA ?
+         BL    NUMLOOP             NO. TEST NEXT BYTE
+SETDEFLT XC    OPERANDS,OPERANDS   CLEAR OPERAND POINTER
+         LR    REG1,REG10          LOAD THE DEFAULT VALUE
+         BR    REG11               RETURN TO CALLER
+STARTSCN EQU   *
+         CLI   0(REG1),C'*'        IS THIS AN ASTERISK TYPE OPERAND
+         BNE   SORRY               NO. MUST BE A REAL NUMBER
+         LA    REG1,1(REG1)        LOAD ADDRESS OF NEXT BYTE
+         ST    REG1,OPERANDS       UPDATE THE CURRENT OPERAND POINTER
+         LA    REG1,1              LOAD A NUMBER
+         LCR   REG1,REG1           MAKE IT LOOK VERY LARGE INDEED
+         BR    REG11               AND RETURN TO CALLER
+SORRY    EQU   *                   CANNOT PROCESS ALL OCCURRENCES
+         LR    REG14,REG1          LOAD START ADDRESS OF FIELD
+         LA    REG1,1(REG1)        ADDRESS NEXT BYTE OF DATA
+NUMLOOP2 CLI   0(REG1),C' '        END OF THIS DATA YET
+         BE    TESTNUMR            YES GO GET LENGTH AND TEST
+         CLI   0(REG1),C'*'        OR HAS HE FOLLOWED WITH AN ASTERISK
+         BE    TESTNUMR            YES. GO PROCESS THOSE SQUEEZED DIGIT
+         LA    REG1,1(REG1)        ADDRESS NEXT DATA BYTE
+         C     REG1,=A(COMMAND+L'COMMAND) END OF DATA AREA
+         BNE   NUMLOOP2            NO. CARRY ON ALONF DATA
+TESTNUMR ST    REG1,OPERANDS       SAVE ADDRESS OF NEXT OPERAND
+         SR    REG1,REG14          LENGTH OF THIS FIELD
+         L     REG15,=A(NUMTABLE)  LOAD ADDRESS OF NUMBER TABLE
+         BCT   REG1,OVERTHEM       SUBTRACT ONE FROM IT
+TRTINST  TRT   0(0,REG14),0(REG15) TEST FOR NUMERIC DATA
+PCKINST  PACK  DBLWORD,0(0,REG14)  CONVERT TO PADKED DECIMAL
+OVERTHEM EX    REG1,TRTINST        EXECUTE THE NUMERIC TEST
+         BNZ   BADNUMBR            INVALID DATA . ERROR
+         EX    REG1,PCKINST        EXECUTE THE CONVERT TO PD
+         CVB   REG1,DBLWORD        GET IT IN BINARY
+         BR    REG11     RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        SKIP ALONG OPERANDS FOR NEXT ONE
+***********************************************************************
+         SPACE 2
+SKIPBLNK DS    0H
+         L     REG1,OPERANDS       LOAD CURRENT POINTER ADDRESS
+SKIPLOOP CLI   0(REG1),C' '        START OF NEXT OPERAND
+         BNE   SKIPEXIT            YES RETURN TO CALLER
+         LA    REG1,1(REG1)        ADDRESS NEXT BYTE
+         C     REG1,=A(COMMAND+L'COMMAND) END OF INPUT AREA ?
+         BNL   MISSNGOP            MUST BE MISSING OPERAND
+         B     SKIPLOOP            OK. TRY NEXT BYTE
+SKIPEXIT ST    REG1,OPERANDS       SAVE CURRENT OPERAND ADDRESS
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        READ THE CONSOLE AND UPDATE STACK
+***********************************************************************
+         SPACE 2
+CONSREAD DS    0H
+         TGET  IOAREA-6,L'IOAREA+6,ASIS,WAIT READ THE NEXT COMMAND
+         LTR   REG15,REG15         WAS THE READ SUCCESSFUL ?
+         BNZ   GENERAL             NO. GIVE A VAGUE IBM TYPE ERROR
+         OC    IOAREA,=120C' '     CONVERT EVERYTHING TO UPPER CASE
+CONSRD2  LA    REG3,STACKTOP       LOAD ADDRESS OF TOP OF STACK
+STAKTEST NC    0(4,REG3),0(REG3)   IS THERE ANYTHING THERE ?
+         BZ    ATENDSTK            NO, REG3 IS END OF STACK
+         L     REG3,0(REG3)        LOAD ADDRESS OF NEXT ENTRY
+         B     STAKTEST            AND GO SEARCH FOR THE END
+ATENDSTK EQU   *
+         CH    REG1,=H'6'          IS THERE ANY INPUT DATA
+         BNH   JUSTAKEY            APPARENTLY NOT. GO TAKE SPECIAL ACT
+         SH    REG1,=H'6'          SUBTRACT THE LENGTH OF CONTROL DATA
+         LA    REG4,IOAREA-1       START ADDRESS OF SOURCE DATA
+         LA    REG6,IOAREA         START ADDRESS FOR FIRST STRING
+CONSLOOP LA    REG4,1(REG4)        STEP TO NEXT BYTE
+         CLI   0(REG4),DELIM       IS IT A DELIMITER BYTE ?
+         BE    SETLEND             YES. GO SET LINE END
+         CLI   0(REG4),ESCAPE      IS IT AN ESCAPE CHARACTER
+         BNE   NOESCAPE            NO. """""""""""""""""""""
+         LA    REG15,IOAREA+L'IOAREA ADDRESS OF END OF DATA
+         SR    REG15,REG4          LENGTH OF REMAINING DATA
+         BCTR  REG15,0             LENGTH I AM INTERESTED IN
+         BCT   REG15,*+10          SUBTRACT 1 FOR ECECUTE
+         MVC   0(0,REG4),1(REG4)   SHUFFLE EVERYTHING UP
+         EX    REG15,*-6           AND EXECUTE THE MOVE
+         BCT   REG1,*+8            SUBTRACT ONE FROM LENGTH FOR IT
+         B     BCTEXIT             JUST IN CASE....
+NOESCAPE EQU   *
+         BCT   REG1,CONSLOOP       PROCESS ALL THE INPUT DATA
+BCTEXIT  EQU   *
+         LA    REG1,1              MAKE SURE NEXT BCT WORKS
+         LA    REG4,1(REG4)        PRETEND TO HAVE A LAST EDLIMITER
+SETLEND  LR    REG5,REG4           LOAD ADDRESS OF THAT DELIMITER
+         SR    REG5,REG6           GET LENGTH OF THE DATA
+         L     REG14,FREESTAK      LOAD ADDRESS OF NEXT FREE ENTRY
+         MVC   FREESTAK,0(REG14)   AND UPDATE THE CHAIN
+         XC    0(4,REG14),0(REG14) CLEAR MY OWN CHAIN FIELD
+         ST    REG14,0(REG3)       UPDATE THE CONSOLE STACK ITSELF
+         LR    REG3,REG14          MAKE THIS ENTRY THE LAST
+         USING STKENTRY,REG3       ADDRESSABILITY FOR STACK ENTRY
+         MVC   STKAID,IOAID        SHOW HIM WHAT THE AID DATA WAS
+         STH   REG5,STKLEN         GIVE HIM THE LENGTH OF DATA
+         LA    REG14,STKDATA       LOAD MVCL REGISTER
+         LA    REG15,L'STKDATA     LOAD THE LENGTH REGISTER
+         LR    REG7,REG5           LOAD A LENGTH REGISTER
+         ICM   REG7,8,=C' '        AND LOAD A PADDING CHARACTER
+         MVCL  REG14,REG6          MOVE THE COMMAND TO STACK AREA
+         LA    REG6,1(REG4)        SET UP FOR NEXT LOOP
+         BCT   REG1,CONSLOOP       AND GO PROCESS THE REST
+         B     READENDS            END OF INPUT DATA
+JUSTAKEY EQU   *
+         TM    WORKFLAG,DANGER     ANY CHANCE OF CHANGED DATA AFTER TAB
+         BZ    NOWORRY             NO. CARRY ON AS NORMAL
+         CLC   CURSORID,CMNDCURS   IS CURSOR AT START OF LINE ?
+         BNE   TAKEIT              NO. GO USE THE PREVIOUSLY SAVED DATA
+         TM    WORKFLAG,TABCOL1    DID WE JUST TAB TO COLUMN 1 THEN
+         BZ    NOWORRY             NO. HE DID IT. SO FORGET DATA
+TAKEIT   EQU   *                   USE WHAT I THINK IS WHAT HE ENTERED
+         LA    REG1,86             LOAD A SUITABLE LENGTH REGISTER
+         B     ATENDSTK            AND GO PROCESS AS IF I READ IT
+NOWORRY  EQU   *                   IGNORE ANY HELD DATA
+         L     REG14,FREESTAK      GET A STACK ENTRY FROM CHAIN
+         MVC   FREESTAK,0(REG14)   AND UPDATE CHAIN BEHIND ME
+         XC    0(4,REG14),0(REG14) CLEAR MY OWN CHAIN POINTER
+         ST    REG14,0(REG3)       UPDATE THE REAL CONSOLE STACK
+         LR    REG3,REG14          AND MAKE THIS THE END
+         MVC   STKAID,IOAID        UPDATE THE AID FIELDS
+         XC    STKLEN,STKLEN       SET THE LENGTH FIELD TO ZERO
+         XC    STKDATA,STKDATA     AND THE STACK DATA
+READENDS EQU   *
+         NI    WORKFLAG,255-TABCOL1-DANGER RESET THE LOGIC FLAG
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        LOCATE THE NEXT ENTRY IN THE CONSOLE STACK
+***********************************************************************
+         SPACE 2
+READSTAK DS    0H
+READSTK2 EQU   *
+         L     REG14,STACKTOP      LOAD ADDRESS OF TOP OF STACK
+         LTR   REG14,REG14         ANYTHING THERE
+         BNZ   GOTASTAK            YES. GO PROCESS IT
+         XAL   REG11,CONSREAD      NO. GO READ SOME MORE DATA
+         B     READSTK2            AND GO TRY AGAIN
+GOTASTAK EQU   *
+         MVC   STACKTOP,0(REG14)   UPDATE THE CURRENT STACK
+         LR    REG3,REG14          LOAD A BASE REGISTER
+         USING STKENTRY,REG3       ADDRESSABILIYT FOR IT
+         MVC   COMMANDX,STKAID     UPDATE THE NORMAL RESPONSE AREA
+         MVC   DATALNTH,STKLEN     AND UPDATE THE LENGTH AREA
+         MVC   STKCHAIN,FREESTAK   CHAIN FREE STACK ONTO ME
+         ST    REG3,FREESTAK       AND THEN UPDATE THE FREE CHAIN
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*         PROCESS THE CURRENT STACK ENTRY FOR A COMMAND OR A PFK
+***********************************************************************
+         SPACE 2
+PROCSTAK DS    0H
+         L     REG2,=A(AIDTABLE)  TABLE OF POSSIBLE AID CODES
+         LA    REG14,AIDTLEN        LENGTH OF AN AID TABLE ENTRY
+         L     REG15,=A(AIDTENDS-1) ADDRESS OF END OF TABLE
+AIDLOOP  CLC   AID(1),0(REG2)     IS THIS THE CODE
+         BE    FOUNDAID           YES. GO PROCESS IT
+         BXLE  REG2,REG14,AIDLOOP  NO. TRY NEXT ONE
+         B     GENERAL            BEATS ME....
+FOUNDAID TM    1(REG2),AIDRTN      DOES A PROGRAM ROUTINE EXIST
+         BO    GETPROG            YES. GO PASS CONTROL TO IT
+         TM    WORKFLAG,PFKCASE     ASKING FOR UPPER CASE PFK ?
+         BZ    PFKLOWER             NO. CARRY ON AS NORMAL
+         A     REG2,CASEOFFS        INCREMENT TO UPPER CASE ENTRY
+PFKLOWER EQU   *
+         NI    WORKFLAG,255-PFKCASE RESET THE UPPER CASE FLAG
+         TM    1(REG2),PFKSTAK     DOES A CONSOLE STACK EXIST ?
+         BZ    PFKNOTON           NO. PFK IS NOT SET UP
+         L     REG3,1(REG2)        LOAD ADDRESS OF SAVED DATA
+         TM    1(REG2),TABKEY      IS THIS IN FACT A TAB KEY ?
+         BO    TAB                 YES. GO SHIFT THE CURSOR ABOUT
+         TM    1(REG2),PFKIMM     IMMEDIATE EXECUTION
+         BZ    PFKNOTIM           NO. GO LOAD UP COMMAND AREA
+         MVC   IOAREA(80),0(REG3)  PRETEND THAT WE HAVE JUST READ IT
+         LA    REG1,86             GET AN ARTIFICIAL LENGTH
+         MVI   IOAID,X'7D'         MAKE IT LOOK NORMAL
+         B     CONSRD2             GO TO SPECIAL ENTRY IN CONSREAD
+         SPACE 2
+GETPROG  L     REG15,1(REG2)       LOAD ADDRESS OF THE PROCESSOR
+         XAL   REG11,0(REG15)      CALL THE ROUTINE
+         B     PRCEXIT             AND RETURN TO CALLER IF HE RETURNS
+PFKNOTIM EQU   *
+         L     REG1,CMNDLINE       LOAD ADDRESS OF COMMAND AREA
+         XC    0(120,REG1),0(REG1) CLEAR IT TO BE SURE
+         MVC   0(80,REG1),0(REG3) AND MOVE THE DATA TO IT
+         MVC   IOAREA,0(REG1)      AND ALSO SAVE A COPY FOR ME
+         OI    WORKFLAG,DANGER     AND SET UP IN CASE HE JUST HITS EOB
+         LA    REG1,80(REG1)       ADDRESS OF END OF AREA
+PFKLOOPZ BCTR  REG1,0              SUBTRACT 1
+         CLI    0(REG1),C' '       TEST FOR STILL BLANK
+         BNE   DOCURSOR            NO. GO INSERT THE CURSOR
+         MVI   0(REG1),X'00'       SET IT TO NULLS
+         B     PFKLOOPZ            GO PROCESS EACH BYTE
+DOCURSOR EQU   *
+         MVI   1(REG1),X'13'       INSERT THE CURSOR
+         XAL   REG11,OUTPUTIT      GO WRITE THE SCREEN
+PRCEXIT  EQU   *
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        PROGRAM ACCESS AND AUXILIARY ROUTINES
+***********************************************************************
+         SPACE 2
+PA2KEY   DS    0H
+         OI    WORKFLAG,PFKCASE    SIGNAL UPPER CASE PFK ENTRY
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        DATA CONTROL BLOCK EXIT ROUTINES                             *
+***********************************************************************
+         SPACE 2
+EXLST    DS    0F
+         DC    X'85'
+         DC    AL3(*+3)
+         PUSH  USING
+         USING *,REG15
+         USING IHADCB,REG1         ADDRESSABILITY FOR DCB
+         NC    DCBLRECL,DCBLRECL   IS THERE AN LRECL CODED ?
+         BNZ   LRECLOK             YES. ACCEPT IT THEN
+         LA    REG2,80             OTHERWISE LOAD A SUITABLE DEFAULT
+         STH   REG2,DCBLRECL       AND STORE IT IT THE DCB
+LRECLOK  EQU   *
+         NC    DCBBLKSI,DCBBLKSI   ANY BLOCKSIZE AVAILABLE
+         BNZ   NOMOVELR            YES. ACCEPT IT THEN
+         MVC   DCBBLKSI,DCBLRECL   NO. THEN TAKE LRECL AS BLOCKSIZE
+NOMOVELR BR    REG14               AND RETURN TO CALLER
+         POP   USING               RESTORE ORIGINAL ADDRESSABILITY
+         EJECT
+***********************************************************************
+*        ERROR ROUTINES
+***********************************************************************
+         SPACE 2
+*
+*        ODD KEYS NOT YET CODED
+*
+TESTREQ  DS    0H
+PA1KEY   DS    0H
+CLEARKEY DS    0H
+PA3KEY   DS    0H
+         BAL   REG1,TPUTERR          KEY IS NOT SUPPORTED
+         DC    CL20'KEY NOT SUPPORTED'
+*
+*
+GENERAL  DS    0H                    GENERAL ERROR MESSAGE
+CHERROR1 DS    0H                    NO FIRST OPERAND FOR CHANGE
+CHERROR2 DS    0H                    NO SECND OPERAND FOR CHANGE
+LCERROR1 DS    0H                    NO FIRST OPERAND FOR CHANGE
+INVLDCMD BAL   REG1,TPUTERR
+         DC    CL20'??????'
+PFKNOTON BAL   REG1,TPUTERR           PFK HAS NOT BEEN DEFINED
+         DC    CL20'PFK NOT DEFINED'
+TGETATTN BAL   REG1,TPUTERR           TELL OF INTERVENING ATTENTION
+         DC    CL20'INTER. ATTENTION'
+SETERROR BAL   REG1,TPUTERR           SET COMMAND OPERAND INVALID
+         DC    CL20'INVALID PFK OPERAND'
+BADNUMBR BAL   REG1,TPUTERR
+         DC    CL20'OPERAND(S) INVALID'
+ZONERR   BAL   REG1,TPUTERR            ZONE OPERANDS INVALID
+         DC    CL20'INVALID ZONE RANGE'
+MISSNGOP BAL   REG1,TPUTERR            EXPECTED OPERAND IS MISSING
+         DC    CL20'OPERAND MISSING!'
+MINEMINE BAL   REG1,TPUTERR          TRYING TO CHANGE TOP OR BOTTOM
+         DC    CL20'THAT''S MINE !!!'
+SFERROR  BAL   REG1,TPUTERR            SAVE/FILE DSN ALLOCATION FAILED
+         DC    CL20'ALLOCATION FAILED'
+$DPERR   BAL   REG1,TPUTERR        DUP/MOVE DIRECTION WRONG
+         DC    CL20'ONLY ''U'' OR ''D'' !!'
+GETERROR BAL   REG1,TPUTERR        BAD RETURN FROM EDITCOPY
+         DC    CL20'ALLOCATION FAILED !'
+         EJECT
+***********************************************************************
+*        WRITE THE ERROR MESSAGE AND POSITION CURSOR
+***********************************************************************
+         SPACE 2
+TPUTERR  LA    REG15,ERRMSG2          LOAD ADDRESS OF MSG AREA
+         MVC   0(20,REG15),0(REG1)    MOVE MESSAGE TO OUT AREA
+         MVI   WORKFLAG,0              RESET THE WORK FLAG
+         L     REG1,ERROPNDS       LOAD ADDRESS LAST OPERAND DELIMITED
+         S     REG1,=A(COMMAND)    GET ITS OFFSET
+         XAL   REG11,GETBUFF       GET A COMMAND LINE BUFFER ADDRESS
+         STCM  REG1,REG3,ECURSOR   UPDATE ERROR CURSOR ADDRESS
+         LA    REG3,ERRTPUT        LOAD ADDRESS OF ERROR SCREEN
+         LA    REG4,ERRTPUTL       LOAD LENGTH OF IT
+         TPUT  (3),(4),FULLSCR,WAIT GO TELL OF THE ERROR
+         B     REREAD              AND READ HIS NEXT COMMAND
+         EJECT
+***********************************************************************
+*        CONSTANTS NOT CHANGED BY THE PROGRAM
+***********************************************************************
+         SPACE 2
+DELIM    EQU   C'@'                NEW LINE SYMBOL
+ESCAPE   EQU   C'"'                ESCAPE CHARACTER FOR NEW LINE
+PFKREGS  DC    A(PFKSCRN,PFKSCLEN) TPUT REGISTERS FOR PFK AREA
+CASEOFFS DC    A(PFKAENDS-PFKAREA) SHIFT DISTANCE FOR UPPER CASE PFK
+CLIINST  CLI   0(REG14),0          EXECUTED CLI INSTRUCTION
+$DPLOAD  L     REG1,0(0,REG1)      EXECUTED TO GO UP OR DOWN A CHAIN
+MAXCNT   DC    F'32767'            MAXIMIMUM NUMBER CHANGES
+MIDPOINT DC    F'560'              OFFSET TO MIDDLE OF SCREEN
+SCREENLN DC    F'1600'
+SCLENGTH EQU   2200                LENGTH OF A COMPLETE SCREEN
+CMNDCURS DC    X'5B60'             SCREEN ADDRESS OF START OF CMND AREA
+DSNERROR DC    C'** NOT AVAILABLE ** PLEASE RE-ENTER.'
+CLOSEDWN DS   0C                   TERMINATION MESSAGE
+         DC   X'40115D7E11C1501140403C404040'
+         DC   CL20'SUPREDIT TERMINATED'
+CLOSELEN EQU   *-CLOSEDWN          LENGTH OF CLOSE DOWN MESSAGE
+FUNCTION DC    C'A'                FUNCTIUON CODE FOR UT501
+FUNCTIO2 DC    C'D'                FUNCTION CODE FOR UT501
+EOFMARK  DC    C':END OF DATA'
+TOFMARK  DC    C':TOP OF FILE'
+         EJECT
+***********************************************************************
+*        SCREEN FORMAT AREAS
+***********************************************************************
+         SPACE 2
+ERRTPUT  DS    0F
+         DC    X'40115D7F1140401DE8'
+ERRMSG2  DC    CL20' '             ERROR MESSAGE AREA
+         DC    X'11'
+ECURSOR  DC    X'0000'
+         DC    X'13'
+ERRTPUTL EQU   *-ERRTPUT           LENGTH OF ERROR MESSAGE WRITE
+INCURS   DC    X'40115D7F11'
+CURSLOC  DC    X'0000'
+         DC    X'13'
+INCURLEN EQU   *-INCURS            LENGTH OF INSERT CURSOR WRITE
+NAMEQERY DC    X'40115D7F1140403C4040401140401D60'
+         DC    C'DATA SET NAME =====>'
+         DC    X'1DC8'
+         DC    X'13'               INSERT CURSOR
+DSNERR1  DC    CL54' '
+         DC    XL25'00'            PADDING
+         DC    X'1D60'             END OF DSN FIELD
+         DC    X'11C260'
+         DC    X'1D60'
+         DC    C'OR'
+         DC    X'11C2E31DC9'
+         DC     C'EXIT'
+         DC    X'11C2E81D60'
+         DC    C'TO TERMINATE SUPREDIT'
+         DC    X'11C47F1D60'
+         DC    C'SUPPORTED TODAY:'
+         DC    X'11C6D91D60'
+         DC    CL70' THIS VERSION USES CHAINED DATA BLOCKS'
+NAMEQLEN EQU   *-NAMEQERY
+         LTORG
+         EJECT
+***********************************************************************
+*        DATA AREAS NOT ADDRESSABLE FROM THE MAIN CSECT
+***********************************************************************
+         SPACE 2
+DATA     CSECT
+CMDTABLE DS     0F
+         DC    AL1(3),CL3'GET',AL3(GET)
+         DC    AL1(2),CL2'LE',AL3(LEFT)
+         DC    AL1(2),CL2'RI',AL3(RIGHT)
+         DC    AL1(4),CL4'NEXT',AL3(NEXT)
+         DC    AL1(1),CL1'N',AL3(NEXT)
+         DC    AL1(2),CL2'UP',AL3(UP)
+         DC    AL1(1),CL1'U',AL3(UP)
+         DC    AL1(3),CL3'TOP',AL3(TOPOFIT)
+         DC    AL1(1),CL1'T',AL3(TOPOFIT)
+         DC    AL1(3),CL3'BOT',AL3(BOT)
+         DC    AL1(1),CL1'B',AL3(BOT)
+         DC    AL1(1),CL1'C',AL3(CHANGE)
+         DC    AL1(6),CL6'DELETE',AL3(DELETE)
+         DC    AL1(3),CL3'DEL',AL3(DELETE)
+         DC    AL1(5),CL5'INPUT',AL3(INPUT)
+         DC    AL1(1),CL1'I',AL3(INPUT)
+         DC    AL1(4),CL4'FILE',AL3(FILE)
+         DC    AL1(4),CL4'QUIT',AL3(QUIT)
+         DC    AL1(4),CL4'EXIT',AL3(QUIT)
+         DC    AL1(6),CL6'LOCATE',AL3(LOCATE)
+         DC    AL1(1),CL1'L',AL3(LOCATE)
+         DC    AL1(4),CL4'ZONE',AL3(ZONE)
+         DC    AL1(1),CL1'Z',AL3(ZONE)
+         DC    AL1(5),CL5'RENUM',AL3(RENUM)
+         DC    AL1(4),CL4'SAVE',AL3(SAVE)
+         DC    AL1(6),CL6'SUBMIT',AL3(SUBMIT)
+         DC    AL1(1),CL1'=',AL3(SAMAGAIN)
+         DC    AL1(8),CL8'$DUPMOVE',AL3($DUPMOVE)
+         DC    AL1(3),CL3'$DM',AL3($DUPMOVE)
+         DC    AL1(5),CL5'$MOVE',AL3($MOVE)
+         DC    AL1(2),CL2'$M',AL3($MOVE)
+         DC    AL1(4),CL4'$DUP',AL3($DUP)
+         DC    AL1(2),CL2'$D',AL3($DUP)
+         DC    AL1(1),CL1'/',AL3(MINILOC)
+         DC    AL1(3),CL3'SET',AL3(SET)
+         DC    AL1(3),CL3'PFK',AL3(PFK)
+         DC     X'FF'               END OF TABLE INDICATOR
+NUMTABLE DC    256X'FF'
+         ORG   NUMTABLE+C'0'
+         DC    10X'00'
+         ORG
+BUFFTABL DS    0F                   TABLE OF BUFFER ADDRESSES
+         DC    XL2'5B60'
+         DC    XL2'5B61'
+         DC    XL2'5BE2'
+         DC    XL2'5BE3'
+         DC    XL2'5BE4'
+         DC    XL2'5BE5'
+         DC    XL2'5BE6'
+         DC    XL2'5BE7'
+         DC    XL2'5BE8'
+         DC    XL2'5BE9'
+         DC    XL2'5B6A'
+         DC    XL2'5B6B'
+         DC    XL2'5B6C'
+         DC    XL2'5B6D'
+         DC    XL2'5B6E'
+         DC    XL2'5B6F'
+         DC    XL2'5BF0'
+         DC    XL2'5BF1'
+         DC    XL2'5BF2'
+         DC    XL2'5BF3'
+         DC    XL2'5BF4'
+         DC    XL2'5BF5'
+         DC    XL2'5BF6'
+         DC    XL2'5BF7'
+         DC    XL2'5BF8'
+         DC    XL2'5BF9'
+         DC    XL2'5B7A'
+         DC    XL2'5B7B'
+         DC    XL2'5B7C'
+         DC    XL2'5B7D'
+         DC    XL2'5B7E'
+         DC    XL2'5B7F'
+         DC    XL2'5C40'
+         DC    XL2'5CC1'
+         DC    XL2'5CC2'
+         DC    XL2'5CC3'
+         DC    XL2'5CC4'
+         DC    XL2'5CC5'
+         DC    XL2'5CC6'
+         DC    XL2'5CC7'
+         DC    XL2'5CC8'
+         DC    XL2'5CC9'
+         DC    XL2'5C4A'
+         DC    XL2'5C4B'
+         DC    XL2'5C4C'
+         DC    XL2'5C4D'
+         DC    XL2'5C4E'
+         DC    XL2'5C4F'
+         DC    XL2'5C50'
+         DC    XL2'5CD1'
+         DC    XL2'5CD2'
+         DC    XL2'5CD3'
+         DC    XL2'5CD4'
+         DC    XL2'5CD5'
+         DC    XL2'5CD6'
+         DC    XL2'5CD7'
+         DC    XL2'5CD8'
+         DC    XL2'5CD9'
+         DC    XL2'5C5A'
+         DC    XL2'5C5B'
+         DC    XL2'5C5C'
+         DC    XL2'5C5D'
+         DC    XL2'5C5E'
+         DC    XL2'5C5F'
+         DC    XL2'5C60'
+         DC    XL2'5C61'
+         DC    XL2'5CE2'
+         DC    XL2'5CE3'
+         DC    XL2'5CE4'
+         DC    XL2'5CE5'
+         DC    XL2'5CE6'
+         DC    XL2'5CE7'
+         DC    XL2'5CE8'
+         DC    XL2'5CE9'
+         DC    XL2'5C6A'
+         DC    XL2'5C6B'
+         DC    XL2'5C6C'
+         DC    XL2'5C6D'
+         DC    XL2'5C6E'
+         DC    XL2'5C6F'
+         DC    XL2'5CF0'
+         DC    XL2'5CF1'
+         DC    XL2'5CF2'
+         DC    XL2'5CF3'
+         DC    XL2'5CF4'
+         DC    XL2'5CF5'
+         DC    XL2'5CF6'
+         DC    XL2'5CF7'
+         DC    XL2'5CF8'
+         DC    XL2'5CF9'
+         DC    XL2'5C7A'
+         DC    XL2'5C7B'
+         DC    XL2'5C7C'
+         DC    XL2'5C7D'
+         DC    XL2'5C7E'
+         DC    XL2'5C7F'
+         DC    XL2'5D40'
+         DC    XL2'5DC1'
+         DC    XL2'5DC2'
+         DC    XL2'5DC3'
+         DC    XL2'5DC4'
+         DC    XL2'5DC5'
+         DC    XL2'5DC6'
+         DC    XL2'5DC7'
+         DC    XL2'5DC8'
+         DC    XL2'5DC9'
+         DC    XL2'5D4A'
+         DC    XL2'5D4B'
+         DC    XL2'5D4C'
+         DC    XL2'5D4D'
+         DC    XL2'5D4E'
+         DC    XL2'5D4F'
+         DC    XL2'5D50'
+         DC    XL2'5DD1'
+         DC    XL2'5DD2'
+         DC    XL2'5DD3'
+         DC    XL2'5DD4'
+         DC    XL2'5DD5'
+         DC    XL2'5DD6'
+         DC    XL2'5DD7'
+         DC    XL2'5DD8'
+         EJECT
+***********************************************************************
+*        DSECTS
+***********************************************************************
+         SPACE 2
+STKENTRY DSECT
+STKCHAIN DS    F                   CHAIN FIELD FOR CONSOLE STACK
+STKLEN   DS    H                   APPARENT LENGTH OF DATA ENTERED
+STKAID   DS    CL6                 CONTROL INFORMATION
+STKDATA  DS    CL120               SINGLE LINE OF INPUT
+STKLENTH EQU   *-STKENTRY          LENGTH OF A STACK ENTRY
+STACKLEN EQU   40*STKLENTH         LENGTH OF GATMAINED AREA
+         SPACE 2
+***********************************************************************
+* WORK AREA DEFINITIONS.   THESE AREAS DO NOT REQUIRE INITIIALISATION
+***********************************************************************
+         SPACE 2
+EDIT     CSECT
+         XAL   GENERATE
+         EDITWORK DSECT=NO
+AIDTABLE DS    0F                   TABLE OF AID CODES
+         DC    X'7D',AL1(AIDRTN),AL3(ANALCMND)     ENTER
+AIDRTN   EQU   X'80'   EQUATE FOR SECOND BYTE OF ENTRY - RTN EXISTS
+PFKSTAK  EQU   X'40'   EQUATE FOR SECOND BYTE OF ENTRY - PFK EXISTS
+PFKIMM   EQU   X'20'   EQUATE FOR SECOND BYTE OF ENTRY - PFK IS IMMEDTE
+TABKEY   EQU   X'10'   EQUATE FOR SECOND BYTE OF ENTRY - PFK IS TAB
+AIDTLEN  EQU   *-AIDTABLE                          LENGTH OF AN ENTRY
+PFKAREA  DC    X'F1',AL1(PFKIMM+PFKSTAK),AL3(PFAREA1)           PFK1
+         DC    X'F2',AL1(PFKIMM+PFKSTAK),AL3(PFAREA2)           PFK2
+         DC    X'F3',AL1(PFKIMM+PFKSTAK),AL3(PFAREA3)           PFK3
+         DC    X'F4',AL1(PFKIMM+PFKSTAK),AL3(PFAREA4)           PFK4
+         DC    X'F5',AL1(PFKIMM+PFKSTAK),AL3(PFAREA5)           PFK5
+         DC    X'F6',AL1(PFKIMM+PFKSTAK),AL3(PFAREA6)           PFK6
+         DC    X'F7',AL1(PFKIMM+PFKSTAK+TABKEY),AL3(PFAREA7)    PFK7
+         DC    X'F8',AL1(PFKIMM+PFKSTAK),AL3(PFAREA8)           PFK8
+         DC    X'F9',AL1(PFKIMM+PFKSTAK),AL3(PFAREA9)           PFK9
+         DC    X'7A',AL1(PFKIMM+PFKSTAK),AL3(PFAREA10)          PFK10
+         DC    X'7B',AL1(PFKIMM+PFKSTAK),AL3(PFAREA11)          PFK11
+         DC    X'7C',AL1(PFKIMM+PFKSTAK),AL3(PFAREA12)          PFK12
+PFKAENDS EQU   *                                  END OF BASIC PFK AREA
+         DC    X'FF',AL1(0),AL3(PFAREA13)                       PFK13
+         DC    X'FF',AL1(0),AL3(PFAREA14)                       PFK14
+         DC    X'FF',AL1(0),AL3(PFAREA15)                       PFK15
+         DC    X'FF',AL1(0),AL3(PFAREA16)                       PFK16
+         DC    X'FF',AL1(0),AL3(PFAREA17)                       PFK17
+         DC    X'FF',AL1(0),AL3(PFAREA18)                       PFK18
+         DC    X'FF',AL1(0),AL3(PFAREA19)                       PFK19
+         DC    X'FF',AL1(0),AL3(PFAREA20)                       PFK20
+         DC    X'FF',AL1(0),AL3(PFAREA21)                       PFK21
+         DC    X'FF',AL1(0),AL3(PFAREA22)                       PFK22
+         DC    X'FF',AL1(0),AL3(PFAREA23)                       PFK23
+         DC    X'FF',AL1(PFKSTAK),AL3(PFAREA24)                 PFK24
+         DC    X'F0',AL1(AIDRTN),AL3(TESTREQ)      TEST REQUEST
+         DC    X'6D',AL1(AIDRTN),AL3(CLEARKEY)     SCREEN CLEAR
+         DC    X'6C',AL1(AIDRTN),AL3(PA1KEY)       PROGRAM ACCESS 1
+         DC    X'6E',AL1(AIDRTN),AL3(PA2KEY)       PROGRAM ACCESS 2
+         DC    X'6B',AL1(AIDRTN),AL3(PA3KEY)       PROGRAM ACCESS 3
+AIDTENDS EQU   *                                   END OF TABLE
+         PRINT NOGEN
+         DCBD  DSORG=QS,DEVD=DA    DCB DSECT
+         PRINT GEN
+         EJECT
+         END
+??
+// EXEC ASMFCL,L=H
+//SYSLIB DD
+// DD
+// DD DSN=JEA.MACLIB,DISP=SHR
+//SYSPRINT DD DSN=JEA.SUPREDIT.PRINT,UNIT=SYSDA,VOL=SER=SYSTS1,
+// DISP=SHR,DCB=(LRECL=121,RECFM=FBA,BLKSIZE=6050),
+// SPACE=(6050,(800,200))
+//SYSIN DD DSN=&OSJOB,DISP=(OLD,DELETE)
+//LKED.SYSLMOD DD DSN=JEA.LOADLIB,DISP=SHR
+ NAME ED(R)

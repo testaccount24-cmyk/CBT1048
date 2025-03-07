@@ -1,0 +1,395 @@
+         TITLE 'BUDGIE3M - INTERNAL MACROS'                             M 000010
+         MACRO                                                          M 000020
+         $CB   &PRINT=OFF                                               M 000030
+         PUSH PRINT                PRESERVE CURRENT PRINT STATUS        M 000040
+         PRINT &PRINT              ESTABLISH NEW PRINT STATUS           M 000050
+               TITLE '     - CONTROL BLOCK PREFIX'                      M 000060
+      CBPREFIX ,                   GENERATE DSECT                       M 000070
+               TITLE 'CB20 - CB20 CONTROL BLOCK'                        M 000080
+         CB20  ,                   GENERATE DSECT                       M 000090
+               TITLE 'CB21 - CB21 CONTROL BLOCK'                        M 000100
+         CB21  ,                   GENERATE DSECT                       M 000110
+               TITLE 'CCB  - CENTRAL CONTROL BLOCK'                     M 000120
+         CCB   ,                   GENERATE DSECT                       M 000130
+               TITLE 'DCB  - DATA CONTROL BLOCK'                        M 000140
+         DCBD  DSORG=(PS,IS)       GENERATE DSECTS                      M 000150
+               TITLE '     - BATCH BALANCING REPORT LINES'              M 000160
+      DETAILBB ,                   GENERATE DSECTS                      M 000170
+               TITLE '     - GENERAL EQUATES'                           M 000180
+       EQUATES ,                   GENERATE EQUATES                     M 000190
+         POP   PRINT               RESTORE ORIGINAL PRINT STATUS        M 000200
+         MEND                                                           M 000210
+         SPACE 5                                                        M 000220
+BUDGIE3M CSECT                                                          M 000230
+         $CB   ,                   GENERATE DSECTS AND EQUATES          M 000240
+         TITLE 'BUDGIE3M - ISAM ROUTINES'                               M 000250
+        SCSECT M                   START CSECT BUDGIE3M                 M 000260
+         ENTRY CTESTI              PERFORM ISAM LOOKUP                  M 000270
+         ENTRY ISCLOSE             CLOSE ISAM DATA SETS                 M 000280
+         ENTRY ISDCB               CONSTRUCT ISAM DCB'S DYNAMICALLY     M 000290
+         TITLE 'BUDGIE3M - PERFORM ISAM LOOK-UP'                        M 000300
+*********************************************************************** M 000310
+*        I  - ISAM LOOK-UP                                            * M 000320
+*********************************************************************** M 000330
+         SPACE 1                                                        M 000340
+         USING CB20NTRY,R8         ESTABLISH CB20 ADDRESSABILITY        M 000350
+         USING DETAILBB,R7         ESTABLISH REPORT LINE ADDRESSABILITY M 000360
+CTESTI   SUBIN SAVE=(R3,R4,R8)     PRESERVE REGISTERS                   M 000370
+        BBMESS 06                  MOVE DEFAULT MEDSAGE TO LINE         M 000380
+         LR    R8,R2               POINT R8 AT CB20 C/B                 M 000390
+         CBAL  R4,BUILDKEY         BUILD KEY & COMPARE WITH PREVIOUS    M 000400
+         BE    TESTI01             BYPASS I/O IF SAME AS PREVIOUS KEY   M 000410
+         CBAL  R4,ISRANDM          PERFORM ISAM LOOK-UP                 M 000420
+         BNL   TESTI01             BR IF NO I/O ERROR                   M 000430
+         ABEND 44,FULL             ISAM I/O ERROR SO ABEND              M 000440
+TESTI01  CBAL  R4,MOVECB21         PERFORM ANY NECESSARY MOVES          M 000450
+         MVC   $TSTTSTX,CB20XORY   SET COND CODE FOR USER               M 000460
+        SUBOUT RESTORE=(R3,R4,R8)  RESTORE AND RETURN TO CALLER         M 000470
+         DROP  R7                  DROP REPORT LINE ADDRESSABILITY      M 000480
+         TITLE 'BUDGIE3M - BUILD KEY FOR ISAM/RIGAM/TABLE LOOKUP'       M 000490
+*********************************************************************** M 000500
+*        BUILD KEY FOR ISAM/RIGAM/TABLE LOOK-UP                       * M 000510
+*********************************************************************** M 000520
+         SPACE 1                                                        M 000530
+*        ON ENTRY, R8 POINTS AT THE CB20 DEFINING THE KEY.  ON RETURN,  M 000540
+*         THE CONDITION CODE IS SET SUCH THAT THE CALLER CAN MAKE THE   M 000550
+*         FOLLOWING TESTS :-                                            M 000560
+*              BE  - KEY SAME AS PREVIOUS KEY                           M 000570
+*              BNE - KEY NOT SAME AS PREVIOUS KEY                       M 000580
+         SPACE 1                                                        M 000590
+         USING CB20NTRY,R8         ESTABLISH CB20 ADDRESSABLITY         M 000600
+BUILDKEY SUBIN SAVE=(R4,R10)       PRESERVE REGISTERS                   M 000610
+         LA    R10,8               SET LOOP OF 8 COMPONENTS             M 000620
+         L     R2,CB20TKEY         POINT R2 AT KEY AREA                 M 000630
+         LA    R3,CB20FLD1         POINT R3 AT 1ST CONPONENT            M 000640
+BUILDK01 L     R6,SYSUT1+IOPSRECA  POINT R6 AT DETAIL RECORD            M 000650
+         CLI   2(R3),C'D'          TEST IF SOURCE IS DETAIL             M 000660
+         BE    BUILDK02            BR IF SOURCE IS DETAIL               M 000670
+         CLI   2(R3),C'S'          IS THIS COMPONENT DYNAMICALLY ACQUID M 000680
+         BNE   *+14                BR IF NOT                            M 000690
+         MVC   0(2,R3),$FLDP       INSERT PL FROM CB13 INTO CB20        M 000700
+         B     BUILDK02            GO EXTRACT FIELD FROM DETAIL RECORD  M 000710
+         L     R6,CB20POOL         POINT R6 AT LITERAL POOL             M 000720
+         CLI   2(R3),C'L'          IS THIS COMPONENT A LITERAL          M 000730
+         BE    BUILDK02            BR IF COMPONENT IS LITERAL           M 000740
+*        COMPONENT MUST BE A BATCH CARD FIELD                           M 000750
+         L     R6,SYSUT1+IOPSRECA  ASSUME THIS IS THE BATCH CARD        M 000760
+         TM    PSWITCH,PSWBCARD    TEST IF PROCESSING BATCH CARD        M 000770
+         BO    BUILDK02            BR IF YES TO USE CURRENT RECORD      M 000780
+         L     R6,$AWORKBC         POINT R6 AT B/C IN WORK POOL         M 000790
+BUILDK02 CBAL  R4,EXTRACT          ADD COMPONENT TO KEY                 M 000800
+         LA    R3,3(,R3)           POINT AT NEEXT KEY COMPONENT         M 000810
+         BCT   R10,BUILDK01        LOOP BACK IF COMPONENTS LEFT         M 000820
+         L     R14,CB20TKEY        POINT R14 AT NEW KEY                 M 000830
+         L     R15,CB20LKEY        POINT R15 AT PREVIOUS KEY            M 000840
+         SR    R1,R1               ZEROISE R1                           M 000850
+         IC    R1,CB20KLEN         RETRIEVE KEY LENGTH                  M 000860
+         BCTR  R1,0                DECREMENT FOR EXECUTE                M 000870
+         EX    R1,CLCKEY           COMPARE THIS KEY WITH LAT            M 000880
+         BE    *+8                 BR IF KEYKEYS SAME                   M 000890
+         EX    R1,MVCKEY           PRESERVE NEW KEY AS LAST             M 000900
+        SUBOUT RESTORE=(R4,R10)    RESTORE REG AND RETRUN TO CALLER     M 000910
+         TITLE 'BUDGIE3M - PERFORM MOVES DEFINED BY CB21 C/B''S'        M 000920
+*********************************************************************** M 000930
+*        PERFORM MOVES DEFINED BY CB21 C/B'S                          * M 000940
+*********************************************************************** M 000950
+         SPACE 1                                                        M 000960
+         USING CB21NTRY,R10        ESTABLISH CB21 ADDRESSABILITY        M 000970
+MOVECB21 SUBIN SAVE=(R10)          PRESERVE REGISTES                    M 000980
+         L     R10,CB20CB21        POINT R10 AT 1ST CB21 IN CHAIN       M 000990
+         L     R11,CB20IREC        POOINT AT ISAM/RIGAM/TABLE RECORD    M 001000
+MOVE2101 LTRR  R10,R10             TEST FOR END OF CHAIN                M 001010
+         BZ    MOVE21X             LEAVE ROUTINE IF END OF CHAIN        M 001020
+         SR    R15,R15             ZEROISE WORK REGISTER                M 001030
+         IC    R15,CB21DPOS        GET POSN OF OUTPUT FIELD             M 001040
+         BCTR  R15,0               ALTER POSN TO DISPLACEMENT           M 001050
+         L     R6,SYSUT1+IOPSRECA  POINT R6 AT OUTPUT RECORD            M 001060
+         AR    R15,R6              POINT R15 AT DESTINATION FIELD       M 001070
+         SR    R1,R1               ZEROIZE EXECUTUON REGISTER           M 001080
+         IC    R1,CB21SLEN         RETRIEVE LENGTH OF FIELD             M 001090
+         BCTR  R1,0                DECREMENT FOR EXECUTE                M 001100
+         CLI   CB20XORY,C'X'       TES IF KEY MATCH FOUND               M 001110
+         BE    MOVE2103            BR IF YES TO DERIVE  DATA            M 001120
+         TM    CB21SW,SW21PAD      IS DERIED FIELD TO BE PADED          M 001130
+         BO    MOVE2102            BR IF PADDING REQUIRED               M 001140
+         TM    CB21SW,SW21LIT      IS THERE A DEFAULT LITERAL           M 001150
+         BZ    MOVE2104            BR IF NOT TO GET NEXT CB21           M 001160
+         LA    R14,CB21LIT         POINT R14 AT LITERAL                 M 001170
+         B     MOVE2105            GO PERFORM DESIRIED MOVE             M 001180
+MOVE2102 MVC   0(1,R15),CB21PADC   INSERT PAD CHAR IN 1ST BYTE          M 001190
+         BCTR  R1,0                DECREMENT FOR PROPAGATING EXECUTE    M 001200
+         LTR   R1,R1               TEST IF ORIGINAL FIELD 1 BYTE LONG   M 001210
+         BM    *+8                 BR IF YES TO AVOID HUGE MOVE         M 001220
+         EX    R1,MOVEPAD          PROPAGATE PAD CHARACTER THRU FIELD   M 001230
+         B     MOVE2104            GO GET NEXT CB21                     M 001240
+         EJECT                                                          M 001250
+*********************************************************************** M 001260
+*        PERFORM MOVES DEFINED BY CB21 C/B'S ( CONT'D )               * M 001270
+*********************************************************************** M 001280
+         SPACE 1                                                        M 001290
+MOVE2103 SR    R14,R14             ZEROISE WORK REGISTER                M 001300
+         IC    R14,CB21SPOS        RETRIEVE POSN OF SOURCE FIELD        M 001310
+         BCTR  R14,0               ALTER POSN TO DISPALCEMENT           M 001320
+         A     R14,CB20IREC        POINT R14 AT SOURCE FIELD            M 001330
+MOVE2105 TM    CB21SW,SW21PACK     IS SOURCE FIELD TO BE PACKED         M 001340
+         BO    MOVE2106            BR IF YES                            M 001350
+         TM    CB21SW,SW21UNP      IS SOURCE FIELD TO BE UNPACKED       M 001360
+         BZ    MOVE2107            BR IF NO TO MOVE DIRECT              M 001370
+         EX    R1,C3UNPACK         UNPACJ SOURCE INTO DESTINATIOM       M 001380
+         B     MOVE2104            GO GET NEXT C/B                      M 001390
+MOVE2106 EX    R1,C3PACK           PACK SOURCE INTO DESTINATION         M 001400
+         B     MOVE2104            GO GET NEXT C/B                      M 001410
+MOVE2107 EX    R1,C3MVC            MOVE SOURCE TO DESTINATION           M 001420
+MOVE2104 L     R10,CB21CB21        GET ADDR OF NRXT CB21                M 001430
+         B     MOVE2101            LOOP BACK TO PROCESS                 M 001440
+MOVE21X SUBOUT RESTORE=(R10)       RESTORE & RETURN TO CALLER           M 001450
+         DROP  R8,R10              DROP C/B ADDRESSABILITY              M 001460
+         TITLE 'BUDGIE3M - BUILD ISAM DCB''S DYNAMICALLY'               M 001470
+*********************************************************************** M 001480
+*        CONSTRUCT ISAM DCB'S FOR CB20'S                              * M 001490
+*********************************************************************** M 001500
+         SPACE 1                                                        M 001510
+         USING CB20NTRY,R6         ESTABLISH CB20 ADDRESSABILITY        M 001520
+         USING IHADCB,R10          ESTABLISH DCB ADDRESSABILITY         M 001530
+ISDCB    SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              M 001540
+         L     R6,$FSTCB20         GET 1ST C/B IN CHAIN                 M 001550
+CCISDCB  LTRR  R6,R6               TEST FOR END OF CHAIN                M 001560
+         BZ    CCLINKX2            EXIT IF END OF CHAIN                 M 001570
+         CLI   CB20FLAG,FLAGCB20   IS THIS A CB20                       M 001580
+         BNE   CCISDCB6            BR IF NOT TO GET NEXT C/B            M 001590
+         OC    CB20IDCB+1(3),CB20IDCB+1 DOES DCB ALREADY EXIST          M 001600
+         BNZ   CCISDCB6            BR IF YES TO GET NEXT C/B            M 001610
+         LA    R2,DCBWKPT6-IHADCB+4 SET LENGTH OF IS DCB                M 001620
+         CBAL  R4,GETMAIN          ACQUIRE CORE FOR DCB                 M 001630
+         CBPREF DCB                ACQUIRE CORE FOR DCB AND PREFIX      M 001640
+         IC    R10,CB20ISW         PRESERVE STATUS SWITCH               M 001650
+         ST    R1,CB20IDCB         PRESERVE DCB ADDR IN C/B             M 001660
+         STC   R10,CB20ISW         RESTORE SWITCH                       M 001670
+         LR    R10,R1              ESTABLISH DCB ADDRESSABILITY         M 001680
+         L     R8,CB20CB20         USE R8 TO CHAIN FORWARD              M 001690
+CCISDCB1 LTRR  R8,R8               TEST FOR END OF CHAIN                M 001700
+         BZ    CCISDCB3            BR IF END OF CHAIN                   M 001710
+         CLI   CB20FLAG-CB20NTRY(R8),FLAGCB20 IS THIS A CB20            M 001720
+         BNE   CCISDCB2            BR IF NOT TO GET NEXT                M 001730
+         CLC   CB20IDDN,CB20IDDN-CB20NTRY(R8) IS IT SAME DD NAME        M 001740
+         BNE   CCISDCB2            BR IF NOT TO CHAIN FORWARD           M 001750
+         MVC   CB20IDCB-CB20NTRY(4,R8),CB20IDCB POINT C/B AT SAME DCB   M 001760
+CCISDCB2 L     R8,CB20CB20-CB20NTRY(R8) GET ADDR OF NEXT C/B            M 001770
+         B     CCISDCB1            POOL BACK TO PROCESS                 M 001780
+CCISDCB3 MVC   DCBDDNAM,CB20IDDN   ADD DDNAME TO DCB                    M 001790
+         MVI   DCBDSORG,DCBDSGIS   FLAG AS ISAM DCB                     M 001800
+         MVI   DCBOFLGS,DCBOFUEX   FLAG AS WITHIN IOS                   M 001810
+         LA    R8,ISIOERR          GET ADDR OF SYNAD EXIT               M 001820
+         ST    R8,DCBSYNAD          ... AND STOR IN DCB                 M 001830
+         MVI   DCBMACR,DCBMRRD+DCBMRDBF FLAG AS BISAM READ ...          M 001840
+*                                   ... WITH DYNAMIC BUFFERING          M 001850
+         LA    R8,1                PUT A(1) IN REG 8                    M 001860
+         SR    R11,R11             ZEROISE WORK REGISTER                M 001870
+         LA    R7,DCBTABL1         POINT AT TABLE OF DISPLACEMENTS      M 001880
+         EJECT                                                          M 001890
+**************************************<******************************** M 001900
+*        CONSTRUCT ISAM DCB'S ( CONT'D )                              * M 001910
+**************************************<******************************** M 001920
+         SPACE 1                                                        M 001930
+CCISDCB4 CLI   0(R7),X'FF'         TEST FOR END OF TABLE                M 001940
+         BE    CCISDCB5            BR IF EOT                            M 001950
+         IC    R11,0(R7)           GET DISPLACEMENT WITHIN DCB          M 001960
+         ST    R8,IHADCB(R11)      STORE A(1) IN DCB + XXX              M 001970
+         LA    R7,1(,R7)           INCREMENT TO NEXT TABLE ENTRY        M 001980
+         B     CCISDCB4            LOOP BACJ TO PROCESS                 M 001990
+CCISDCB5 LA    R2,EXITLISX         POINT R2 AT EXIT LIST                M 002000
+         ST    R2,DCBEXLST         POINT DCB AT EXIT LIST               M 002010
+         LA    R2,CB20DCBS         POINT AT DCB SWITCH FOR OPEN         M 002020
+         CBAL  R4,ISOPEN           OPEN DCB & GET REC SAVE AREA         M 002030
+CCISDCB6 L     R6,CB20CB20         GET ADDRESS OF NEXT C/B              M 002040
+         B     CCISDCB             LOOP BACK TO PROCESS                 M 002050
+         DROP  R6,R10              DROP ADDRESSABILITY                  M 002060
+CCLINKX2 SUBOUT RESTORE=R4         RESTORE AND RETURN                   M 002070
+         TITLE 'BUDGIE3M - OPEN ROUTINE FOR ISAM DCB''S'                M 002080
+*********************************************************************** M 002090
+*        OPEN ROUTINE FOR ISAM FILES                                  * M 002100
+*********************************************************************** M 002110
+         SPACE 1                                                        M 002120
+         USING CB20NTRY,R6         ESTABLISH CB20 ADDRESSABILITY        M 002130
+ISOPEN   SUBIN SAVE=(R4,R5,R6)     PRESERVE REGISTERS                   M 002140
+         LR    R5,R2               PRESERVE ADDRESS OF DCB SW           M 002150
+         CBAL  R4,OPEN             OPEN ISAM D/S                        M 002160
+         TM    IOPSSW(R5),IOSWOPEN TEST IF OPEN SUCCESSFUL              M 002170
+         BZ    ISOPENX             BYPASS REMAINDER IF NOT              M 002180
+         L     R6,$FSTCB20         RETRIEVE ADDRESS OF 1ST C/B          M 002190
+ISOPEN1  LTRR  R6,R6               TEST FOR END OF CHAIN                M 002200
+         BZ    ISOPENX             EXIT IF END OF CHAIN                 M 002210
+         CLI   CB20FLAG,FLAGCB20   VERIFY THAT THIS IS S CB20           M 002220
+         BNE   ISOPEN2             BR IF NOT CB20 TO GET NEXT C/B       M 002230
+         CLC   CB20IDDN,IOPSDDN(R5) IS THIS THE SAME DD NAME            M 002240
+         BNE   ISOPEN2 BR IF NOT TO GET NEXT                            M 002250
+         OI    CB20ISW,IOSWOPEN    FLAG DCB AS OPEN                     M 002260
+         OC    CB20IREC,CB20IREC   TEST IF REC SAVE AREA ALLOCATED      M 002270
+         BNZ   ISOPEN3             BR IF ALLOCATED                      M 002280
+         L     R2,CB20IDCB         GET ADDRESS OF DCB                   M 002290
+         USING IHADCB,R2           ESRABLISH DCB ADDRESSABILITY         M 002300
+         LH    R2,DCBLRECL         GET RECORD LENGTH                    M 002310
+         CBAL  R4,GETMAIN          GET CORE FOR RECORD SAVE AREA        M 002320
+         ST    R1,CB20IREC         PRESERVE STORAGE AREA ADDRESS        M 002330
+ISOPEN3  L     R2,CB20IDCB         GET ADDRESS OF DCB                   M 002340
+         CLC   CB20KLEN,DCBKEYLE   COMPARE DCB LEKLEN WITH COMPUTED     M 002350
+         BE    ISOPEN2             CONTINUE PROCESSING IF KEY LENS SAME M 002360
+         ABEND 48                  DUMP BECAUSE KEYLEN SPECIFICATION ER M 002370
+         DROP  R2                  DROP DCB ADDRESSABILITY              M 002380
+ISOPEN2  L     R6,CB20CB20         GET ADDRESS OF NEXT CB20             M 002390
+         B     ISOPEN1             LOOP BACK TO PROCESS                 M 002400
+ISOPENX SUBOUT RESTORE=(R4,R5,R6)  RESTORE AND RETURN TO CALLER         M 002410
+         DROP  R6                  DROP CB20 ADDRESSABILITY             M 002420
+         TITLE 'BUDGIE3M - CLOSE ROUTINE FOR ISAM DCB''S'               M 002430
+*********************************************************************** M 002440
+*        CLOSE ROUTINE FOR ISAM FILES                                 * M 002450
+*********************************************************************** M 002460
+         SPACE 1                                                        M 002470
+         USING CB20NTRY,R6         ESTABLISH CB20 AADDRESSABILITY       M 002480
+ISCLOSE  SUBIN SAVE=(R4,R5,R6)     PRESERVE RGISTERS                    M 002490
+         LR    R5,R2               PRESERVE ADDRESS OF DCB SW           M 002500
+         L     R2,IOPSDCB(R2)      GET ADDRESS OF DCB                   M 002510
+         TM    IOPSSW(R5),IOSWOPEN TEST IF D/S IS OPEN                  M 002520
+         BZ    ISCLOSEX            BYPASS ROUTINE IF CLOSED             M 002530
+         CLOSE ((R2))              CLOSE IS D/S (WITH NO FREEPOOL)      M 002540
+         L     R6,$FSTCB20         RETRIEVE AFDRESS OF 1ST CB20         M 002550
+ISCLOSE1 LTRR  R6,R6               TEST FOR END OF CHAIN                M 002560
+         BZ    ISCLOSEX            EXIT IF END OF CHAIN                 M 002570
+         CLI   CB20FLAG,FLAGCB20   VERIFY THAT THIS ISI A CB20          M 002580
+         BNE   ISCLOSE2            BR IF NOT CB20 TO GET NEXT C/B       M 002590
+         CLC   CB20IDDN,IOPSDDN(R5) IS THIS THE SAME DD NAME            M 002600
+         BNE   ISCLOSE2            BR IF NOT TO GET NEXT C/B            M 002610
+         NI    CB20ISW,IOSWCLOS    INDICATE DATA SET IS CLOSED          M 002620
+ISCLOSE2 L     R6,CB20CB20         GET ADDRESS OF NEXT CB20             M 002630
+         B     ISCLOSE1            LOOP BACK TO PROCESS                 M 002640
+ISCLOSEX SUBOUT RESTORE=(R4,R5,R6) RESTORE & RETURN TO CALLER           M 002650
+         DROP  R6                  DROP CB20 ADDRESSABILITY             M 002660
+         TITLE 'BUDGIE3M - READ ISAM DATA SET RANDOMLY'                 M 002670
+*********************************************************************** M 002680
+*        READ ISAM FILE RANDOMLY                                      * M 002690
+*********************************************************************** M 002700
+         SPACE 1                                                        M 002710
+*        ON ENTRY, R8 CONTAINS THE ADDRESS OF THE CB20 DEFINING THE KEY M 002720
+*         AND THE ISAM FILE.  FIELD CB20XORY IS SET ( BY THIS ROUTINE   M 002730
+*         AND THE SYNAD EXIT ) THUS :-                                  M 002740
+*              W - ERROR OTHER THAN RECORD NOT FOUND                    M 002750
+*              X - RECORD FOUND                                         M 002760
+*              Y - RECORD NOT FOUND                                     M 002770
+         SPACE 1                                                        M 002780
+         USING CB20NTRY,R8         ESTABLISH CB20 ADDRESSABILITY        M 002790
+ISRANDM  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              M 002800
+         L     R15,CB20TKEY        SET KEY ADDRESS IN R15               M 002810
+         IOM   ISRANDOM,CB20DCBS,0(,R15) REDA RANDOMLY                  M 002820
+         EJECT                                                          M 002830
+*********************************************************************** M 002840
+*        READ ISAM FILE RANDOMLY ( CONT'D )                           * M 002850
+*********************************************************************** M 002860
+         SPACE 1                                                        M 002870
+         ST    R1,CB20BADR         PRESERVE ADDRESS OF RECORD IN BUFFER M 002880
+         CLI   CB20XORY,C'X'       DETERMINE RESULT OF LOOKUP           M 002890
+         BNL   ISRANDM2            BR IF RECORD RETRIEVED               M 002900
+         L     R1,=V(ISFLD)        GET ADDRESS OF MESSAGE AREA          M 002910
+         UNPK  0(5,R1),DECB0164+24(3) UNPACK EXCEPTION INDICATORS       M 002920
+         MVI   4(R1),C''''         REPLACE TRAILING QUOTE IN MSG        M 002930
+         TR    0(4,R1),HEXTRTAB-C'0' TRANSLATE INTO PRINTABLE HEX       M 002940
+         TM    AFSWITCH,AFSWNABM   HAVE ABEND MESSAGES BEEN SUPPRESSED  M 002950
+         BO    ISRANDM2            BR IF NO ABEND MESSAGES              M 002960
+         L     R1,=V(ISDDN)        GET ADDRESS OF DDNAME IN MESSAGE     M 002970
+         MVC   0(8,R1),CB20DCBS+IOPSDDN MOVE DDNAME TO MESSAGE          M 002980
+         L     R1,=V(ISLAB)        GET ADDRESS OF MS20 LABEL IN MESSAGE M 002990
+         MVC   0(2,R1),CB20TID     MOVE LABEL TO MESSAGE                M 003000
+ISRANDM2 CLI   CB20XORY,C'X'       DETERMINE RESULT OF LOOKUP AGAIN     M 003010
+         BNE   ISRANDMX            EXIT IF RECORD NOT FOUND             M 003020
+         L     R1,CB20IDCB         POINT R1 AT DCB                      M 003030
+         LH    R2,DCBLRECL-IHADCB(R1) RETRIEVE RECORD LENGTH            M 003040
+         L     R3,CB20IREC         POINT R3 AT RECORD SAVE AREA         M 003050
+         L     R1,CB20BADR         RETRIEVE ADDRESS OF RECORD IN BUFFER M 003060
+         CBAL  R4,VARMOVE          MOVE RECORD TO STORAGE AREA          M 003070
+         AP    CB20ICNT,=P'1'      INCREMENT RECORD COUNT               M 003080
+ISRANDMX CLI   CB20XORY,C'X'       SET COND CODE FOR CALLER             M 003090
+        SUBOUT RESTORE=R4          RESTORE & RETURN TO CALLER           M 003100
+         DROP  R8                  FROP CB20 ADDRESSABILITY             M 003110
+         TITLE 'BUDGIE3M - BUILD MASTER INDICES IN CORE'                M 003120
+*********************************************************************** M 003130
+*        SET UP I.S. MASTER INDICES IN CORE                           * M 003140
+*********************************************************************** M 003150
+         SPACE 1                                                        M 003160
+ISINDEX  SUBIN ,                   ENTER ROUTINE                        M 003170
+         USING IHADCB,R1           ESTABLISH DCB ADDRESSABILITY         M 003180
+         USING ISINDEX,R15         ESTABLISH DCB EXIT ADDRESSABILITY    M 003190
+         LH    R4,DCBNCRHI         GET SIZE OF MASTER INDEX FROM LABEL  M 003200
+         A     R4,$SIZEISX         ADD SIZE OD INDICES SO FAR           M 003210
+         ST    R4,$SIZEISX         PRESERVE UPDATES INDEX SIZE          M 003220
+         TM    YPSWITCH,YPSWNOIX   IS MASTER INDEX REQUIRED             M 003230
+         BO    ISINDXX             BR IF INDEX SUPPRESSED               M 003240
+         MVC   DCBSMSI,DCBNCRHI    SET SIZE OF INDEX WORK AREA          M 003250
+         LR    R3,R1               PRESERVE DCB ADDRESS                 M 003260
+         LH    R0,DCBNCRHI         SET REQUIRED CORE SIZE FOR GETMAIN   M 003270
+         LTR   R1,R0               IS INDEX SIZE ZERO                   M 003280
+         BZ    ISINDXX             BR IF INDEX OF ZERO SIZE             M 003290
+       GETMAIN R,LV=(0)            ACQUIRE CORE FOR INDEX               M 003300
+         STCM  R1,7,DCBMSHI-IHADCB+1(R3) PUT ADDRESS OF AREA IN DCB     M 003310
+         LR    R1,R3               RESTORE DCB ADDRESS                  M 003320
+ISINDXX SUBOUT RETURN=(R14)        RETURN TO CO,PLETE OPEN              M 003330
+         DROP  R15                 DROP TEMPORARY ADDRESSABILITY        M 003340
+         TITLE 'BUDGIE3M - I/O ERROR ROUTINE FOR RANDOM ISAM RETRIEVAL' M 003350
+*********************************************************************** M 003360
+*        I/O ERROR ROUTINE FOR RANDOM ISAM SEARCH                     * M 003370
+*********************************************************************** M 003380
+         SPACE 1                                                        M 003390
+         USING CB20NTRY,R8         ESTABLISH CB20 ADRESSABILITY         M 003400
+         USING IHADCB,R1           ESTABLISH DCB ADDRESSABULITY         M 003410
+         USING ISIOERR,R15         ESTABLISH DCB EXIT ADDRESSABILITY    M 003420
+ISIOERR  SUBIN ,                   ENTER SYNAD EXIT                     M 003430
+         MVI   CB20XORY,C'Y'       ASSUME RECORD NOT FOUND              M 003440
+         TM    DCBEXCD1,DCBEXNKY   TEST IF RECORD NOT FOUND             M 003450
+         BO    *+8                 BR IF RECOR  NOT FOUND               M 003460
+         MVI   CB20XORY,C'W'       SHOW OTHER ERROR                     M 003470
+        SUBOUT RETURN=(R14)        RETURN TO I/O SUPERVISOR             M 003480
+         DROP  R1,R8               DROP ADDRESSABILITY                  M 003490
+         DROP  R15                 DROP EXIT ADDRESSABILITY             M 003500
+         TITLE 'BUDGIE3M - EXECUTED INSTRUCTIONS'                       M 003510
+*********************************************************************** M 003520
+*        EXECUTED INSTRUCTIONS                                        * M 003530
+*********************************************************************** M 003540
+         SPACE 1                                                        M 003550
+CLCKEY   CLC   0(0,R15),0(R14)     COMPARE CURRENT AND PREVIOUS KEY     M 003560
+MVCKEY   MVC   0(0,R15),0(R14)     MOVE CURRENT KEY TO PREVIOUS         M 003570
+C3MVC    MVC   0(0,R15),0(R14)     MOVE SOURCE TO DESTINATION           M 003580
+MOVEPAD  MVC   1(0,R15),0(R15)     PROPAGATE PAD CHARACTER              M 003590
+C3UNPACK UNPK  0(0,R15),0(0,R14)   UNPACK SOURCE INTO DESTINATION       M 003600
+C3PACK   PACK  0(0,R15),0(0,R14)   PACK SOURCE INTO DESTINATION         M 003610
+         TITLE 'BUDGIE3M - MISCELLANEOUS CONSTANTS AND FIELDS'          M 003620
+EXITLISX DC    X'85',AL3(ISINDEX)  SET UP MASTER INDEX IN CORE          M 003630
+         SPACE 1                                                        M 003640
+DCBTABL1 EQU   *                   TABLE OF IS DCB DISPLACEMENTS        M 003650
+         DC    AL1(DCBBUFCB-IHADCB)                                     M 003660
+         DC    AL1(DCBIOBAD-IHADCB)                                     M 003670
+         DC    AL1(DCBESETL-IHADCB)                                     M 003680
+         DC    AL1(DCBRELSE-IHADCB)                                     M 003690
+         DC    AL1(DCBRELEX-IHADCB)                                     M 003700
+         DC    AL1(DCBFREED-IHADCB)                                     M 003710
+         DC    AL1(DCBWKPT1-IHADCB)                                     M 003720
+         DC    AL1(DCBWKPT2-IHADCB)                                     M 003730
+         DC    AL1(DCBWKPT3-IHADCB)                                     M 003740
+         DC    AL1(DCBWKPT4-IHADCB)                                     M 003750
+         DC    AL1(DCBWKPT5-IHADCB)                                     M 003760
+         DC    AL1(DCBWKPT6-IHADCB)                                     M 003770
+         DC    AL1(DCBMSWA-IHADCB)                                      M 003780
+         DC    AL1(DCBMSHI-IHADCB)                                      M 003790
+         DC    AL1(DCBSETL-IHADCB)                                      M 003800
+         DC    AL1(DCBLRAN-IHADCB)                                      M 003810
+         DC    AL1(DCBLWKN-IHADCB)                                      M 003820
+         DC    AL1(DCBPUTX-IHADCB)                                      M 003830
+         DC    X'FF'               END OF TABLE                         M 003840
+         SPACE 1                                                        M 003850
+BBMESS06 DC    C'FIELD COLS   -   NOT IN FILE'                          M 003860
+         SPACE 1                                                        M 003870
+HEXTRTAB DC    C'0123456789ABCDEF' TRANSLATE TABLE FOR HEXPANSION       M 003880
+         SPACE 1                                                        M 003890
+        SCSEND M                   TERMINATE CSECT BUDGIE3M             M 003900
+         END                                                            M 003910
+         SPACE 1                                                        M 003920
+         REPRO                                                          M 003930
+ IDENTIFY BUDGIE3M('ISAM ROUTINES')                                     M 003940
+         END                                                            M 003950

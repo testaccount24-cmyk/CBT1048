@@ -1,0 +1,259 @@
+//AUXCOMM JOB (1586,5),'** FOR J NOLS **',CLASS=N
+// EXEC GENASMOD,COPT='NOALGN'
+         TITLE 'AUXILIARY COMMAND ROUTER'
+***********************************************************************
+*                        A U X C O M M                                *
+*                                                                     *
+*        THIS IS THE AUXILIARY COMMAND ROUTER FOR INDEPENDANT         *
+*        INSTALLATION COMMANDS. IT IS INVOKED BY XEE0503D WHEN        *
+*        AN OS-INVALID COMMAND IS ENTERED BY THE OPERATOR. THIS       *
+*        PROGRAM WILL FURTHER ANALYSE THE COMMAND TO SEE IF IT IS     *
+*        A VALID MONSANTO COMMAND. IF IT IS, THE APPROPRIATE          *
+*        PROCESSING ROUTINE IS INVOKED. IF IT IS NOT, CONTROL IS      *
+*        RETURNED TO XEE0503D WITH 4 IN REG15.                        *
+*                                                                     *
+*        ATTRIBUTES. REENTRANT,REUSABLE AUTHORISED.                   *
+*                                                                     *
+*                                                                     *
+*        REGISTER USAGE.                                              *
+*                                                                     *
+*        REG0  PARAMETER REGISTER. WORK REGISTER                      *
+*        REG1  PARAMETER REGISTER. WORK REGISTER                      *
+*        REG2  ADDRESS OF EXTENDED SAVE AREA OF SVRB FOR SVC 34       *
+*        REG3  ADDRESS CURRENT ENTRY OF COMMAND TABLE                 *
+*        REG4  LENGTH CURRENT COMMAND TABLE ENTRY                     *
+*        REG5  END ADDRESS-1 OF COMMAND TABLE (FOR BXLE)              *
+*        REG6  LENGTH COMMAND IN TABLE MINUS ONE                      *
+*        REG7  LENGTH COMMAND ENTERED MINUS ONE                       *
+*        REG8  WORK REGISTER                                          *
+*        REG9  ADDRESS OF LAST ELEMENT IN OUTPUT CHAIN                *
+*        REG10 LENGTH DESCRIPTIVE TEXT MINUS ONE                      *
+*        REG11 INTERNAL LINK REGISTER                                 *
+*        REG12 BASE REGISTER                                          *
+*        REG13 ADDRESS PROGRAM REGISTER SAVE AREA                     *
+*        REG14 LINK REGISTER, WORK REGISTER                           *
+*        REG15 LINK REGISTER, WORK REGISTER                           *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        DSECTS USED IN THIS MODULE                                   *
+***********************************************************************
+         SPACE 2
+CMDTAB   DSECT ,                   FORMAT OF COMMAND TABLE ENTRIES
+         COMMAND DSECT             GENERATE DSECT FOR TABLE ENTRY
+CMDENLEN EQU   *-CMDTAB            LENGTH OF COMMAND TABLE ENTRY
+         SPACE 2
+XSA      DSECT ,                   FORMAT OF EXTENDED SAVE AREA
+XSAP     DS    F                   PTR TO XCTL NAME
+XSAD     DS    F                   DCB POINTER
+XSAX     DS    D                   XCTL NAME
+XSAE     DS    0C                  ERROR CODE FOR IEE0503D
+XSAR     DS    F                   ADDRESS OF PARM LIST
+XSAN     DS    0C                  VERB INDEX
+XSAL     DS    F                   PTR TO LIST POSITION
+XSAVERB  DS    D                   VERB ENTERED BY OPERATOR
+XSAS     DS    D                   TEMPORARY SAVE AREA
+XSAU     DS    C                   UCM ENTRYINDICATOR
+         DS    C                   RESERVED
+XSAJ     DS    H                   TJID ENTRY INDICATOR
+         SPACE 2
+WKAREA   DSECT ,                   INTERNAL WORK AREA
+         DS    18F                 REGISTER SAVE AREA
+MSGAREA  DS    0CL70               OUTPUT AREA FOR QUERY RESPONSE
+MSGLEN   EQU   L'MSGAREA           LENGTH SPECIFICATION FOR LOADMSG
+CLRLINE  DS    0CL70               REFERENCE FOR LINE CLEARING
+         DS    CL8                 OUTPUT  COMMAND NAME
+MSGSEP   DS    C                   MESSAGE SEPARATOR
+MSGTEXT  DS    CL61                DETAILS OF THE COMMAND
+WKLEN    EQU   *-MSGAREA           EXTRA LENGTH FOR ZCSECT MACRO
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING                                   *
+***********************************************************************
+         SPACE 2
+AUXCOMM  ZCSECT GETMAIN=1,WKLEN=WKLEN
+         USING WKAREA,REG13        ADDRESSABILITY FOR WORK AREA
+         EJECT
+***********************************************************************
+*        DETERMINE THE LENGTH OF THE INPUT COMMAND                    *
+***********************************************************************
+         SPACE 2
+         USING XSA,REG2            ADDRESSABILITY FOR EXTENDED S/A
+         LA    REG8,XSAVERB        LOAD ADDRESS OF VERB
+         LA    REG7,XSAVERB+8      LOAD ADDRESS END OF VERB
+BLNKLOOP BCTR  REG7,0              SUBTRACT 1
+         CLI   0(REG7),C' '        IS THIS A BLANK
+         BE    BLNKLOOP            YES. KEEP GOING
+         SR    REG7,REG8           CALCULATE LENGTH-1 OF VERB.
+         EJECT
+***********************************************************************
+*        SCAN THE COMMAND TABLE FOR A VALID COMMAND                   *
+***********************************************************************
+         SPACE 2
+         LA    REG3,CMDTABLE       LOAD START ADDRESS OF COMMAND TABLE
+         LA    REG5,CMDTBEND-1     LOAD END ADDRESS OF COMMAND TABLE
+         XR    REG6,REG6           CLEAR REGISTER 6
+         XR    REG10,REG10         CLEAR REGISTER 10
+         USING CMDTAB,REG3         ADDRESSABILITY FOR EACH ENTRY IN TAB
+         SPACE 2
+LOOP     IC    REG6,CMDLEN         LOAD LENGTH-1 OF COMMAND
+         CR    REG7,REG6           COMPARE LENGTHS OF VERBS
+         BNE   LOOPEXIT            NOT SAME. NO FURTHER TESTS
+         EX    REG6,CMDCLC         COMPARE COMMAND WITH TABLE ENTRY
+         BE    VALCMD              COMMAND FOUND. GO PROCESS.
+LOOPEXIT IC    REG10,CMDTXLEN(REG6) LOAD LENGTH OF TEXT
+         LA    REG4,CMDENLEN(REG6,REG10) LOAD LENGTH THIS ENTRY
+         BXLE  REG3,REG4,LOOP      LOOP TO END OF TABLE
+         B     INVALCMD            COMMAND NOT FOUND - INVALID
+         SPACE 2
+CMDCLC   CLC   XSAVERB(0),CMDNAME  COMPARE OPERATOR ENTRY & VALID CMD
+         EJECT
+***********************************************************************
+*        THE COMMAND IS NOT VALID                                     *
+***********************************************************************
+         SPACE 2
+INVALCMD DS    0H
+         ZRETURN RC=4              RETURN TO XEE0503D FOR ERROR MSG
+         EJECT
+***********************************************************************
+*        THE COMMAND IS VALID. LOAD REGISTERS & CALL PROCESSOR        *
+***********************************************************************
+         SPACE 2
+LOADER   DS    0H                  FIRST LOAD THE PROCESSOR
+         LA    REG11,CMDPRCSR(REG6) LOAD ADDRESS OF MODULE NAME
+         LOAD EPLOC=(11)           LOAD THE MODULE
+         LR    REG15,REG0          LOAD LINKAGE REGISTER
+         BALR  REG14,REG15         LINK TO THE ROUTINE
+         LR    REG10,REG15         SAVE RETURN CODE
+         DELETE EPLOC=(11)         DELETE THE MODULE
+         LTR   REG15,REG10         TEST THE RETURN CODE
+         B     TESTRET             BRANCH TO RETURN CODE ANALYSIS
+VALCMD   DS    0H
+         L     REG15,CMDPRCAD(REG6) LOAD ADDRESS OF PROCESSOR
+BALTOIT  BALR  REG14,REG15         LINK TO THE ROUTINE
+         LTR   REG15,REG15         GOOD RETURN CODE
+TESTRET  BZ    NORMRET             YES. LEAVE WELL ALONE
+         MVI   XSAE,X'0B'          CAUSE INVALID PARM MESSAGE
+NORMRET  ZRETURN RC=(15)
+         EJECT
+***********************************************************************
+*        THE COMMAND IS ASYNCHRONOUS. THIS ROUTINE  ATTACHES IT.      *
+***********************************************************************
+         SPACE 2
+ATTACHER DS    0H
+         LA    REG14,CMDPRCSR(REG6) LOAD ADDRESS OF PROCESSOR NAME
+         LR    REG1,REG2           LOAD ADDRESS OF PARAMETERS
+         ATTACH EPLOC=(14),SZERO=YES,       ATTACH THE PROCESSOR       X
+               SM=SUPV,KEY=ZERO    WITH SUPERVISOR MODE PSW
+         B     NORMRET             RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        TABLE OF VALID COMMANDS                                      *
+***********************************************************************
+         SPACE 2
+CMDTABLE DS    0D
+         COMMAND DD,AUXCMM01,                                          X
+               TXT='DISPLAY THE STATUS OF VARIOUS SYSTEM COMPONENTS'
+         COMMAND ZAP,AUXCMM10,ADCON=(A,ATTACHER),                      X
+               TXT='DYNAMICALLY INSPECT AND/OR ALTER MAIN STORAGE'
+         COMMAND HNDSHK,AUXCMM12,ADCON=(A,LOADER),                     X
+               TXT='INITIALISE MVS/VM HANDSHAKING'
+         COMMAND TAPEOUT,AUXCMM14,ADCON=(A,LOADER),                    X
+               TXT='COPY REAL CORE TO TAPE FOR LATER RELOADING'
+         COMMAND ?,AUXCMMZZ,ADCON=A,                                   X
+               TXT='LIST MONSANTO COMMANDS AND THEIR OPERANDS'
+CMDTBEND EQU   *                   END OF COMMAND TABLE
+         EJECT
+***********************************************************************
+*                                                                     *
+*        AUXCMMZZ IS THE QUERY ROUTINE FOR MONSANTO OPERATOR          *
+*        COMMANDS. IF A '?' IS ENTERED INTO THE CONSOLE, THIS         *
+*        ROUTINE IS INVOKED TO LIST OF ALL THE COMMANDS AVAILABLE     *
+*        TO THE OPERATOR AND THEIR FUNCTION.                          *
+*                                                                     *
+***********************************************************************
+         SPACE 2
+AUXCMMZZ DS    0H
+         SPACE 2
+***********************************************************************
+*        FIRST OUTPUT THE TITLE LINE                                  *
+***********************************************************************
+         SPACE 2
+         LOADMSG DATA=TITLE,LENGTH=TITLLEN,TYPE=C
+         LR    REG11,REG1          LOAD THIS AS FIRST WTO ELEMENT
+         LR    REG9,REG11          SET UP FOR FOLLOWING CHAIN
+         LOADMSG DATA=QUERYTOP,LENGTH=LENQUTOP,TYPE=L
+         ST    REG1,0(REG9)        CHAIN THIS ELEMENT TO LAST ONE
+         LR    REG9,REG1           SAVE ADDRESS OF LAST ELEMENT
+         B     ZZLIST              BRANCH TO NEXT ROUTINE
+         SPACE 2
+TITLE    DC    C'MONSANTO COMMAND SUMMARY'
+TITLLEN  EQU   L'TITLE
+QUERYTOP DC    C'COMMAND   :FUNCTION'
+LENQUTOP EQU   L'QUERYTOP          LENGTH FOR GETMAIN
+         EJECT
+***********************************************************************
+*        LIST OFF ALL TEXT FIELDS                                     *
+***********************************************************************
+         SPACE 2
+ZZLIST   DS    0H
+         LA    REG3,CMDTABLE       LOAD START ADDRESS OF COMMAND TABLE
+         LA    REG5,CMDTBEND-1     LOAD END ADDRESS OF COMMAND TABLE
+         XR    REG6,REG6           CLEAR REGISTER 6
+         XR    REG10,REG10         CLEAR REGISTER 10
+         USING CMDTAB,REG3         ADDRESSABILITY FOR EACH ENTRY IN TAB
+         SPACE 2
+LOOP2    IC    REG6,CMDLEN         LOAD LENGTH-1 OF COMMAND
+         IC    REG10,CMDTXLEN(REG6) LOAD LENGTH OF TEXT
+         XC    CLRLINE,CLRLINE     CLEAR THE OUTPUT AREA
+         EX    REG6,MVCWTO1        MOVE COMMAND NAME TO WTO
+         MVI   MSGSEP,C':'         SEPARATING LITERAL TO OUTPUT MSG
+         LA    REG15,CMDTEXT(REG6) LOAD 'FROM' ADDRESS FOR TEXT
+         EX    REG10,MVCWTO2       MOVE TEXT TO WTO
+         LOADMSG DATA=MSGAREA,LENGTH=MSGLEN,TYPE=D
+         ST    REG1,0(REG9)        CHAIN THIS OUTPUT ELEMENT TO OTHERS
+         LR    REG9,REG1           SAVE ADDRESS OF LAST ELEMENT
+         LA    REG4,CMDENLEN(REG6,REG10) LOAD LENGTH THIS ENTRY
+         BXLE  REG3,REG4,LOOP2     LOOP TO END OF TABLE
+         B     ENDLINE             BRANCH TO NEXT ROUTINE
+         SPACE 2
+MVCWTO1  MVC   MSGAREA(0),CMDNAME  MOVE COMMAND NAME TO WTO
+MVCWTO2  MVC   MSGTEXT(0),0(REG15) MOVE DESCRIPTIVE TEXT TO WTO
+         EJECT
+***********************************************************************
+*        OUTPUT A LINE TO ROUND OFF DISPLAY                           *
+***********************************************************************
+         SPACE 2
+ENDLINE  DS    0H
+         LOADMSG DATA=LASTLINE,LENGTH=LENLAST,TYPE=E
+         ST    REG1,0(REG9)
+         LR    REG9,REG1
+         B     DOOUTPUT            GO HAVE OUTPUT DONE
+         SPACE 2
+LASTLINE DC    C'TO FIND OUT MORE, ENTER THE COMMAND FOLLOWED BY ?'
+LENLAST  EQU   L'LASTLINE          LENGTH FOR GETMAIN
+         EJECT
+***********************************************************************
+*        ALL OUTPUT IS PREPARED. ARRANGE TO OUTPUT IT                 *
+***********************************************************************
+         SPACE 2
+DOOUTPUT OUTPUT (REG11),UCMID=XSAU OUTPUT THE PREPARED DATA
+         ORG   *-2
+         BR    REG15               BRANCH TO THE ROUTINE
+AUXCMM00 DC    V(AUXCMM00)         OUTPUT PROCESSING ROUTINE
+SUBPOOL  DS    0F                  USED TO PLACE SUBPOOL ID IN REG 0
+         DC    AL1(0)
+         DC    AL3(0)              PADDING
+         END
+//LKED.SYSIN   DD *
+ SETCODE AC(1)
+ NAME AUXCOMMX(R)
+ INCLUDE MLPALIB(AUXCOMM)
+ INCLUDE MLPALIB(AUXCOMMX)
+ ENTRY AUXCOMM
+ ALIAS AUXCMM10
+ ALIAS AUXCMM06
+ SETCODE AC(1)
+ NAME AUXCOMM(R)
+/*

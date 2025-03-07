@@ -1,0 +1,471 @@
+//AUXCMM04 JOB (1585,5),'0000 AUXCMM04',CLASS=T
+//STEP01   EXEC   GENASMOD
+***********************************************************************
+*                    A U X C M M 0 4                                  *
+*                                                                     *
+*        THIS ROUTINE HANDLES THE OPERATOR COMMAND #D PAGE            *
+*        IT IS ATTACHED BY THE COMMAND PROCESSOR AUXCMM01 AS A SUB-   *
+*        TASK OF THE COMMUNICATIONS TASK.                             *
+*          THE MODULE OPERATES BY REPLACING THE ADDRESS OF THE PAGE   *
+*        I/O PROCESSING ROUTINE IN THE PAGE VECTOR TABLE WITH THE     *
+*        ADDRESS OF ANOTHER ROUTINE WITHIN THIS MODULE. THIS NEW      *
+*        ROUTINE RECORDS DETAILS OF EACH ENTRY MADE BEFORE PASSING    *
+*        CONTROL ON TO THE REAL ROUTINE. AFTER A GIVEN TIME PERIOD,   *
+*        THE MAIN ROUTINE REGAINS CONTROL AND RESETS THE PVT ADDRESS  *
+*        THEN FORMATS AND OUTPUTS THE ACCUMULATED STATISTICS.         *
+*          BECAUSE OF THE NATURE OF THIS PROCESSING IT IS IMPOSSIBLE  *
+*        FOR THE ROUTINE TO RECOVER FORM PAGE FAULTS, SO IT IS VITAL  *
+*        THAT AUXCMM04 IS RESIDENT IN THE FIXED LINK PACK AREA. THIS  *
+*        CAN BE ON ITS OWN BY SPECIFYING AUXCMM04 IN THE FIX LIST     *
+*        (IEAFIXNN), OR AS PART OF THE AUXCOMM LOAD MODULE, IN WHICH  *
+*        CASE, ALL THE AUXCOMM LOAD MODULES MUST BE INCLUDED IN THE   *
+*        FIXED LINK PACK AREA IN THE SAME WAY.                        *
+*          THE STATISTICS ACCUMULATORS ARE DEFINED TO HANDLE A MAXIMUM*
+*        OF 30 ACTIVE ADDRESS SPACES. IF MORE ARE LIKELY TO BE ACTIVE *
+*        WHEN THE COMMAND IS ISSUED, THE WORK AREA FIELDS AFTER THE   *
+*        LABEL 'ACCLPA' MUST BE ADJUSTED.                             *
+*          THE MEASUREMENT INTERVAL IS DEFINED AS FOUR SECONDS AND    *
+*        IS DEFINED BY THE CONSTANT 'WAITTIME' WHICH IS IN HUNDREDTHS *
+*        OF A SECOND                                                  *
+*                                                                     *
+*        ATTRIBUTES. REENTRANT, REUSABLE, SUPERVISOR MODE.            *
+*                                                                     *
+*        REGISTER USAGE                                               *
+*        REG0  PARAMETER REGISTER, WORK REGISTER                      *
+*        REG1  PARAMETER REGISTER, WORK REGISTER                      *
+*        REG2  WORK REGISTER                                          *
+*        REG3  ADDRESS INTERNAL WORK AREA                             *
+*        REG4  ADDRESS OF ASVT ENTRY LIST                             *
+*        REG5  NUMBER REMAINING POSSIBLE ADDRESS SPACES TO LOOK AT    *
+*        REG6  ADDRESS CURRENT ASCB                                   *
+*        REG7  ADDRESS CURRENT OUCB                                   *
+*        REG8  ADDRESS OF AUX STOR MNGR VECTOR TABLE                  *
+*        REG9  ADDRESS OF CURRENT OUTPUT ELEMENT
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        DSECTS USED IN THIS MODULE                                   *
+***********************************************************************
+         SPACE 2
+WKAREA   DSECT ,                   INTERNAL WORK AREA
+GETMNLEN DS    F                   SAVED DETAILS FOR FREEMAIN
+CHAINHDR DS    F                   START OF OUTPUT CHAIN
+ILRSAVE  DS    F                   SAVE AREA FOR ASM ROUTINE EP ADDRESS
+LOADR11  DS    F                   SAVE AREA FOR LINK REGISTER
+SAVER111 DS    F                   SAVE AREA FOR LINK REGISTER
+DBLWORD  DS    D                   WORK AREA FOR UNPACK
+FLAG     DS    X                   INTERNAL FLAG
+SYSMASK  DS    X                   SAVE AREA FOR SYSTEM MASK
+CID      DS    X                   CONSOLE ID FOR RESPONSES
+MSGAREA  DS    0CL50               OUTPUT AREA FOR MESSAGES
+CLRLINE  DS    0CL50               REFERENCE FOR BUFFER CLEARING
+ENDLINE  DS    0CL30               TEXT AREA FOR LAST LINE
+ERRORMSG DS    0CL50               OUTPUT AREA FOR ERROR MESSAGES
+JOBNAME  DS    CL8                 NAME OF JOB
+         DS    CL2                 PADDING
+ASID     DS    CL4                 ADDRESS SPACE ID
+         DS    CL2                 PADDING
+INFO     DS    0CL30               INFORMATION ABOUT ADDRESS SPACE
+PAGEIN   DS    0CL12               PAGE IN LITERAL
+         DS    CL4                 PADDING
+PRTINPGE DS    CL4                 PAGE-IN RATE
+         DS    CL4                 PADDING
+         DS    CL2                 PADDING
+PAGEOUT  DS    0CL13               PAGE OUT LITERAL
+         DS    CL4                 PADDING
+PRTOUTPG DS    CL4                 PAGE-OUT RATE
+         DS    CL12                PADDING
+ACCLATRS DS    0CL(64*4)           REFERENCE FOR ACCUMULATORS
+ASSTATS  DS    0F                  FALSE START OF ADDRESS SPACE ACC'S
+ACCLPA   DS    F                   ACCUMULATOR FOR LPA ON 1ST SCAN
+         DS    F                   PADDING FOR DBLWORD ALIGNMENT
+         DS    31D                 IN AND OUT FOR 30 A/S PLUS LPA
+ACCSEND  EQU   *
+WKARELEN EQU   *-WKAREA            LENGTH FOR GETMAIN
+ASMVT    DSECT ,                   AUXILIARY STORAGE MANAGER VECTOR TBL
+ASMFLAG1 DS    X                   ASM GLOBAL FLAG
+ASMFLAG2 DS    X                   ASM GLOBAL FLAG
+ASMRSV4  DS    H                   RESERVED
+ASMSART  DS    A                   ADDRESS OF SART
+ASMPART  DS    A                   ADDRESS OF PART
+ASMGOS   DS    A                   ADDRESS OF EP INTO ILRGOS
+ASMTRPAG DS    A                   ADDRESS OF EP TO ILRPOS
+ASMREST  DS    CL1004              REST OF ASMVT. NOT USED HERE
+         SPACE 2
+AIA      DSECT ,                   ASM IO AREA
+AIAFQPA  DS    A                   FORWARD Q POINTER FOR VIO
+AIABQPA  DS    A                   BACK QUEUE POINTER FOR VIO
+AIAOP    DS    X                   OPERATION CODE FIELD
+AIAFLG1  DS    X                   IO CONTROL FLAGS
+AIAWRITE EQU   X'80'               WRITE=1, READ=0
+AIAPRIV  EQU   X'40'               PRIVATE=1, COMMON=0
+AIAVIO   EQU   X'20'               VIO PAGE=1, NORMAL PAGE =0
+AIADUPLX EQU   X'10'               DUPLEX WRITE=1, SIMPLEX=0
+AIAFLG2  DS    X                   DISPOSITION FLAGS
+AIAFLG3  DS    X                   VIO CONTROLLER FLAGS
+AIANXAIA DS    A                   CHAIN POINTER FOR AIA CHAINS
+AIAID    DS    D                   AIA ID FIELDS
+         SPACE 2
+         PRINT NOGEN
+         IHAASCB
+         IHAPSA
+         IHAPVT
+         CVT
+         PRINT GEN
+         EJECT
+***********************************************************************
+*        EQUATES USED IN THE MODULE                                   *
+***********************************************************************
+         SPACE 2
+ASVTENTY EQU   X'210'              OFFSET TO ASID ENTRIES IN ASVT
+ASVTMAXU EQU   X'204'              OFFSET TO MAX USERS FIELD IN ASVT
+DISABLED EQU   B'00000100'         SYSTEM MASK FOR DISABLED PROCESSING
+ENABLED  EQU   B'01000111'         SYSTEM MASK FOR ENABLED PROCESSING
+MSGLEN   EQU   L'MSGAREA           LENGTH SPECIFICATION FOR LOADMSG
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING                                   *
+***********************************************************************
+         SPACE 2
+AUXCMM04 ZCSECT GETMAIN=1
+PGMSTART EQU   *                   LABEL USED LATER ESTABLISHING BASE
+         LR    REG4,REG1           LOAD ADDRESS SCAN DESCR BLK CHAIN
+         MODESET MODE=SUP          GET INTO SUPERVISOR MODE
+         ESTAE STAEXIT             SET UP TRAP FOR ABENDS
+         EJECT
+***********************************************************************
+*        GETMAIN CORE FOR WORK AREA & INITIALISE ACCUMULATORS         *
+***********************************************************************
+         SPACE 2
+         USING WKAREA,REG3
+         USING PSA,0               SHOW PSA AT LOCATION 0
+         USING ASCB,REG6           ADDRESSABILITY FOR ASCB
+         USING CVTMAP,REG1         BASIC ADDRESSABILITY FOR CVT
+         USING PVT,REG8            ADDRESSABILITY FOR PVT
+         LA    REG0,WKARELEN+8     LOAD LENGTH FOR GETMAIN
+         N     REG0,REG0MASK       ROUND DOWN TO DOUBLE WORD
+         O     REG0,SUBPOOL        LOAD SUBPOOL ID
+         LR    REG10,REG0          SAVE GETMAIN DETAILS
+         GETMAIN R,LV=(0)          GETMAIN THE CORE
+         LR    REG3,REG1           LOAD BASE ADDRESS
+         ST    REG10,GETMNLEN      STORE IN DETAILS FOR FREEMAIN
+         SPACE 2
+         XC    ACCLATRS,ACCLATRS   CLEAR ALL ACCUMULATORS
+         STCM  REG4,8,CID          STORE OUT RESPONSE CONSOLE ID
+         EJECT
+***********************************************************************
+*        ANALYSE INPUT PARMS & TEST VALIDITY                          *
+***********************************************************************
+         SPACE 2
+PARMS    DS    0H
+         LA    REG4,0(REG4)        STRIP OFF TOP BYTE
+         LTR   REG4,REG4           TEST FOR PRESCENCE OF OPERANDS
+         BZ    HEADER              NO OPERANDS. START PROCESSING
+         CLI   4(REG4),X'01'       IS OPERAND 1 BYTE LONG ?
+         BNE   ERROR               NO. CANNOT BE VALID
+         L     REG4,4(REG4)        LOAD ITS ADDRESS
+         CLI   0(REG4),C'?'        REQUEST FOR INFORMATION ?
+         BNE   ERROR               NO. OPERAND NOT KNOWN
+         B     AUXCMMZZ            BRANCH TO QUERY ROUTINE
+         EJECT
+***********************************************************************
+*        PREPARE & INITIALISE THE HEADING LINE FOR OUTPUT             *
+***********************************************************************
+         SPACE 2
+HEADER   DS    0H
+         LOADMSG DATA=TITLE,LENGTH=TITLLEN,TYPE=C
+         ST    REG1,CHAINHDR       INITIALISE START OF OUTPUT CHAIN
+         LR    REG9,REG1           LOAD NEXT ELEMENT ADDRESS
+         XC    CLRLINE,CLRLINE     CLEAR THE BUFFER
+         MVC   ASID,ASIDTEXT       IDENTIFY THIS OUTPUT
+         MVC   JOBNAME,JOBNTEXT    IDENTIFY JOBNAME TEXT
+         MVC   PAGEIN,PINTEXT      IDENTIFY PAGE IN COLUMN
+         MVC   PAGEOUT,POUTTEXT    IDENTIFY PAGE OUT TEXT
+         LOADMSG DATA=MSGAREA,LENGTH=MSGLEN,TYPE=L
+         ST    REG1,0(REG9)        PLACE LINE HEADING ON O/P CHAIN
+         LR    REG9,REG1           SAVE ADDRESS OF END OF CHAIN
+         B     MAIN                BRANCH TO NEXT ROUTINE
+         SPACE 2
+TITLE    DC    C'ANALYSIS OF PAGING ACTIVITY'
+TITLLEN  EQU   L'TITLE
+ASIDTEXT DC    C'ASID'
+JOBNTEXT DC    C'JOBNAME '
+PINTEXT  DC    C'PAGES IN/SEC'
+POUTTEXT DC    C'PAGES OUT/SEC'
+         EJECT
+***********************************************************************
+*        INITIALISE THE STATS COLLECTOR AND WAIT 4 SECOND             *
+***********************************************************************
+         SPACE 2
+MAIN     DS    0H
+         L     REG1,FLCCVT         LOAD ADDRESS OF CVT
+         L     REG8,CVTPVTP        LOAD ADDRESS OF PVT
+         L     REG14,PVTPAGIO      LOAD ADDRESS OF ASM ROUTINED
+         ST    REG14,ILRSAVE       SAVE ADDRESS OF THIS ROUTINE
+         LA    REG15,STATIST       LOAD ADDRESS OF STATS COLLECTION
+         CR    REG14,REG15         DD PAGE ALREADY IN PROGRESS ?
+         BE    ERROR1              YES. CANNOT PROCESS MORE THAN ONE
+         CS    REG14,REG15,PVTPAGIO STORE OUR ADDRESS IN PVT
+         BNE   ERROR1              ANOTHER CPU HAS ALREADY DONE IT
+         ST    REG3,XCVTUSER       SAVE ADDRESS OF WORK AREA
+STIMER   STIMER WAIT,BINTVL=WAITTIME WAIT FOR 4 SECOND
+         L     REG14,ILRSAVE       LOAD REAL ADDRESS OF ASM
+         ST    REG14,PVTPAGIO      RESET ADDRESS BACK TO NORMAL
+         B     PREPRSLT            GO FORMAT RESULTS
+         SPACE 2
+WAITTIME DC    F'400'              GIVES FOUR SECOND WAIT TIME
+         EJECT
+***********************************************************************
+*        THIS IS THE COMMON STATS COLLECTION ROUTINE                  *
+***********************************************************************
+         SPACE 2
+STATIST  DS    0H
+         USING *,REG15             INITIAL ENTRY POINT ADDRESSABILITY
+         STM   REG0,REG15,STATSAVE SAVE ALL INCOMING REGISTERS
+         DROP  REG15               RELEASE INITIAL ADDRESSABILITY
+         BALR  REG12,0             SET UP NEW BASE REGISTER
+         USING *,REG12             TEMPORARY ADDRESSABILITY FOR STATIST
+         L     REG2,FLCCVT         LOAD ADDRESS OF CVT
+         DROP  REG1                RELEASE PREVIOUS ADDRESSABILITY
+         USING CVTMAP,REG2         SET NEW ADDRESSABILITY FOR CVT
+         L     REG3,XCVTUSER       RELOAD ADDRESS OF WORK AREA
+         USING AIA,REG1            ADDRESSABILITY FOR INPUT BLOCK
+         L     REG6,PSAAOLD        LOAD ADDRESS CURRENT ASCB
+MATHS    LH    REG15,ASCBASID      LOAD ADDRESS SPACE ID
+         SLL   REG15,3             MULTIPLY BY 8
+         LA    REG15,ASSTATS(REG15) LOAD ADDRESS THIS A.S. ACCUM
+         TM    AIAFLG1,AIAPRIV     PRIVATE OR COMMON REQUEST
+         BO    TESTIO              PRIVATE. GO MAKE FURTHER TESTS
+         LA    REG15,ACCLPA        LOAD ADDRESS OF LPA ACCUMULATOR
+         B     ADDITUP             GO INCREMENT THIS ACCUMULATOR
+TESTIO   TM    AIAFLG1,AIAWRITE    IS IT INPUT OR OUTPUT ?
+         BZ    *+8                 INPUT. STEP OVER NEXT LOAD ADDRESS
+         LA    REG15,4(REG15)      STEP TO OUTPUT PAGE ACCUMULATOR
+ADDITUP  L     REG4,0(REG15)       LOAD CONTENTS OF ACCUMULATOR
+         LA    REG5,1(REG4)        INCREMENT THE ACCUMULATOR
+         CS    REG4,REG5,0(REG15)  UPDATE THE ACCUMULATOR
+         BNE   ADDITUP             UPDATE NOT SUCCESSFUL. RETRY
+         L     REG15,ILRSAVE       LOAD ADDRESS REAL ROUTINE
+         LM    REG0,REG14,STATSAVE RELOAD INCOMING REGISTERS
+         BR    REG15               BRANCH TO THE REAL ROUTINE
+         SPACE 2
+STATSAVE DS    18F                 SAVE AREA FOR RSM'S REGISTERS
+*                                  NOTE: THE USE OF THIS AREA IS
+*                                  PROTECTED BY THE FACT THAT ONLY ONE
+*                                  DD PAGE COMMAND WILL EXECUTE AT ANY
+*                                  ONE TIME.
+XCVTUSER DS    F                   SAVE AREA FOR WORK AREA ADDRESS
+         EJECT
+***********************************************************************
+*        THE DETAILS FOR SYSTEM & USER PAGING ARE PREPARED HERE       *
+***********************************************************************
+         SPACE 2
+         DROP  REG2                RELEASE OLD ADDRESSABILITY
+         USING CVTMAP,REG1         SET NEW ADDRESSABILITY FOR CVT
+         USING PGMSTART,REG12      RESET ORIGIN FOR BASE REGIOSTER
+PREPRSLT DS    0H
+         L     REG1,16             LOAD ADDRESS OF CVT
+         L     REG1,CVTASVT        LOAD ADDRESS ADDR.SPACE VECTOR TABLE
+         LA    REG4,ASVTENTY(REG1) LOAD ADDRESS ADDRESS SPACE ENTRIES
+         L     REG5,ASVTMAXU(REG1) LOAD MAXIMUM NUMBER USERS
+XSCBSTRT L     REG6,0(REG4)        LOAD ADDRESS NEXT ADDRESS SPACE C.B
+         LTR   REG6,REG6           TEST FOR ACTIVE ENTRY
+         BNP   XSCBLOOP            ENTRY NOT ACTIVE. FIND NEXT
+         BAL   REG11,LOADIT        GO PREPARE OUTPUT LINE
+XSCBLOOP LA    REG4,4(REG4)        ADDRESS NEXT ADDRESS SPACE ENTRY
+         BCT   REG5,XSCBSTRT       LOOP FOR ALL POSSIBLE ENTRIES
+         B     DOCOMMON            GO PREPARE COMMON I/O LINE (LPA)
+         SPACE 2
+         EJECT
+***********************************************************************
+*        THIS ROUTINE PREPARES THE OUTPUT FOR THE LINK PACK AREA      *
+***********************************************************************
+         SPACE 2
+DOCOMMON DS    0H
+         XC    CLRLINE,CLRLINE     CLEAR THE OUTPUT AREA
+         MVC   JOBNAME,LPANAME1    MOVE START LINK PACK AREA ID
+         MVC   ASID,LPANAME2       MOVE REST OF LINK PACK AREA NAME
+         L     REG10,ACCLPA        LOAD FINAL ACCUMULATED TOTAL
+         LA    REG10,2(REG10)      ADD HALF DIVIDING FACTOR
+         SRL   REG10,2             DIVIDE BY FOUR
+         CVD   REG10,DBLWORD       CONVERT TO DECIMAL
+         UNPK  PRTINPGE,DBLWORD+6(2) UNPACK TO PRINT LINE
+         OI    PRTINPGE+L'PRTINPGE-1,X'F0' MAKE IT PRINT
+         LOADMSG DATA=MSGAREA,LENGTH=MSGLEN,TYPE=D
+         ST    REG1,0(REG9)        CHAIN THIS ENTRY TO OTHERS
+         LR    REG9,REG1           MAKE THIS THE LAST ENTRY
+         B     DOENDING            GO PREPARE FINAL LINE OF OUTPUT
+         SPACE 2
+LPANAME1 DC    C'LINKPACK'         START OF LINK PACK ID
+LPANAME2 DC    C'AREA'             END OF ID
+         EJECT
+***********************************************************************
+*        THIS IS THE COMMON I/O LOAD ROUTINE                          *
+***********************************************************************
+         SPACE 2
+LOADIT   DS    0H
+         ST    REG11,LOADR11       SAVE LINK REGISTER
+         BAL   REG11,LINEUP        RESET THE OUTPUT AREA
+         LH    REG15,ASCBASID      LOAD ADDRESS SPACE ID
+         SLL   REG15,3             MULTIPLY BY EIGHT
+         LA    REG15,ASSTATS(REG15) LOAD ADDRESS THIS A/S ACCUM
+         CLC   JOBNAME,INIT        IS THIS AN INITIATOR ?
+         BNE   LOADCALC            NO. CARRY ON WITH CALCULATION
+         CLC   0(8,REG15),=2F'0'   HAS THIS INIT ANY FIGURES
+         BE    LOADEXIT            NO. NOT WORTH PRINTING IT
+LOADCALC L     REG1,0(REG15)       LOAD THIS ADDRESS SPACES IN ACCUM
+         LA    REG1,2(REG1)        ADD HALF DIVIDING FACTOR
+         SRL   REG1,2              DIVIDE BY FOUR
+         CVD   REG1,DBLWORD        CONVERT TO DECIMAL
+         UNPK  PRTINPGE,DBLWORD+6(2) UNPACK TO OUTPUT AREA
+         OI    PRTINPGE+L'PRTINPGE-1,X'F0' MAKE IT PRINT
+         L     REG1,4(REG15)       LOAD THE OUT PAGE STATS
+         LA    REG1,2(REG1)        LOAD HALF THE DIVIDING FACTOR
+         SRL   REG1,2              DIVIDE BY FOUR
+         CVD   REG1,DBLWORD        CONVERT IT TO DECIMAL
+         UNPK  PRTOUTPG,DBLWORD+6(2) UNPACK IT TO OUTPUT AREA
+         OI    PRTOUTPG+L'PRTOUTPG-1,X'F0' MAKE IT PRINT
+         LOADMSG DATA=MSGAREA,LENGTH=MSGLEN,TYPE=D
+         ST    REG1,0(REG9)        CHAIN THIS ELEMENT ONTO OUTPUT CHAIN
+         LR    REG9,REG1           MAKE THIS THE LAST ENTRY
+LOADEXIT L     REG11,LOADR11       RELOAD THE LINK REGISTER
+         BR    REG11               RETURN TO CALLER
+         SPACE 2
+INIT     DC    CL8'INIT'           INITIATOR'S JOBNAME
+         EJECT
+***********************************************************************
+*        COMMON OUTPUT AREA PREPARATION                               *
+***********************************************************************
+         SPACE 2
+LINEUP   DS    0H
+         XC    CLRLINE,CLRLINE     CLEAR MOST OF OUTPUT BUFFER
+         LH    REG15,ASCBASID      LOAD ADDRESS SPACE ID
+         CVD   REG15,DBLWORD       CONVERT IT TO DECIMAL
+         UNPK  ASID,DBLWORD+6(2)   MOVE ADDRESS SPACE ID TO OUTPUT
+         OI    ASID+L'ASID-1,X'F0' MAKE FINAL BYTE PRINTABLE
+         L     REG1,ASCBJBNI       LOAD ADDRESS JOBNAME FIELD
+         LTR   REG1,REG1           TEST FOR PRESCENCE JOB NAME
+         BNZ   *+8                 STEP OVER NEXT LOAD IF FOUND
+         L     REG1,ASCBJBNS       LOAD NAME OF SYSTEM COMPONENT
+         MVC   JOBNAME,0(REG1)     MOVE JOBNAME TO OUTPUT
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        ALL USAGES REPORTED. PREPARE FINAL SUMMARY LINE              *
+***********************************************************************
+         SPACE 2
+DOENDING DS    0H
+         XC    CLRLINE,CLRLINE     CLEAR THE OUTPUT LINE
+         MVC   ENDLINE,ENDTEXT     IDENTIFY LAST LINE OF OUTPUT
+         LOADMSG DATA=MSGAREA,LENGTH=MSGLEN,TYPE=E
+         ST    REG1,0(REG9)        CHAIN THIS BLOCK ONTO OTHERS
+         B     MSGOUT              GO HAVE OUTPUT DONE
+         SPACE 2
+ENDTEXT  DC    CL(L'ENDLINE)'END OF ANALYSIS'
+         EJECT
+***********************************************************************
+*        MESSAGES ARE PREPARED. INVOKE OUTPUT PROCESSOR               *
+***********************************************************************
+         SPACE 2
+MSGOUT   DS    0H
+         OUTPUT CHAINHDR,UCMID=CID HAVE ALL READY MESSAGES OUTPUT
+         B     EXITPGM             RETURN TO CALLER
+         SPACE 2
+         EJECT
+***********************************************************************
+*        COMMON PROGRAM EXIT ROUTINES                                 *
+***********************************************************************
+         SPACE 2
+EXITPGM  DS    0H
+         XR    REG15,REG15         SIGNAL GOOD RETURN CODE
+ZRETURN  LR    REG11,REG15         SAVE RETURN CODE
+         L     REG0,GETMNLEN       LOAD FREEMAIN LENGTH AND SUBPOOL
+         LR    REG1,REG3           LOAD ADDRESS OF WORK AREA
+         FREEMAIN R,LV=(0),A=(1)   FREE UP THE WORK AREA
+         LR    REG15,REG11         RESTORE RETURN CODE
+         ZRETURN RC=(15)
+         EJECT
+***********************************************************************
+*        IN CASE OF ERROR, A MESSAGE MUST BE ISSUED                   *
+***********************************************************************
+         SPACE 2
+ERROR1   DS    0H
+         MVC   ERRORMSG,FAILCS     TELL OF CS INSTRUCTION FAILURE
+         B     ERRORXX             BRANCH TO MESSAGE LOADER
+ERROR    DS    0H
+         MVC   ERRORMSG,ERRORLIN   MOVE ERROR MESSAGE TO OUTPUT
+ERRORXX  LOADMSG DATA=MSGAREA,LENGTH=MSGLEN,TYPE=E
+         ST    REG1,CHAINHDR       SET UP OUTPUT CHAIN
+         B     MSGOUT              GO OUTPUT THE MESSAGE
+         SPACE 2
+ERRORLIN DC    CL(L'ERRORMSG)'INVALID OR MISSING OPERAND'
+FAILCS   DC    CL(L'ERRORMSG)'DD PAGE COMMAND ALREADY IN PROGRESS'
+         EJECT
+***********************************************************************
+*        COMMAND QUERY RESPONSE ROUTINE                               *
+***********************************************************************
+         SPACE 2
+AUXCMMZZ DS    0H
+         LOADMSG DATA=LINE1,LENGTH=LINE1LEN,TYPE=E
+         ST    REG1,CHAINHDR       IDENTIFY START CHAIN
+         B     MSGOUT              BRANCH TO OUTPUT ROUTINE
+         SPACE 2
+LINE1    DC    C'DD PAGE-  NO FURTHER OPERANDS ARE REQUIRED'
+LINE1LEN EQU   L'LINE1             LENGTH FOR GETMAIN
+         EJECT
+***********************************************************************
+*        THIS IS THE ESTAE EXIT ROUTINE FOR ABENDS                    *
+***********************************************************************
+         SPACE 2
+STAEXIT  DS    0H
+         BALR  REG11,0             GET BASIC ADDRESSABILITY
+         USING *,REG11             SET BASE ADDRESS REGISTER
+         LR    REG2,REG1           LOAD ADDRESS STAE WORK AREA
+         L     REG1,FLCCVT         LOAD ADDRESS OF CVT
+         L     REG8,CVTPVTP        LOAD ADDRESS OF PVT
+         L     REG9,PVTPAGIO       LOAD ADDRESS PAGE ROUTINE
+         LA    REG10,STATIST       LOAD ADDRESS PARASITE ROUTINE
+         CR    REG9,REG10          HAS THE ADDRESS BEEN SET ?
+         BNE   NORESET             NO. NO NEED TO RESET REAL ADDRESS
+         CLC   XCVTUSER+1(L'XCVTUSER-1),XCVTUSER TEST FOR ZERO ADDRESS
+         BE    NORELOAD            SAVE AREA ADDRESS NOT STORED
+         L     REG3,XCVTUSER       RELOAD ADDRESS OF WORK AREA
+NORELOAD L     REG9,ILRSAVE        LOAD ADDRESS OF REAL ROUTINE
+         ST    REG9,PVTPAGIO       RESET PAGE VECTOR TABLE EP POINTER
+NORESET  L     REG4,4(REG2)        LOAD ABEND CODE
+         LA    REG4,0(REG4)        STRIP OFF TOP BYTE
+         ST    REG4,DBLWORD        STORE OUT TO WORK AREA
+         UNPK  WTOCODE(3),DBLWORD+1(2) UNPACK CODE TO OUT AREA
+         OI    WTOCODE+2,X'F0'     MAKE LAST DIGIT HIGH VALUE ZONE
+         TR    WTOCODE(3),TRTABLE-240 CONVERT TO PRINTABLE FORM
+STAEWTO  WTO   'DD PAGE COMMAND ABENDED              ',ROUTCDE=1
+WTOCODE  EQU   STAEWTO+34          ADDRESS IN WTO FOR ABEND CODE
+         SDUMP HDR='DD PAGE COMMAND FAILURE',                          X
+               SDATA=(SQA,PSA,NUC,LSQA,RGN,LPA)
+         LTR   REG15,REG15         TEST RETURN FROM SDUMP
+         BNZ   DUMPFAIL            DUMP DID NOT WORK
+         WTO   'SVC DUMP TAKEN',ROUTCDE=1
+EXITSTAE XR    REG15,REG15         SIGNAL ABEND TO CONTINUE
+         BR    REG14               RETURN TO CALLER
+DUMPFAIL WTO   'COMMAND PROCESSOR UNABLE TO DUMP',ROUTCDE=1
+         B     EXITSTAE            EXIT FROM STAE
+         SPACE 2
+TRTABLE  DC    C'0123456789ABCDEF'  TRANSLATE TABLE FOR ABEND CODE
+         EJECT
+***********************************************************************
+*        ODD LITERALS AND CONSTANTS                                   *
+***********************************************************************
+REG0MASK DC    F'-8'               AND MASK TO STRIP LAST 3 BITS
+SUBPOOL  DS    0F                  USED TO LOAD SUBPOOL ID
+         DC    AL1(245)            NON-PAGEABLE,PK0,SQA
+         DC    AL3(0)              PADDING
+         LTORG
+         END
+//LKED.SYSIN   DD   *
+ INCLUDE MLPALIB(AUXCMM00)
+ ENTRY AUXCMM04
+ SETCODE AC(1)
+ NAME AUXCMM04(R)
+/*

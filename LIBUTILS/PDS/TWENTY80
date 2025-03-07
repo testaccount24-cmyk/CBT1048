@@ -1,0 +1,594 @@
+ TW80: PROC OPTIONS(MAIN);
+                               /* FILES                               */
+       DCL
+       CARDS FILE RECORD SEQUENTIAL,
+       PRINT FILE RECORD SEQUENTIAL,
+       DFILE FILE RECORD SEQUENTIAL;
+                               /* INPUT CARD AREAS                    */
+       DCL
+       XCARD CHAR (80),
+       1 TCARD DEFINED XCARD,
+         3 TCKEY CHAR (5),
+         3 TITLE CHAR (75),
+       1 ICARD DEFINED XCARD,
+         3 ICKEY CHAR (5),
+         3 ICFIL CHAR (75),
+       1 SCARD DEFINED XCARD,
+         3 SCKEY CHAR (5),
+         3 SCFIL CHAR (75),
+       1 FCARD DEFINED XCARD,
+         3 FCKEY CHAR (5),
+         3 FCFIL CHAR (75),
+       1 RCARD DEFINED XCARD,
+         3 RCKEY CHAR (5),
+         3 RFILL CHAR (5),
+         3 RANGE PIC '9999999999',
+         3 RSIGN CHAR (1),
+         3 RFILX CHAR (59);
+                               /* MAIN ACCUMULATORS                   */
+       DCL
+       1 ARRAY (50),
+         3 ARQTY (2) FIXED DECIMAL (7),
+         3 ARVAL (2) FIXED DECIMAL (15,5),
+         3 ARNGE FIXED DECIMAL (10);
+                               /* PRINT HEADINGS                      */
+       DCL
+       1 HEADA,
+         3 HEADAX  CHAR (20) INIT ('1'),
+         3 HTITLE  CHAR (75) INIT (' '),
+         3 HEADAX0 CHAR(5) INIT(' '),
+         3 HEADAY  CHAR(9),
+         3 HEADAX1 CHAR(1) INIT(' '),
+         3 HEADAT  CHAR(9),
+         3 HEADAX2 CHAR(4) INIT(' '),
+         3 HEADHH CHAR(2),
+         3 HEADAX3 CHAR(1) INIT('.'),
+         3 HEADMM CHAR(2),
+         3 HEADAX4 CHAR(1) INIT('.'),
+         3 HEADSS CHAR(2),
+         3 HEADAX5 CHAR(2) INIT(' '),
+       1 HEADB     CHAR (133),
+       1 HEADC,
+         3 HEADCX  CHAR (73) INIT ('0'),
+         3 HEADCY  CHAR (60) INIT ('-----------CUMULATIVE-----------'),
+       1 HEADD,
+         3 HEADDX  CHAR (32) INIT ('            RANGE'),
+         3 HEADDY  CHAR (41) INIT (' ENTRIES    %         VALUE    %'),
+         3 HEADDZ  CHAR (60) INIT ('ENTRIES    %          VALUE    %');
+                               /* PRINT LINE                          */
+       DCL
+       1 LINEA,
+         3 CCBYTE  CHAR (1)  INIT ('0'),
+         3 LRANGE  CHAR (32),
+         3 LENTA   PIC 'ZZZZZZ9',
+         3 LEPCTA  PIC 'ZZZZ9V.99',
+       3 LVALA CHAR(12),
+         3 LVPCTA  PIC 'ZZZ9V.99-',
+         3 LENTB   PIC 'ZZZZZZZZZZZ9',
+         3 LEPCTB  PIC 'ZZZZ9V.99',
+       3 LVALB CHAR(13),
+         3 LVPCTB  PIC 'ZZZ9V.99-',
+         3 LFILL   CHAR (24) INIT (' ');
+       DCL
+       LVALX CHAR(15),
+       LVAL PIC 'ZZZZZZZZZZV9999-' DEFINED LVALX,
+       1 LVAL_FIL DEFINED LVALX,
+       3 LVAL_UNITS CHAR(10),
+       3 LVAL_DECS CHAR(4),
+       3 LVAL_SIGN CHAR(1);
+       DCL
+       1 DATE_AREA,
+       3 DATE_CODE CHAR(1) INIT('0'),
+       3 DATE_FIL1 CHAR(33),
+       3 DATE_DATE CHAR(9),
+       3 DATE_FIL2 CHAR(27),
+       3 DATE_DAY  CHAR(9),
+       3 DATE_HH   CHAR(2),
+       3 DATE_MM   CHAR(2),
+       3 DATE_SS   CHAR(2),
+       3 DATE_FIL3 CHAR(1),
+       1 DATE_MATH DEC(3) BASED(P),
+       P POINTER;
+                               /* ERROR MESSAGES                      */
+       DCL
+       ERRNO PIC '99999',
+       ERRNOX CHAR (5) DEFINED ERRNO,
+       1 LINEE,
+         3 CCBYTE  CHAR (1) INIT ('1'),
+         3 ERRMG   CHAR (36),
+         3 ERRCD   CHAR (80),
+         3 ERREX   CHAR (16) INIT (' RUN ABORTED');
+                               /* INPUT RECORD FIELDS                 */
+       DCL
+       INREC CHAR (1000) VARYING STATIC,
+       INVAL PIC '99999999999999R',
+       INVAX CHAR (15) DEFINED INVAL,
+       INPD1 FIXED DEC(15,5),
+       ANPD1 FIXED DEC(15,5),
+       INPD  FIXED DEC (15),
+       ANPD FIXED DEC(15),
+       ANPDX CHAR(8) DEFINED ANPD,
+       INPDX CHAR (8) DEFINED INPD;
+                               /* 'IDENT' CARD DECODING AREAS         */
+       DCL
+       ALPHA CHAR (10) VARYING STATIC,
+       PRIME CHAR (1) INIT (''''),
+       ICDX CHAR (80),
+       IEXSW BIT (1) INIT ('0'B),
+       ISW   BIT (1) INIT ('0'B);
+                               /* 'SUBAN' CARD DECODING AREAS         */
+       DCL
+       STHIS CHAR (20),
+       SLAST CHAR (20),
+       SSW   BIT (1) INIT ('0'B);
+                               /* 'FIELD' CARD DECODING AREAS         */
+       DCL
+       FCARDX CHAR (80),
+       FPOS   PIC '999',
+       FPOSX CHAR (3) DEFINED FPOS,
+       FPOSD  FIXED DEC(3),
+       FLEN   PIC '99',
+       FLENX CHAR (2) DEFINED FLEN,
+       FLEND  FIXED DEC(3),
+       FPDSW  BIT (1),
+       FDECS  PIC '9',
+       FDECX  CHAR (1) DEFINED FDECS,
+       FDECD  FIXED DEC(1),
+       ACCSW BIT(1) INIT('0'B),
+       APDSW BIT(1) INIT('0'B),
+       AABSW BIT(1) INIT('0'B),
+       AIGSW BIT(1) INIT('0'B),
+       ADECS PIC '9',
+       ADECD FIXED DEC(1),
+       FABSW  BIT (1) INIT ('0'B),
+       FIGSW  BIT (1) INIT ('0'B);
+                               /* 'RANGE' PRINT FIELDS                */
+       DCL
+       PRRAA CHAR (27),
+       1 PRRA DEFINED PRRAA,
+         3 PRRAX   CHAR (16),
+         3 PRRAY   PIC 'ZZZZZZZZZ9-',
+       PRRBA CHAR (27),
+       1 PRRB DEFINED PRRBA,
+         3 PRRBX   PIC 'ZZZZZZZZZ9-',
+         3 PRRBY   CHAR (5),
+         3 PRRBZ   PIC 'ZZZZZZZZZ9-',
+       PRRCA CHAR (27),
+       1 PRRC DEFINED PRRCA,
+         3 PRRCX   PIC 'ZZZZZZZZZ9-',
+         3 PRRCY   CHAR (16);
+                               /* ACCUMULATORS                        */
+       DCL
+       TOTENT FIXED DEC(15,2) INIT(0),
+       TOTVAL FIXED DEC(15,2) INIT(0),
+       CUMENT FIXED DEC(15,2) INIT(0),
+       CUMVAL FIXED DEC(15,2) INIT(0),
+       INTENT FIXED DEC(15,4) INIT(0),
+       INTVAL FIXED DEC(15,4) INIT(0);
+                               /* LABEL VARIABLES                     */
+       DCL
+       PEXIT LABEL,
+       LEXIT LABEL,
+       SEXIT LABEL,
+       REXIT LABEL;
+       P = ADDR(DATE_AREA);
+       CALL UT458(DATE_MATH);
+       HEADAY = DATE_DAY;
+       HEADAT = DATE_DATE;
+       HEADHH = DATE_HH;
+       HEADMM = DATE_MM;
+       HEADSS = DATE_SS;
+       ON ERROR SNAP GO TO X1; /* SETTING ERROR PROCEDURE             */
+                               /* INITIALISE ARRAY ACCUMULATORS       */
+       DO I = 1 TO 50;
+          DO J = 1 TO 2;
+             ARQTY(I,J) = 0;
+             ARVAL(I,J) = 0;
+          END;
+       END;
+       SEXIT = S2;
+       PRRAX = '      LESS THAN ';
+       PRRBY = '  TO ';
+       PRRCY = '  AND OVER ';
+                               /* READ TITLE CARD, IF PRESENT.        */
+       OPEN FILE(CARDS) INPUT;
+       ON ENDFILE(CARDS) GO TO C1;
+       REXIT = CR1;
+       GO TO V1;
+ CR1:
+       IF TCKEY = 'TITLE'
+       THEN DO;
+               HTITLE = TITLE;
+               REXIT = CR2;
+               GO TO V1;
+            END;
+ CR2:
+                               /* NOW IDENT CARD IS IN 'ICARD'        */
+       IF ICKEY ^= 'IDENT' THEN GO TO A2;
+                               /* IDENT CARD PRESENT - DECODE         */
+       ICDX = XCARD;
+       ALPHA = PRIME;
+       REXIT = IR1;
+       GO TO W1;
+ IR1:  J = I;
+       SUBSTR(XCARD,I,1) = '*';
+       REXIT = IR2;
+       GO TO W1;
+ IR2:  ICPOS = J + 1;
+       ILEN = I - ICPOS;
+       PEXIT = A1;
+       GO TO P1;               /* GO TO DECODE 'POSITION' PARAMETER   */
+ A1:   IPOS = FPOSD;
+       ALPHA = 'EXCLUDE';
+       REXIT = IR3;
+       GO TO W1;
+ IR3:
+       IF I = 0 THEN IEXSW = '1'B;
+       ISW = '1'B;
+       REXIT = A2;
+       GO TO V1;
+                               /* NOW SUBAN CARD IS IN 'SCARD'        */
+ A2:   IF SCKEY ^= 'SUBAN' THEN GO TO A5;
+                               /* SUBAN CARD PRESENT - DECODE         */
+       ALPHA = PRIME;
+       REXIT = IR4;
+       GO TO W1;
+ IR4:  J = I;
+       SUBSTR(XCARD,I,1) = '*';
+       REXIT = IR5;
+       GO TO W1;
+ IR5:  K = J + 1;
+       L = I - K;
+       HEADB = '0    SUB-ANALYSIS FOR ';
+       SUBSTR(HEADB,23,L) = SUBSTR(XCARD,K,L);
+       ISHPOS = L + 24;
+       PEXIT = A3;
+       GO TO P1;               /* GO TO DECODE 'POSITION' PARAMETER   */
+ A3:   PEXIT = A4;
+       GO TO L1;               /* GO TO DECODE 'LENGTH' PARAMETER     */
+ A4:   ISPOS = FPOSD;
+       ISLEN = FLEND;
+       SSW = '1'B;
+       REXIT = A5;
+       GO TO V1;
+                               /* NOW FIELD CARD IS IN 'FCARD'        */
+ A5:   IF FCKEY ^= 'FIELD'
+       THEN DO;
+               ERRMG = 'NO FIELD CARD - CARD RECEIVED WAS:';
+               ERRCD = XCARD;
+               GO TO Y1;
+            END;
+       PEXIT = A6;
+       GO TO P1;               /* GO TO DECODE 'POSITION' PARAMETER   */
+ A6:   PEXIT = A7;
+       GO TO L1;               /* GO TO DECODE 'LENGTH' PARAMETER     */
+ A7:   IFPOS = FPOSD;
+       IFLEN = FLEND;
+       ALPHA = 'TYPE=';
+       REXIT = IR6;
+       GO TO W1;
+ IR6:
+       IF I = 0
+       THEN DO;
+ A8:           FPDSW = '1'B;
+               GO TO A9;
+            END;
+       IF SUBSTR(XCARD,I+5,1) ^= 'X' THEN GO TO A8;
+       FPDSW = '0'B;
+ A9:   ALPHA = 'DECIMALS=';
+       REXIT = IR7;
+       GO TO W1;
+ IR7:
+       IF I = 0
+       THEN FDECS = 0;
+       ELSE FDECX = SUBSTR(XCARD,I+9,1);
+       FDECD = FDECS;
+       ALPHA = 'NEGATIVE=';
+       REXIT = IR8;
+       GO TO W1;
+ IR8:
+       IF I = 0 THEN GO TO B1;
+       IF SUBSTR(XCARD,I+9,3) = 'ABS' THEN FABSW = '1'B;
+       IF SUBSTR(XCARD,I+9,3) = 'IGN' THEN FIGSW = '1'B;
+ B1:   REXIT = ACC1;
+       GO TO V1;
+ ACC1: IF FCKEY ^= 'ACCUM'
+       THEN GO TO CR3;
+       ACCSW = '1'B;
+       PEXIT = ACC2;
+       GO TO P1;
+ ACC2: PEXIT = ACC3;
+       GO TO L1;
+ ACC3: JFPOS = FPOSD;
+       JFLEN = FLEND;
+       ALPHA = 'TYPE=';
+       REXIT = ACC4;
+       GO TO W1;
+ ACC4: IF I = 0
+       THEN DO;
+             APDSW = '1'B;
+             GO TO ACC5;
+       END;
+       IF SUBSTR(XCARD,I+5,1) ^= 'X'
+       THEN GO TO ACC4;
+       APDSW = '0'B;
+ ACC5: ALPHA = 'DECIMALS=';
+       REXIT = ACC6;
+       GO TO W1;
+ ACC6: IF I = 0
+       THEN ADECS = 0;
+       ELSE ADECS = SUBSTR(XCARD,I+9,1);
+       ADECD = ADECS;
+       ALPHA = 'NEGATIVE=';
+       REXIT = ACC7;
+       GO TO W1;
+ ACC7: IF I = 0 THEN GO TO ACC8;
+       IF SUBSTR(XCARD,I+9,3) = 'ABS' THEN AABSW ='1'B;
+       IF SUBSTR(XCARD,I+9,3) = 'IGN' THEN AIGSW ='1'B;
+ ACC8: REXIT = CR3;
+       GO TO V1;
+ CR3:  IF RCKEY ^= 'RANGE'
+       THEN DO;
+ B2:           ERRMG = 'NO RANGE CARD - CARD RECEIVED WAS:';
+               ERRCD = XCARD;
+               GO TO Y1;
+            END;
+       I = 0;
+                               /* READ RANGE CARDS INTO ARRAY         */
+ B3:   I = I + 1;
+       ARNGE(I) = RANGE;
+       IF RSIGN = '-' THEN ARNGE(I) = -ARNGE(I);
+       REXIT = B3;
+       GO TO V1;
+ C1:                           /* ENDFILE ON CARDS.                   */
+       IF RCKEY ^= 'RANGE' THEN GO TO B2;
+       CLOSE FILE(CARDS);
+       LEXIT = C4;
+       OPEN FILE(DFILE) INPUT;
+       ON ENDFILE(DFILE) GO TO R1;
+ C2:   READ FILE(DFILE) INTO(INREC);
+       IF ^ISW THEN GO TO C3;
+       IF SUBSTR(INREC,IPOS,ILEN) = SUBSTR(ICDX,ICPOS,ILEN)
+       THEN DO;
+               IF ^IEXSW THEN GO TO C2;
+            END;
+       ELSE DO;
+               IF  IEXSW THEN GO TO C2;
+            END;
+ C3:   IF ^SSW THEN GO TO C7;
+       GO TO LEXIT;
+ C4:   LEXIT = C5;
+       SLAST = SUBSTR(INREC,ISPOS,ISLEN);
+ C5:   STHIS = SUBSTR(INREC,ISPOS,ISLEN);
+       IF STHIS = SLAST THEN GO TO C7;
+       SUBSTR(HEADB,ISHPOS,ISLEN) = SLAST;
+       N = 1;
+       REXIT = C6;
+       GO TO S1;
+ C6:   SLAST = STHIS;
+       DO J = 1 TO I + 1;
+          ARQTY(J,2) = ARQTY(J,2) + ARQTY(J,1);
+          ARVAL(J,2) = ARVAL(J,2) + ARVAL(J,1);
+          ARQTY(J,1) = 0;
+          ARVAL(J,1) = 0;
+       END;
+ C7:   IF FPDSW
+       THEN DO;
+               INPD = 0;
+               SUBSTR(INPDX,9-IFLEN) = SUBSTR(INREC,IFPOS,IFLEN);
+            END;
+       ELSE DO;
+               INVAL = 0;
+               SUBSTR(INVAX,16-IFLEN) = SUBSTR(INREC,IFPOS,IFLEN);
+               INPD = INVAL;
+            END;
+       IF FABSW
+       THEN IF INPD < 0
+            THEN INPD = -INPD;
+       IF FIGSW
+       THEN IF INPD < 0
+            THEN GO TO C2;
+       INPD1 = INPD / 10 ** FDECD;
+       INPD = INPD / 10 ** FDECD;
+       IF ACCSW
+       THEN DO;
+             IF APDSW THEN DO;
+                   ANPD = 0;
+                   SUBSTR(ANPDX,9-JFLEN) = SUBSTR(INREC,JFPOS,JFLEN);
+             END;
+             ELSE DO;
+                   INVAL = 0;
+                   SUBSTR(INVAX,16-JFLEN) = SUBSTR(INREC,JFPOS,JFLEN);
+                   ANPD = INVAL;
+             END;
+             IF AABSW
+             THEN IF ANPD < 0
+                   THEN ANPD = -ANPD;
+             IF AIGSW
+             THEN IF ANPD < 0
+                   THEN GO TO C2;
+             ANPD1 = ANPD / 10 ** ADECD;
+             ANPD = ANPD / 10 ** ADECD;
+       END;
+       DO J = 1 TO I;
+          IF INPD <= ARNGE(J)
+          THEN DO;
+                  ARQTY(J,1) = ARQTY(J,1) + 1;
+                   IF ACCSW
+                   THEN ARVAL(J,1) = ARVAL(J,1) + ANPD1;
+                   ELSE ARVAL(J,1) = ARVAL(J,1) + INPD1;
+                  GO TO C2;
+               END;
+       END;
+       ARQTY(I+1,1) = ARQTY(I+1,1) + 1;
+       IF ACCSW
+       THEN ARVAL(I+1,1) = ARVAL(I+1,1) + ANPD1;
+       ELSE ARVAL(I+1,1) = ARVAL(I+1,1) + INPD1;
+       GO TO C2;
+ L1:                           /* DECODE 'LENGTH' PARAMETER           */
+       ALPHA = 'LENGTH=';
+       REXIT = IR9;
+       GO TO W1;
+ IR9:  IF I = 0
+       THEN DO;
+               ERRMG = 'INVALID CARD - NO LENGTH PARM.';
+ L2:           ERRCD = XCARD;
+               GO TO Y1;
+            END;
+       I = I + 7;
+       J = I + 1;
+ L3:   IF SUBSTR(XCARD,J,1) = ',' THEN GO TO L4;
+       IF SUBSTR(XCARD,J,1) = ' ' THEN GO TO L4;
+       J = J + 1;
+       IF J > I + 2
+       THEN DO;
+               ERRMG = 'INVALID LENGTH PARAMETER';
+               GO TO L2;
+            END;
+       GO TO L3;
+ L4:   FLEN = 0;
+       SUBSTR(FLENX,3+I-J) = SUBSTR(XCARD,I);
+       FLEND = FLEN;
+       GO TO PEXIT;
+ P1:                           /* DECODE 'POSITION' PARAMETER         */
+       ALPHA = 'POSITION=';
+       REXIT = IR10;
+       GO TO W1;
+ IR10: IF I = 0
+       THEN DO;
+               ERRMG = 'INVALID CARD - NO POSITION PARM.';
+ P2:           ERRCD = XCARD;
+               GO TO Y1;
+            END;
+       I = I + 9;
+       J = I + 1;
+ P3:   IF SUBSTR(XCARD,J,1) = ',' THEN GO TO P4;
+       IF SUBSTR(XCARD,J,1) = ' ' THEN GO TO P4;
+       J = J + 1;
+       IF J > I + 3
+       THEN DO;
+               ERRMG = 'INVALID POSITION PARAMETER.';
+               GO TO P2;
+            END;
+       GO TO P3;
+ P4:   FPOS = 0;
+       SUBSTR(FPOSX,4+I-J) = SUBSTR(XCARD,I);
+       FPOSD = FPOS;
+       GO TO PEXIT;
+ R1:   CLOSE FILE(DFILE);      /* ENDFILE MET ON INPUT DFILE          */
+       IF ^SSW THEN GO TO R3;
+       SUBSTR(HEADB,ISHPOS,ISLEN) = SLAST;
+       N = 1;
+       REXIT = R2;
+       GO TO S1;
+ R2:   DO J = 1 TO I + 1;
+          ARQTY(J,2) = ARQTY(J,2) + ARQTY(J,1);
+          ARVAL(J,2) = ARVAL(J,2) + ARVAL(J,1);
+       END;
+       HEADB = '0   OVERALL FILE ANALYSIS';
+       N = 2;
+       REXIT = Z1;
+       GO TO S1;
+ R3:   HEADB = '0';
+       REXIT = Z1;
+       N = 1;
+       GO TO S1;
+ S1:   GO TO SEXIT;            /* PRINT PROCEDURE                     */
+ S2:   SEXIT = S3;
+       OPEN FILE(PRINT) OUTPUT;
+ S3:   WRITE FILE(PRINT) FROM(HEADA);
+       WRITE FILE(PRINT) FROM(HEADB);
+       WRITE FILE(PRINT) FROM(HEADC);
+       WRITE FILE(PRINT) FROM(HEADD);
+       TOTENT = 0;
+       TOTVAL = 0;
+       CUMENT = 0;
+       CUMVAL = 0;
+       DO J = 1 TO I + 1;
+          TOTENT = TOTENT + ARQTY(J,N);
+          TOTVAL = TOTVAL + ARVAL(J,N);
+       END;
+       DO J = 1 TO I + 1;
+          CUMENT = CUMENT + ARQTY(J,N);
+          CUMVAL = CUMVAL + ARVAL(J,N);
+          IF J = 1 THEN DO;
+                           PRRAY = ARNGE(1);
+                           LRANGE = PRRAA;
+                           GO TO S4;
+                        END;
+          IF J = I + 1 THEN DO;
+                               PRRCX = ARNGE(I);
+                               LRANGE = PRRCA;
+                               GO TO S4;
+                            END;
+          PRRBX = ARNGE(J-1);
+          PRRBZ = ARNGE(J);
+          LRANGE = PRRBA;
+ S4:      LENTA = ARQTY(J,N);
+       IF ACCSW
+       THEN L = ADECD;
+       ELSE L = FDECD;
+       LVAL = ARVAL(J,N);
+       IF L = 0
+       THEN LVALA = ' ' || LVAL_UNITS || LVAL_SIGN;
+       ELSE LVALA =  SUBSTR(LVAL_UNITS,L+1,10-L) || '.' ||
+                    SUBSTR(LVAL_DECS,1,L) || LVAL_SIGN;
+          LENTB = CUMENT;
+       IF ACCSW
+       THEN L = ADECD;
+       ELSE L = FDECD;
+       LVAL = CUMVAL;
+       IF L = 0
+       THEN LVALB = '  ' || LVAL_UNITS || LVAL_SIGN;
+       ELSE LVALB = SUBSTR(LVAL_UNITS,L,11-L) || '.' ||
+                    SUBSTR(LVAL_DECS,1,L) || LVAL_SIGN;
+          IF TOTENT = 0
+          THEN DO;
+                  INTENT = 0;
+                  INTVAL = 0;
+               END;
+          ELSE DO;
+                  INTENT = 100 * ARQTY(J,N) / TOTENT;
+                  INTVAL = 100.000 * CUMENT / TOTENT;
+               END;
+          LEPCTA = INTENT;
+          LEPCTB = INTVAL;
+          IF TOTVAL = 0
+          THEN DO;
+                  INTENT = 0;
+                  INTVAL = 0;
+               END;
+          ELSE DO;
+                  INTENT = 100 * ARVAL(J,N) / TOTVAL;
+                  INTVAL = 100.000 * CUMVAL / TOTVAL;
+               END;
+          LVPCTA = INTENT;
+          LVPCTB = INTVAL;
+          WRITE FILE(PRINT) FROM(LINEA);
+       END;
+       GO TO REXIT;
+ V1:   READ FILE(CARDS) INTO(XCARD);
+       GO TO REXIT;
+ W1:   I = INDEX(XCARD,ALPHA);
+       GO TO REXIT;
+ X1:   IF ONCODE = 8097
+       THEN DO;
+               ERRMG = '                      RECORD NUMBER ';
+               INTENT = 0;
+               DO J = 1 TO I + 1;
+                  INTENT = INTENT + ARQTY(J,1);
+                  INTENT = INTENT + ARQTY(J,2);
+               END;
+               INTENT = INTENT + 1;
+               ERRNO = INTENT;
+               ERRCD = ERRNOX || ' CONTAINS NON-NUMERIC DATA';
+            END;
+       ELSE DO;
+               ERRMG = '          PL/1 ERROR WITH  ONCODE = ';
+               ERRNO = ONCODE;
+               ERRCD = ERRNOX || ' ENCOUNTERED. SYSPRINT HAS SNAP';
+            END;
+ Y1:   OPEN FILE(PRINT) OUTPUT;
+       WRITE FILE(PRINT) FROM(LINEE);
+ Z1:   CLOSE FILE(PRINT);
+       END;

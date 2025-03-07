@@ -1,0 +1,851 @@
+         TITLE 'RANDOM INDEXED GENERIC ACCESS METHOD  RIGAM'
+         ISEQ  73,80
+         PRINT ON,GEN,DATA
+UNIVAC   START
+         USING UNIVAC,15
+         SAVE  (14,12)
+         BAL   10,*+76
+SAVEAREA DS    18F
+         LA    9,SAVEAREA
+         ST    9,8(13)
+         ST    13,SAVEAREA+4
+         LR    13,10
+         LM    10,12,BASEADDR
+         USING SAVEAREA,13,10,11,12
+         DROP  15
+         B     FIRST
+BASEADDR DC    A(SAVEAREA+4096,SAVEAREA+8192,SAVEAREA+12288)
+FIRST    L     2,0(1)              GET LIST POINTER
+         ST    2,ULIST             SAVE ADDRESS OF LIST
+         L     3,4(1)              GET AREA POINTER
+         ST    3,UAREA             SAVE ADDRESS OF AREA
+         L     4,8(1)              GET ERROR LIST
+         ST    4,UERLIST           STORE POINTER TO USER ERROR HANDLER.
+         MVC   NOOFILE1(54),0(2)   MOVE IN LIST PARAMETERS
+         CLC   UOPCODE+2(1),=C'G'  TYPE 1 FILE OP-CODE?
+         BE    SW3OPI              YES.
+         CLC   UOPCODE,=C'OPI'     INITIAL OP-CODE?
+         BNE   SW2OPI              NO
+SW1OPI   BC    0,ER2               SWITCH OFF,FIRST TIME THRU.
+         MVI   SW1OPI+1,X'F0'      TURN OPI SWITCH1 OFF.
+         MVI   SW2OPI+1,X'00'      TURN OPI SWITCH2 ON.
+         MVI   SW3OPI+1,X'00'      TURN OPI SWITCH3 ON.
+         B     OPI                 GO TO OPI ROUTINE.
+SW2OPI   BC    15,ER1              IF ON NO OPI ISSUED BY USER.
+         CLC   UOPCODE,=C'CDS'     CLOSE DATA SET?
+         BE    CDS                  YES.
+         CLC   UOPCODE,=C'OPF'     OPEN FILE?
+         BE    OPF                  YES.
+         BAL   4,GFP               GET THE FILE PARAMETERS.
+         CLC   INDICTOR,=H'1'      TEST INDICATOR.
+         BNE   MR3C                NOT VALID,LEAVE.
+         CLC   UOPCODE,=C'CLF'     CLOSE FILE?
+         BE    CLF                  YES.
+         B     ER3                 INVALID OP-CODE ERROR.
+SW3OPI   BC    15,ER1              IF ON OPI NOT ISSUED BY USER.
+         BAL   4,GFP               GET THE FILE PARAMETER TABLE.
+         CLC   INDICTOR,=H'1'      TEST INDICATOR.
+         BNE   MR3C                NOT VALID LEAVE.
+         CLC   UOPCODE,=C'RRG'     READ RANDOM GENERIC
+         BE    RRG                  YES.
+         CLC   UOPCODE,=C'SSG'     SET SEQUENTIAL GENERIC?
+         BE    SSG                  YES.
+         CLC   UOPCODE,=C'RSG'     READ SEQUENTIAL GENERIC?
+         BE    RSG                  YES.
+         B     ER3                 INVALID OP-CODE.
+ER1      MVC   INDICTOR,=H'4'       OPI NOT FIRST OP-CODE ISSUED.
+         B     MR3C                RETURN
+ER2      MVC   INDICTOR,=H'26'     MORE THAN ONE OPI ISSUED.
+         B     MR3C                RETURN
+ER3      MVC   INDICTOR,=H'5'      INVALID OP-CODE ISSUED.
+         B     MR3C                RETURN
+MR3C     L     2,ULIST             LOAD ADDRESS OF USERS LIST
+         MVC   0(54,2),NOOFILE1    MOVE INFORMATION BACK TO USER
+         LR    8,13
+         USING SAVEAREA,8
+         DROP  13
+         L     13,SAVEAREA+4
+         L     14,12(13)
+         BAL   4,TESTIND           RESOLVE USERS RETURN AREA.
+MR3CML   LM    0,12,20(13)
+         SR    15,15
+         BR    14
+         USING SAVEAREA,13
+         DROP  8
+         DS    0F
+NOOFILE1 DS    H'0'                                 NO.OF TYPE 1 FILES.
+         DS    H'0'
+URECNO   DS    F'0'                                 RECORD NUMBER.
+INDICTOR DS    H'0'                                 INDICATOR.
+UOPCODE  DS    CL3                 USER PARAMETERS= OP-CODE
+FILETYPE DS    CL1                                  FILE TYPE.
+UFILE    DS    CL3                                  FILE NUMBER.
+UKEY     DS    CL35                                 KEY (OR ARGUEMENT)
+MULTIO1  DS    CL1                 TYPE 1 FILE MULTI-I/O AREA INDICATOR
+MULTIO2  DS    CL1                 TYPE 2 FILE MULTI-I/O AREA INDICATOR
+ULIST    DC    A(0)                ADDRESS OF USERS LIST.
+UAREA    DC    A(0)                ADDRESS OF USERS WORK AREA.
+FEEDBACK DC    A(URECNO)           ADDRESS OF RECORD NUMBER.
+UERLIST  DC    A(0)                USER ERROR LIST POINTER.
+         ISEQ
+         TITLE  'READ DATA ROUTINE  RIGAM'
+         ISEQ  73,80
+RTTR     DC    F'0'
+AWORD    DC    F'0'                A FULL WORD FILLER.
+READBLK  STM   2,9,REGSAVE3        SAVE THE REGISTARS.
+         CLC   RTTR(3),HGHBLK           CHECK HIGH FILE EXTENT
+         BH    RDR1                     EXTENT VIOLATION
+         CLC   RTTR(3),LOWBLK           CHECK LOW  FILE EXTENT
+         BL    RDR1                     EXTENT VIOLATION
+         CLC   BLOCK(3),RTTR            CHECK FOR BLOCK IN CORE
+         BE    RDR2                     EQUAL SKIP READ
+JDAREAD  STM   2,9,REGSAVE3        SAVE 'EM AGAIN!
+         L     0,RTTR              LOAD TTRN INTO R0
+         L     1,DISKDCB+44        LOAD ADDRESS OF DATA EVENT BLOCK
+         LA    2,MBBCCHHR          LOAD ADDRESS OF MBBCCHHR WORK AREA
+         L     15,16               LOAD ADDRESS OF COMM. VECTOR TABLE
+         L     15,28(15)           LOAD ENTRY POINT ADDRESS OF IECPCNVT
+         STM   9,13,XDAPSA         PRESERVE REGISTERS 9 TO 13
+         CNOP  2,4
+         BALR  14,15               GO CONVERT RELATIVE TRACK ADDRESS
+*                                   TO ACTUAL ADDRESS
+         BAL   14,24(14)           BRANCH AND LINK AROUND SAVE AREA REG
+XDAPSA   DS    5F                  SAVE AREA FOR REGS 9 TO 13
+         LM    9,13,0(14)          RESTORE REGS 9 TO 13
+         XDAP  XDAPECB,RI,DISKDCB,BLOCK,1693,,MBBCCHHR
+         WAIT  ECB=XDAPECB
+         CLI   XDAPECB,X'7F'       TEST IF SUCCESSFUL ?
+         BNE   XDAPERR             BRANCH IF NO
+RDR2     MVC   INDICTOR,=H'1'      SET INDICATOR TO 1.
+         B     RDR3                BRANCH TO GET OUT.
+RDR1     MVC   INDICTOR,=H'12'     SET INDICATOR TO -12.
+RDR3     LM    2,9,REGSAVE3        REE-STOAR DEM DERE REG'S, BABY.
+         BR    4                        RETURN
+REGSAVE3 DS    8F                  DA RESTORE FROM AREA.
+         SPACE 1
+MBBCCHHR DS    D
+         SPACE 1
+XDAPERR  WTO   'XDAP ERROR'
+         ABEND 999,DUMP
+         ISEQ
+         TITLE 'OPEN INITIAL ROUTINE  OPI RIGAM'
+         ISEQ  73,80
+OPI      STM   2,9,REGSAVE         SAVE THE REGISTARS.
+         BAL   4,TSTYPDEV          GO TEST DEVICE TYPE
+         OPEN  (DISKDCB,INPUT)     OPEN THE *RIGAM DATA SET.
+         XC    PARMWK1,PARMWK1     CLEAR PARAMETER WORK AREA.
+         LH    2,NOOFILE1          GET NUMBER OF TYPE 1
+         CH    2,=H'0'             ARE THERE ANY TYPE 1 FILES?
+         BH    TSTOK               YES.
+         AH    2,=H'1'             OPEN AT LEAST ONE TYPE 1 FILE.
+TSTOK    STH   2,LTB1              STORE NUMBER OF TYPE 1
+         MH    2,=H'229'           RESOLVE NUMBER OF BYTES FOR EACH
+         STM   2,3,SAV23           SAVE NUMBERS FOR FREEMAIN
+         LR    0,2                 USE RO AS BYTE DEFINITION FOR TYPE1
+         GETMAIN R,LV=(0)          ISSUE GETMAIN FOR TABLE1.
+         ST    1,TABLE1            SAVE ADDRESS OF TABLE1 START.
+         LH    3,LTB1              GET NUMBER OF TYPE 1 FILES
+         L     2,TABLE1            INITIALIZE TABLE1.
+INITFIL1 MVC   0(3,2),=X'FFFFFF'   MOVE IN F'S.
+         LA    2,229(2)            INCREMENT TO NEXT FILE SPACE.
+         BCT   3,INITFIL1          TEST FOR MORE FILES.
+         MVC   INDICTOR,=H'1'      SET INDICATOR TO 1.
+         LM    2,9,REGSAVE         RE-STORE THE REGISTARS.
+         B     MR3C                RETURN TO MAIN ROUTINE.
+SAV23    DS    2F                  GETMAIN STORAGE LENGTH SAVE AREA.
+REGSAVE  DS    8F                  REGISTAR SAVE AREA.
+         ISEQ
+         TITLE 'OPEN FILE OPF RIGAM'
+         ISEQ  73,80
+OPF      STM   2,9,REGSAVE              SAVE REGISTERS
+         XC    OPFCVTAR,OPFCVTAR        CLEAR CVB AREA
+         PACK  OPFCVTAR+6(2),UFILE      PACK FILE
+         CVB   3,OPFCVTAR               FILE TO BINARY
+         XR    2,2                      REG 2 TO ZERO
+         D     2,BLKNOF            DIVIDE FILE BY MAX-BLOCK-PER-TRACK
+         LTR   2,2                 IS REGISTAR 2= TO ZERO?
+         BC    6,OPFB              NO.BRANCH TO STORE TTR.
+         S     3,=F'1'             DECREMENT TT OF TTR.
+         L     2,BLKNOF            SET R OF TTR
+OPFB     ST    3,OPFCVTAR          STORE TT.
+         MVC   RTTR(2),OPFCVTAR+2       MOVE  TT TO RTTR
+         STC   2,RTTR+2                 R TO RTTR
+         BAL   4,JDAREAD                 READ FILE PARAMETER BLOCK.
+         CLC   FILENO,UFILE
+         BNE   OPFS1
+         MVC   FILENO,=X'FFFFFF'        DELETE WORK AREA
+         MVI   FILETYP,X'00'  ZERO FILETYPE USED AS SWITCH IN GFP RTN
+OPFS1    L     5,TABLE1                 POINT 5 TO TABLE 1
+         LH    3,LTB1                   3 CONTAINS ENTRIES IN TABLE 1
+OPFLOOP1 CLC   0(003,5),UFILE           CHECK FILE PRESENT
+         BE    OPFM1                    MOVE INFO TO TABLE
+         LA    5,229(5)                 INCREMENT TO NEXT ENTRY
+         BCT   3,OPFLOOP1               COMPARE NEXT ENTRY
+         L     5,TABLE1                 POINT 5 TO TABLE 1
+         LH    3,LTB1                   3 CONTAINS ENTRIES IN TABLE 1
+OPFLOOP2 CLC   0(3,5),=X'FFFFFF'        CHECK FOR OPENING
+         BE    OPFM1                    EQUAL GO TO MOVE
+         LA    5,229(5)                 INCREMENT
+         BCT   3,OPFLOOP2               CHECK END
+         B     OPFSCM1                  CODE = -1 TABLE FULL
+OPFM1    MVC   0(229,5),BLOCK           MOVE IN PARAMETERS
+         XC    190(39,5),190(5)    CLEAR LARG,LBR *LAST DATA RCD READ*
+         MVI   8(5),X'01'               SET FT SWITCH
+         MVI   7(5),X'00'          MOVE '00' TO RESERVE CODE.
+         B     OPFRTN                   RETURN
+OPFCVTAR DS    D          XXXXXXXX      CONVERT TO BINARY AREA
+OPFSCM1  MVC   INDICTOR,=H'7'      TABLE FULL,SET INDICATOR TO -7.
+         B     OPFRTN1             LEAVE.
+OPFRTN   MVC   INDICTOR,=X'0001'   SET INDICATOR TO 1.
+         MVC   TTRHLD(4),BLOCK+19       GET LAST DATA RECORD USED.
+         BAL   4,FDBKCALC               GO CONVERT IT TO DECIMAL.
+         L     6,URECNO                 SAVE IT.
+         MVC   TTRHLD(3),BLOCK+14       GET TTR OF UPPER DATA EXTENT.
+         MVC   TTRHLD+3(1),BLOCK+23     GET NO.DATA REC.PER BLOCK.
+         BAL   4,FDBKCALC               GO CONVERT IT TO DECIMAL
+         L     7,URECNO                 READY FOR DIFFERENCE.
+         SR    7,6                      SUB.TO DETERMINE REC.SPACE LEFT
+         ST    7,URECNO                 GIVE NUMBER TO USER.
+OPFRTN1  LM    2,9,REGSAVE              RESTORE THE REGISTARS.
+         B     MR3C                RETURN TO MAINLINE.
+         ISEQ
+         TITLE 'SET SEQUENTIAL GENERIC SSG RIGAM'
+         ISEQ  73,80
+SSG      STM   2,9,REGSAVE6        SAVE THE REGISTARS.
+         CLI   FILETYP,X'F1'       IS IT A TYPE 1 FILE?
+         BE    SSGOK               YES.
+         MVC   INDICTOR,=H'13'     NO. SET INDICATOR TO -13 AND RETURN
+         B     MR3C                  TO THE MAINLINE ROUTINE.
+SSG27    MVC   INDICTOR,=H'27'     NEXT SEQUENTIAL. SET INDICATOR.
+         B     SSGSET              CONTINUE PROCESSING.
+SSGOK    BAL   4,GIR               GET INDICES ROUTINE.
+         LH    2,=H'1'
+         LH    3,INDICTOR               INDICATOR
+         C     3,=F'3'             IS IT NEXT SEQUENTIAL*
+         BE    SSG27               YES.
+         CR    3,2                      INDICATOR < 0
+         BH    SSG1                YES
+SSGSET   L     5,FOUNDADD          POINTER TO ARGUEMENT.
+         SR    4,4                      CLEAR 4
+         IC    4,ARGL                   ARGUMENT LENGTH
+         AR    5,4                      POINT TO DELETE CODE
+         LA    5,1(5)                   POINT TO TTRN OF RECORD
+         MVC   BRNSR,0(5)          MOVE FOR TTRN OF NSR.
+SSG1     LM    2,9,REGSAVE6        RESTORE REGISTARS.
+         B     MR3C                     RETURN TO CALLING PROGRAM
+REGSAVE6 DS    8F                  REGISTAR SAVE AREA.
+         ISEQ
+         TITLE 'READ SEQUENTIAL GENERIC RSG RIGAM'
+         ISEQ  73,80
+RSG      STM   2,9,REGSAVE7        STORE THE REGISTARS.
+         CLI   FILETYP,X'F1'       IS IT A TYPE 1 FILE?
+         BE    RSGTTR              YES. CONTINUE PROCESSING.
+         MVC   INDICTOR,=H'14'     NO.SET INDICATOR TO -14.
+         B     RSG1A                 AND RETURN.
+RSGTTR   MVC   RTTR(3),BRNSR       TTR OF NEXT SEQUENTIAL RECORD.
+         MVC   BDN(1),BRNSR+3           RECORD POSITION OF NSR
+RSG2     CLC   BRNSR,BREOF              END OF FILE COMPARE
+         BE    RSG1                     YES
+         BAL   4,READBLK                READ DATA BLOCK
+         LH    2,=H'1'                  COMPARE TO 1
+         LH    3,INDICTOR               LOAD INDICATOR
+         CR    3,2                      INDICATOR < 1
+         BH    RSG1A                    YES
+         MVI   BDIND,X'01'              SET BLOCK INDICATOR TO 1
+         BAL   4,BDR                    DEBLOCK
+         L     5,RECORDFD               RECORD
+         S     5,=F'4'                  POINT TO TTRN OF NSR
+         MVC   BRNSR,0(5)               SAVE NSR IN FP TABLE
+         S     5,=F'1'                  POINT TO DELETE CODE
+         CLI   0(5),X'FF'               CHECK FOR DELETE
+         BE    RSGTTR                   GO TO NSR
+         A     5,=F'8'                  POINT TO KEY OF RECORD
+         SR    4,4                      CLEAR 4
+         IC    4,ARGL                   ARGUMENT LENGTH
+         S     4,=F'1'                  MOVE LENGTH FOR ARGUMENT
+         EX    4,RSGMOVE                MOVE ARG FOUND TO FP TABLE
+         MVC   TTRHLD(3),RTTR      SAVE READ ADDRESS BLOCK.
+         MVC   TTRHLD+3(1),BDN     SAVE READ ADDRESS RECORD NUMBER.
+         MVC   INDICTOR,=X'0001'   SET INDICATOR TO 1.
+         BAL   4,FDBKCALC          GET USER A RECORD NUMBER.
+         MVI   RSGSW+1,X'F0'  DO NOT ASSUME INDICIES ALREADY IN CORE
+RSG1A    LM    2,9,REGSAVE7        RESTORE THE REGISTARS.
+         B     MR3C                     RETURN TO CALLING PROGRAM
+RSGMOVE  MVC   LARG(0),0(5)        ARGUMENT MOVE
+RSG1     MVC   INDICTOR,=H'29'          END OF FILE INDICATOR
+         B     RSG1A                    GO TO 1A
+REGSAVE7 DS    8F                  REGISTAR SAVE AREA.
+         ISEQ
+         TITLE ' READ RANDOM GENERIC RRG RIGAM'
+         ISEQ  73,80
+RRG      STM   2,9,REGSAVE5        SAVE REGISTARS.
+         CLI   FILETYP,X'F1'       IS PARM FILE TYPE = TO 1 ?
+         BE    RRGBAL              YES. CONTINUE.
+         MVC   INDICTOR,=H'11'     NO. SET INDICATOR TO -11.
+         B     RRG1                  AND RETURN TO USER.
+RRGBAL   BAL   4,GIR               GET INDICIES.
+         LH    3,=H'1'                  1
+         LH    2,INDICTOR               INDICATOR
+         CR    2,3                      INDICATOR< 1
+         BH    RRG1                     YES
+         BAL   4,READBLK                READ DATA BLOCK
+         LH    2,INDICTOR               INDICATOR
+         CR    2,3                      INDICATOR< 1
+         BH    RRG1                     YES
+         MVC   TTRHLD(3),RTTR      SAVE READ ADDRESS BLOCK.
+         MVC   TTRHLD+3(1),BDN     SAVE READ ADDRESS RECORD NUMBER.
+         MVI   BDIND,X'01'              DEBLOCK
+         BAL   4,BDR                    BLOCK DEBLOCK ROUTINE
+         BAL   4,FDBKCALC          GET USER A RECORD NUMBER.
+RRG1     LM    2,9,REGSAVE5        RESTORE REGISTARS.
+         B     MR3C                RETURN TO CALLING PROGRAM.
+REGSAVE5 DS    8F                  REGISTAR SAVE AREA.
+         ISEQ
+         TITLE 'FEEDBACK CALCULATION ROUTINE FOR USER INFORMATION.'
+         ISEQ  73,80
+FDBKCALC STM   2,9,REGSAVEC        STORE THE REGISTARS.
+         XC    CONVTTRN,CONVTTRN   CLEAR TTRN AREA IN CONVERT ROUTINE.
+         MVC   CONVTTRN(3),LOWBLK  MOVE DATA START TTR FOR RELETIVE TO
+         BAL   4,CONVTON             ZERO ALIGNMENT AND CONVERT IT.
+         L     7,CONVNNNN          CONVERTED DATA TTR FOR RELETIVE NO.
+         MVC   CONVTTRN,TTRHLD     TTRN OF DATA JUST FOUND.
+         BAL   4,CONVTON           CONVERT IT TO A NUMBER.
+         L     6,CONVNNNN          STORE RESULTANT NUMBER.
+         SR    6,7                 CALCULATE RECORD NUMBER.
+         L     7,FEEDBACK          GET ADDRESS OF USERS REC.NO.AREA.
+         ST    6,0(0,7)            PLACE REC.NO.IN USER RETURN
+         LM    2,9,REGSAVEC        RESTORE THE REGISTARS.
+         BR    4                   RETURN.
+TTRHLD   DC    F'0'                HOLD AREA FOR CALCULATION.
+REGSAVEC DS    8F                  REGISTAR STORAGE SAVE AREA.
+         ISEQ
+         TITLE 'GET FILE PARAMETERS RIGAM'
+         ISEQ  73,80
+TABLE1   DC    A(0)                     LOCATION OF TABLE 1
+LTB1     DC    H'0'                 MAX NO OF ENTRIES TABLE 1
+GFP      STM   2,9,REGSAVE         STORE THE REGISTARTS.
+         CLI   FILETYP,X'00'       IS IT FIRST TIME?(PARMWK WILL BE 00)
+         BE    GFP7                YES. GO TEST FILE TYPE.
+         CLC   UFILE,FILENO        NO.ARE FILE PARAMS IN WORK AREA?
+         BE    GFP16               YES.SET INDICATOR AND LEAVE.
+         CLI   FILETYP,X'F1'       DOES WORK AREA CONTAIN A TYPE 1 FILE
+         BE    GFP1                YES. GO STORE IT.
+         B     GFP14               NEITHER.GO SET INDICATOR AND LEAVE.
+GFP1     L     2,TABLE1            POINT TO TABLE 1 START.
+         LH    3,LTB1              GET ENTRIES IN TABLE 1.
+GFP2     CLC   0(3,2),FILENO       COMPARE WORK FILE TO TABLE.
+         BE    GFP3                IF = GO STORE WORK IN TABLE.
+         LA    2,229(2)           IF ^= PREPARE TO LOOK AGAIN.
+         BCT   3,GFP2              HAS NUMBER OF ENTRIES BEEN EXCEEDED?
+         B     GFP15               YES.GO SET INDICATOR AND LEAVE.
+GFP3     MVC   0(229,2),PARMWK1    WORK STORAGE MOVE.
+         B     GFP7                GO TEST NEW USER FILE TYPE.
+GFP7     CLI   FILETYPE,X'F1'      IS USER FILE TYPE A 1?
+         BE    GFP8                YES. GO PREPARE SEARCH.
+         B     GFP14               NO.GO SET INDICATOR AND LEAVE
+GFP8     L     2,TABLE1            POINT TO TABLE 1 START.
+         LH    3,LTB1              GET ENTRIES IN TABLE 1.
+GFP9     CLC   0(3,2),UFILE        COMPARE USER FILE TO TABLE 1.
+         BE    GFP10               IF = GO MOVE PARAMS TO WORK AREA.
+         LA    2,229(2)           IF ^= PREPARE SEARCH AGAIN.
+         BCT   3,GFP9              HAS NUMBER OF ENTRIES BEEN EXCEEDED?
+         B     GFP15               YES.GO SET INDICATOR AND LEAVE.
+GFP10    MVC   PARMWK1(229),0(2)
+         B     GFP16               GO SET INDICATOR.
+GFP14    MVC   INDICTOR,=H'6'      NOT EQUAL SPECIFICATIONS SET.
+         B     GFP17               LEAVE
+GFP15    MVC   INDICTOR,=H'9'      FILE NOT OPENED SET.
+         B     GFP17               LEAVE
+GFP16    MVC   INDICTOR,=H'1'      FUNCTION COMPLETED SET
+GFP17    LM    2,9,REGSAVE
+         BR    4                   LEAVE.
+         ISEQ
+         TITLE 'GET INDICIES ROUTINE RIGAM'
+         ISEQ  73,80
+GIR      STM   2,9,REGSAVE1        SAVE THE REGISTARS.
+         TM    FTSWTCH,X'02'            FIRST TIME
+         BO    GIR1                     NO
+         MVI   FTSWTCH,X'02'            YES RESET SWITCH
+         B     GIR2A                    GO TO 2A
+GIR1     LA    2,LARG                   LAST ARGUMENT FOUND
+         LA    3,UKEY                   USER ARGUMENT - KEY
+         SR    4,4                      CLEAR 4
+         IC    4,ARGL                   ARGUMENT LENGTH
+         B     GIR2                     BRANCH AROUND COMPARE
+GIRCOMP  CLC   0(0,3),0(2)              COMPARE
+GIR2     S     4,=F'1'                  LENGTH-1
+         EX    4,GIRCOMP                EXECUTE COMPARE
+RSGSW    B     GIR3         16DEC68 UNCOND BR FOR RECALC OF RTTR.
+         MVC   RTTR(3),LBR         TTR FOR THE READ.
+         MVC   BDN,LBR+3                N   FOR DEBLOCK
+         MVI   LEVEL,X'01'         SET LEVEL TO A 1.
+         B     GIR2B               GO READ THE INDEX BLOCK.
+GIR3     LA    2,HA1                    POINTER TO HIGH ARG LEVEL 1
+         MVI   RSGSW+1,X'F0'  16DEC68 UNCOND BR FOR RECALC OF RTTR.TN)
+         EX    4,GIRCOMP                COMPARE
+         BC    12,GIR4                  LT EQ BR
+GIR5     LA    2,HA2                    POINTER TO HIGH ARG LEVEL 2
+         EX    4,GIRCOMP                COMPARE
+         BC    12,GIR6                  LT EQ BR
+         B     GIR2A                    GO TO  2A
+GIR4     LA    2,LA1                    POINTER TO LOW ARG LEVEL 1
+         EX    4,GIRCOMP                COMPARE
+         BL    GIR5                     LOWER
+         MVC   RTTR(3),BN1         BLOCK NO. TO LEVEL 1 BLK NO.
+         MVI   LEVEL,X'01'              LEVEL NO = 1
+         B     GIR2B                    GO TO 2B
+GIR6     LA    2,LA2                    POINTER TO  LOW ARG LEVEL 2
+         EX    4,GIRCOMP                COMPARE
+         BL    GIR2A                    GO TO 2A
+         MVC   RTTR(3),BN2         BLOCK NO. OF LEVEL 2 BLK NO.
+         MVI    LEVEL,X'02'             LEVEL NO = 2
+         B     GIR2B                    GO TO 2B
+GIR2A    MVC   RTTR(3),ILBN        STARTING INDEX BLOCK.
+         MVC   LEVEL,NOINDL             NO OF LEVELS
+GIR2B    BAL   4,JDAREAD           READ AN INDEX BLOCK.
+         CLC   INDICTOR,=H'1'      TEST INDICATOR.
+         BH    GIR3C               BAD NOISE IF LOW, SO LEAVE.
+         MVC   LBR(3),RTTR              TTR OF LAST REC TO FP TABLE
+         MVC   LBR+3(1),BDN             N   OF LAST REC TO FP TABLE
+         BAL   4,SEARCH                 SEARCH INDEX  BLOCK AND CHAIN
+         CLI   LEVEL,X'02'              CURRENT LEVEL = 2
+         BE    GIR7                     GO TO SAVE LEVEL 2
+         CLI   LEVEL,X'01'              CURRENT LEVEL = 1
+         BE    GIR8                     GO TO SAVE LEVEL 1
+GIR9     SR    2,2                      CLEAR REG 2
+         IC    2,LEVEL                  LEVEL
+         S     2,=F'1'                  REDUCE LEVEL BY ONE
+         STC   2,LEVEL                  STORE LEVEL
+         B     GIR2B                    GO TO 2B
+GIR7     SR    4,4                      CLEAR 4
+         IC    4,ARGL                   ARG LENGTH
+         S     4,=F'1'                  LENGTH FOR MOVE
+         LA    2,LA2                    LOW ARGUMENT LEVEL2
+         LA    3,BLOCK+12               LOW ARGUMENT BLOCK
+         B     GIR10                    BR AROUND MOVE
+GIRMOVE  MVC   0(0,2),0(3)              EXECUTED MOVE
+GIR10    EX    4,GIRMOVE                MOVE  LOW ARGUMENT LEVEL 2
+         LA    2,HA2                    POINTER HIGH ARG  LEVEL2
+         LR    8,4                      ARGUMENT LENGTH - 1
+         LA    8,6(8)                   INDEX LENGTH
+         SR    6,6                      CLEAR  6
+         SR    7,7                      CLEAR  7
+         IC    7,BLOCK+3                NUMBER OF INDICIES PER BLOCK
+         S     7,=F'1'                  SUBTRACT 1
+         MR    6,8                      LENGTH TO LAST INDEX
+         AR    3,7                      POINT TO HIGH BLOCK
+         EX    4,GIRMOVE                MOVE HIGH ARGUMENT  LEVEL 2
+         MVC   BN2(3),BLOCK        MOVE LEVEL 2 BLOCK NO.
+         B     GIR9                     GO TO REDUCE LEVEL
+GIR8     SR    4,4                      CLEAR 4
+         IC    4,ARGL                   ARG LENGTH
+         S     4,=F'1'                  LENGTH FOR MOVE
+         LA    2,LA1                    LOW ARG LEVEL 1
+         LA    3,BLOCK+12               LOW ARG BLOCK
+         EX    4,GIRMOVE                MOVE LOW LEVEL ARG
+         LA    2,HA1                    POINT TO PARM AREA HIGH ARG
+         LR    8,4                      ARG LENGTH-1
+         LA    8,6(8)                   INDEX LENGTH
+         SR    6,6                      CLEAR 6
+         SR    7,7                      CLEAR 7
+         IC    7,BLOCK+3                NO OF INDICIES
+         S     7,=F'1'                  SUB 1
+         MR    6,8                      LENGTH TO LAST INDEX
+         AR    3,7                      POINT TO LAST INDEX
+         EX    4,GIRMOVE                MOVE TO PARM AREA H L BLOCK 1
+         MVC   BN1(3),BLOCK        MOVE LEVEL 1 BLOCK POINTER.
+GIR3C    LM    2,9,REGSAVE1        RESTORE THE REGISTARS
+         BR    4                        RETURN
+REGSAVE1 DS    8F                  REGISTAR STORAGE AREA.
+LEVEL    DS    C                        LEVEL COUNTER
+         ISEQ
+         TITLE 'SEARCH   RIGAM'
+         ISEQ  73,80
+SEARCH   STM   2,9,REGSAVE2        SAVE THE REGISTARS(CRIED THE C.P.U.)
+S7       SR     8,8                     COUNTER REG = 0
+         SR    9,9                      CLEAR 9
+         IC    9,BLOCK+3                NO OF INDICES
+         LA    3,BLOCK+12               POINTER TO FIRST INDEX
+         SR    4,4                      CLEAR 4
+         IC    4,ARGL                   ARGUMENT LENGTH
+         S     4,=F'1'                  DECREMENT LENGTH
+         LA    8,1(8)                   COUNTER = 1
+         LA    2,UKEY                   KEY POINTER
+         B     S1                       BR AROUND
+SCOMP    CLC   0(0,2),0(3)              COMPARE
+S1       EX    4,SCOMP                  KEY = INDEX ARGUMENT
+         BE    S2                       TEST DELETE CODE
+         BL    S10                 TEST BLOCK INDICE LOCATION.
+         CR    8,9                      COUNTER = NO INDICIES PER BLOCK
+         BE    S4                       GO TO CHAIN
+         LA    8,1(8)                   INCREMENT COUNTER
+         LA    3,6(3)                   INCREMENT INDEX
+         AR   3,4                       INCREMENT INDEX
+         B     S1                       GO TO COMPARE
+S4       CLI   BLOCK+10,X'FF'      CHAIN CODE ON.
+         BE    S6                       YES READ BLOCK
+         MVC   INDICTOR,=H'3'      SET INDICATOR TO NOT FOUND COND.
+         B     S5                  LEAVE.
+S9       SR    3,4                 RESTORE POINTER TO EQUAL INDEX
+         S     3,=F'1'                FOUND ADDRESS FOR STORING POINTER
+S3       MVC   INDICTOR,=H'3'      SET INDICATOR TO ZERO.
+         LR    7,3                 SEARCH
+SHIL01   S     7,=F'5'               FOR
+         CLI   0(7),X'FF'              LOWEST
+         BNE   SHIL02                      SEQUENTIAL
+         SR    7,4                           KEY
+         S     7,=F'1'                              THEN
+         B     SHIL01                             THEN
+SHIL02   LR    7,3                     HIGHEST
+SHIL03   AR    7,4                        SEQUENTIAL
+         CLI   1(7),X'FF'                    KEY
+         BNE   S5                            INDEX
+         A     7,=F'6'                                 STORE
+         B     SHIL03                              STORE
+S6       MVC   RTTR(3),BLOCK+7     GET CHAIN POINTER
+         ST    4,FOUNDADD
+         MVC   WAGLDBST,LOWBLK     STORE LOW BLOCK EXTENT.
+         MVC   WAGHDBST,HGHBLK     STORE HIGH DATA BLOCK EXTENT.
+         MVC   LOWBLK,ILBN  CHANGE DATA BLK LO XTNT TO INDEX BLK LO XT.
+         MVC   HGHBLK,IHBN  CHANGE DATA BLK HI XTNT TO INDEX BLK HI XT.
+         BAL   4,READBLK           READ INDEX BLOCK.
+*   PLEASE NOTE ----
+*   PLEASE NOTE -------  NO INDICATOR TEST MADE.  IF NO INDEX BLOCK
+*   PLEASE NOTE -------  READ DUE TO EXTENT VIOLATION, LOOP ENSUES.
+*   PLEASE NOTE ----
+         MVC   LOWBLK,WAGLDBST     RESTORE LOW DATA BLOCK EXTENT.
+         MVC   HGHBLK,WAGHDBST     RESTORE HIGH DATA BLOCK EXTENT.
+         L     4,FOUNDADD
+         B     S7                       GO BACK
+S2       AR    3,4                      INCREMENT TO
+         LA    3,1(3)                   GET DELETE POINTER
+         CLI   0(3),X'FF'               DELETE
+         BE    S9                  SET INDICATORS.
+         MVC   INDICTOR,=H'1'      SET INDICATOR TO 1.
+         SR    6,6                 CLEAR REGISTAR 6 FOR DATA RECORD
+         IC    6,ARGL                LENGTH ADJUSTMENT FACTOR.
+         B     S8                  GET NEXT LEVEL TTRN.
+S5       SR    6,6                 ADJUST
+         IC    6,ARGL                TO
+         AR    3,6                     BLOCK
+S8       LA    3,1(3)                       TTR.
+         MVC   RTTR(3),0(3)        MOVE TTR TO READ
+         MVC   BDN,3(3)                 MOVE N TO BLOCK DEBLOCK
+         S     3,=F'1'             ADJUST BACK TO
+         SR    3,6                   KEY ADDRESS.
+         ST    3,FOUNDADD               POINTER TO FOUND INDEX
+         LM    2,9,REGSAVE2        RESTORE THE REGISTARS
+         BR    4                        RETURN
+S10      CLI   LEVEL,X'01'
+         BNE   S3
+         LA    5,BLOCK+12          POINT TO FIRST INDICE IN. BLOCK.
+         CR    3,5                 SAME AS POINTER TO HIGH INDICE ??
+         BNE   S3                  NO. CONTINUE MAINLINE.
+         XR    6,6                 YES.FIRST OF BLOCK. CLEAR R6.
+         IC    6,ARGL              INSERT ARGUEMENT LENGTH
+S11      AR    5,6                 ADD ARG.LENGTH TO POINTER FOR DELETE
+         CLI   0(5),X'FF'          IS IT DELETED?
+         BNE   S12                 NO.
+         LA    5,5(5)              YES. POINT TO NEXT INDEX
+         B     S11                  AND GO COMPARE FOR DELETE AGAIN.
+S12      MVC   PREVTTR(3),BLOCK    SAVE THIS BLOCK TTR.
+         CLC   BLOCK+4(3),=X'000000'    IS PREVIOUS NEXT LEVEL ?
+         BE    S16                      YES. GO MAKE LO=HI.
+         MVC   RTTR(3),BLOCK+4     GET PREVIOUS BLOCK TTR FOR READ.
+         BAL   4,JDAREAD           GO TO READ ROUTINE.
+         XR    5,5                 CLEAR REGISTAR 5.
+         IC    5,BLOCK+11          GET INDICE LEVEL OF THIS BLOCK
+         N     5,FOXMASK           MASK OUT TOTAL INDICES
+         CH    5,=H'1'             IS THIS BLOCK A LEVEL 1 ??
+         BNE   S16                                      READ.
+         XR    5,5                 YES.CLEAR REG.5
+         IC    5,BLOCK+3           INSERT TOTAL INDICES THIS BLOCK.
+         STC   5,INDNUMB           STORE IT FOR CALCULATION ROUTINE.
+         BAL   4,INDCALC           GO TO CALCULATION ROUTINE.
+         L     5,INDADDR           GET ADDRESS OF LAST INDEX KEY.
+S13      AR    5,6                 ADD KEY LENGTH TO ADDRESS OF KEY
+         CLI   0(5),X'FF'          IS THIS RECORD DELETED ?
+         BNE   S16                 NO. GO TO STORE TTRN.
+         SR    5,6                 YES. SUBTRACT KEY LENGTH AND
+         S     5,=F'5'                  5 FOR TTRN AND DELETE THEN
+         SR    5,6                      ADJUST TO NEXT KEY.
+         B     S13                 GO COMPARE AGAIN.
+S16      MVC   RTTR(3),PREVTTR     POINT TO NEXT BLOCK SAVED.
+         BAL   4,JDAREAD           GO TO READ ROUTINE.
+         MVC   INDICTOR,=H'3'        EXCEPTION INDICATOR.
+         B     S5                  GO TO CALCULATE ADJUSTMENT ADDRESS
+REGSAVE2 DS    8F                  REGISTAR STORAGE AREA.
+FOUNDADD DS    F
+PREVTTR  DC    F'0'                PREVIOUS INDEX BLOCK TTR HOLD.
+FOXMASK  DC    XL4'0000000F'       MASK FOR LEVEL CHECK
+WAGLDBST DS    CL3                 LOW DATA BLOCK EXTENT STORE.
+WAGHDBST DS    CL3                 HIGH DATA BLOCK EXTENT STORE.
+         ISEQ
+         TITLE  'BLOCK BEBLOCK ROUTINE GENERIC RIGAM'
+         ISEQ  73,80
+BDN      DS    C                        POSITION OF RECORD IN BLOCK
+BDIND    DS    C                01 OR 02IND=1 OR 2  =1 TO USER
+BDR      STM   2,9,REGSAVE         SAVE THE REGISTARS
+         LA    2,BLOCK+3                POINTER TO FIRST ENTRY
+         SR     3,3                     CLEAR 3
+         IC    3,BDN                    NO OF BLOCK TO 3
+         S     3,=F'1'                 SET FOR MULTIPLY
+         SR    7,7                      CLEAR 6
+         IC    7,DLGN                   FIRST BYTE OF DATA LENGTH+
+         SLA    7,8(0)                 SHIFT LENGTH
+         IC    7,DLGN+1                 REMAINDER OF LENGTH
+         LR    8,7                 SAVE THE DATA LENGTH.
+         SR    6,6                      CLEAR6
+         MR    6,3
+         AR    2,7                      POINTER TO DATA
+         SR    6,6                 CLEAR REGISTAR 6.
+         SR    7,7                 CLEAR REGISTAR 7.
+         LA    7,5(7)              PLACE A 5 IN REGISTAR 7.
+         A     3,=F'1'             ADD 1 TO RECORD NUMBER.
+         MR    6,3                 MULTIPLY NO.OF REC.S AND CONSTANT 5.
+         AR    2,7                 ADD PRODUCT TO REG.2 FOR ALIGNMENT.
+         ST    2,RECORDFD               SAVE DATA POINTER
+         L     3,UAREA                  AREA IN CALLING PROG
+         LR    6,8           RESTORE DATA LENGTH
+         S     6,=F'1'                  LENGTH FOR MOVE
+         L     8,=F'255'                LOAD MOVE CONSTANT
+BDRCOMP  CR    6,8                      COMPARE < 256
+         BC    12,MOVEL256         GO TO 256 CHAR.OR LESS MOVE.
+         B     MOVEG256                 > 256 CHAR MOVE
+MOVEL256 CLI   BDIND,X'01'              DATA TO USER
+         BE    MOVETO                   GO TO MOVE TO USER
+         EX    6,BDRMOVEF               EXECUTE MOVE FROM USER
+         B     BDRRTN                   RETURN
+MOVETO   EX     6,BDRMOVET              EXECUTE MOVE TO USER
+         B     BDRRTN                   RETURN
+MOVEG256 S     6,=F'256'                DECREMENT
+         CLI   BDIND,X'01'              CHECK FOR MOVE TO USER
+         BE    MVTO                     MOVE TO
+         EX    8,BDRMOVEF              EXECUTE MOVE FROM
+         B     ADJUST                   ADJUST REGISTERS
+MVTO     EX    8,BDRMOVET               MOVE TO
+         B     ADJUST                   ADJUST
+BDRMOVET MVC   0(0,3),0(2)              COMPUTED MOVE  TO   USER
+BDRMOVEF MVC   0(0,2),0(3)              COMPUTED MOVE  FROM USER
+ADJUST   A     2,=F'256'                ADJUST POINTERS
+         A     3,=F'256'                ADJUST POINTERS
+         B     BDRCOMP                  GO BACK TO COMPARE
+BDRRTN   LM    2,9,REGSAVE         RESTORE THE REGISTERS.
+         BR    4                        RETURN
+RECORDFD DC    A(0)                     LOCATION OF DATA BLOCK
+         ISEQ
+         TITLE 'CALCULATE AN INDICE ADDRESS. INDCALC ROUTINE. RLG.'
+         ISEQ  73,80
+INDNUMB  DC    XL1'00'             INDICE NUMBER FOR CALCULATION.
+INDADDR  DC    F'0'                ADDRESS CALCULATED.
+INDCALC  STM   2,9,REGSAVE         STORE THE REGISTERS.
+         XC    INDADDR,INDADDR     CLEAR THE ADDRESS AREA.
+         XR    2,2                 CLEAR REGISTARS 2,
+         XR    4,4                                 4,
+         XR    5,5                                 5,
+         XR    6,6                                 6.
+         LA    2,BLOCK+12          POINT TO FIRST INDICE.
+         IC    5,INDNUMB           GET INDICE NUMBER.
+         IC    6,ARGL              GET THE KEY LENGTH.
+         SH    5,=H'1'             DECREMENT INDICE BY 1.
+         MR    4,6                 DETERMINE NO.OF KEY BYTES DISPLACED.
+         AR    2,5                 ADD ABOVE TO START ADDRESS.
+         XR    4,4                 CLEAR CALCULATION REGISTARS 4,
+         XR    5,5                                             5,
+         XR    6,6                                             6,
+         IC    5,INDNUMB           GET INDICE NUMBER.
+         LA    6,5(6)              CONSTANT 5 FOR TTRN AND DELETE CODE.
+         SH    5,=H'1'             DECREMENT INDICE BY 1.
+         MR    4,6                 DETERMINE CONSTANT BYTES DISPLACED.
+         AR    2,5                 ADD ABOVE TO START ADDRESS.
+         ST    2,INDADDR           PLACE POINTER IN HOLD FOR RETURN.
+         LM    2,9,REGSAVE         RESTORE THE REGISTERS.
+         BR    4                   RETURN.
+         ISEQ
+         TITLE 'CLOSE FILE   CLF  RIGAM'
+         ISEQ  73,80
+CLF      STM   2,9,REGSAVED        STORE THE REGISTARS.
+         CLC   UFILE,FILENO        PARAMETER TABLE CONTAINS FILE
+         BNE   CLF1                NOT EQUAL
+         CLC   FILETYPE,FILETYP    EQUAL FILETYPE EQUAL
+         BNE   CLF2                NOT EQUAL SET CODE = -1
+         B     CLF3                BRANCH AROUND
+CLF2     MVC   INDICTOR,=H'18'     SET INDICATOR TO -18.
+         B     CLFEXIT             EXIT
+CLF3     MVC   FILENO,=X'FFFFFF'   DELETE FILE
+         MVI   FILETYP,X'00'
+CLF1     CLI   FILETYPE,X'F1'      TYPE 1 FILE  ?
+         BNE   CLF2                GO TO TYPE 2
+         L     2,TABLE1            ADDRESS OF TABLE 1
+         LH    3,LTB1              ENTRIES   TABLE 1
+CLF5     CLC   0(3,2),UFILE        COMPARE FOR EQUAL FILENO
+         BE    CLF4                EQUAL
+         LA    2,229(2)            INCREMENT TO NEXT
+         BCT   3,CLF5              GO TO NEXT PARAMETER
+         B     CLF2                GO TO SET IND = -1
+CLF4     CLI   6(2),X'F1'          FILE TYPE = 1
+         BNE   CLF2                NO  IND = -1
+         MVC   0(3,2),=X'FFFFFF'   DELETE FILE
+         MVC   INDICTOR,=H'1'      SET  IND = 1
+CLFEXIT  BAL   4,CLEAR             DETERMINE CLEAR PARMWK1.
+         LM    2,9,REGSAVED        RESTORE THE REGISTARS.
+         B     MR3C                RETURN.
+REGSAVED DS    8F                  REGISTAR SAVE AREA.
+         ISEQ
+         TITLE 'TEST OVERLAY END-OF-JOB FOR CLEARING PARMWK AREA.RLG.'
+         ISEQ  73,80
+CLEAR    STM   2,9,REGSAVE         STORE THE REGISTERS.
+         L     2,TABLE1            POINT TO TABLE OF TYPE 1 FILES.
+         LH    3,LTB1              GET NUMBER OF ENTRIES FOR TYPE 1.
+         XR    4,4                 CLEAR REG.4 FOR COUNT.
+CLR1     CLC   0(3,2),=X'FFFFFF'   COMPARE FOR FREE AREA.
+         BNE   CLEARXIT            NOT EQUAL,LEAVE.
+         AH    4,=H'1'             COUNT TYPE 1 CLOSED TABLE AREAS.
+         LA    2,229(2)            POINT TO NEXT ENTRY
+         BCT   3,CLR1              TEST FOR MORE. YES,GO COMPARE.
+         LH    3,LTB1              NO.GET NUMBER OF TYPE1 ENTRIES.
+         CR    3,4                 IS COUNT THE SAME AS ENTRIES?
+         BNE   CLEARXIT            NO. LEAVE.
+         XC    PARMWK1,PARMWK1     YES. CLEAR PARAMETER WORK AREA.
+CLEARXIT LM    2,9,REGSAVE         RESTORE THE REGISTERS.
+         BR    4                   RETURN TO CLF.
+         ISEQ
+         TITLE 'CLOSE DATA SET  CDS  RIGAM'
+        ISEQ   73,80
+CDS      STM   2,9,REGSAVE         SAVE REGISTERS
+         LA    2,FILENO            STORE PARAMETER WORK AREA ADDRESS...
+CDS1     MVC   FILENO,=X'FFFFFF'   DELETE FILE
+         L     2,TABLE1            ADDRESS OF TABLE 1
+         LH    3,LTB1              NO ENTRIES TABLE 1
+CDS5     MVC   0(3,2),=X'FFFFFF'   NO DELETE  FILE
+         LA    2,229(2)            INCREMENT TO NEXT PARAMETER
+         BCT   3,CDS5              LOOP
+         B     CDSEXIT             GO TO TYPE 2
+CDSEXIT  LH    3,LTB1              LOAD ENTRIES FOR TABLE 1.
+         CH    3,=H'1'             ARE THERE ANY?
+         BL    CDSLEAVE            NO. GO TRY TYPE 2.
+         L     0,SAV23             LOAD LENGTH OF TABLE 1 INTO REG.'0'.
+         L     1,TABLE1            LOAD ADD. OF TABLE1 INTO REG. '1'.
+         FREEMAIN R,LV=(0),A=(1)             ISSUE FREEMAIN.
+CDSLEAVE LM    2,9,REGSAVE         RESTORE THE REGISTERS.
+         CLOSE (DISKDCB)           CLOSE THE DATA SET.
+         MVC   INDICTOR,=H'1'      SET INDICATOR.
+         B     MR3C                RETURN TO THE USER.
+         ISEQ
+         TITLE 'TTRN-NNNNNN TWO WAY CONVERSION RIGAM'
+         ISEQ  73,80
+CONVTTRN DC    F'0'                TTRN TO BE CONVERTED
+CONVNNNN DC    F'0'                 NNNNNN TO BE CONVERTED
+CONVTON  STM   2,9,REGSAVE              SAVE REGISTERS
+         XR    2,2                      CLEAR REGISTER 2
+         IC    2,NODRPB                 INSERT NO OF DATA RECORDS/BLOCK
+         LH    5,CONVTTRN               LOAD TT OF TTRN
+         MH    5,BLKNOH            TT * MAX-BLOCK-PER-TRACK
+         XR    3,3                      CLEAR REGISTER 3
+         IC    3,CONVTTRN+2             R INSERTED
+         AR    5,3                      TTX4+R
+         XR    4,4                      CLEAR REGISTER 4
+         MR    4,2                      BLOCKSXNO DATA RECORDS/BLOCK
+         XR    4,4                      CLEAR REGISTER 4
+         IC    4,CONVTTRN+3             N OF CURRENT RECORD
+         AR    5,4                      NNNNNN OF RECORD
+         ST    5,CONVNNNN               STORE NNNNNN OF TTRN
+         LM    2,9,REGSAVE              RESTORE PRIOR REGISTERS
+         BR    4                        RETURN
+         ISEQ
+         TITLE 'FILE PARAMETER WORK AREA RIGAM'
+         ISEQ  73,80
+PARMWK1  DS    0CL229                   TYPE 1 FILES
+FILENO   DS    CL3                      FILE NO
+FILEID   DS    CL3                      3 CHAR ID
+FILETYP  DS    CL1               F1ORF2 FILE TYPE 1 OR 2
+INDFILE  DS    0C                       FILE AND ACCESSING INDICATORS
+RESERVCD DS    C                00 OR FF     RESERVATION CODE
+FTSWTCH  DS    C          '02'=NFT'01'=FT    FIRST TIME 'GET INDICIES'
+PCODE    DS    CL2                           ETC
+LOWBLK   DS    CL3                      TTR  LOW BLOCK NO
+HGHBLK   DS    CL3                      TTR  HIGH BLOCK NO
+DLGN     DS    CL2                      LENGTH OF DATA    BINARY
+LDRU     DS    CL4          NOT EOF T-1 TTRN OF LAST DATA RECORD USED.
+NODRPB   DS    C                        NO OF DATA RECORDS PER BLOCK
+BRNSR    DS    CL4                      TTRN OF NEXT SEQUENTIAL RECORD
+BREOF    DS    CL4                      TTRN OF END OF FILE RECORD
+NOINDL   DS    C                        NO OF INDEX LEVELS
+ILBN     DS    CL3                      LOW BLOCK NO   TTR
+IHBN     DS    CL3                      HIGH BLOCK NO  TTR
+ILBU     DS    CL3                      LAST INDEX BLOCK USED TTR
+ARGL     DS    C                        ARGUMENT LENGTH
+INDPB    DS    C                        NO INDICIES PER BLOCK
+LA2      DS    CL35                     LOW ARG
+HA2      DS    CL35                     HIGH ARG
+BN2      DS    CL3                      BLOCK NO
+LA1      DS    CL35                     LOW ARG
+HA1      DS    CL35                     HIGH ARG
+BN1      DS    CL3                      BLOCK NO
+LARG     DS    CL35                     ARG
+LBR      DS    CL4                      DATA BLOCK NO AND REC NO TTRN
+         ISEQ
+         EJECT
+         SPACE 1
+********************
+* TEST DEVICE TYPE *
+********************
+         SPACE 1
+TSTYPDEV DEVTYPE DISKDCB+40,TYPDEVWA,DEVTAB,RPS
+         LTR   6,15           RETURN CODE = ZERO ?
+         BNZ   DNOK           BRANCH IF NO
+         LA    2,NETAD        ESTABLISH LOOP
+         LA    3,TABDEV       POINT R3 AT FIRST TABLE ELEMENT
+LTSTAD   CLC   TYPDEVWA(4),0(3) TEST IF DEVICE T. IS IN TABLE
+         BE    DOK            BRANCH IF YES
+         LA    3,6(3)         INCREMENT POINTER
+         BCT   2,LTSTAD       PROCESS NEXT TABLE ELEMENT
+DNOK     ABEND 999,DUMP       ERROR - ABEND V0999
+DOK      MVC   BLKNOH,4(3)    MOVE MAX. NO OF BLOCKS PER TRACKS
+         BR    4              RETURN TO CALLER
+         SPACE 1
+TYPDEVWA DC    6F'0'          WORK AREA FOR DEVTYPE MACRO
+BLKNOF   DC    H'0'           MAXIMUM NUMBER OF
+BLKNOH   DC    H'0'                BLOCKS PER TRACK
+TABDEV   DC    X'30002001',H'2'    2 BLOCKS FOR 2311
+         DC    X'30C02008',H'4'    4 BLOCKS FOR 2314
+         DC    X'30502009',H'7'    7 BLOCKS FOR 3330
+         DC    X'3050200D',H'7'    7 BLOCKS FOR 3330-11
+         DC    X'FFFFFFFF',H'0'    FREE
+         DC    X'FFFFFFFF',H'0'    FREE
+         DC    X'FFFFFFFF',H'0'    FREE
+         DC    X'FFFFFFFF',H'0'    FREE
+         DC    X'FFFFFFFF',H'0'    FREE
+         DC    X'FFFFFFFF',H'0'    FREE
+NETAD    EQU   10                  NUMBER OF TABLE ELEMENT
+         TITLE 'I/0 AREA DCB RIGAM'
+         ISEQ  73,80
+BLOCK    DS    CL1693                   I/O AREA FOR DISK
+DISKDCB  DCB   BLKSIZE=1693,                                           X
+               BUFNO=1,                                                X
+               DDNAME=IAMRIGAM,                                        X
+               DSORG=DA,                                               X
+               EODAD=EOF,                                              X
+               MACRF=(E),                                              X
+               RECFM=F,                                                X
+               SYNAD=ERR
+EOF      WTO   'RIGAM DISK EOF'
+         ABEND 111,DUMP
+ERR      WTO   'RIGAM DISK ERR'
+         ABEND 222,DUMP
+         ISEQ
+         TITLE 'TEST INDICATOR FOR ERROR RETURN ROUTINE...TESTIND'
+         ISEQ  73,80
+TESTIND  STM   2,9,TIRGSAV      STORE THE REGISTERS.
+         NI    CGHALL1+2,X'8F'  INSERTED BY C.G.HALL - PLEASE NOTE THAT
+         NI    CGHALL2+2,X'8F'     THESE ARE NOT IN GREENVILLE VERSION.
+CGHALL1  CLC   INDICTOR,=H'1'      IS INDICATOR O.K?
+         BE    TESTRTN             YES,RETURN TO USER CALL
+CGHALL2  L     3,UERLIST           GET POINTER TO USER ERROR LIST.
+         L     5,4(13)  LOAD ADDRESS OF 'DYNAMO' SAVE AREA.
+         ST    3,12(5)  ALTER STORED VALUE OF REGISTER 14.
+TESTRTN  LM    2,9,TIRGSAV         RESTORE THE REGISTERS.
+         BR    4                   RETURN TO MAINLINE.
+TIRGSAV  DS    8F        REGISTER SAVE AREA.
+         LTORG
+         END

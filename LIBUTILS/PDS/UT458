@@ -1,0 +1,609 @@
+UT458    CSECT
+         SPACE 3
+***********************************************************************
+*                                                                     *
+*        PROGRAM ID. :             UT458                              *
+*                                                                     *
+*        ALIAS :                   ALLDTE                             *
+*                                                                     *
+*        DATE WRITTEN :            NOVEMBER 1973                      *
+*                                                                     *
+*        LOCATION :                EUROPEAN COMPUTER CENTER           *
+*                                                                     *
+*        AUTHOR :                  J.NOLS                             *
+*                                                                     *
+***********************************************************************
+         SPACE 3
+***********************************************************************
+*                                                                     *
+*                                                                     *
+*                                                                     *
+*              UNIVERSAL DATE ROUTINE                                 *
+*             ========================                                *
+*                                                                     *
+*                  SUPPLIES IPL DATE IN ANY FORMAT .                  *
+*                  VALIDATES A GIVEN DATE IN ANY                      *
+*                  FORMAT . CONVERTS A GIVEN DATE                     *
+*                  TO OTHER FORMATS .                                 *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+***********************************************************************
+*                                                                     *
+* ******************************************************************* *
+* * THIS PROGRAM IS VALID ONLY FOR A DATE IN THE TWENTIETH CENTURY  * *
+* ******************************************************************* *
+*                                                                     *
+***********************************************************************
+         SPACE 3
+ALLDTE   EQU   *                   ENTRY POINT FOR
+         ENTRY ALLDTE                   ALIAS NAME
+         EJECT
+***********************************************************************
+*        REGISTERS EQUATES AND USAGE                                  *
+***********************************************************************
+         SPACE 3
+R0       EQU   0  SVC CUMMUNICATIONS AND WORK REGISTER
+R1       EQU   1  SVC CUMMUNICATIONS AND WORK REGISTER
+R2       EQU   2  BASE REGISTER FOR DUMMY SECTION NAMED DATE
+R3       EQU   3  RETURN ADDRESS
+R4       EQU   4  = YEAR / YY ( 19YY )
+R5       EQU   5  = DAY NUMBER OF YEAR / DDD
+R6       EQU   6  WORK REGISTER
+R7       EQU   7  WORK REGISTER
+R8       EQU   8  ADDRESS TABLE3 IF NORMAL YEAR , TABLE4 IF LEAP YEAR
+R9       EQU   9  ADDRESS TABLE5 IF NORMAL YEAR , TABLE6 IF LEAP YEAR
+R10      EQU   10 WORK REGISTER
+R11      EQU   11 WORK REGISTER
+R12      EQU   12 WORK REGISTER
+R13      EQU   13 SAVE AREA POINTER / BASE REGISTER
+R14      EQU   14 BALR RETURN ADDRESS
+R15      EQU   15 BALR ROUTINE ADDRESS
+         EJECT
+***********************************************************************
+*        HOUSEKEEPING                                                 *
+***********************************************************************
+         SPACE 3
+         PGMIN EQUATES=NO,USING=(R13)   ESTABLISH ADDRESSABILITY
+         SPACE 3
+***********************************************************************
+*        TEST IF CALLING BY COBOL OR RPG                              *
+***********************************************************************
+         SPACE 3
+         USING DATE,R2             USING REG2 FOR DSECT DATE
+         SPACE 1
+SWITCH1  NOP   COBOL               IF COBOL BYPASS RPG LOAD ROUTINE
+         CNOP  0,4
+         B     LOADR2              BRANCH AROUND VCON
+         WXTRN OPCOD               EXTERNAL REFERENCE
+OPER     DC    A(OPCOD)            RPG PARAMETERS ADDRESS
+LOADR2   L     R2,OPER             RPG PARAMETERS ADDRESS INTO REG2
+SWITCH2  NOP   BEGPROC             BYPASS RPG TEST AFTER FIRST TIME
+         CLC   41(2,R2),=C'RP'     EQ IS CALL BY RPG
+         MVI   SWITCH2+1,X'F0'     SET ON BYPASS SWITCH
+         BE    BEGPROC             BRANCH IF RPG - BYPASS COBOL LOAD
+         MVI   SWITCH1+1,X'F0'     SET ON COBOL LOAD SWITCH
+COBOL    L     R2,0(R1)            COBOL PARAMETERS ADDRESS INTO REG2
+         EJECT
+***********************************************************************
+*        REQUEST IPL DATE AND TIME ,AND TEST OPERATION CODE           *
+***********************************************************************
+         SPACE 1
+BEGPROC  EQU   *
+         TIME  ,                   REQUEST DATE AND TIME
+         STM   R0,R1,DATIME        STORE PACKED TIME AND DATE
+         UNPK  HHMMSS(7),DATIME(4) UNPACK TIME
+         MVI   RTCODE,C'2'         MOVE 2 TO RETURN CODE = INVALID DATE
+         XC    BINARY(6),BINARY    RESET
+         SR    R4,R4               RESET
+         SR    R5,R5               RESET
+         MVI   WORKAREA,X'F0'           MOVE X'F0' TO FIRST BYTE WA
+         MVC   WORKAREA+1(11),WORKAREA  MOVE X'F0' TO OTHER BYTES WA
+         SPACE 1
+TESTLANG EQU   *                   TEST LANGUAGE
+         LH    R6,ENGLISH          LOAD ENGLISH DISPL. INTO REG6
+         CLC   REPORT(6),=C'FRENCH' TEST IF FRENCH LANGUAGE
+         BNE   T1L                 NO - BRANCH TO T1L
+         LH    R6,FRENCH           YES- LOAD FRENCH DISPL. INTO REG6
+         B     OK                  BRANCH TO OK
+T1L      CLC   REPORT(7),=C'FLEMISH' TEST IF FLEMISH LANGUAGE
+         BNE   T2L                 NO - BRANCH TO T2L
+         LH    R6,FLEMISH          YES- LOAD FLEMISH DISPL. INTO REG6
+         B     OK                  BRANCH TO OK
+T2L      CLC   REPORT(6),=C'GERMAN' TEST IF GERMAN LANGUAGE
+         BNE   OK                  NO - BRANCH TO OK
+         LH    R6,GERMAN           YES- LOAD GERMAN DISPL. INTO REG6
+OK       STH   R6,LANGUAGE         STORE LANGUAGE
+         MVI   WEEK00,OFF          SET OFF WEEK 00 SWITCH
+         CLC   HHMMSS,=C'WEEK00'   TEST FOR WEEK 00 REQUEST
+         BNE   *+8                 NO - SKIP NEXT INSTRUCTION
+         MVI   WEEK00,ON           SET ON  WEEK 00 SWITCH
+         SPACE 1
+         CLI   OPCODE,C'0'      ****
+         BE    OPCODE0             *
+         CLI   OPCODE,C'1'         *
+         BE    OPCODE1             *
+         CLI   OPCODE,C'2'         ************************************
+         BE    OPCODE2             * TESTS IF OPERATION CODE IS EQUAL *
+         CLI   OPCODE,C'3'         * A CHARACTER IN THE RANGE 0 - 6 , *
+         BE    OPCODE3             * AND BRANCH TO DIFFERENT ROUTINE  *
+         CLI   OPCODE,C'4'         * FOLLOWING THIS CODE .            *
+         BE    OPCODE4             ************************************
+         CLI   OPCODE,C'5'         *
+         BE    OPCODE5             *
+         CLI   OPCODE,C'6'         *
+         BE    OPCODE6          ****
+         SPACE 1
+         MVI   RTCODE,C'1'         INVALID OPERATION CODE
+         B     ERROR               BRANCH TO ERROR
+         EJECT
+OPCODE6  EQU   *                   OPERATION CODE = 6
+         MVC   YY,DATE6            MOVE YEAR FROM DATE FORMAT 6 TO YY
+         MVC   DDD,DATE6+2         MOVE DAY-N-YEAR FROM D.FORM-6 TO DDD
+         LA    R3,TESTDDD          LOAD ADDRESS TESTDDD INTO REG3
+         B     TESTNUM             BRANCH TO TEST NUMERIC
+         SPACE 1
+OPCODE5  EQU   *                   OPERATION CODE = 5
+         MVC   YY,DATE5            MOVE YEAR FROM DATE FORMAT 5 TO YY
+         MVC   WW,DATE5+2          MOVE WEEK FROM DATE FORMAT 5 TO WW
+         MVC   D,DATE5+4           MOVE DAY-NBER FROM DATE F.5 TO DN
+         LA    R3,TESTWEEK         LOAD ADDRESS TESTWEEK INTO REG3
+         B     TESTNUM             BRANCH TO TEST NUMERIC
+         SPACE 1
+OPCODE4  EQU   *                   OPERATION CODE = 4
+         MVC   YY,DATE4+3          MOVE YEAR FROM DATE FORMAT 4 TO YY
+         MVC   WW,DATE4+1          MOVE WEEK FROM DATE FORMAT 4 TO WW
+         MVC   D,DATE4             MOVE DAY-N-WEEK FROM D.FORM-4 TO D
+         LA    R3,TESTWEEK         LOAD ADDRESS TESTWEEK INTO REG3
+         B     TESTNUM             BRANCH TO TEST NUMERIC
+         SPACE 1
+OPCODE3  EQU   *                   OPERATION CODE = 3
+         MVC   YY,DATE3            MOVE YEAR FROM DATE FORMAT 3 TO YY
+         MVC   DD,DATE3+4          MOVE DAY FROM DATE FORMAT 3 TO DD
+         MVC   MM,DATE3+2          MOVE MONTH FROM DATE FORMAT 3 TO MM
+         LA    R3,TESTMTH          LOAD ADDRESS TESTMTH INTO REG3
+         B     TESTNUM             BRANCH TO TEST NUMERIC
+         SPACE 1
+OPCODE2  EQU   *                   OPERATION CODE = 2
+         MVC   YY,DATE2+4          MOVE YEAR FROM DATE FORMAT 2 TO YY
+         MVC   DD,DATE2            MOVE DAY FROM DATE FORMAT 2 TO DD
+         MVC   MM,DATE2+2          MOVE MONTH FROM DATE FORMAT 2 TO MM
+         LA    R3,TESTMTH          LOAD ADDRESS TESTMTH INTO REG3
+         B     TESTNUM             BRANCH TO TEST NUMERIC
+         SPACE 1
+OPCODE1  EQU   *                   OPERATION CODE = 1
+         MVC   YY,DATE1+4          MOVE YEAR FROM DATE FORMAT 1 TO YY
+         MVC   DD,DATE1+2          MOVE DAY FROM DATE FORMAT 1 TO DD
+         MVC   MM,DATE1            MOVE MONTH FROM DATE FORMAT 1 TO MM
+         LA    R3,TESTMTH          LOAD ADDRESS TESTMTH INTO REG3
+         B     TESTNUM             BRANCH TO TEST NUMERIC
+         SPACE 1
+OPCODE0  EQU   *                   OPERATION CODE = 0
+         UNPK  DATE6,DATIME+5(3)   UNPACK IPL DATE
+         OI    DATE6+4,SIGN        FORCE SIGN TO 'F'
+         MVC   YY,DATE6            MOVE YEAR FROM DATE FORMAT 6 TO YY
+         MVC   DDD,DATE6+2         MOVE DAY-N-YEAR FROM D.FORM-6 TO DDD
+         LA    R3,TESTDDD          LOAD ADDRESS TESTDDD INTO REG3
+         B     TESTNUM             BRANCH TO TEST NUMERIC
+         EJECT
+TESTNUM  EQU   *                   TEST NUMERIC
+         LA    R6,WORKAREA         LOAD ADDRESS WORKAREA INTO REG6
+         LA    R7,12               SET BCT COUNT TO TWELVE
+LOOP1    CLI   0(R6),C'0'          TEST IF BYTE IS LESS THAN ZERO
+         BL    ERROR               YES - BRANCH TO ERROR
+         CLI   0(R6),C'9'          TEST IF BYTE IS GREATER THAN NINE
+         BH    ERROR               YES - BRANCH TO ERROR
+         LA    R6,1(R6)            INCREMENT POINTER
+         BCT   R7,LOOP1            REPEAT PROCESS TWELVE TIMES
+         SPACE 1
+TESTYEAR EQU   *                   TEST YEAR
+         PACK  DECIMAL,YY          PACK YEAR
+         CVB   R6,DECIMAL          CONVERT BINARY YEAR INTO REG6
+         LR    R4,R6               STORE YEAR
+         SRDA  R6,32(0)
+         D     R6,FOUR             DIVIDE YEAR BY FOUR
+         LA    R8,TABLE3           LOAD ADDRESS TABLE3 INTO REG8
+         LA    R9,TABLE5           LOAD ADDRESS TABLE5 INTO REG9
+         LTR   R6,R6               TEST IF REMAINDER IS ZERO
+         BNZ   NEXT0               BRANCH IF IS NOT ZERO
+         LA    R8,TABLE4           LOAD ADDRESS TABLE4 INTO REG8
+         LA    R9,TABLE6           LOAD ADDRESS TABLE6 INTO REG9
+NEXT0    BR    R3
+         SPACE 1
+TESTMTH  EQU   *                   TEST MONTH
+         PACK  DECIMAL,MM          PACK MONTH
+         CVB   R6,DECIMAL          CONVERT BINARY MONTH INTO REG6
+         STH   R6,BINMTH           STORE MONTH
+         CH    R6,ONE              TEST IF MONTH IS LESS THAN ONE
+         BL    ERROR               YES - BRANCH TO ERROR
+         CH    R6,TWELVE           TEST IF MONTH IS GREATER THAN TWELVE
+         BH    ERROR               YES - BRANCH TO ERROR
+         AR    R6,R6               REG6 = MONTH X 2
+         AR    R6,R9               ADD ADDRESS TABLE5 OR 6 TO REG6
+         SPACE 1
+TESTDAY  EQU   *                   TEST DAY
+         PACK  DECIMAL,DD          PACK DAY
+         CVB   R7,DECIMAL          CONVERT BINARY DAY INTO REG7
+         CH    R7,ONE              TEST IF DAY IS LESS THAN ONE
+         BL    ERROR               YES - BRANCH TO ERROR
+         CH    R7,0(0,R6)          TEST IF DAY IS GREATER THAN DAYMXMTH
+         BH    ERROR               YES - BRANCH TO ERROR
+         LH    R6,BINMTH           LOAD MONTH INTO REG6
+         SH    R6,ONE              R6 = MONTH - 1
+         BZ    NEXT1               BRANCH TO NEXT1 IF RESULT IS ZERO
+         AR    R6,R6               R6 = MONTH-1 X 2
+         AR    R6,R8               ADD ADDRESS TABLE3 OR 4 TO REG6
+         AH    R7,0(0,R6)          R7 = DAY-NUMBER-YEAR DDD
+NEXT1    STH   R7,BINDDD           STORE DDD
+         B     COMMON              BRANCH TO PROCESS COMMON
+         EJECT
+TESTWEEK EQU   *                   TEST WEEK
+         PACK  DECIMAL,WW          PACK WEEK
+         CVB   R7,DECIMAL          CONVERT BINARY WEEK INTO REG7
+         CH    R7,ZERO             TEST IF WEEK IS LESS THAN ZERO
+         BL    ERROR               YES - BRANCH TO ERROR
+         CH    R7,=H'53'           TEST IF WEEK IS GREATER THAN 53
+         BH    ERROR               YES - BRANCH TO ERROR
+         SPACE 1
+TESTD    EQU   *                   TEST DAY-NUMBER-WEEK
+         PACK  DECIMAL,D           PACK D
+         CVB   R6,DECIMAL          CONVERT BINARY D INTO REG6
+         STH   R6,BIND             STORE D
+         CH    R6,ZERO             TEST IF D IS LESS THAN ZERO
+         BL    ERROR               YES - BRANCH TO ERROR
+         CH    R6,SIX              TEST IF D IS GREATER THAN SIX
+         BH    ERROR               YES - BRANCH TO ERROR
+         SPACE 1
+CONVDWW  EQU   *                   CONVERT D AND WW TO DDD
+         SH    R7,ONE              SUBTRACT ONE TO WEEK
+         MH    R7,SEVEN            MULTIPLY WEEK-1 BY SEVEN
+         AR    R7,R6               ADD D TO WEEK-1X7
+         AH    R7,ONE              ADD ONE TO WEEK-1X7
+         LH    R10,ONE             LOAD ONE INTO REG10
+         LH    R12,ONE             LOAD ONE INTO REG12
+         CLI   WEEK00,ON           TEST IF WEEK 00 SWITCH IS ON
+         BNE   *+8                 NO - SKIP NEXT INSTRUCTION
+         MVI   SWITCH3+1,X'00'
+         BAL   R3,SEACHDN          PERFORM RESEARCH DAYN-WW FOR 1.1.YY
+         SR    R7,R10              SUB DAY-N-WEEK OF 1.1.YY TO WEEK
+         LR    R6,R7               LOAD REG7 INTO REG6
+         B     STDDD               BRANCH TO SUB-TESTDDD
+         SPACE 1
+TESTDDD  EQU   *                   TEST DAY NUMBER YEAR
+         PACK  DECIMAL,DDD         PACK DDD
+         CVB   R6,DECIMAL          CONVERT BINARY DDD INTO REG6
+STDDD    STH   R6,BINDDD           STORE DDD
+         CH    R6,ONE              TEST IF DDD IS LESS THAN ONE
+         BL    ERROR               YES - BRANCH TO ERROR
+         CH    R6,24(0,R8)         TEST IF DDD IS GREATER THAN DAYMAXYR
+         BH    ERROR               YES - BRANCH TO ERROR
+         EJECT
+COMMON   EQU   *                   PROCESS COMMON
+         MVI   RTCODE,C'0'         MOVE '0' TO RETURN CODE = SUCCESSFUL
+         MVI   REPORT,BLANK        * RESET
+         MVC   REPORT+1(8),REPORT  *    REPORT DATE FORMAT
+         LH    R5,BINDDD           STORE DDD
+         CVD   R5,DECIMAL               CONVERT DDD TO PACKED
+         UNPK  DATE6+2(3),DECIMAL+6(2)  UNPACK DDD INTO DATE FORMAT 6
+         MVC   DATE6(2),YY              MOVE YEAR TO DATE FORMAT 6
+         OI    DATE6+4,SIGN        FORCE SIGN TO 'F'
+         MVC   DATE1+4(2),DATE6    MOVE YEAR TO DATE FORMAT 1 (MMDDYY)
+         MVC   DATE2+4(2),DATE6    MOVE YEAR TO DATE FORMAT 2 (DDMMYY)
+         MVC   DATE3(2),DATE6      MOVE YEAR TO DATE FORMAT 3 (YYMMDD)
+         MVC   DATE4+3(2),DATE6    MOVE YEAR TO DATE FORMAT 4 (DWWYY)
+         MVC   DATE5(2),DATE6      MOVE YEAR TO DATE FORMAT 5 (YYWWD)
+         MVC   REPORT+7(2),DATE6   MOVE YEAR TO REPORT FORM.(DD MMM YY)
+         LR    R6,R8               LOAD ADDRESS REG8 INTO REG6
+         LA    R7,TABLE1           LOAD ADDRESS TABLE1 INTO REG7
+LOOP2    CH    R5,2(0,R6)          TEST IF DDD IS GREATER THAN A(R6+2)
+         BNH   NEXT3               NO - BRANCH TO NEXT3
+         LA    R7,9(0,R7)          LOAD ADDRESS REG7 + 9 INTO REG7
+         LA    R6,2(0,R6)          LOAD ADDRESS REG6 + 2 INTO REG6
+         B     LOOP2               BRANCH TO LOOP2
+NEXT3    AH    R7,LANGUAGE         ADD LANGUAGE DISPLACEMENT INTO REG7
+         MVC   LASTMTH(27),0(R7)   MOVE TO LASTMTH/THISMTH/NEXTMTH
+         MVC   REPORT+3(3),9(R7)   MOVE MMM TO REPORT (DD MMM YY)
+         LR    R7,R5               LOAD REG5 INTO REG7
+         SH    R7,0(0,R6)          SUBTRACT ( CALC. DAY )
+         LR    R10,R7              LOAD DAY INTO REG10
+         CVD   R7,DECIMAL          CONVERT DAY TO PACKED
+         UNPK  DECIMAL(3),DECIMAL+6(2)  UNPACK DAY
+         OI    DECIMAL+2,SIGN      FORCE SIGN TO 'F'
+         MVC   DATE1+2(2),DECIMAL+1 MOVE DAY TO DATE FORMAT 1 (MMDDYY)
+         MVC   DATE2(2),DECIMAL+1   MOVE DAY TO DATE FORMAT 2 (DDMMYY)
+         MVC   DATE3+4(2),DECIMAL+1 MOVE DAY TO DATE FORMAT 3 (YYMMDD)
+         MVC   REPORT(2),DECIMAL+1  MOVE DAY TO REPORT FORM.(DD MMM YY)
+         CLI   REPORT,C'0'         TEST IF FIRST DIGIT OF REPORT IS '0'
+         BNE   NEXT4               NO  - BRANCH TO NEXT4
+         MVI   REPORT,C' '         YES - MOVE BLANK
+NEXT4    SR    R6,R8
+         SRA   R6,1(0)
+         AH    R6,ONE
+         LR    R12,R6              LOAD MONTH INTO REG12
+         CVD   R6,DECIMAL               CONVERT MONTH TO PACKED
+         UNPK  DECIMAL(3),DECIMAL+6(2)  UNPACK MONTH
+         OI    DECIMAL+2,SIGN      FORCE SIGN TO 'F'
+         MVC   DATE1(2),DECIMAL+1   MOVE MONTH TO DATE FORMAT 1 (MMDDYY
+         MVC   DATE2+2(2),DECIMAL+1 MOVE MONTH TO DATE FORMAT 2 (DDMMYY
+         MVC   DATE3+2(2),DECIMAL+1 MOVE MONTH TO DATE FORMAT 3 (YYMMDD
+         LA    R3,STD              LOAD ADDRESS STD INTO REG3
+         EJECT
+SEACHDN  EQU   *                   RESEARCH DAY NUMBER OF WEEK
+         LR    R11,R4              LOAD YEAR INTO REG11
+         CH    R12,=H'3'           TEST IF MONTH IS JAN OR FEB
+         BNL   DONTADJ             NO - BRANCH TO DONTADJ
+         BCTR  R11,R0              SUBTRACT 1 TO YEAR
+DONTADJ  BCTR  R12,R0              SUBTRACT 1 TO MONTH
+         LA    R6,SHIFACT(R12)     LOAD ADDRESS SHIFACT INTO REG6
+         IC    R12,0(0,R6)         GET SHIFT FACTOR THIS MONTH
+         AR    R12,R10             ADD DAY TO SHIFT FACTOR
+         LA    R10,3
+         NR    R10,R11             R10= NO. OF YEARS SINCE LAST LEAP YR
+         AR    R12,R10             ADD YEARS TO SHIFT FACTOR
+         SRL   R11,2               R11= NO. OF LEAP YR SOFAR IN CENTURY
+         LA    R11,3(0,R11)        ADD NO. CENTURIES MODULUS FOUR
+         MH    R11,=H'5'           EACH FACTOR INR11 CAUSE SHIFT 5 DAYS
+         AR    R11,R12             R11 = TOTAL SHIFT FACTOR + DAY
+         SR    R10,R10
+         D     R10,=F'7'           REMAINDER IS DAY-NUMBER
+SWITCH3  BCR   15,R3               BRANCH IF NOT 1.1.YY
+         MVI   SWITCH3+1,X'F3'
+         C     R10,FOUR
+         BNL   SUBSEVEN
+         BR    R3
+SUBSEVEN SH    R10,SEVEN
+         BR    R3
+STD      STC   R10,D               STORE DAY-NUMBER INTO D
+         STH   R10,BIND            STORE D
+         OI    D,SIGN              FORCE SIGN TO 'F'
+         MVC   DATE5+4(1),D        MOVE D TO DATE FORMAT 5 (YYWWD)
+         MVC   DATE4(1),D          MOVE D TO DATE FORMAT 4 (DWWYY)
+         MH    R10,=H'9'           MULTIPLY DAY-NUMBER BY NINE
+         LA    R10,TABLE2(R10)
+         AH    R10,LANGUAGE        ADD LANGUAGE DISPLACEMENT INTO REG10
+         MVC   DAYNAME,0(R10)      MOVE
+         SPACE 3
+SEARCHWW EQU   *                   RESEARCH WEEK
+         LR    R7,R5               LOAD DDD INTO REG7
+         SH    R7,ONE              SUBTRACT ONE TO DDD
+         LH    R10,ONE             LOAD ONE TO REG10
+         LH    R12,ONE             LOAD ONE TO REG12
+         CLI   WEEK00,ON           TEST IF WEEK 00 SWITCH IS ON
+         BNE   *+8                 NO - SKIP NEXT INSTRUCTION
+         MVI   SWITCH3+1,X'00'
+         BAL   R3,SEACHDN          PERFORM RESEARCH DAYN-WW FOR 1.1.YY
+         CH    R7,TWO              TEST IF DDD-1 IS GREATER THAN TWO
+         BH    GWEEK               YES - BRANCH TO GWEEK
+         LTR   R10,R10             TEST IF NEGATIVE
+         BNM   GWEEK               NO  - BRANCH TO GWEEK
+         XR    R7,R7               YES - CLEAR
+         B     NONEG
+GWEEK    AR    R7,R10              ADD DAY-N-WEEK OF 1.1.YY TO DDD-1
+         SR    R6,R6
+         D     R6,=F'7'            DIVIDE BY SEVEN
+         AH    R7,ONE              ADD ONE TO REG7 ( WEEK )
+NONEG    CVD   R7,DECIMAL          CONVERT WEEK TO PACKED
+         UNPK  DECIMAL(3),DECIMAL+6(2)  UNPACK WEEK
+         OI    DECIMAL+2,SIGN      FORCE SIGN TO 'F'
+         MVC   DATE4+1(2),DECIMAL+1 MOVE WEEK TO DATE FORMAT 4 (DWWYY )
+         MVC   DATE5+2(2),DECIMAL+1 MOVE WEEK TO DATE FORMAT 5 (YYWWD )
+         B     END                 BRANCH TO END
+         EJECT
+ERROR    EQU   *                   ERROR
+         MVI   DATE+1,BLANK        * RESET
+         MVC   DATE+2(83),DATE+1   *    INPUT/OUTPUT PARAMETERS
+         SPACE 1
+END      PGMOUT ,                  RETURN TO THE CALLER
+         EJECT
+***********************************************************************
+*        TABLE OF MONTHS ( ENGLISH )                                  *
+***********************************************************************
+         SPACE 1
+TABLE1   DC    CL9'DECEMBER'
+         DC    CL9'JANUARY'
+         DC    CL9'FEBRUARY'
+         DC    CL9'MARCH'
+         DC    CL9'APRIL'
+         DC    CL9'MAY'
+         DC    CL9'JUNE'
+         DC    CL9'JULY'
+         DC    CL9'AUGUST'
+         DC    CL9'SEPTEMBER'
+         DC    CL9'OCTOBER'
+         DC    CL9'NOVEMBER'
+         DC    CL9'DECEMBER'
+         DC    CL9'JANUARY'
+         SPACE 1
+***********************************************************************
+*        TABLE OF DAYS OF THE WEEK ( ENGLISH )                        *
+***********************************************************************
+         SPACE 1
+TABLE2   DC    CL9'SUNDAY'
+         DC    CL9'MONDAY'
+         DC    CL9'TUESDAY'
+         DC    CL9'WEDNESDAY'
+         DC    CL9'THURSDAY'
+         DC    CL9'FRIDAY'
+         DC    CL9'SATURDAY'
+         EJECT
+***********************************************************************
+*        TABLE OF MONTHS ( FRENCH )                                   *
+***********************************************************************
+         SPACE 1
+         DC    CL9'DECEMBRE'
+         DC    CL9'JANVIER'
+         DC    CL9'FEVRIER'
+         DC    CL9'MARS'
+         DC    CL9'AVRIL'
+         DC    CL9'MAI'
+         DC    CL9'JUIN'
+         DC    CL9'JUILLET'
+         DC    CL9'AOUT'
+         DC    CL9'SEPTEMBRE'
+         DC    CL9'OCTOBRE'
+         DC    CL9'NOVEMBRE'
+         DC    CL9'DECEMBRE'
+         DC    CL9'JANVIER'
+***********************************************************************
+*        TABLE OF DAYS OF THE WEEK ( FRENCH )                         *
+***********************************************************************
+         SPACE 1
+         DC    CL9'DIMANCHE'
+         DC    CL9'LUNDI'
+         DC    CL9'MARDI'
+         DC    CL9'MERCREDI'
+         DC    CL9'JEUDI'
+         DC    CL9'VENDREDI'
+         DC    CL9'SAMEDI'
+         EJECT
+***********************************************************************
+*        TABLE OF MONTHS ( FLEMISH )                                  *
+***********************************************************************
+         SPACE 1
+         DC    CL9'DECEMBER'
+         DC    CL9'JANUARI'
+         DC    CL9'FEBRUARI'
+         DC    CL9'MAART'
+         DC    CL9'APRIL'
+         DC    CL9'MEI'
+         DC    CL9'JUNI'
+         DC    CL9'JULI'
+         DC    CL9'AUGUSTUS'
+         DC    CL9'SEPTEMBER'
+         DC    CL9'OCTOBER'
+         DC    CL9'NOVEMBER'
+         DC    CL9'DECEMBER'
+         DC    CL9'JANUARI'
+***********************************************************************
+*        TABLE OF DAYS OF THE WEEK ( FLEMISH )                        *
+***********************************************************************
+         SPACE 1
+         DC    CL9'ZONDAG'
+         DC    CL9'MAANDAG'
+         DC    CL9'DINSDAG'
+         DC    CL9'WOENSDAG'
+         DC    CL9'DONDERDAG'
+         DC    CL9'VRIJDAG'
+         DC    CL9'ZATERDAG'
+         EJECT
+***********************************************************************
+*        TABLE OF MONTHS ( GERMAN )                                   *
+***********************************************************************
+         SPACE 1
+         DC    CL9'DEZEMBER'
+         DC    CL9'JANUAR'
+         DC    CL9'FEBRUAR'
+         DC    CL9'MARZ'
+         DC    CL9'APRIL'
+         DC    CL9'MAI'
+         DC    CL9'JUNI'
+         DC    CL9'JULI'
+         DC    CL9'AUGUST'
+         DC    CL9'SEPTEMBER'
+         DC    CL9'OCTOBER'
+         DC    CL9'NOVEMBER'
+         DC    CL9'DEZEMBER'
+         DC    CL9'JANUAR'
+***********************************************************************
+*        TABLE OF DAYS OF THE WEEK ( GERMAN )                         *
+***********************************************************************
+         SPACE 1
+         DC    CL9'SONNTAG'
+         DC    CL9'MONTAG'
+         DC    CL9'DIENSTAG'
+         DC    CL9'MITTWOCH'
+         DC    CL9'DONNERSTG'
+         DC    CL9'FREITAG'
+         DC    CL9'SAMSTAG'
+         EJECT
+***********************************************************************
+*        TABLE FOR DETERMINING THE MONTH OF THE YEAR - NORMAL YEARS   *
+***********************************************************************
+         SPACE 1
+TABLE3   DC    H'0,31,59,90,120,151,181,212,243,273,304,334,365'
+         SPACE 1
+***********************************************************************
+*        TABLE FOR DETERMINING THE MONTH OF THE YEAR - LEAP YEARS     *
+***********************************************************************
+         SPACE 1
+TABLE4   DC    H'0,31,60,91,121,152,182,213,244,274,305,335,366'
+         SPACE 1
+***********************************************************************
+*        TABLE FOR NUMBER OF DAYS MAXIMUN PER MONTH - NORMAL YEARS    *
+***********************************************************************
+         SPACE 1
+TABLE5   DC    H'0,31,28,31,30,31,30,31,31,30,31,30,31'
+         SPACE 1
+***********************************************************************
+*        TABLE FOR NUMBER OF DAYS MAXIMUN PER MONTH - LEAP YEARS      *
+***********************************************************************
+         SPACE 1
+TABLE6   DC    H'0,31,29,31,30,31,30,31,31,30,31,30,31'
+         SPACE 1
+***********************************************************************
+*        DAY OF THE WEEK SHIFT FACTORS                                *
+***********************************************************************
+         SPACE 1
+SHIFACT  DC    HL1'0,3,2,5,0,3,5,1,4,6,2,4'
+         EJECT
+***********************************************************************
+*        WORKING AREAS , CONSTANTS AND EQUATES                        *
+***********************************************************************
+         SPACE 3
+DECIMAL  DS    D                   WORK AREA FOR PACKED OPERATIONS
+DATIME   DS    2F                  1 FW = IPL TIME / 2ND FW = IPL DATE
+WORKAREA DS    0CL12               YYDDMMDDDWWD
+YY       DS    CL2                 YEAR
+DD       DS    CL2                 DAY
+MM       DS    CL2                 MONTH
+DDD      DS    CL3                 DAY-NUMBER-YEAR
+WW       DS    CL2                 WEEK
+D        DS    CL1                 DAY-NUMBER-WEEK
+BINARY   DS    0H
+BINMTH   DS    H
+BINDDD   DS    H
+BIND     DS    H
+LANGUAGE DS    H                   DISPLACEMENT FOR LANGUAGE
+WEEK00   DC    X'00'               WEEK 00 SWITCH
+         SPACE 1
+ENGLISH  DC    H'0'                DISPLACEMENT FOR ENGLISH LANGUAGE
+FRENCH   DC    H'189'              DISPLACEMENT FOR FRENCH LANGUAGE
+FLEMISH  DC    H'378'              DISPLACEMENT FOR FLEMISH LANGUAGE
+GERMAN   DC    H'567'              DISPLACEMENT FOR GERMAN LANGUAGE
+ZERO     DC    H'0'
+ONE      DC    H'1'
+TWO      DC    H'2'
+FOUR     DC    F'4'
+SIX      DC    H'6'
+SEVEN    DC    H'7'
+TWELVE   DC    H'12'
+         SPACE 1
+SIGN     EQU   X'F0'
+BLANK    EQU   X'40'
+ON       EQU   X'FF'
+OFF      EQU   X'00'
+         SPACE 3
+         LTORG *                   LITERAL POOL
+         EJECT
+***********************************************************************
+*        DEFINITIONS INPUT / OUTPUT PARAMETERS                        *
+***********************************************************************
+         SPACE 3
+DATE     DSECT
+OPCODE   DS    CL1                 OPERATION CODE
+DATE1    DS    CL6                 MMDDYY - MONTH/DAY/YEAR
+DATE2    DS    CL6                 DDMMYY - DAY/MONTH/YEAR
+DATE3    DS    CL6                 YYMMDD - YEAR/MONTH/DAY
+DATE4    DS    CL5                 DWWYY  - DAY-NUMBER-WEEK/WEEK/YEAR
+DATE5    DS    CL5                 YYWWD  - YEAR/WEEK/DAY-NUMBER-WEEK
+DATE6    DS    CL5                 YYDDD  - YEAR/DAY-NUMBER-YEAR
+REPORT   DS    CL9                 DD MMM YY
+LASTMTH  DS    CL9                 LAST MONTH
+THISMTH  DS    CL9                 THIS MONTH
+NEXTMTH  DS    CL9                 NEXT MONTH
+DAYNAME  DS    CL9                 DAY NAME
+HHMMSS   DS    CL6                 HHMMSS - HOUR/MINUTE/SECONDE
+RTCODE   DS    CL1                 RETURN CODE
+         END

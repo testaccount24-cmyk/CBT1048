@@ -1,0 +1,544 @@
+         TITLE 'PARROTD - INTERNAL SORT PROCESSING'                     D 000100
+         MACRO                                                          D 000200
+         $CB   &PRINT=OFF          MACRO TO GENERATE DSECTS             D 000300
+         PUSH  PRINT               PRESERVE PRINT OPTIONS               D 000400
+         PRINT &PRINT              SET PRINT OPTIONS FOR DSECTS         D 000500
+               EJECT                                                    D 000600
+         CBPREFIX ,                CONTROL BLOCK PREFIX                 D 000700
+               EJECT                                                    D 000800
+         CCB   ,                   CENTRAL CONTROL BLOCK                D 000900
+               EJECT                                                    D 001000
+         DCBD  DSORG=PS            DCB                                  D 001100
+               EJECT                                                    D 001200
+         EQUATES ,                 GENERATE STANDARD EQUATES            D 001300
+               EJECT                                                    D 001400
+         FDB   ,                   FIELD DESCRIPTOR BLOCK               D 001500
+               EJECT                                                    D 001600
+         KBD   ,                   KEY BREAK DESCRIPTOR                 D 001700
+               EJECT                                                    D 001800
+         LIB   ,                   LABEL IDENTIFICATION BLOCK           D 001900
+               EJECT                                                    D 002000
+         PARROTT ,                 TRANSLATE TABLES ETC                 D 002100
+               EJECT                                                    D 002200
+         RST   ,                   RECORD SELECTION TEST DEF'N          D 002300
+               EJECT                                                    D 002400
+         SCE   ,                   SELECTION CRITERION ELEMENT          D 002500
+         POP   PRINT               RESTORE ORIGINAL PRINT OPTIONS       D 002600
+         MEND                                                           D 002700
+         SPACE 4                                                        D 002800
+PARROTD  CSECT                                                          D 002900
+         $CB   ,                   GENERATE DSECTS AND EQUATES          D 003000
+         EJECT                                                          D 003100
+     SCSECT D                                                           D 003200
+         USING PARROTD,R12         ESTABLISH PARROTD ADDRESSABILITY     D 003300
+         USING CCBNTRY,R13         ESTABLISH CCB ADDRESSABILITY         D 003400
+         SPACE 1                                                        D 003500
+         ENTRY GETIREC             GET NEXT SELECTED SORTED INPUT REC   D 003600
+         ENTRY PARENDD             END IF CSECT                         D 003700
+         ENTRY RECSTRT             START OF RECORD STATEMENT ( SORT )   D 003800
+         ENTRY SORTSTRT            START OF SORT STATEMENT ( SORT )     D 003900
+         EJECT                                                          D 004000
+*********************************************************************** D 004100
+*        GET NEXT SELECTED SORTED INPUT RECORD ( FROM SYSUT1 )        * D 004200
+*********************************************************************** D 004300
+         SPACE 1                                                        D 004400
+*        THIS ROUTINE, WHICH IS INVOKED BY THE MAIN-LINE LOGIC, GETS    D 004500
+*         THE NEXT INPUT RECORD REQUIRED FOR PROCESSING.  THIS ROUTINE  D 004600
+*         ( OR ITS SUBORDINATES ) PERFORM ANY SPECIFIED RECORD          D 004700
+*         SELECTION, AND INVOKES THE INTERNAL SORT IF NECESSARY.        D 004800
+*        BY THUS MAKING RECORD SELECTION TOTALLY INDEPENDENT OF AND     D 004900
+*         PERIPHERAL TO ACTUAL MAIN-LINE PROCESSING, IT WILL BE AN      D 005000
+*         EASY TASK TO ADD SUPPORT FOR FILE ORGANISTAIONS OTHER THAN    D 005100
+*         SEQUENTIAL ( E.G. IMS ).                                      D 005200
+         SPACE 1                                                        D 005300
+*        THIS ROUTINE EMBODIES AN E35 SORT EXIT FOR THE OPTIONAL        D 005400
+*         INTERNAL SORT.  THE UNUSUAL REGISTER SAVE/RESTORE CONVENTIONS D 005500
+*         GIVE THE EXIT TOTAL PARROT ADDRESSABILITY, AND ALLOW THE EXIT D 005600
+*         TO USE ANY PARROT FACILITIES.  AT FIRST GLANCE, WE APPEAR TO  D 005700
+*         FLOW INTO THE BOTTOM OF THE EXIT AND COME OUT THE TOP ( WHICH D 005800
+*         IS A LITTLE UNUSUAL ), BUT THIS ALLOWS US TO FLOW OUT OF THE  D 005900
+*         EXIT INTO PARROT MAIN-LINE LOGIC, AND LATER TO RETURN TO THE  D 006000
+*         EXIT TO GET THE NEXT RECORD.                                  D 006100
+         SPACE 1                                                        D 006200
+*        UPON RETURN TO PARROT MAIN-LINE ( FROM ALL OF THE LOGIC PATHS  D 006300
+*         HEREIN ), THE COND CODE IS SET THUS :-                        D 006400
+*         BE  - RECORD RETRIEVED                                        D 006500
+*         BNE - END-OF-FILE REACHED                                     D 006600
+         EJECT                                                          D 006700
+*********************************************************************** D 006800
+*        GET NEXT SELECTED SORTED INPUT RECORD ( CONT'D )             * D 006900
+*********************************************************************** D 007000
+         SPACE 1                                                        D 007100
+GETIREC  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              D 007200
+         CBAL  R4,SETINDS          PERFORM INDICATOR PROCESSING         D 007300
+         BNE   GETIRECY            SIMULATE END-OF-FILE IF TERMINATION  D 007400
+         L     R2,$SORTREC         POINT AT RDW || RECORD AREA          D 007500
+         LH    R3,$RECLUT1         GET SYSUT1 RECORD LENGTH             D 007600
+         SR    R14,R14             ZEROISE 'FROM' ADDRESS               D 007700
+         SR    R15,R15             SET LENGTH AND PAD CHAR TO X'00'     D 007800
+         MVCL  R2,R14              SET RECORD AREA TO LOW VALUES        D 007900
+         L     R2,$SORTREC         RETRIEVE ADDRESS OF RDW || RECORD    D 008000
+         MVC   0(2,R2),$RECLUT1    REFRESH LENGTH IN RDW ( LEST FB REC) D 008100
+         TM    SORTSW,MSRTREQD     IS AN INTERNAL SORT REQUIRED         D 008200
+         BZ    GETIREC1            BR IF NO SORT TO READ AND SELECT     D 008300
+         NOP   GETIREC2            GO GET NEXT RECORD FROM SORT         D 008400
+         OI    *-3,X'F0'           SET ON THE PREVIOUS ONE-TIME SWITCH  D 008500
+         CBAL  R4,SORTINIT         PERFORM ANY NECESSARY INITIALISATION D 008600
+         STM   R4,R12,36(R13)      PRESERVE CRITICAL PARROT REGISTERS   D 008700
+         ST    R13,E15R13S1        PRESERVE CCB ADDRESS FOR E15 EXIT    D 008800
+         ST    R13,E35R13S1        PRESERVE CCB ADDRESS FOR E35 EXIT    D 008900
+         LA    R1,SORTPARM         ESTABLISH PARAMETER LINKAGE          D 009000
+         LINK  EP=SORT             INVOKE THE INTERNAL SORT             D 009100
+         LTR   R15,R15             TEST IF SORT SUCCESSFULL             D 009200
+         BZ    GETIRECY            BR IF YES TO INDICATE END-OF-FILE    D 009300
+         ABEND 16                  DUMP TO HIGHLIGHT ERROR IN SORT      D 009400
+         EJECT                                                          D 009500
+*********************************************************************** D 009600
+*        GET NEXT SELECTED SORTED INPUT RECORD ( CONT'D )             * D 009700
+*********************************************************************** D 009800
+         SPACE 1                                                        D 009900
+GETIREC2 LA    R15,DELETE          TELL THE SORT TO DELETE THE RECORD   D 010000
+SORTE35X MVC   12(64,R13),E35REGSV RESTORE PARROT'S REGISTERS           D 010100
+         STM   R4,R12,36(R13)      PRESERVE CRITICAL PARROT REGISTERS   D 010200
+         L     R13,E35R13S2        RETRIEVE ADDRESS OF SORT'S SAVE AREA D 010300
+         L     R14,12(R13)         RESTORE THE RETURN ADDRESS           D 010400
+         LM    R0,R12,20(R13)      RESTORE OTHER SORT REGISTERS         D 010500
+         BR    R14                 RETURN TO THE SORT                   D 010600
+         SPACE 1                                                        D 010700
+         USING SORTE35,R15         ESTABLISH TEMPORARY ADDRESSABILITY   D 010800
+SORTE35  STM   R14,R12,12(R13)     PRESERVE THE SORT'S REGISTERS        D 010900
+         ST    R13,E35R13S2        PRESERVE THE SORT'S SAVE AREA POINTR D 011000
+         L     R13,E35R13S1        RETUREVE ADDRESS OF PARROT'S SAVE AR D 011100
+         MVC   E35REGSV,12(R13)    SAVE REGS FOR RETURN FROM SORT       D 011200
+         LM    R4,R12,36(R13)      RESTORE CRITICAL PARROT REGISTERS    D 011300
+         DROP  R15                 DROP TEMPORARY ADDRESSBABILITY       D 011400
+         LA    R15,NORETURN        ASSUME END OF FILE AND SET NO RETURN D 011500
+         L     R2,0(R1)            GET ADDRESS OF RECORD FROM SORT      D 011600
+         LTRR  R2,R2               TEST FOR END OF FILE                 D 011700
+         BZ    SORTE35X            BR IF EOF TO TELL SORT TO GO AWAY    D 011800
+         CBAL  R4,SORTMREC         MOVE RECORD FROM SORT TO WORK AREA   D 011900
+         B     GETIRECX            GO INDICATE TO PARROT RECORD AVAILAB D 012000
+         SPACE 1                                                        D 012100
+GETIREC1 CBAL  R4,SELECTRC         GET NEXT ACCEPTABLE RECORD           D 012200
+         BL    GETIRECY            BR IF END OF FILE TO SET COND CODE   D 012300
+         B     GETIRECX            GO SET COND CODE TO SHOW RECORD FOUN D 012400
+         SPACE 1                                                        D 012500
+GETIRECY CLI   *,Y                 SET COND CODE TO SHOW END OF FILE    D 012600
+         B     *+8                 BYPASS RESTTING COND CODE            D 012700
+GETIRECX CLI   *,X                 SET COND CODE SHOWING RECORD FOUND   D 012800
+        SUBOUT RESTORE=R4          RESTOE AND RETURN                    D 012900
+         TITLE 'PARROTD - PERFORM INIDCATOR PROCESSING'                 D 013000
+*********************************************************************** D 013100
+*        PERFORM INDICATOR PROCESSING                                 * D 013200
+*********************************************************************** D 013300
+         SPACE 1                                                        D 013400
+*        UPON RETURN, THE COND CODE IS SET THUS :-                      D 013500
+*         BE  - CONTINUE PROCESSING                                     D 013600
+*         BNE - TERMINATE PROCESSING ( H0 ON )                          D 013700
+         SPACE 1                                                        D 013800
+SETINDS  SUBIN ,                   ENTER ROUTINE                        D 013900
+         XC    $INDS(7),$INDS      SET OFF INDICATORS 00 - 55           D 014000
+         TM    $HINDS,$HINDH0      IS HALT IND H0 ON                    D 014100
+         BO    SETINDY             GO FLAG FOR TERMINATION IF YES       D 014200
+         TM    $HINDS,$HINDH1+$HINDH2+$HINDH3 ANY OTHER HALT IND ON ?   D 014300
+         BZ    SETINDX             GO TO ROUTINE EXIT IF NOT            D 014400
+         L     R1,=V(MSG60)        GET ADDRESS OF BASIC MSG DESCRIPTOR  D 014500
+         L     R9,=V(MSG61)        GET ADDRESS OF NEW MSG DESCRIPTOR    D 014600
+         L     R9,0(R9)            STE MSG DESCRIPTOR IN REG 9          D 014700
+         ST    R9,0(R1)            REPLACE MSG60 DESCRIPTOR BY MSG61    D 014800
+         SR    R9,R9               ZEROISE WORK REGISTER                D 014900
+         IC    R9,$HINDS           RETRIEVE HALT INDICATORS             D 015000
+         SLL   R9,29               CLEAR OUT ALL BUT LAST 3 BITS        D 015100
+         SRL   R9,29               AND PUT THEM BACK WHENCE THEY CAME   D 015200
+         LA    R9,60(,R9)          ADD 60 TO CONVERT TO 61-63           D 015300
+         STH   R9,$ABNDCDE+2       PRESERVE ABEND CODE IN CCB           D 015400
+         CBAL  ,DUMP               TRIGGER A USER ABEND                 D 015500
+SETINDY  MVC   $COMPCDE,=X'0004'   SET PGM COMPLETION CODE TO '4'       D 015600
+         CLI   *,Y                 SET COND CODE TO SHOW TERMINATE      D 015700
+         B     *+8                 BYPASS RESETTING COND CODE           D 015800
+SETINDX  CLI   *,X                 SET COND CODE TO SHOW CONTINUE       D 015900
+        SUBOUT ,                   RETURN TO CALLER                     D 016000
+         TITLE 'PARROTD - E15 SORT EXIT'                                D 016100
+*********************************************************************** D 016200
+*        E15 SORT EXIT                                                * D 016300
+*********************************************************************** D 016400
+         SPACE 1                                                        D 016500
+*        THE PURPOSE OF THIS ROUTINE IS TO READ RECORDS FROM SYSUT1,    D 016600
+*         DETERMINE IF THEY SATISFY ANY GR02 SELECTION CRITERIA, AND    D 016700
+*         TO PASS SELECTED RECORDS TO THE INTERNAL SORT.                D 016800
+*        NOTE THAT THIS ROUTINE IS NOT CALLED BY PARROT, BUT IS INVOKED D 016900
+*         BY THE INTERNAL SORT.  THE UNUSUAL REGISTER SAVE/RESTORE      D 017000
+*         CONVENTIONS GIVE THE EXIT TOTAL PARROT ADDRESSABILITY, SO     D 017100
+*         THIS ROUTINE ( AND ITS ASSOCIATED EXIT E35 ) MAY USE ANY      D 017200
+*         PARROT FACILITY.                                              D 017300
+         SPACE 1                                                        D 017400
+         USING SORTE15,R15         ESTABLISH TEMPORARY ADDRESSABILITY   D 017500
+SORTE15  SUBIN ,                   ENTER ROUTINE                        D 017600
+         STM   R14,R12,12(R13)     PRESERVE SORT'S REGISTERS            D 017700
+         ST    R13,E15R13S2        PRESERVE SORT'S SAVE AREA ADDRESS    D 017800
+         L     R13,E15R13S1        RETRIEVE PARROT'S SAVE AREA ADDRESS  D 017900
+         MVC   E15REGSV(64),12(R13) SAVE REGISTERS FOR RETURN FROM SORT D 018000
+         LM    R4,R12,36(R13)      RETRIEVE CRITICAL PARROT REGISTERS   D 018100
+         DROP  R15                 DROP TEMPORARY ADDRESSABILITY        D 018200
+SORTE15R CBAL  R4,SELECTRC         GET NEXT ACCEPTABLE RECORD           D 018300
+         LA    R15,NORETURN        ASSUME EOF AND SET NOT TO RETURN     D 018400
+         BL    SORTE15X            BR IF EOF TO TELL SORT NOT TO RETURN D 018500
+         LA    R15,INSERT          TELL SORT TO INSERT THIS RECORD      D 018600
+         L     R1,$SORTREC         POINT R1 AT THE LENGTH||RECORD       D 018700
+         SPACE 1                                                        D 018800
+SORTE15X MVC   12(64,R13),E15REGSV RESTORE PARROT'S REGISTERS           D 018900
+         L     R13,E15R13S2        RETRIEVE SORT'S SAVE AREA ADDRESS    D 019000
+         L     R14,12(R13)         RESTORE RETURN ADDRESS               D 019100
+         L     R0,20(R13)          RESTORE OTHER ...                    D 019200
+         LM    R2,R12,28(R13)       ... SORT REGISTERS                  D 019300
+         BR    R14                 RETURN TO THE SORT                   D 019400
+         EJECT                                                          D 019500
+*********************************************************************** D 019600
+*        SELECT RECORDS FOR PROCESSING                                * D 019700
+*********************************************************************** D 019800
+         SPACE 1                                                        D 019900
+*        THIS ROUTINE SELECTS RECORDS FOR PROCESSING BASED UPON ANY     D 020000
+*         SELECTION CRITERIA SPECIFIED ( GR02 CARDS ), AND BASED        D 020100
+*         UPON DECISIONS TAKEN BY THE USER EXIT ( IF ANY ).             D 020200
+         SPACE 1                                                        D 020300
+*        UPON RETURN THE COND CODE IS SET THUS:_                        D 020400
+*         BL  - END OF FILE                                             D 020500
+*         BE  - RECORD ACCEPTED FOR PROCESSING                          D 020600
+         SPACE 1                                                        D 020700
+SELECTRC SUBIN SAVE=R4             PRESERVE BASE REGISTER               D 020800
+SELECTR  CBAL  R4,READUT1          READ NEXT RECORD FROM SYSUT1         D 020900
+         BNE   SELECTW             BR IF END OF FILE TO SET COND CODE   D 021000
+         MVI   $PROCTYP,C'A'       SET CALL TYPE TO 'A'                 D 021100
+         TM    $PCBTYPS,PCBTYPEA   ARE THERE ANY 'A' TYPE PCB'S         D 021200
+         BZ    SELECTUX            BYPASS PCB-PROCESSING ROUTINE IF NOT D 021300
+         CBAL  R4,PCBPROC          PROCESS ANY 'A' TYPE PCB'S           D 021400
+         EJECT                                                          D 021500
+*********************************************************************** D 021600
+*        SELECT RECORDS FOR PROCESSING ( CONT'D )                     * D 021700
+*********************************************************************** D 021800
+         SPACE 1                                                        D 021900
+SELECTUX TM    $STATUS,STATEXIT    IS USER ROUTINE SUPPLIED             D 022000
+         BZ    SELECT01            BR IF NO EXIT TO SHOW RECORD GOOD    D 022100
+         CBAL  R4,UXITCAL          INVOKE THE USER EXIT                 D 022200
+         BE    SELECT01            BR TO SHOW RECORD ACCEPTED           D 022300
+SELECTY  TM    SYSUT3+IOPSSW,IOSWPRES TEST IF SYSUT3 EXISTS             D 022400
+         BZ    SELECTY2            DON'T TRY TO WRITE TO IT IF NOT PRES D 022500
+         CBAL  R4,PUTUT3           WRITE REJECTED RECORD TO SYSUT3      D 022600
+SELECTY2 B     SELECTR             LOOP BACK TO READ NEXT RECORD        D 022700
+SELECT01 LTA   R10,$RSTRST,SELECTX GET ADDRESS OF 1ST RST IF ANY        D 022800
+         CBAL  R4,RSTPROC          PERFORM RECORD SELECTION TESTS       D 022900
+         BNE   SELECTY             REJECT IF CRITERIA NOT SATISFIED     D 023000
+SELECTX  AP    $ARECCNT,$ONE       INCREMENT COUNT OF ACCEPTED RECORDS  D 023100
+         CLI   *,X                 SET COND CODE TO ACCEPT RECORD       D 023200
+         B     *+8                 BYPASS RESETTING COND CODE           D 023300
+SELECTW  CLI   *,W                 SET COND CODE TO SHOW END OF FILE    D 023400
+       SUBOUT RESTORE=R4           RETSORE AND RETURN TO CALLER         D 023500
+         TITLE 'PARROTD - INTERNAL SORT INITIALISATION'                 D 023600
+*********************************************************************** D 023700
+*        INITIALISATION ROUTINE FOR INTERNAL SORT                     * D 023800
+*********************************************************************** D 023900
+         SPACE 1                                                        D 024000
+SORTINIT SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              D 024100
+         CBAL  R4,BLDSRTST         CONSTRUCT SORT STATEMENT IF FIELDS=K D 024200
+         CBAL  R4,BLDRECST         CONSTRUCT RECORD STATEMENT (IF NEC)  D 024300
+         CBAL  R4,ALLOCPRM         ALLOCATE $ORTPARM DD STATEMENT       D 024400
+         CBAL  R4,SAVESTS          SET SORT & RECORD STATEMENT IN S/A   D 024500
+        SUBOUT RESTORE=R4          RESTORE AND RETURN TO CALLER         D 024600
+         EJECT                                                          D 024700
+*********************************************************************** D 024800
+*        SORT INITIALISATION:      CONSTRUCT SORT STATEMENT           * D 024900
+*********************************************************************** D 025000
+         SPACE 1                                                        D 025100
+         USING FDBNTRY,R2          ESTABLISH FDB ADDRESSABILITY         D 025200
+         USING LIBNTRY,R7          ESTABLISH LIB ADDRESSABILITY         D 025300
+         USING KBDNTRY,R8          ESTABLISH KBD ADDRESSABILITY         D 025400
+         USING PARROTT,R9          ESTABLISH PARROTT ADDRESSABILITY     D 025500
+BLDSRTST SUBIN SAVE=R4             ENTER ROUTINE                        D 025600
+         CBAL  R4,CHEKEYS          DETERMINE IF FIELDS=KEYS CODED       D 025700
+         BNE   BLDSRTX             EXIT IF NOT FIELDS=KEYS              D 025800
+         CBAL  R4,BLDDMYST         CONSTRUCT DUMMY SORT STATEMENT       D 025900
+BLDSRTX SUBOUT RESTORE=R4          RETURN TO CALLER                     D 026000
+         DROP  R9                  DROP PARROTT ADDRESSABILITY          D 026100
+         DROP  R8                  DROP KBD ADDRESSABILITY              D 026200
+         DROP  R7                  DROP LIB ADDRESSABILITY              D 026300
+         DROP  R2                  DROP FDB ADDRESSABILITY              D 026400
+         EJECT                                                          D 026500
+*********************************************************************** D 026600
+*        SORT INITIALISATION:      DETERMINE IF FIELDS=KEYS CODED     * D 026700
+*********************************************************************** D 026800
+         SPACE 1                                                        D 026900
+*        UPON RETURN, THE COND CODE IS SET THUS :-                      D 027000
+*         BE  - FIELDS=KEYS SPECIFIED                                   D 027100
+*         BNE - FIELDS=KEYS NOT SPECIFIED                               D 027200
+         SPACE 1                                                        D 027300
+         USING PARROTT,R9          ESTABLISH PARROTT ADDRESSABILITY     D 027400
+CHEKEYS  SUBIN ,                   ENTER ROUTINE                        D 027500
+         L     R9,$VPARTT          GET ADDRESS OF PARROTT CSECT         D 027600
+         MVI   STRTAB,X'00'        INSERT X'00' AT START OF TABLE ..    D 027700
+         MVC   STRTAB+1(255),STRTAB ... AND PROPAGATE THROUGH           D 027800
+         SR    R15,R15             ZEROISE WORK REGISTER                D 027900
+         IC    R15,=C'='           SET '=' IN REG15                     D 028000
+         STC   R15,STRTAB(R15)     SET TABLE TO DETECT '='              D 028100
+         TRT   SORTSTRT,STRTAB     LOCATE '=' SIGN IF ANY               D 028200
+         BE    CHEKEYY             NO '=' SIGN: LEAVE SORT TO NOTICE    D 028300
+         CLC   0(5,R1),=C'=KEYS'   IS THIS FIELDS=KEYS SPEC'N           D 028400
+         BNE   CHEKEYY             EXIT IF NOT                          D 028500
+         B     CHEKEYX             GO TO EXIT SHOWING FIELDS=KEYS       D 028600
+CHEKEYY  CLI   *,Y                 SHOW NOT FIELDS=KEYS SPECIFICATION   D 028700
+         BNE   *+8                 BYPASS RESETTING COND CODE           D 028800
+CHEKEYX  CLI   *,X                 SHOW FIELDS=KEYS SPECIFIED           D 028900
+        SUBOUT ,                   RETRUN TO CALLER                     D 029000
+         DROP  R9                  DROP PARROTT ADDRESSABILITY          D 029100
+         EJECT                                                          D 029200
+*********************************************************************** D 029300
+*        SORT INITIALISATION:      CONSTRUCT SORT STATEMENT           * D 029400
+*********************************************************************** D 029500
+         SPACE 1                                                        D 029600
+         USING KBDNTRY,R8          ESTABLISH KBD ADDRESSABILITY         D 029700
+         USING FDBNTRY,R2          ESTABLISH FDB ADDRESSABILITY         D 029800
+         USING LIBNTRY,R7          ESTABLISH LIB ADDRESSABILITY         D 029900
+BLDDMYST SUBIN ,                   ENTER ROUTINE                        D 030000
+         MVI   SORTSTRT,C' '       INSERT BLANK AT START OF STATEMENT   D 030100
+         MVC   SORTSTRT+1(L'SORTSTRT-1),SORTSTRT ... AND PROPAGATE      D 030200
+         MVC   SORTSTRT(L'DUMMYSRT),DUMMYSRT SET UP SORT FIELDS=        D 030300
+         LA    R1,SORTSTRT+L'DUMMYSRT POINT REG 1 AT FIRST SLOT         D 030400
+         LTA   R8,$KBDKBD          GET ADDRESS OF 1ST KBD               D 030500
+         B     *+8                 BYPASS FORWARD CHAINING              D 030600
+BLDSRT02 LTA   R8,KBDKBD,BLDSRT01  GET NEXT KBD IN CHAIN                D 030700
+         NULCB KBD,BLDSRT02        LOOP BACK FOR NEXT IF NULLIFIED      D 030800
+         TM    KBDSW2,MKBDNKEY     DOES THIS KBD DEFINE A KEY           D 030900
+         BO    BLDSRT02            LOOP BACK FOR NEXT IF NOT A KEY      D 031000
+         LTA   R7,KBDKLIB,BLDSRT02 GET ADDRESS OF 1ST LIB FOR KEY       D 031100
+         NULCB LIB,BLDSRT02        LOOP BACK IF LIB NULLIFIED           D 031200
+         EJECT                                                          D 031300
+*********************************************************************** D 031400
+*        SORT INITIALISATION:      CONSTRUCT SORT STATEMENT           * D 031500
+*********************************************************************** D 031600
+         SPACE 1                                                        D 031700
+BLDSRT03 LTA   R2,LIBFDB,BLDSRT02  GET ADDRESS OF 1ST ASSOC FDB         D 031800
+         NULCB FDB,BLDSRT02        LOOP BACK IF FDB NULLIFIED           D 031900
+         MVC   0(L'SKELETON,R1),SKELETON SET UP SKELETON IN SORT STAT'T D 032000
+         LH    R3,FDBFLDP          GET DISPLACEMENT OF FIELD            D 032100
+         LA    R3,5(,R3)           ALLOW FOR RDW AND DISP-TO-POSITION   D 032200
+         CVD   R3,$WRKDUBL         CONVERT POSITION TO PACKED DEC       D 032300
+         UNPK  0(4,R1),$WRKDUBL    UNPACK POSN INTO STATEMENT           D 032400
+         OI    3(R1),X'F0'         ENSURE SIGN IS ACCEPTABLE            D 032500
+         SR    R3,R3               ZEROISE WORK REGISTER                D 032600
+         IC    R3,FDBFLDL          RETRIEVE EXECUTABLE LENGTH           D 032700
+         LA    R3,1(,R3)           ADJUST TO TRUE LENGTH                D 032800
+         CVD   R3,$WRKDUBL         CONVERT LENGTH TO PACKED DEC         D 032900
+         UNPK  5(2,R1),$WRKDUBL    UNPACK LENGTH INTO STATEMENT         D 033000
+         OI    6(R1),C'0'          ENSURE SIGN IS ACCEPTABLE            D 033100
+         IC    R3,FDBFLDT          GET TYPE OF FIELD                    D 033200
+         BCTR  R3,0                DECREMENT FOR USE AS INDEX           D 033300
+         SLL   R3,1                MULTIPLY BY 2 FOR INDEX              D 033400
+         LA    R3,SORTTAB(R3)      POINT AT APPROPRIATE FIELD TYPE      D 033500
+         MVC   8(2,R1),0(R3)       SET FIELD TYPE IN STATEMENT          D 033600
+         LA    R1,L'SKELETON(,R1)  INCREMENT TO NEXT SLOT               D 033700
+         B     BLDSRT02            LOOP BACK FOR NEXT KBD               D 033800
+BLDSRT01 BCTR  R1,0                DECREMENT TO LAST TRAILING COMMA     D 033900
+         MVI   0(R1),C')'          INSERT TRAILING PARENTHESIS          D 034000
+        SUBOUT ,                   RESTORE AND RETURN                   D 034100
+         DROP  R7                  DROP LIB ADDRESSABILITY              D 034200
+         DROP  R2                  DROP FDB ADDRESSABILITY              D 034300
+         DROP  R8                  DROP KBD ADDRESSABILITY              D 034400
+         EJECT                                                          D 034500
+*********************************************************************** D 034600
+*        SORT INITIALISATION:      CONSTRUCT RECORD STATEMENT         * D 034700
+*********************************************************************** D 034800
+         SPACE 1                                                        D 034900
+*        THIS ROUTINE CREATES THE RECORD STATEMENT FOR THE SORT IF ONE  D 035000
+*         WAS NOT SUPPLIED BY THE USER.                                 D 035100
+         SPACE 1                                                        D 035200
+BLDRECST SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              D 035300
+         TM    SORTSW,MSRTREC      WAS RECORD STATEMENT SUPPLIED        D 035400
+         BO    BLDRECX             BR IF WAS SUPPLIED: ASSUME IT IS COR D 035500
+         L     R1,SYSUT1+IOPSDCB   GET ADDRESS OF SYSUT1 DCB            D 035600
+         USING IHADCB,R1           ESTABLISH DCB ADDRESSABILITY         D 035700
+         LH    R2,DCBLRECL         GET SYSUT1 RECORD LENGTH             D 035800
+         TM    DCBRECFM,DCBRECV    IS THIS A VARIABLE LENGTH RECORD     D 035900
+         BO    *+8                 BR IF YES                            D 036000
+         LA    R2,4(,R2)           INCREMENT TO ALLOW FOR LENGTH FLD    D 036100
+         CVD   R2,$WRKDUBL         CONVERT LENGTH TO PACKED DECIMAL     D 036200
+         UNPK  RECLRECL,$WRKDUBL   UNPACK LENGTH INTO RECORD STATEMENT  D 036300
+         OI    RECLRECL+L'RECLRECL-1,X'F0' CONVERT SIGN TO 'F'          D 036400
+         TM    DCBRECFM,DCBRECV    IS IT A VARIABLE LENGTH RECORD       D 036500
+         BZ    BLDRECX             BR IF NOT VARIABLE ( ASSUME FIXED )  D 036600
+         MVI   RECRECFM,C'V'       FLAG AS VARIABLE IN RECORD STATEMENT D 036700
+         DROP  R1                  DROP SYSUT1 DCB ADDRESSABILITY       D 036800
+         LINE  LINE01              TELL THAT RECORD STAT IMPROVES EFFIC D 036900
+BLDRECX SUBOUT RESTORE=R4          RESTORE AND RETURN                   D 037000
+         EJECT                                                          D 037100
+*********************************************************************** D 037200
+*        SORT INITIALISATION:      DYNAMICALLY ALLOCATE $ORTPARM      * D 037300
+*********************************************************************** D 037400
+         SPACE 1                                                        D 037500
+*        SYNCSORT MAY BE SUPPLIED WITH ADDITIONAL PARAMETERS VIA THE    D 037600
+*         $SORTPARM DD STATEMENT.  BECAUSE EXISTING PARROTS DO NOT      D 037700
+*         SPECIFY THIS DD STATEMENT, IT IS NECESSARY TO DYNAMICALLY     D 037800
+*         ALLOCATE THE DD STATEMENT, AND THIS ROUTINE USES OUR AMAZING  D 037900
+*         DYNAMICALLY INVOKED ROUTINE TO INTERPRET THE JCT STRING, AND  D 038000
+*         THEN ISSUE THE DYNAMIC ALLOCATION SVC.                        D 038100
+         SPACE 1                                                        D 038200
+ALLOCPRM SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              D 038300
+         LINK  EP=UT501,           INVOKE ALLOCATION SUBROUTINE        *D 038400
+               PARAM=(JCLCARD-2,UT501OPC,UT501RTC,UT501AD1,UT501AD2),  *D 038500
+               VL=1                DELIMIT VARIABLE LENGTH  PARAM LIST  D 038600
+         CLI   UT501RTC,0          WAS THE ALLOCATION SUCCESSFUL        D 038700
+         BE    ALLOCPX             EXIT IF ALLOCATION SUCCESSFUL        D 038800
+         CBAL  R4,ALLOCERR         TELL OF ALLOCATION ERROR             D 038900
+ALLOCPX SUBOUT RESTORE=R4          RESTORE AND RETURN TO CALLER         D 039000
+         EJECT                                                          D 039100
+*********************************************************************** D 039200
+*        SORT INITIALISATION:      TELL OF ALLOCATION ERROR           * D 039300
+*********************************************************************** D 039400
+         SPACE 1                                                        D 039500
+ALLOCERR SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              D 039600
+         L     R5,SYSPRINT+IOPSRECA REFRESH SYSPRINT BUFFER ADDRESS     D 039700
+         LINE  LINE02              TELL OF ALLOCATION ERROR             D 039800
+         LINE  LINE03              TELL OF PARMS THAT WILL NOT BE USED  D 039900
+         MVC   5(L'LINE04,R5),LINE04 MOVE MESSAGE TO BUFFER             D 040000
+         UNPK  5+L'LINE04(3,R5),UT501RTC(2) 'UNPACK' RETURN CODE        D 040100
+         MVI   5+L'LINE04+2(R5),C' ' BLANK OUT THE 'GASH' BYTE          D 040200
+         TR    5+L'LINE04(2,R5),HEXTABLE-C'0' CONVERT RETCODE TO EBCDIC D 040300
+         CBAL  R4,PRINT            PRINT THE CONDITION CODE             D 040400
+        SUBOUT RESTORE=R4          RESTORE AND RETURN TO CALLER         D 040500
+         EJECT                                                          D 040600
+*********************************************************************** D 040700
+*        SORT INITIALISATION:      PRESERVE SORT & RECORD STATEMENTS  * D 040800
+*********************************************************************** D 040900
+         SPACE 1                                                        D 041000
+*        PESERVE SORT AND RECORD STATEMENTS IN CHAINED, GETMAINED CORE  D 041100
+*         SO THAT THE ESTAE CAN PRINT THEM OUT IN ORDER TO FACILITATE   D 041200
+*         DEBUGGING.                                                    D 041300
+         SPACE 1                                                        D 041400
+SAVESTS  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              D 041500
+         LA    R2,RECEND-SORTSTRT  GET LENGTH OF SORT & RECORD STATEMEN D 041600
+         GETCB SORT,NOCHAIN        ACQUIRE BUT DO NOT CHAIN CORE        D 041700
+         MVC   0(RECEND-SORTSTRT,R1),SORTSTRT PRESERVE STATEMENTS       D 041800
+        SUBOUT RESTORE=R4          RESTORE AND RETURN TO CALLER         D 041900
+         TITLE 'PARROTD - MOVE RECORD FROM SORT TO OUR RECORD AREA'     D 042000
+*********************************************************************** D 042100
+*        MOVE RECORD FROM SORT TO OUR RECORD AREA                     * D 042200
+*********************************************************************** D 042300
+         SPACE 1                                                        D 042400
+*        THIS ROUTINE MOVES THE RECORD PASSED FROM THE SORT TO THE      D 042500
+*         RECORD WORK AREA, AND RESETS R6 TO POINT AT THE WORK AREA.    D 042600
+*         REMEMBER THAT ALL RECORDS ( 'F' AS WELL AS 'V' ) ARE PRECEDED D 042700
+*         BY A LENGTH FIELD ( COURTESY OF COMPATABILITY WITH FAYER'S    D 042800
+*         SOMEWHAT ECCENTRIC PL/1 CODING ), AND THE ROUTINE USES THAT   D 042900
+*         VALUE TO DETERMINE THE LENGTH OF THE MOVE.  TO PLAY SAFE, I   D 043000
+*         ASSUME THAT THE RECORD PASSED BY THE SORT IS NOT PROPERLY     D 043100
+*         ALIGNED, AND MOVE THE LENGTH FIELD TO AN INTERMEDIATE         D 043200
+*         ALIGNED FIELD BEFORE USING IT.                                D 043300
+         SPACE 1                                                        D 043400
+SORTMREC SUBIN ,                   ENETR ROUTINE                        D 043500
+         L     R6,$SORTREC         POINT R6 AT RECORD WORK AREA         D 043600
+         L     R2,0(R1)            GET RECORD ADDRESS FROM SORT PARMLST D 043700
+         MVC   MVCLRECL,0(R2)      ASSUME REC NOT ALIGNED: MOVE LENGTH  D 043800
+         LH    R15,MVCLRECL        SET RECORD LENGTH IN R15             D 043900
+         LR    R3,R15              SET LENGTH IN R3 ALSO                D 044000
+         LR    R14,R6              POINT R14 AT DESTINATION FIELD       D 044100
+         MVCL  R14,R2              MOVE RECORD TO WORK AREA             D 044200
+         L     R6,$PTRUT1R         POINT R6 AT FIRST DATA BYTE          D 044300
+        SUBOUT ,                   RETURN TO CALLER                     D 044400
+         TITLE 'PARROTD - EXECUTED INSTRUCTIONS'                        D 044500
+*********************************************************************** D 044600
+*        EXECUTED INSTRUCTIONS                                        * D 044700
+*********************************************************************** D 044800
+         SPACE 1                                                        D 044900
+         TITLE 'PARROTD - INTERNAL SORT SAVE AREAS'                     D 045000
+*********************************************************************** D 045100
+*        E15 SAVE AREAS                                               * D 045200
+*********************************************************************** D 045300
+         SPACE 1                                                        D 045400
+E15R13S1 DS    F                   SAVE AREA FOR PARROT'S REGISTER 13   D 045500
+E15R13S2 DS    F                   SAVE AREA FOR SORT'S REGISTER 13     D 045600
+E15REGSV DS    16F                 REG SAVE AREA FOR RETURN FROM SORT   D 045700
+         SPACE 5                                                        D 045800
+*********************************************************************** D 045900
+*        E35 SAVE AREAS                                               * D 046000
+*********************************************************************** D 046100
+         SPACE 1                                                        D 046200
+E35R13S1 DS    F                   SAVE AREA FOR PARROT'S REGISTER 13   D 046300
+E35R13S2 DS    F                   SAVE AREA FOR SORT'S REGISTER 13     D 046400
+E35REGSV DS    16F                 REG SAVE AREA FOR RETURN FROM SORT   D 046500
+         TITLE 'PARROTD - INTERNAL SORT PARAMETER LISTS'                D 046600
+SORTPARM DS    0F                  ENSURE ALIGNMENT                     D 046700
+         DC    X'80',AL3(SORTLIST) ADDRESS OF SORT PARAMETER LIST       D 046800
+         DC    X'0000'             FILLER                               D 046900
+SORTLIST DC    AL2(SORTLSTE-SORTLIST-2) LENGTH OF PARAMETER LIST        D 047000
+         DC    A(SORTSTRT)         ADDRESS OF START OF SORT STATEMENT   D 047100
+         DC    A(SORTEND)          ADDRESS OF END OF SORT STATEMENT     D 047200
+         DC    A(RECSTRT)          ADDRESS OF START OF RECORD STATEMENT D 047300
+         DC    A(RECEND)           ADDRESS OF END OF RECORD STATEMENT   D 047400
+         DC    A(SORTE15)          ADDRESS OF E15 SORT EXIT             D 047500
+         DC    A(SORTE35)          ADDRESS OF E35 SORT EXIT             D 047600
+         DC    AL1(0),C'MAX'       REQUEST CORE OPTIMISATION            D 047700
+         DC    AL1(1),AL3(2048)    RESERVE 2K FOR SAFETY                D 047800
+         DC    AL1(3),AL3(LISTNAME) SPECIFY MESSGAE DDNAME              D 047900
+         DC    X'FF',X'00',C'AP'   ALL MESSAGES TO THE PRINTER          D 048000
+SORTLSTE EQU   *                   END OF PARAMETER LIST                D 048100
+         SPACE 5                                                        D 048200
+SORTSTRT DC    CL160' '            SORT STATEMENT                       D 048300
+SORTEND  DC    C' '                END OF SORT STATEMENT                D 048400
+         SPACE 1                                                        D 048500
+RECSTRT  DS    0CL80               RECORD STATEMENT                     D 048600
+         DC    C' RECORD LENGTH=('                                      D 048700
+RECLRECL DC    CL5' '              RECORD LENGTH                        D 048800
+         DC    C'),TYPE='                                               D 048900
+RECRECFM DC    C'F'                RECORD FORMAT                        D 049000
+         DC    CL51' '                                                  D 049100
+RECEND   DC    C' '                END OF RECORD STATEMENT              D 049200
+         SPACE 1                                                        D 049300
+LISTNAME DC    CL8'SYSOUT'         NAME OF MESSAGE DD NAME              D 049400
+         SPACE 5                                                        D 049500
+*        FOR VARIABLE LENGTH RECORDS, THE USER SHOULD IDEALLY SUPPLY    D 049600
+*         A RECORD STATEMENT OF THE FOLLOWING FORMAT :-                 D 049700
+         SPACE 1                                                        D 049800
+*        RECORD TYPE=V,LENGTH=(L1,,,L4,L5)                              D 049900
+         SPACE 1                                                        D 050000
+*        WHERE L1 IS THE MAXIMUM RCORD LENGTH                           D 050100
+*              L4 IS THE MINIMUM RECORD LENGTH ( ASSUMES MIN FOR SORT ) D 050200
+*        AND   L5 IS THE MODAL LENGTH ( ASSUMES (L1+L4)/2 )             D 050300
+         EJECT                                                          D 050400
+DUMMYSRT DC    C' SORT FIELDS=('                                        D 050500
+SKELETON DC    C'9999,99,CH,A,'    SKELETON SORT SPEC'N                 D 050600
+         SPACE 5                                                        D 050700
+*        TABLE TO CONVERT INTERNAL FIELD TYPE CODE TO ACCEPTABLE FIELD  D 050800
+*         TYPE FOR THE SORT.                                            D 050900
+         SPACE 1                                                        D 051000
+SORTTAB  DC    12C'CH'             BASIC TABLE                          D 051100
+         ORG   SORTTAB+BIN+BIN                                          D 051200
+         DC    C'BI'                                                    D 051300
+         ORG   SORTTAB+FLOAT+FLOAT                                      D 051400
+         DC    C'FL'                                                    D 051500
+         ORG   SORTTAB+PD+PD                                            D 051600
+         DC    C'PD'                                                    D 051700
+         ORG                                                            D 051800
+         TITLE 'PARROTD - MISCELLANEOUS CONSTANTS AND FIELDS'           D 051900
+MVCLRECL DS    H                   LENGTH FIELD FROM RECORD FROM SORT   D 052000
+         SPACE 1                                                        D 052100
+LINE01   DC    C'PRTD-001-I  YOU ARE SORTING VARIABLE LENGTH RECORDS: EFD 052200
+               FFICIENCY WILL BE IMPROVED IF YOU SUPPLY A RECORD STATEMED 052300
+               ENT ( VIA A GR06 )'                                      D 052400
+LINE02   DC    C'PRTD-002-W  ATTEMPT TO DYNAMICALLY ALLOCATE $ORTPARM FAD 052500
+               AILED: ADDITIONAL SYNCSORT PARMS NOT SUPPLIED'           D 052600
+LINE03   DC    C'PRTD-003-W  MISSING PARMS ARE: NOSTAE,NOSTIMER,EQUALS,LD 052700
+               LIST'                                                    D 052800
+LINE04   DC    C'PRTD-004-W  THE RETURN CODE FROM UT501 ( THE DYNAMIC ALD 052900
+               LLOCATION SUBROUTINE ) WAS: '                            D 053000
+         SPACE 5                                                        D 053100
+*        WORK FIELDS FOR DYNAMIC ALLOCATION OF $ORTPARM                 D 053200
+         SPACE 1                                                        D 053300
+         DC    AL2(L'JCLCARD)      LENGTH OF DD STATEMENT               D 053400
+JCLCARD  DC    C'//$ORTPARM DD DSN=OPS.CONTRLIB(PAROTSRT),DISP=SHR '    D 053500
+UT501OPC DC    C'A'                SPECIFY INTERPRETING AND ALLOCATION  D 053600
+UT501RTC DC    X'FF'               RETURN CODE                          D 053700
+UT501AD1 DC    A(0)                ADDRESS OF ALLOCATION TEXT STRING    D 053800
+UT501AD2 DC    A(0)                ADDRESS OF DE-ALLOCATION TEXT STRING D 053900
+         SPACE 5                                                        D 054000
+HEXTABLE DC    C'0123456789ABCDEF' HEXPANSION TRANSLATE TABLE           D 054100
+         SPACE 5                                                        D 054200
+        SCSEND D                   TERMINATE CSET PARROTD               D 054300
+         END                                                            D 054400

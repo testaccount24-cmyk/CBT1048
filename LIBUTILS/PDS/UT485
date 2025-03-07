@@ -1,0 +1,1531 @@
+         TITLE 'UT485 - MERGE TWO SEQUENTIAL DATA SETS WITH SELECTION I*
+               F MATCHING'
+UT485    CSECT
+         SPACE 3
+***********************************************************************
+*                                                                     *
+*        PROGRAM ID:               UT485                              *
+*                                                                     *
+*        DATE WRITTEN :            NOVEMBER 1974                      *
+*                                                                     *
+*        LOCATION:                 EUROPEAN COMPUTER CENTRE           *
+*                                                                     *
+*        AUTHOR :                  J.NOLS                             *
+*                                                                     *
+***********************************************************************
+         SPACE 3
+***********************************************************************
+*                                                                     *
+*        FUNCTION                                                     *
+*        ________                                                     *
+*                                                                     *
+*                                                                     *
+*       THIS PROGRAM SORTS A SEQUENCIAL DATA SET CONTAINING UPDATE    *
+*        RECORDS, THEN MERGES THESE RECORDS WITH ANOTHER SEQUENTIAL   *
+*        DATA SET USING THE SAME KEYS SPECIFIED FOR THE SORT.         *
+*        UNMATCHED RECORDS ARE WRITTEN OUT UNCHANGED AND FOR          *
+*        MATCHED RECORDS THE UPDATE RECORD IS OUTPUT. OPTIONALLY,     *
+*        DELETE OR MODIFY RECORDS IF MATCHING, AND OUTPUTS THE        *
+*        DELETED, REPLACED OR MODIFIED RECORDS.                       *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*                                                                     *
+*        MANDATORY DD STATEMENTS                                      *
+*        _______________________                                      *
+*                                                                     *
+*        SORTLIST  - MESSAGE DATA SET FOR THE SORT                    *
+*        SORTLIB   - SYSTEM DATA SET CONTAINING THE SORT MODULES      *
+*        SORTWK01  - WORK DATA SET FOR THE SORT                       *
+*        SORTWK02  - WORK DATA SET FOR THE SORT                       *
+*        SORTWK03  - WORK DATA SET FOR THE SORT                       *
+*        SYSUT1    - THE INPUT SEQUENTIAL DATA SET                    *
+*        SYSIN     - THE INPUT SEQUENTIAL DATA SET WITH               *
+*                    THE UPDATE RECORDS                               *
+*                                                                     *
+***********************************************************************
+         SPACE 5
+***********************************************************************
+*                                                                     *
+*        OPTIONAL DATA SETS                                           *
+*        __________________                                           *
+*                                                                     *
+*        SYSPRINT  - MESSAGE DATA SET FOR UT485                       *
+*        SYSOUT    - REPORT DATA SET LISTING OF RECORDS KEYS ADDED ,  *
+*                    DELETED , REPLACED AND MODIFIED                  *
+*        SYSUT2    - OUTPUT DATA SET CONTAINING THE RETAINED          *
+*                    AND ADDED RECORDS.                               *
+*        SYSUT3    - OUTPUT DATA SET CONTAINING THE DELETED AND       *
+*                    REPLACED OR MODIFIED RECORDS.                    *
+*                                                                     *
+***********************************************************************
+         EJECT
+         PRINT ON,GEN,NODATA
+         SPACE 1
+*        REGISTER EQUATES AND USAGE
+         SPACE 1
+R0       EQU   0
+R1       EQU   1
+R2       EQU   2         WORK REGISTER
+R3       EQU   3         WORK REGISTER
+R4       EQU   4         BAL RETURN ADDRESS
+R5       EQU   5         ADDRESS OF SYSPRINT BUFFER
+R6       EQU   6         POINTER TO CURRENT ELEMENT TABSOFIL / ADDRESS
+*                                  OF SYSIN BUFFER
+R7       EQU   7         ADDRESS OF SYSOUT BUFFER
+R8       EQU   8         WORK REGISTER
+R9       EQU   9         WORK AREA BUFFER
+R10      EQU   10        WORK REGISTER
+R11      EQU   11        BASE REGISTER 3
+R12      EQU   12        BASE REGISTER 2
+R13      EQU   13        SAVE AREA POINTER / BASE REGISTER 1
+R14      EQU   14        BALR RETURN ADDRESS
+R15      EQU   15        BALR ROUTINEADDRESS
+         EJECT
+***********************************************************************
+*        HOUSEKEEPING                                                 *
+***********************************************************************
+         SPACE 1
+         PGMIN EQUATES=NO,USING=(R13,R12,R11) ESTABLISH ADDRESSABILITY
+*        PRINT NOGEN               SUPPRESS MACRO EXPANSION
+SAVEPARM SAVEPARM                  ENSURE PARM PROCESS
+         ST    R1,PARMPNTR         PRESERVE PARM POINTER
+         ST    R13,E15R13S1        PRESERVE REG 13 FOR E15
+         ST    R13,E35R13S1        PRESERVE REG 13 FOR E35
+         UT458 ,                   REQUIRE IPL DATE
+         SPACE 5
+***********************************************************************
+*        OPEN DATA SETS                                               *
+***********************************************************************
+         SPACE 1
+         LA    R10,MAXDS           ESTABLISH LOOP
+         LA    R2,DCBTABLE         POINT AT AD-CON TABLE
+LOOP1    BAL   R4,DDFIND           VERIFY DD STATEMENT EXISTS
+         BAL   R4,OPEN             OPEN DATA SET IF PRESENT
+         LA    R2,NTRYSIZE(,R2)    POINT AT NEXT TABLE ENTRY
+         BCT   R10,LOOP1           PROCESS NEXT DATA SET
+         LA    R5,SAFETY           POINT BUFFER POINTERS AT
+         LA    R7,SAFETY            PSEUDO-BUFFER, LEST NO
+*                                   DD STATEMENT IS PRESENT
+         BAL   R4,PRINT            GET ADDRESS OF 1ST PRINT BUFFERS
+         EJECT
+***********************************************************************
+*        THIS ROUTINE PUTS OUT INITIAL INFORMATORY MESSAGES           *
+*        TO SYSPRINT ( IF PRESENT ).                                  *
+***********************************************************************
+         SPACE 1
+         OI    PRINTSW,PRINTON     INDICATE SYSPRINT ON
+         MVI   0(R5),PAGESKIP       AND FOR SYSPRINT
+         BAL   R4,PRINT            SKIP TO NEW PAGE
+         MVI   0(R5),SPCE3AFT      ESTABLISH TRIPLE SPACE
+         MVC   5(L'LINE01,R5),LINE01 ADD HEADING LINE
+         MVC   5+L'LINE01+30(9,R5),UTREPORT MOVE DATE TO PRINT LINE
+         BAL   R4,PRINT            WRITE HEADING LINE
+         MVC   5(L'LINE02,R5),LINE02 ADD SUB-HEADING
+         BAL   R4,PRINT            WRITE SUB-HEADING
+         LA    R10,MAXDS           ESTABLISH DETAIL LOOP
+         LA    R2,DCBTABLE         POINT AT AD-CON TABLE
+LOOP2    TM    0(R2),DDSTAT        TEST IF DD STATEMENT PRESENT
+         BZ    *+14                BYPASS PRINT IF NOT
+         MVC   10(8,R5),4(R2)      ADD DD NAME TO PRINT LINE
+         BAL   R4,PRINT            PRINT DETAIL LINE
+         LA    R2,NTRYSIZE(,R2)    POINT TO NEXT TABLE ENTRY
+         BCT   R10,LOOP2           PROCESS NEXT ENTRY
+         MVI   0(R5),SPCE2AFT      ESTABLISH DOUBLE BLANK LINE
+         BAL   R4,PRINT             AND WRITE THEM
+         SPACE 3
+***********************************************************************
+*        VERIFY THAT SYSIN DD STATEMENT EXISTS                        *
+***********************************************************************
+         SPACE 1
+TESTIN   TM    SYSINSW,DDSTAT      TEST FOR SYSIN STATEMENT
+         BO    TESTUT1             BRANCH IF ONE EXISTS
+         MVC   COMPCODE,COND16     SET CONDITION CODE TO 16
+         WTO   'UT485     ***** NO SYSIN STATEMENT  *****'
+         WTO   'UT485     ***** PROCESSING BYPASSED *****'
+         MVC   5(L'LINE12,R5),LINE12 ADD ERROR MESSAGE
+         BAL   R4,PRINT            WRITE ERROR MESSAGE
+         MVI   0(R5),SPCE2AFT      ESTABLISH DOUBLE SPACE
+         MVC   5(L'LINE09,R5),LINE09 TELL OF INACTION
+         BAL   R4,PRINT            WRITE MESSAGE
+         B     PRINTCDE            PRINT CONDITION CODE
+         EJECT
+***********************************************************************
+*        VERIFY THAT SYSUT1 DD STATEMENT EXISTS                       *
+***********************************************************************
+         SPACE 1
+TESTUT1  TM    SYSUT1SW,DDSTAT     TEST FOR SYSUT1 STATEMENT
+         BO    TESTSORT            BRANCH IF ONE EXISTS
+         MVC   COMPCODE,COND16     SET CONDITION CODE TO 16
+         WTO   'UT485     ***** NO SYSUT1 STATEMENT *****'
+         WTO   'UT485     ***** PROCESSING BYPASSED *****'
+         MVC   5(L'LINE08,R5),LINE08 ADD ERROR MESSAGE
+         BAL   R4,PRINT            WRITE ERROR MESSAGE
+         MVI   0(R5),SPCE2AFT      ESTABLISH DOUBLE SPACE
+         MVC   5(L'LINE09,R5),LINE09 TELL OF INACTION
+         BAL   R4,PRINT            WRITE MESSAGE
+         B     PRINTCDE            PRINT CONDITION CODE
+         SPACE 3
+***********************************************************************
+*        VERIFY THAT MANDATORY SORT DD STATEMENTS ARE PRESENT.        *
+***********************************************************************
+         SPACE 1
+TESTSORT LA    R10,SORTDS          ESTABLISH LOOP
+         SR    R3,R3               ZEROISE COUNTER
+         LA    R2,SORTABLE         POINT AT SORT DD TABLE
+         BAL   R4,DDFIND           VERIFY DD STATEMENT EXISTS
+         LA    R3,1(,R3)           INCREMENT 'FOUND' COUNT
+         LA    R2,NTRYSIZ2(,R2)    POINT AT NEXT TABLE ENTRY
+         BCT   R10,*-12            VERIFY NEXT DD STATEMENT
+         LA    R10,SORTDS          SET UP VALUE FOR COMPARE
+         CR    R10,R3              TEST IF ALL STATEMENTS SUPPLIED
+         BE    TSTSRTND            BRANCH IF YES TO ROUTINE END
+         MVC   5(L'LINE18,R5),LINE18 TELL OF INSUFFICIENT DD
+         BAL   R4,PRINT            WRITE THE MESSAGE
+         MVC   5(L'LINE19,R5),LINE19 ADD 'MISSING' MESSAGE TO
+         BAL   R4,PRINT            WRITE THE LINES
+         LA    R10,SORTDS          ESTABLISH LOOP
+         LA    R2,SORTABLE         POINT AT START OF TABLE
+LOOP3    TM    0(R2),DDSTAT        TEST IF DD STATEMENT PRESENT
+         BO    *+14                BRANCH IF YES
+         MVC   10(8,R5),4(R2)      MOVE DD NAME TO SYSPRINT
+         BAL   R4,PRINT            PRINT THE NAME
+         LA    R2,NTRYSIZ2(,R2)    POINT TO NEXT TABLE ENTRY
+         BCT   R10,LOOP3           PROCESS NEXT ENTRY
+TELNOSRT MVI   0(R5),SPCE3AFT      ESTABLISH FOLLOWING SPACES
+         MVC   5(L'LINE09,R5),LINE09 MOVE IN 'BYPASSED' MESSAGE
+         BAL   R4,PRINT            WRITE THE MESSAGE
+         WTO   'UT485     ***** MISSING DD STATEMENT *****'
+         MVC   COMPCODE,COND16     SET CONDITION CODE TO 16
+         B     PRINTCDE            PRINT COND CODE & TERMINATE
+         SPACE 1
+TSTSRTND EQU   *                   END OF 'TEST FOR SORT' ROUTINE
+         EJECT
+***********************************************************************
+*        PROCESS PARM FIELDS                                          *
+***********************************************************************
+         SPACE 1
+PARMGET  BAL   R4,GETPARM          GET NEXT SUB-FIELD
+         B     PARMDONE            NO PARMS LEFT, SO EXIT
+         CLC   KEYS,0(R2)          TEST FOR 'KEYS='
+         BE    PARMKEYS            PROCESS IF YES
+         CLC   DELET,0(R2)         TEST FOR 'DELETE='
+         BE    PARMDLT             PROCESS IF YES
+         CLC   EXIT,0(R2)          TEST FOR 'EXIT='
+         BE    PARMEXIT            PROCESS IF YES
+         SPACE 1
+         SP    CNTPARM,ONE         SUBSTRACT ONE OF PARM COUNT
+         B     PARMINV2            TELL OF UNRECOGNISABLE PARM
+PARMINV  MVC   5(L'LINE26,R5),LINE26 MOVE IN ERROR MESSAGE
+         B     PARMINV3            GO PRINT ERROR MESSAGE
+PARMINV2 MVC   5(L'LINE29,R5),LINE29 MOVE IN ERROR MESSAGE
+         BAL   R4,PRINT            WRITE ERROR MESSAGE
+         EX    R3,PARMMVC          MOVE SUB-FILLD TO PRINT LINE
+         BAL   R4,PRINT            WRITE ERROR MESSAGE
+         B     CONCOD4             GO MOVE  COND. CODE 4
+PARMINV3 BAL   R4,PRINT            AND PRINT THE LINE
+         MVI   0(R5),SPCE2AFT      ENSURE FOLLOWING BLANK LINE
+         ZAP   CNTPARM,ZERO        NULLIFY PARM COUNT FOR LATER TEST
+         B     PARMDONE
+PARMINV4 NI    SWITCH,255-DELETEON INDICATE PARM NOT FOUND
+         B     *+8                 BYPASS NEXT INSTRUCTION
+PARMINV5 NI    SWITCH,255-EXITON   INDICATE PARM NOT FOUND
+         MVC   5(L'LINE11,R5),LINE11 MOVE ERROR MESSAGE TO PRINT LINE
+         BAL   R4,PRINT               AND PRINT THE LINE
+         SP    CNTPARM,ONE         SUBSTRACT ONE OF PARM COUNT
+CONCOD4  CLC   COMPCODE,COND4      TEST IF COND CODE GREATER T AN 4
+         BH    *+10                BRANCH IF YES
+         MVC   COMPCODE,COND4      SET COMPLETION CODE TO 4
+         B     PARMGET             RETRIEVE NEXT SUB-FIELD
+         SPACE 1
+PARMMVC  MVC   10(0,R5),0(R2)      EXECUTED MOVE INSTRUCTION
+PARMPACK PACK  DECIMAL,0(0,R2)     EXECUTED PACK INSTRUCTION
+PARMFLDS MVC   0(0,R8),0(R2)       EXECUTED MOVE INSTRUCTION
+PARMDELI MVC   DELIND(0),0(R2)     EXECUTED MOVE INSTRUCTION
+PARMEXT  MVC   EXITNAME(0),0(R2)   EXECUTED MOVE INSTRUCTION
+         EJECT
+***********************************************************************
+*        PARM SUB-FIELD PROCESSING                                    *
+***********************************************************************
+         SPACE 1
+PARMKEYS OI    SWITCH,KEYSON       INDICATE KEYS PARM SUPPLIED
+         EX    R3,PARMMVC          MOVE PARM TO PRINT LINE
+         BAL   R4,PRINT             AND PRINT IT ON SYSPRINT
+         S     R3,=F'6'            DECREMENT R3 'KEYS=('
+         LTR   R3,R3               TEST FOR'KEYS=,
+         BM    PARMINV             REJECT PARM IF YES
+         LA    R2,5(R2)            INCREMENT POINTER PAST 'KEYS='
+         CLI   0(R2),OPENBRAK      TEST FOR OPEN PARENTHESIS
+         BNE   PARMINV             REJECT PARM IF NO
+         LA    R2,1(R2)            INCREMENT POINTER PAST '('
+         LA    R8,SORT1D           LOAD ADDRESS SORT STATEMENT
+         LA    R6,TABSOFIL         LOAD ADDRESS TABLE SORT FIELDS
+PFLDLOOP EX    R3,PARMFLDS         MOVE PARM TO SORT STATEMENT
+         LA    R10,5               LOAD MAX LENGTH FOR 'PPPP,' IN
+FINDFC   CLI   0(R2),COMMA          KEYS PARM / TEST FOR FIRST COMMA
+         BNE   FCNF                BRANCH IF NOT FOUND
+         BAL   R4,CVBPOLEN         CONVERT TO BINARY CURRENT 'PPPP'
+         LA    R10,6               LOAD MAX LENGTH FOR ',LLLL,'
+         B     *+12                SKIP NEXT TWO INSTRUCTIONS
+FINDSC   CLI   0(R2),COMMA         TEST FOR SECOND COMMA
+         BE    SCF1                BRANCH IF FOUND
+         CLI   0(R2),CLOSEBRA      TEST FOR CLOSE PARENTHESIS
+         BE    SCF2                BRANCH IF FOUND
+         LA    R2,1(R2)            ADD ONE
+         LA    R8,1(R8)            ADD ONE
+         BCTR  R3,0                SUBTRACT ONE
+         BCT   R10,FINDSC          TEST NEXT CHARACTER
+         B     PARMINV             REJECT PARM
+FCNF     LA    R2,1(R2)            ADD ONE
+         LA    R8,1(R8)            ADD ONE
+         BCTR  R3,0                SUBTRACT ONE
+         BCT   R10,FINDFC          TEST NEXT CHARACTER
+         B     PARMINV             REJECT PARM
+SCF1     MVC   1(L'SORCHAC,R8),SORCHAC  MOVE 'CH,A,' TO SORT STATEMENT
+         BAL   R4,CVBPOLEN         CONVERT TO BINARY CURRENT 'LLLL'
+         LA    R8,1+L'SORCHAC(R8)
+         LA    R2,1(R2)                 ADD ONE
+         BCT   R3,PFLDLOOP              TEXT NEXT CHARACTER
+         B     PARMINV                  REJECT PARM
+SCF2     MVC   0(L'SORCHAE,R8),SORCHAE  MOVE ',CH,A)' TO SORT STATEMENT
+         BAL   R4,CVBPOLEN         CONVERT TO BINARY LAST 'LLLL'
+         LA    R8,L'SORCHAE(R8)
+         MVI   0(R8),BLANK              MOVE A BLANK AFTER CLOSING PAR.
+         ST    R8,SORTND1               STORE ADDRESS OF END OF SORT
+         LTR   R3,R3                     STATEMENT+1 / TEST IF ZERO
+         BNZ   PARMINV                  BRANCH IF NOT
+         B     PARMGET                  GET NEXT SUB-FIELD
+         EJECT
+***********************************************************************
+*        PARM SUB-FIELD PROCESSING (CONTINUED)                        *
+***********************************************************************
+         SPACE 1
+PARMDLT  OI    SWITCH,DELETEON     INDICATE DELETE PARM SUPPLIED
+         EX    R3,PARMMVC          MOVE PARM TO PRINT LINE
+         BAL   R4,PRINT             AND PRINT IT ON SYSPRINT
+         S     R3,=F'8'            DECREMENT R3 'DELETE=('
+         LTR   R3,R3               TEST FOR DELETE=,
+         BM    PARMINV4            REJECT PARM IF YES
+         LA    R2,7(R2)            INCREMENT POINTER PAST 'DELETE='
+         CLI   0(R2),OPENBRAK      TEST FOR OPEN PARENTHESIS
+         BNE   PARMINV4            REJECT PARM IF NO
+         LA    R2,1(R2)            INCREMENT POINTER PAST '('
+         SR    R8,R8               ZEROES R8
+         LR    R3,R2
+         LA    R10,16              LOAD REST OF MAX. LENTGH FOR DELETE
+FINFC    CLI   0(R3),COMMA         PARM 'PPPP,L,XXXXXXXX)' / T. 1ST COM
+         BE    FCF                 BRANCH IF FOUND
+         LA    R8,1(R8)            ADD ONE
+         LA    R3,1(R3)            ADD ONE
+         BCT   R10,FINFC           TEST NEXT POSITION
+         B     PARMINV4            REJECT PARM
+FCF      LTR   R8,R8               TEST IF 'PPPP' PRESENT
+         BZ    PARMINV4            REJECT PARM IF NO
+         CH    R8,=H'4'            TEST IF 'PPPP' LENTGH > 4
+         BH    PARMINV4            REJECT PARM IF YES
+         BCTR  R8,0                SUBTRACT ONE (LENTGH 'PPPP'-1)
+         LA    R3,112(R8)          PUT '0000007L' IN REG 3
+         EX    R3,PARMPACK         PACK DELETE START POSITION
+         LA    R2,2(R8,R2)         INCREMENT FOR TEST NEXT FIELD
+         CVB   R3,DECIMAL          CONVERT VALUE TO BINARY
+         STH   R3,SPFDI            STORE VALUE B
+         CLI   1(R2),COMMA         TEST FOR COMMA
+         BNE   PARMINV4            REJECT PARM IF NO
+         MVC   LNFDI,0(R2)         STORE LENTGH VALUE
+         XI    LNFDI,X'F0'         CONVERT VALUE TO BINARY
+         CLI   LNFDI,X'08'         TEST IF VALUE > 8
+         BH    PARMINV4            REJECT PARM IF YES
+         S     R10,=F'3'           SUBTRACT 3
+         LA    R2,2(R2)            INCREMENT FOR TEST OF NEXT FIELD
+         SR    R8,R8               ZEROES R8
+         LR    R3,R2
+FINCB    CLI   0(R3),CLOSEBRA      TEST IF CLOSE PARENTHESIS
+         BE    CBF                 BRANCH IF YES
+         LA    R8,1(R8)            ADD ONE
+         LA    R3,1(R3)            ADD ONE
+         BCT   R10,FINCB           TESTNEXT CHARACTER
+         B     PARMINV4            REJECT PARM
+         EJECT
+***********************************************************************
+*        PARM SUB-FIELD PROCESSING (CONTINUED)                        *
+***********************************************************************
+         SPACE 1
+CBF      LTR   R8,R8               TEST IF DELETE INDICATOR PRESENT
+         BZ    PARMINV4            REJECT PARM IF NO
+         CH    R8,=H'8'            TEST IF LENTGH > 8
+         BH    PARMINV4            REJECT PARM IF YES
+         BCTR  R8,0                LENT-GTH-1
+         EX    R8,PARMDELI         STORE INDICATOR FOR DELETE RECORD
+         SR    R3,R3               ZEROES R3
+         L     R2,SYSINSW          GET DCB ADDRESS OF SYSIN
+         LH    R2,DCBLRECL-IHADCB(R2) GET LRECL OF SYSIN
+         SH    R2,SPFDI            - START POSITION OF DELETE INDICATOR
+         IC    R3,LNFDI            LOAD L' OF DELETE INDICATOR
+         BCTR  R3,0                -1
+         SR    R2,R3               TEST IF LRECL - PPPP - (L-1) IS NEG
+         BM    PARMINV4            BRANCH IF YES
+         B     PARMGET             RETRIEVE NEXT SUB-FIELD
+         SPACE 1
+PARMEXIT OI    SWITCH,EXITON       INDICATE EXIT PARM SUPPLIED
+         EX    R3,PARMMVC          MOVE PARM TO PRINT LINE
+         BAL   R4,PRINT             AND PRINT IT ON SYSPRINT
+         S     R3,=F'5'            DECREMENT R3 'EXIT='
+         LTR   R3,R3               TEST FOR 'EXIT=,'
+         BM    PARMINV5            REJECT PARM IF YES
+         LA    R2,5(R2)            INCREMENT POINTER PAST 'EXIT='
+         EX    R3,PARMEXT          STORE EXIT NAME
+         TM    SYSUT2SW,DDOPEN     TEST IF DATA SET OPEN
+         BZ    PARMGET             BRANCH IF NO
+         L     R2,SYSUT2SW         GET DCB ADDRESS SYSUT2
+         LH    R3,DCBLRECL-IHADCB(R2) GET LRECL OF SYSUT2
+         ST    R3,BUFUT2LG         SAVE LRECL OF SYSUT2
+         GETMAIN R,LV=(3)          GET CORE FOR BUFFER SYSUT2 USER EXIT
+         ST    R1,ADRBUFUE         SAVE ADDRESS OF ACQUIRED CORE
+         B     PARMGET             RETRIEVE NEXT SUB-FIELD
+         SPACE 1
+CVBPOLEN SUBIN SAVE=(R2,R3)
+         LA    R3,5                LOAD MAX.LENGTH FOR 'PPPP,'OR'LLLL,'
+         SR    R3,R10              GET LENGTH OF CURRENT PPP,'OR'LLLL,'
+         BZ    PARMINV             PARM REJECT IF LENGTH = ZERO
+         SR    R2,R3               GET POINTER FOR EXECUTE INSTRUCTION
+         BCTR  R3,0                -1 OF LENGT FOR EXECUTE INSTRUCTION
+         LA    R3,112(R3)          PUT '0000007L' IN REG 3
+         EX    R3,PARMPACK         PACK CURRENT 'PPPP' OR 'LLLL'
+         CVB   R2,DECIMAL          CONVERT TO BINARY
+         STH   R2,0(R6)            STORE BINARY VALUE IN TABSOFIL
+         LA    R6,2(R6)            INCREMENT POINTER TABLE
+         LA    R2,ENDTASOF         GET ADDRESS END OF TABLE
+         CR    R6,R2               TEST IF ADDRESS IN REG 6 > REG R2
+         BH    PARMINV             PARM REJECT IF YES
+ENDPOLEN SUBOUT RESTORE=(R2,R3)
+         EJECT
+***********************************************************************
+*        TERMINATE PARM PROCESSING                                    *
+***********************************************************************
+         SPACE 1
+PARMDONE CP    CNTPARM,ZERO        ETST IF ANY SUB-PARMS FOUNG
+         BNZ   PARMEND1            BRANCH IF YES
+         MVC   5(L'LINE13,R5),LINE13 TELL OF NO PARM
+PARMERR  BAL   R4,PRINT            WRITE THE MESSAGE
+         MVC   COMPCODE,COND16     SET CONDITION CODE TO 16
+         B     PRINTCDE
+         SPACE 1
+PARMEND1 TM    SWITCH,KEYSON       TEST IF KEYS FOUND
+         BZ    PARMEND2            BRANCH IF NOT TO TELL OF ERROR
+         B     PARMEND             BRANCH IF YES
+PARMEND2 MVC   5(L'LINE24,R5),LINE24 TELL OF ERROR
+         B     PARMERR
+         SPACE 1
+PARMEND  EQU   *                   END OF PARM PROCESSING
+         NI    PRINTSW,PRINTOFF    INDECATE SYSPRINT NOT INTERESTED
+         OI    SYSOUTSW,PRINTON    INDICATE SYSOUT INTERESTED
+         EJECT
+***********************************************************************
+*        INVOKE THE SORT                                              *
+***********************************************************************
+         SPACE 1
+         BAL   R4,HEADING          WRITE INITIAL REPORT HEADINGS
+         L     R2,SYSINSW          GET DCB ADDRESS OF SYSIN
+         LH    R2,DCBLRECL-IHADCB(R2) GET LRECL OF INPUT
+         ST    R2,RECDLGTH         STORE RECORD LENGTH
+         LA    R6,TABSOFIL+2       GET ADDRESS FIRST LENGTH VALUE
+         LA    R8,ENDTASOF         GET ADDRESS TABLE END
+         LH    R2,0(R6)            LOAD FIRST LENGTH VALUE
+LOOPTSF  LA    R6,4(R6)            INCREMENT TABLE POINTER FOR NEXT ADD
+         CR    R6,R8               TEST IF END OF TABLE
+         BH    SLTV                BRANCH IF YES
+         AH    R2,0(R6)            ADD CURRENT LENGTH VALUE
+         B     LOOPTSF
+SLTV     ST    R2,COMPLGTH         STORE TOTAL OF VALUES 'LLLL' IN KEYS
+         LA    R3,2(R2,R2)         PARM / ADD TWO TIMES THIS VALUE INR0
+         LA    R0,1(R2,R3)         V. R0 = KEYS LENGTH X 3 + 3
+         ST    R0,CORELGTH          AND STORE THIS LENGTH
+        GETMAIN R,LV=(0)           GET CORE FOR WORK AREA
+         OI    SWITCH,EXTRACOR     TELL GETMAIN IS EXECUTED
+         LR    R9,R1               SAVE ADDRESS OF ACQUIRED CORE
+         L     R2,CORELGTH         LOAD LENGTH OF WA GETMAINED
+         BAL   R4,OOINIT           GO MOVE LOW-VALUES
+         MVC   BINSTORE,RECDLGTH   MOVE RECORD LENGTH TO WORK AREA
+         BAL   R4,CVD               AND CONVERT IT TO CHARACTER
+         MVC   RECLSORT,DISPLAY+12 PLACE LENGTH IN SORT STATEMENT
+         OC    RECLSORT,ZEROES     TRANSFORM LEDING SPACES TO ZEROES
+         BAL   R4,GET              READ FIRST RECORD FROM SYSUT1
+         STM   R5,R12,40(R13)      PRESERVE UT485'S REGISTERS
+         LA    R1,SORTPARM         ESTABLISH PARAMETER LINKAGE
+         LINK  EP=SORT             PERFORM THE SORT
+         CH    R15,COMPCODE        TEST IF SORT'S COMP CODE > UT485'S
+         BNH   *+8                 BRANCH IF NOT
+         STH   R15,COMPCODE        SAVE THE SORT'S COMPLETION CODE
+         LTR   R15,R15             TEST FOR ZERO COND CODE
+         BZ    END                 GO WRITE TERMINATION MESSAGES
+         NI    SYSOUTSW,PRINTOFF   INDICATE SYSOUT NOT INTRRESTED
+         OI    PRINTSW,PRINTON      AND INDICATE SYSPRINT INTERESTED
+         MVI   0(R5),SPCE2AFT      ESTABLISH SPACE AFETR
+         MVC   5(L'LINE20,R5),LINE20 SET UP ERROR MESSAGE
+         BAL   R4,PRINT             AND PRINT IT
+         B     PRINTCDE            PRINT COND CODE & TERMINATE
+         EJECT
+***********************************************************************
+*        SORT EXIT E15 - ACQUIRE RECORDS AND PASS TO THE SORT         *
+***********************************************************************
+         SPACE 1
+         USING *,R15               ESTABLISH TEMPORARY ADDRESSABILITY
+E15      SUBIN ,                   ENTER SORT EXIT E15
+         STM   R14,R12,12(R13)     SAVE SORT'S REGISTERS
+         ST    R13,E15R13S2        SAVE SORT'D SAVE AREA ADDRESS
+         L     R13,E15R13S1        RETRIEVE UT485'S SAVE AREA ADDRESS
+         MVC   E15REGSV(64),12(R13)    SAVE REGS FOR RET. FROM SORT
+         LM    R5,R12,40(R13)      RETRIEVE UT485'S REGISTERS
+         B     E15CONT             BRANCH AROUND SAVE AREAS
+E15R13S1 DS    F                   SAVE AREA FOR UT485'S REG 13
+E15R13S2 DS    F                   SAVE AREA FOR SORT'S REG 13
+E15REGSV DS    16F                 REGS SAVE AREA FOR RET. FROM SORT
+E15CONT  EQU   *                   CONTINUE
+         DROP  R15                 DROP TEMPORARY ADDRESSABILITY
+         SPACE 3
+E15LOOP  BAL   R4,READ             GET INPUT RECORD
+         LA    R15,INSERT          TELL SORT OF NEW RECORD
+         B     E15EXIT2            RETURN TO THE SORT
+         SPACE 5
+E15EXIT  LA    R15,NORETURN        TELL SORT NOT TO RETURN
+E15EXIT2 LR    R1,R6               POINT R1 AT NEW RECORD
+         MVC   12(64,R13),E15REGSV     RESTORE REGS FOR RET. FROM SORT
+         STM   R5,R12,40(R13)      PRESERVE UT485'S REGISTERS
+         L     R13,E15R13S2        RESTORE SORT'S SAVE AREA POINTER
+         L     R14,12(R13)         RESTORE THE SORT'S
+         L     R0,20(R13)           GENERAL PURPOSE
+         LM    R2,R12,28(R13)       REGISTERS
+         BR    R14                 RETURN TO THE SORT
+         EJECT
+***********************************************************************
+*        SORT EXIT E35                                                *
+***********************************************************************
+         SPACE 1
+         USING *,R15               ESTABLISH TEMPORARY ADDRESSABILITY
+E35      SUBIN ,                   ENTER SORT EXIT E35
+         STM   R14,R12,12(R13)     SAVE SORT'S REGISTERS
+         ST    R13,E35R13S2        SAVE SORT'D SAVE AREA SDDRESS
+         L     R13,E35R13S1        RETRIEVE UT485HS SAVE AREA ADDRESS
+         MVC   E35REGSV(64),12(R13)    SAVE REGS FOR RET. FROM SORT
+         LM    R5,R12,40(R13)      RETRIEVE UT485'S REGISTERS
+         B     E35CONT             BRANCH AROUND SAVE AREAS
+E35R13S1 DS    F                   SAVE AREA FOR UT485'S REG13
+E35R13S2 DS    F                   SAVE AREA FOR SORT'D REG 13
+E35REGSV DS    16F                 REGS SAVE AREA FOR RET. FROM SORT
+E35CONT  EQU   *                   CONTINUE
+         DROP  R15                 DROP TEMPORARY ADDRESSABILITY
+         SPACE 1
+         L     R1,0(,R1)           GET ADDRESS OF RECORD FROM SORT
+         LA    R1,0(,R1)           PURIFY HIGH ORDER BYTE
+         ST    R1,ADRSREC          PEESERVE ADDR OF RECORD FROM  SOH\
+         LTR   R1,R1               TEST IF END OF DATA
+         BNZ   E35CONT2             BRANCH IF NOT
+         L     R2,COMPLGTH         LOAD LENGTH OF KEYS
+         LA    R2,1(R2)            ADD ONE (L'CONTROL CHAR.)
+         LA    R1,0(R2,R9)         ADDRESS OF THE SORT KEYS
+         MVI   PROPAGCH+1,X'FF'    MOVE PADDING CHAR.
+         BAL   R4,OOINIT           GO MOVE HIGH-VALUES
+         B     KEYSCOMP            GO COMPARE THE KEYS
+         SPACE 1
+E35EXITE LA    R15,NORETURN        TELL THE SORT NOT TO RETURN
+         B     *+8                 BYPASS REG 15 LOAD
+         SPACE 1
+E35EXIT  LA    R15,DELETE          TELL THE SORT TO DELETE THE RECORD
+         MVC   12(64,R13),E35REGSV     RESTORE REGS FOR RET. FROM SORT
+         STM   R5,R12,40(R13)      PRESERVE UT485'S REGISTERS
+         L     R13,E35R13S2        RESTORE THE SORT'S REG 13
+         L     R14,12(R13)         RESTORE THE SORT'S
+         LM    R0,R12,20(R13)       REGISTERS
+         BR    R14                 RETURN TO THE SORT
+         EJECT
+***********************************************************************
+*        SORT EXIT E35 ( CONTINUED )                                  *
+***********************************************************************
+         SPACE 1
+E35CONT2 L     R10,ADRSREC         ADDRESS OF SORT RECORD
+         L     R2,COMPLGTH         LOAD LENGTH OF KEYS
+         LA    R2,2(R2,R9)         ADDRESS OF WA FOR SORT KEYS
+         BAL   R4,FORMKEYS         GO FORMAT KEYS IN ORDER FOR COMP.
+         MVI   DLTKEYS,C'N'        TELL IT IS NOT A DELETE RECORD
+         TM    SWITCH,DELETEON     TEST IF 'DELETE' PARM SUPPLIED
+         BZ    ENDTSDLT            BRANCH IF NO
+         L     R2,ADRSREC          ADDRESS OF RECORD FROM SORT
+         AH    R2,SPFDI            ADD NUMBER OF THE 1ST POS. OF DLT ID
+         BCTR  R2,0                -1
+         XR    R3,R3               =0
+         IC    R3,LNFDI            LOAD L' OF DELETE INDICATOR
+         BCTR  R3,0                DECREMENT R3 FOR EXECUTE
+         EX    R3,TESIFDLT         TEST IF DELETE RECORD
+         BNE   ENDTSDLT            BRANCH IF NO
+         MVI   DLTKEYS,C'Y'        TELL IT IS A DELETE RECORD
+         B     ENDTSDLT
+         SPACE 1
+TESIFDLT CLC   0(0,R2),DELIND      EXECUTED COMPARE INSTRUCTION
+         SPACE 1
+ENDTSDLT B     KEYSCOMP            GO COMPARE KEYS
+         EJECT
+***********************************************************************
+*        SORT EXIT E35 ( CONTINUED )                                  *
+***********************************************************************
+         SPACE 1
+**>      A = KEYS OF SYSUT1 CURRENT RECORD / B = KEYS OF SORT CUR. REC.
+         SPACE 1
+*              ----------  A < B  ----------
+E35CONT3 BAL   R4,WRITE            WRITE THIS RECORD
+         AP    CNTRUNM,ONE         ADD ONE TO COUNT RECORDS UT1 UNMATCH
+         L     R3,RECDLGTH         LOAD RECORD LENGTH
+         L     R2,ADRUT2           ADDRESS OF SYSUT2 BUFFER
+         L     R1,ADRUT1           LOAD ADDRESS OF SYSUT1 RECORD
+         TM    SYSUT2SW,DDOPEN     TEST IF DATA SET OPEN
+         BZ    *+8                 BRANCH IF NO
+         BAL   R4,RECDMOVE         MOVE RECORD
+         BAL   R4,GET              READ NEXT RECORD FROM SYSUT1
+         B     KEYSCOMP            GO COMPARE THE KEYS
+         SPACE 1
+*              ----------  A = B  ----------
+E35CONT4 CLI   0(R9),X'FF'         TEST IF END OF SYSUT1 AND SORT RECD
+         BE    E35EXITE            BRANCH IF YES
+         MVC   8(7,R7),=C'DELETED' ACTION TAKEN
+         CLI   DLTKEYS,C'Y'        TEST IF DELETE RECORD
+         BNE   *+14                BRANCH IF NO
+         AP    CNTRDEL,ONE         ADD ONE TO COUNT RECORDS DELETED
+         B     DLTREC              BRANCH IF YES
+         MVC   8(8,R7),=C'REPLACED' ACTION TAKEN
+         TM    SWITCH,EXITON       TEST IF EXIT PARM SUPPLIED
+         BO    *+14                BRANCH IF YES
+         AP    CNTRREP,ONE         ADD ONE TO COUNT RECORDS REPLACED
+         B     DLTREC              BRANCH IF NO
+         MVC   8(8,R7),=C'MODIFIED' ACTION TAKEN
+         AP    CNTRMOD,ONE         ADD ONE TO COUNT RECORDS MODIFIED
+         BAL   R4,EXEXIT           EXECUTE USER EXIT
+DLTREC   BAL   R4,PRINTREJ         WRITE RECORD KEYS TO SYSOUT
+         BAL   R4,WRITEUT3         WRITE THIS RECORD
+         L     R3,RECDLGTH         LOAD RECORD LENGTH
+         L     R2,ADRUT3           ADDRESS OF SYSUT3 BUFFER
+         L     R1,ADRUT1           LOAD ADDRESS OF SYSUT1 RECORD
+         TM    SYSUT3SW,DDOPEN     TEST IF DATA SET OPEN
+         BZ    *+8                 BRANCH IF NO
+         BAL   R4,RECDMOVE         MOVE RECORD
+         BAL   R4,GET              READ NEXT RECORD FROM SYSUT1
+         CLI   DLTKEYS,C'Y'        TEST IF DELETE RECORD
+         BE    KEYSCOMP            BRANCH IF YES
+         TM    SWITCH,EXITON       TEST IF EXIT PARM SUPPLIED
+         BO    KEYSCOMP            BRANCH IF YES
+         L     R3,COMPLGTH         LOAD LENTGH OF KEYS
+         LA    R2,2(R3,R3)         GET ADDRESS OF PRECEDING
+         LA    R2,0(R2,R9)          SYSUT1 RECORD KEYS
+         MVI   0(R2),C'R'          TELL IS AN REPLACE RECORD
+         B     KEYSCOMP            GO COMPARE THE KEYS
+         EJECT
+***********************************************************************
+*        SORT EXIT E35 (CONTINUED)                                    *
+***********************************************************************
+         SPACE 3
+*              ----------  A > B  ----------
+         SPACE 1
+E35CONT5 CLI   DLTKEYS,C'Y'        TEST IF RECORD WITH DELETE INDICATOR
+         BE    E35EXIT             BRANCH IF YES
+         L     R3,COMPLGTH         LOAD LENGTH OF KEYS
+         LA    R2,3(R3,R3)         GET ADDRESS OF PRECEDING
+         LA    R2,0(R2,R9)          SYSUT1 RECORD KEYS
+         LA    R1,2(R3,R9)         ADDRESS OF CURRENT SORT RECORD KEYS
+         BAL   R4,COMPA            GO COMPARE IF CURRENT SORT KEYS IS =
+         B     TESTIFR              TO PRECEDING SYSUT1 KEYS /B. IF YES
+         MVC   8(5,R7),=C'ADDED'   ACTION TAKEN
+         BAL   R4,PRINTREJ         WRITE RECORD KEYS TO SYSOUT
+         AP    CNTRADD,ONE         ADD ONE TO COUNT RECORDS ADDED
+E35WUT2  BAL   R4,WRITE            WRITE THIS RECORD
+         L     R3,RECDLGTH         LOAD RECORD LENGTH
+         L     R2,ADRUT2           ADDRESS OF SYSUT2 BUFFER
+         L     R1,ADRSREC          ADDRESS OF SORT RECORD
+         TM    SYSUT2SW,DDOPEN     TEST IF DATA SET OPEN
+         BZ    *+8                 BRANCH IF NO
+         BAL   R4,RECDMOVE         MOVE RECORD
+         B     E35EXIT             RETURN TO THE SORT
+TESTIFR  L     R3,COMPLGTH         LOAD LENTGH OF KEYS
+         LA    R2,2(R3,R3)         GET ADDRESS OF PRECEDING
+         LA    R2,0(R2,R9)          SYSUT1 RECORD KEYS
+         CLI   0(R2),C'R'          TEST IF REPLACED RECORD
+         BNE   E35EXIT             BRANCH IF NO
+         B     E35WUT2             GO WRITE THIS RECORD
+         EJECT
+***********************************************************************
+*        PUT OUT TERMINATION MESSAGES TO SYSPRINT.                    *
+***********************************************************************
+         SPACE 1
+END      BAL   R4,PRINT            SPACE 1 LINE
+         MVC   5(L'LINE23,R7),LINE23 TELL SYSOUT OF REPORT END
+         BAL   R4,PRINT            PRINT END MESSAGE
+         NI    SYSOUTSW,PRINTOFF   INDICATE SYSOUT NOT INTERESTED
+         OI    PRINTSW,PRINTON      AND SYSPRINT INTERESTED
+         MVI   0(R5),PAGESKIP      ESTABLISH SKIPS
+         BAL   R4,PRINT             AND ISSUE THEM
+         MVI   0(R5),SPCE3AFT      ESTABLISH TRIPLE SPACE
+         MVC   5(L'LINE17,R5),LINE17 ADD TERMINATION HEADING
+         MVC   5+L'LINE17+30(9,R5),UTREPORT MOVE DATE TO PRINT LINE
+         BAL   R4,PRINT            WRITE FINAL HEADING
+         EJECT
+***********************************************************************
+*        TERMINATION MESSAGES (CONTINUED)                             *
+***********************************************************************
+         SPACE 1
+         MVC   5(L'LINE03,R5),LINE03         **
+         MVC   L'LINE03+5(7,R5),EDITMASK      *
+         ED    L'LINE03+5(7,R5),CNTPARM       ** SUB-PARM COUNT
+         MVC   0(133,R7),0(R5)                *
+         BAL   R4,PRINT                      **
+         SPACE 1
+         MVC   5(L'LINE05,R5),LINE05         **
+         MVC   L'LINE05+5(7,R5),EDITMASK      *
+         ED    L'LINE05+5(7,R5),CNTIN         ** SYSIN RECORDS READ
+         MVC   0(133,R7),0(R5)                *
+         BAL   R4,PRINT                      **
+         SPACE 1
+         MVC   5(L'LINE04,R5),LINE04         **
+         MVC   L'LINE04+5(7,R5),EDITMASK      *
+         ED    L'LINE04+5(7,R5),CNTUT1        ** SYSTT1 RECORDS READ
+         MVC   0(133,R7),0(R5)                *
+         BAL   R4,PRINT                      **
+         SPACE 1
+         MVC   5(L'LINE35,R5),LINE35         **
+         MVC   L'LINE35+5(7,R5),EDITMASK      *
+         ED    L'LINE35+5(7,R5),CNTRADD       ** RECORDS ADDED
+         MVC   0(133,R7),0(R5)                *
+         BAL   R4,PRINT                      **
+         SPACE 1
+         MVC   5(L'LINE36,R5),LINE36         **
+         MVC   L'LINE36+5(7,R5),EDITMASK      *
+         ED    L'LINE36+5(7,R5),CNTRREP       ** RECORDS REPLACED
+         MVC   0(133,R7),0(R5)                *
+         BAL   R4,PRINT                      **
+         SPACE 1
+         MVC   5(L'LINE37,R5),LINE37         **
+         MVC   L'LINE37+5(7,R5),EDITMASK      *
+         ED    L'LINE37+5(7,R5),CNTRMOD       ** RECORDS MODIFIED
+         MVC   0(133,R7),0(R5)                *
+         BAL   R4,PRINT                      **
+         SPACE 1
+         MVC   5(L'LINE38,R5),LINE38         **
+         MVC   L'LINE38+5(7,R5),EDITMASK      *
+         ED    L'LINE38+5(7,R5),CNTRDEL       ** RECORDS DELETED
+         MVC   0(133,R7),0(R5)                *
+         BAL   R4,PRINT                      **
+         EJECT
+***********************************************************************
+*        TERMINATION MESSAGES (CONTINUED)                             *
+***********************************************************************
+         SPACE 2
+         MVC   5(L'LINE39,R5),LINE39         **
+         MVC   L'LINE39+5(7,R5),EDITMASK      *
+         ED    L'LINE39+5(7,R5),CNTRUNM       ** RECORDS UNMATCHED UT1
+         MVC   0(133,R7),0(R5)                *
+         BAL   R4,PRINT                      **
+         SPACE 1
+         MVC   5(L'LINE06,R5),LINE06         **
+         MVC   L'LINE06+5(7,R5),EDITMASK      *
+         ED    L'LINE06+5(7,R5),CNTUT2        ** SYSUT2 RECORDS WRITTEN
+         MVC   0(133,R7),0(R5)                *
+         BAL   R4,PRINT                      **
+         SPACE 1
+         MVC   5(L'LINE34,R5),LINE34         **
+         MVC   L'LINE34+5(7,R5),EDITMASK      *
+         ED    L'LINE34+5(7,R5),CNTUT3        ** SYSUT3 RECORDS WRITTEN
+         MVC   0(133,R7),0(R5)                *
+         BAL   R4,PRINT                      **
+         SPACE 1
+         MVI   0(R5),SPCE2AFT      ESTABLISH DOUBLE SPACE
+         BAL   R4,PRINT             AND ISSUE IT
+         EJECT
+***********************************************************************
+*        PRINT CONDITION CODE                                         *
+***********************************************************************
+         SPACE 1
+PRINTCDE MVC   5(L'LINE07,R5),LINE07 ADD COND CODE MESSAGE
+         MVI   0(R5),SPCE2AFT      ESTABLISH DOUBLE SPACE
+         LH    R2,COMPCODE         GET CONDITION CODE
+         CVD   R2,WORKAREA         CONVERT IT TO DECIMAL
+         ED    CONDMASK,WORKAREA+6 CONVERT IT TO PRINTABLE EBCDIC
+         MVC   L'LINE07+6(2,R5),CONDMASK+2 ADD IT TO PRINT LINE
+         OI    PRINTSW,PRINTON     INDICATE SYSPRINT INTERESTED
+         BAL   R4,PRINT            PRINT COND CODE MESSGAE
+         MVC   5(L'LINE10,R5),LINE10 MOVE IN FINAL MESSAGE
+         MVI   0(R7),BLANK         INSERT SPACE IN SYSOUT BUFFER
+         MVC   1(132,R7),0(R7)      AND PROPAGATE THROUGH
+         SPACE 5
+***********************************************************************
+*        JOB TERMINATION ROUTINE - CLOSE ANY OPEN DATA SETS,          *
+*         SET A COMPLETION CODE IN REGISTER 15, AND RETURN .          *
+***********************************************************************
+         SPACE 1
+JOBEND   LA    R10,MAXDS           ESTABLISH LOOP
+         TM    SYSOUTSW,DDSTAT     TEST FOR SYSOUT
+         BZ    *+8                 BRANCH IF NOT
+         OI    SYSOUTSW,DDOPEN     'RE-CONNECT' FOR CLOSE
+         TM    PRINTSW,DDSTAT      TEST FOR SYSPRINT
+         BZ    *+8                 BRANCH IF NOT
+         OI    PRINTSW,DDOPEN      'RE-CONNECT' FOR CLOSE
+         LA    R2,DCBTABLE         POINT AT AD-CON TABLE
+         BAL   R4,CLOSE            CLOSE DATA SET
+         LA    R2,NTRYSIZE(,R2)    POINT AT NEXT TABLE ENTRY
+         BCT   R10,*-8             CLOSE NEXT DATA SET
+         TM    SWITCH,EXTRACOR     TEST IF GETMAIN EXECUTED
+         BNO   ENDOFEND            BRANCH IF NO
+         L     R0,CORELGTH         PLACE LENGTH OF WORK AREA IN REG 0
+         LR    R1,R9               POINT R1 AT THE WORK AREA
+        FREEMAIN R,LV=(0),A=(1)    FREE ACQUIRED CORE
+*
+*        ABEND IF COMPCODE NOT ZERO
+*
+ENDOFEND EQU   *
+         CLC   COMPCODE,=H'0'      COMPCODE = 0 ?
+         BE    ENDOFPGM            YES - BYPASS DUMP
+         ABEND 485,DUMP            ABEND WITH U485
+ENDOFPGM EQU   *
+        PGMOUT RC=COMPCODE         SET COND CODE AND RETURN
+         EJECT
+***********************************************************************
+*        CONVERT BINARY WORD TO DECIMAL AND EBCDIC                    *
+***********************************************************************
+         SPACE 1
+CVD      SUBIN ,                   CONVERT COLUMN BINARY
+         L     R3,BINSTORE         LOAD BINARY FIELD TO WORK REGISTER
+         CVD   R3,DECIMAL          CONVERT TO DECIMAL
+         OI    DECIMAL+7,X'0F'     SET ZONE TO 'F'
+         XC    BINSTORE,BINSTORE   SET WORK AREA TO BINARY ZEROES
+         MVC   DISPLAY,EDITCVD     MOVE EDIT PATTERN TO DISPLAY AREA
+         ED    DISPLAY,DECIMAL     CONVERT TO EBCDIC
+        SUBOUT ,                   RETURN TO CALLER
+         SPACE 1
+***********************************************************************
+*        THIS ROUTINE PASS THE CONTROL TO USER EXIT (IF PRESENT)      *
+***********************************************************************
+         SPACE 1
+EXEXIT   SUBIN SAVE=(R4)
+S1STIME  NOP   EXUSE               BRANCH AFTER 1ST TIME
+         MVI   S1STIME+1,X'F0'     CHANGE SWITCH 1ST TIME
+         LOAD  EPLOC=EXITNAME      LOAD USER EXIT INTO CORE
+         ST    R0,ADREXIT          SAVE ENTRY POINT ADDRESS
+EXUSE    TM    SYSUT2SW,DDOPEN     TEST IF DATA SET OPEN
+         BZ    EXEND               BRANCH IF NO
+         L     R2,BUFUT2LG         LOAD LRECL OF SYSUT2
+         L     R1,ADRBUFUE         LOAD ADDRESS OF PSEUDO-BUFFER
+         MVI   PROPAGCH+1,BLANK    TELL THE PADDING CHAR. TO USE
+         BAL   R4,OOINIT           GO MOVE BLANK
+         MVI   FLAGUSEX,BLANK      MOVE BLANK TO  FLAG BYTE USER EXIT
+         L     R15,ADREXIT         LOAD ENTRY POINT ADDRESS
+         LA    R1,PARMUSEX         LOAD ADDRESS OF PARM. LIST
+         LR    R3,R13              PRESERVE UT485'S REGS
+         LA    R13,USEXSA          PRESERVE UT485'S REGS
+         BALR  R14,R15             PASS CONTROL TO USER EXIT
+         LR    R13,R3              RESTORE UT485'S REGS
+         LM    R14,R12,USEXSA+12   RESTORE UT485'S REGS
+         CLI   FLAGUSEX,C'Y'       TEST IF FLAG BYTE = Y
+         BE    *+26                BRANCH IF YES
+         MVC   8(12,R7),=C'DELETED/EXIT' ACTION TAKEN
+         AP    CNTRDEL,ONE         ADD ONE TO RECORDS DELETED COUNT
+         SP    CNTRMOD,ONE         SUB ONE TO RECORDS MODIFIED COUNT
+         B     EXEND               BRANCH IF NO
+         BAL   R4,WRITE            WRITE THIS RECORD
+         L     R3,RECDLGTH         LOAD RECORD LENGTH
+         L     R2,ADRUT2           ADDRESS OF SYSUT2 BUFFER
+         L     R1,ADRBUFUE         LOAD ADDRESS OF UT2 PSEUDO-BUFFER
+         BAL   R4,RECDMOVE         MOVE RECORD
+EXEND    EQU   *
+         SUBOUT RESTORE=(R4)
+         SPACE 1
+USEXSA   DS    18F
+         EJECT
+***********************************************************************
+*        ROUTINE TO INITIALISE AN AREA OF CORE TO LOW-VALUES.         *
+*         ON ENTRY, THE R2 CONTAINS THE LENGTH OF THE AREA TO BE      *
+*         INITIALISED, AND THE AREA  IS POINTED TO BY R1.             *
+*         R3 IS USED AS WORK REGISTER, AND THE CONTENTS OF R1         *
+*         ARE DESTROYED.                                              *
+***********************************************************************
+         SPACE 1
+OOINIT   SUBIN ,                   INITIALISE TO X'00'
+OOINIT2  LA    R3,256              INITIALISE R3 FOR USE AS COMPARAND
+PROPAGCH MVI   0(R1),X'00'         MOVE PROPAGATION CHARACTER
+         CR    R2,R3               TEST IF MORE THAN 256 BYTES LEFT
+         BNH   OOINIT3             BRANCH IF NOT
+         SR    R2,R3               DECREMENT RESIDUAL COUNT BY 256
+         BCTR  R3,0                DECREMENT FOR 255 BYTE MOVE
+         BCTR  R3,0                DECREMENT R3 FOR EXECUTE
+         EX    R3,OOMVC            INITIALISE 256 BYTES TO X'00'
+         LA    R1,256(,R1)         INCREMENT R1 TO UNINITIALISED AREA
+         B     OOINIT2             REPEAT FOR NEXT 256 BYTES
+OOINIT3  BCTR  R2,0                DECREMENT FOR (LENGTH-1) MOVE
+         BCTR  R2,0                DECREMENT R2 FOR EXECUTE
+         EX    R2,OOMVC            INITIALISE REMAINDER TO X'00'
+        SUBOUT ,                   RETURN TO CALLER
+         SPACE 1
+OOMVC    MVC   1(0,R1),0(R1)       EXECUTED MOVE INSTRUCTION
+         EJECT
+***********************************************************************
+*        WRITE RECORDS TO SYSUT2                                      *
+***********************************************************************
+         SPACE 1
+WRITE    SUBIN ,                   WRITE TO SYSUT2
+WRITE2   TM    SYSUT2SW,DDOPEN     TEST IF DATA SET OPEN
+         BZ    0(R4)               RETURN IF NOT
+         PUT   SYSUT2              WRITE SYSUT2 RECORD
+         AP    CNTUT2,ONE          INCREMENT RECORD COUNT
+         ST    R1,ADRUT2           SAVE NEW BUFFER ADDRESS
+        SUBOUT ,                   RETURN TO CALLER
+         SPACE 5
+***********************************************************************
+*        WRITE REJECTED RECORDS TO SYSUT3                             *
+***********************************************************************
+         SPACE 1
+WRITEUT3 SUBIN ,                   WRITE TO SYSUT3
+         TM    SYSUT3SW,DDOPEN     TEST IF DATA SET OPEN
+         BZ    0(R4)               RETURN IF NOT
+         PUT   SYSUT3              WRITE RECORD
+         ST    R1,ADRUT3           PRESERVE BUFFER ADDRESS
+         AP    CNTUT3,ONE          INCREMENT RECORD COUNT
+        SUBOUT ,                   RETURN TO THE CALLER
+         EJECT
+***********************************************************************
+*        ROUTINE TO FORMAT THE KEYS FOR COMPARAISON. THE FIRST PART   *
+*         OF WORK AREA GETMAINED IS FOR SYSUT1 RECORD KEYS AND        *
+*         THE SECOND PART IS FOR SORT RECORD KEYS.                    *
+***********************************************************************
+         SPACE 1
+FORMKEYS SUBIN SAVE=(R4)
+         LA    R6,TABSOFIL         ADDRESS OF TABLE SORT FIELD
+         LA    R8,ENDTASOF         ADDRESS OF END OF TABLE
+LOOPTSOF CLC   0(4,R6),ZEROWORD    TEST IF END OF TABLE 1
+         BE    ENDFKEYS            BRANCH IF YES
+         CR    R6,R8               TEST IF END OF TABLE 2
+         BE    ENDFKEYS            BRANCH IF YES
+         LH    R1,0(R6)            LOAD 'PPPP' VALUE
+         LH    R3,2(R6)            LOAD 'LLLL' VALUE
+         BCTR  R1,0                -1 = DISPL. FOR RECORD POINTER
+         LA    R1,0(R1,R10)        ADD DISPL. TO RECORD ADDRESS
+         BAL   R4,RECDMOVE         PERFORM MOVE AREA TO ANOTHER
+         LH    R3,2(R6)            GET DISPL. FOR NEXT MOVE
+         LA    R2,0(R3,R2)         ADD DISPL. TO RECEIVING AREA ADDRESS
+         LA    R6,4(R6)            INCREMENT TABLE POINTER
+         B     LOOPTSOF            PROCESS NEXT TABLE ELEMENT
+ENDFKEYS SUBOUT RESTORE=(R4)
+         SPACE 3
+***********************************************************************
+*        MOVE ONE AREA OF CORE TO ANOTHER.                            *
+*                                                                     *
+*        ON ENTRY, REGISTER 3 CONTAINS THE LENGTH OF THE              *
+*         AREA TO BE MOVED, REGISTER 2 CONTAINS THE ADDRESS           *
+*         OF THE RECEIVING AREA, AND REGISTER 1 CONTAINS              *
+*         THE ADDRESS OF THE SENDING AREA.  THE CONTENTS OF           *
+*         ALL THREE REGISTERS IS DESTROYED.                           *
+***********************************************************************
+         SPACE 1
+RECDMOVE SUBIN ,                   MOVE COR E AROUND THE PLACE
+RECDMVE1 C     R3,=F'256'          TEST FOR LENGTH LASS THAN 256 BYTES
+         BNH   RECDMVE2            BRANCH IF YES
+         MVC   0(256,R2),0(R1)     MOVE 256 BYTES
+         S     R3,=F'256'          DECREMENT LENGTH LEFT
+         LA    R1,256(,R1)         ALTER SENDING POINTER
+         LA    R2,256(,R2)         ALTER RECEIVING POINTER
+         B     RECDMVE1            LOOP BACK
+RECDMVE2 BCTR  R3,0                DECREMENT LENGTH FOR EXECUTE
+         EX    R3,RECDMVE          MOVE REMAINDER OF AREA
+        SUBOUT ,                   RETURN TO THE CALLER
+         SPACE 1
+RECDMVE  MVC   0(0,R2),0(R1)       EXECUTED MOVE INSTRUCTION
+         EJECT
+***********************************************************************
+*        ROUTINE TO COMPARE THE KEYS OF SORT RECORD(A) WITH           *
+*         KEYS OF SYSUT1 RECORD(B).                                   *
+***********************************************************************
+         SPACE 1
+KEYSCOMP L     R3,COMPLGTH         LOAD KEYS LENGTH
+         LA    R3,1(R3)            ADD ONE (L'CONTROL CHAR.)
+         LR    R1,R9               ADDRESS OF KEYS(A)
+         LA    R2,0(R3,R9)         ADDRESS OF KEYS(B)
+KEYSCMP1 C     R3,=F'256'          TEST FOR LENGTH LESS THAN 257
+         BNH   KEYSCMP2            BRANCH IF YES
+         CLC   0(256,R1),0(R2)     COMPARE 256 BYTES
+         BL    E35CONT3            BRANCH IF A<B
+         BH    E35CONT5            BRANCH IF A>B
+         S     R3,=F'256'          DECREMENT LENGTH
+         LA    R1,256(R1)          INCREASE POINTER(A)
+         LA    R2,256(R2)          INCREASE POINTER(B)
+         B     KEYSCMP1            LOOP BACK
+KEYSCMP2 BCTR  R3,0                DECREMENT R3 FOR EXECUTE
+         EX    R3,KEYSCMP          COMPARE REMAINDER
+         BL    E35CONT3            BRANCH IF A<B
+         BE    E35CONT4            BRANCH IF A=B
+         BH    E35CONT5            BRANCH IF A>B
+         SPACE 1
+KEYSCMP  CLC   0(0,R1),0(R2)       EXECUTED COMPARE INSTRUCTION
+         SPACE 2
+***********************************************************************
+*        COMPARE ONE AREA OF CORE TO ANOTHER. R3 = LENGT& TO COMPARED *
+*         R1 = ADDRESS OPERAND 1 , R2 = ADDRESS OPERAND 2.            *
+***********************************************************************
+         SPACE 1
+COMPA    EQU   *
+COMPALP  C     R3,=F'256'          TEST IF LENGTH > 256
+         BNH   COMPA2              BRANCH IF NO
+         CLC   0(256,R1),0(R2)     COMPARE 256 BYTES
+         BL    ABEND               BRANCH TO ABEND ROUTINE IF A<B
+         BH    4(R4)               RETURN TO CALLER +4 IF A>B
+         S     R3,=F'256'          DECREMENT LENGTH
+         LA    R1,256(R1)          INCREASE POINTER(A)
+         LA    R2,256(R2)          INCREASE POINTER(B)
+         B     COMPALP             LOOP BACK
+COMPA2   BCTR  R3,0                DECREMENT R3 FOR EXECUTE
+         EX    R3,KEYSCMP          EXECUTE
+         BL    ABEND               BRANCH TO ABEND ROUTINE IF A<B
+         BE    0(R4)               RETURN TO CALLER IF A=B
+         BH    4(R4)               RETURN TO CALLER +4 IF A>B
+         EJECT
+***********************************************************************
+*        PRINT ROUTINE FOR SYSPRINT AND SYSOUT                        *
+***********************************************************************
+         SPACE 1
+PRINT    SUBIN ,                   WRITE TO SYSPRINT AND SYSOUT
+         TM    PRINTSW,DDOPEN+PRINTON TEST IF SYSPRINT OPEN & INTERESTE
+         BNO   PRINT2              BRANCH IF NOT
+         PUT SYSPRINT              WRITE SYSPRINT LINE
+         LR    R5,R1               SAVE NEW BUFER ADDRESS
+         MVI   1(R5),SPACE         MOVE SPACE TO START OF LINE
+         MVC   2(131,R5),1(R5)      AND PROPAGATE THROUGH
+         MVI   0(R5),SPCE1AFT      INSERT DEFAULT SINGLE SPACE
+PRINT2   TM    SYSOUTSW,DDOPEN+PRINTON TEST IF SYSOUT OPEN & INTERESTED
+         BNO   PRINT3              BRANCH IF NOT
+         AP    CNTLINE,ONE         INCREMENT LINE COUNT
+         PUT   SYSOUT              WRITE SYSOUT RECORD
+         LR    R7,R1               SAVE NEW BUFFER ADDRESS
+         MVI   1(R7),SPACE         MOVE SPACE TO START LINE
+         MVC   2(131,R7),1(R7)      AND PROPAGATE THROUGH
+         MVI   0(R7),SPCE1AFT      SPACE 1 AFTER
+         CP    CNTLINE,ENDOPAGE    TEST FOR END OF PAGE
+         BH    HEADING             PERFORM HEADINGS IF YES
+PRINT3  SUBOUT ,                   RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        HEADING ROUTINE FOR SYSOUT.                                  *
+***********************************************************************
+         SPACE 1
+HEADING  SUBIN PREFIX=H,SAVE=R4    ENTER HEADING ROUTINE
+         ZAP   CNTLINE,ZERO        ZEROISE LINE COUNT
+         AP    CNTPAGE,ONE         INCREMENT PAGE COUNT
+         MVI   0(R7),PAGESKIP       PAGE SKIPS
+         BAL   R4,PRINT             AND ISSUE THEM
+         MVC   4(9,R7),UTREPORT     DATE
+         MVC   122(4,R7),PAGE       PAGE CONSTANT
+         MVC   126(4,R7),EDITPAGE  SET UP EDIT MASK
+         ED    126(4,R7),CNTPAGE   CONVERT PAGE NO. TO EBCDIC
+         MVC   18(L'HEADINGO,R7),HEADINGO FIRST HEADING LINE
+         MVI   0(R7),SPCE3AFT      TRIPLE SPACING
+         BAL   R4,PRINT            WRITE HEADING LINES
+         MVC   0(133,R7),HEADO1    SET UP 2ND SYSOUT HEADING
+         BAL   R4,PRINT            WRITE 2ND HEADINGS
+         ZAP   CNTLINE,SIX         SET LINE COUNT TO SIX
+        SUBOUT PREFIX=H,RESTORE=R4 RETURN TO MAIN-LINE
+         EJECT
+***********************************************************************
+*        PRINT KEYS ROUTINE FOR SYSOUT                                *
+***********************************************************************
+         SPACE 1
+PRINTREJ SUBIN PREFIX=P,SAVE=R4    PRINT DUPLICATE RECORDS
+         L     R3,COMPLGTH         LOAD KEYS LEGTH
+         LA    R2,2(R3,R9)         ADDRESS OF KEYS
+PRNTREJL C     R3,=F'80'           TEST IF MORE THEN 80 BYTES DATA LEFT
+         BNH   PRNTREJX            BRANCH IF NOT
+         MVC   23(80,R7),0(R2)     MOVE DATA TO PRINT LINE
+         BAL   R4,PRINT             AND PRINT THE LINE
+         S     R3,=F'80'           DECREMENT LENGTH LEFT
+         LA    R2,80(,R2)          INCREMENT DATA POINTER
+         B     PRNTREJL            RETURN TO PRINT NEXT 80 BYTES
+PRNTREJX BCTR  R3,0                DECREMENT R3 FOR EXECUTE
+         EX    R3,PRNTREJM         MOVE DATA TO LINE
+         BAL   R4,PRINT             AND PRINT IT
+        SUBOUT PREFIX=P,RESTORE=R4 RETURN TO THE CALLER
+         SPACE 1
+PRNTREJM MVC   23(0,R7),0(R2)      EXECUTED MOVE INSTRUCTION
+         EJECT
+***********************************************************************
+*                                                                     *
+*        THIS ROUTINE SCANS THE TIOT TO DETERMINE  WHETHER            *
+*         A SPECIFIC DD STATEMENT IS PRESENT IN THE JCL.  ON          *
+*         ENTRY TO THE ROUTINE, R2 POINTS AT THE ENTRY IN             *
+*         THE DCB AD-CON TABLE OF THE REQUIRED DATA SET NAME.         *
+*         IF THE SPECIFIED DD STATEMENT IS FOUND, CONTROL IS          *
+*         RETURNED TO THE ADDRESS IN REGISTER 4, OTHERWISE            *
+*         CONTROL IS RETURNED TO R4+4.                                *
+*                                                                     *
+***********************************************************************
+         SPACE 5
+DDFIND   SUBIN PREFIX=D,SAVE=(R3,R10) ENTRY TO DD SEARCH ROUTINE
+         SR    R10,R10             ZEROISE WORK REGISTER
+         L     R3,16               GET CVT ADDRESS
+         L     R3,0(,R3)           GET ADDRESS OF TCB DISPATCH FIELDS
+         L     R3,4(,R3)           GET ADDRESS OF THIS TCB
+         L     R3,12(,R3)          GET ADDRESS OF TIOT
+         LA    R3,24(,R3)          POINT AT FIRST DD ENTRY
+DDLOOP   CLC   0(4,R3),ZEROWORD    TEST FOR END OF TIOT
+         BE    DDNOTFND            BRANCH IF YES
+         CLC   4(8,R3),4(R2)       TEST FOR DD NAME MATCH
+         BE    DDFOUND             BRANCH IF YES
+         IC    R10,0(R3)           INSERT ENTRY LENGTH
+         AR    R3,R10              INCREMENT TO NEXT ENTRY
+         B     DDLOOP              PROCESS NEXT ENTRY
+         SPACE 1
+DDFOUND  OI    0(R2),DDSTAT        INDICATE DD STATEMENT FOUND
+        SUBOUT PREFIX=D,RESTORE=(R3,R10) RETURN TO MAIN-LINE
+         SPACE 1
+DDNOTFND EQU   *                   RETURN TO R4+4
+        SUBOUT PREFIX=D,RESTORE=(R3,R10),RETURN=4(R4)
+         EJECT
+***********************************************************************
+*        OPEN / CLOSE ROUTINES                                        *
+***********************************************************************
+         SPACE 5
+OPEN     SUBIN ,                   ENTRY TO OPEN ROUTINE
+         L     R3,0(,R2)           GET DCB ADDRESS
+         CLC   12(L'INPUT,R2),INPUT TEST FOR INPUT DATA SET
+         BE    OPEN2               BRANCH IF YES
+         OPEN  ((R3),(OUTPUT))     OPEN OUTPUT DATA SET
+         B     OPEN3               SET SWITCH
+OPEN2    OPEN  ((R3),(INPUT))      OPEN INPUT DATA SET
+OPEN3    OI    0(R2),DDOPEN        INDICATE DATA SET OPEN
+        SUBOUT ,                   RETURN TO MAIN-LINE
+         SPACE 5
+CLOSE    SUBIN ,                   ENTRY TO CLOSE SUB-ROUTINE
+         TM    0(R2),DDOPEN        TEST IF DATA SET OPEN
+         BZ    0(R4)               RETURN IF NOT
+         L     R3,0(,R2)           GET DCB ADDRESS
+         CLOSE ((R3))              CLOSE DATA SET
+         NI    0(R2),255-DDOPEN    SET OFF 'OPEN' SWITCH
+        SUBOUT ,                   RETURN TO MAIN-LINE
+         EJECT
+***********************************************************************
+*        EXIT ROUTINES FPR OPEN.                                      *
+***********************************************************************
+         SPACE 1
+         USING IHADCB,R1           ESTABLISH DCB ADDRESSABILITY
+         SPACE 1
+BLKSZRTN SUBIN ,                   SUPPLY DEFAULT IF NO BLKSIZE
+         CLC   DCBBLKSI,ZEROWORD   HAS BLOCK-SIZE BEEN SUPPLIED
+         BNE   0(R14)              RETURN TO OPEN IF YES
+         MVC   DCBBLKSI,DCBLRECL   MOVE LRECL TO BLKSIZE
+        SUBOUT RETURN=(R14)        RETURN TO OPEN ROUTINES
+         SPACE 5
+EXITRTN2 SUBIN ,                   SYSUT2/3/4 LRECL & BLKSIZE
+         L     R3,SYSUT1SW         GET ADDRESS OF SYSUT1 DCB
+         MVC   DCBLRECL,DCBLRECL-IHADCB(R3) MOVE SYSUT1 LRECL TO THIS D
+         CLC   DCBBLKSI,ZEROWORD   TEST IF BLKSIZE SUPPLIED
+         BNE   0(R14)              RETURN TO OPEN IF YES
+         MVC   DCBBLKSI,DCBBLKSI-IHADCB(R3) INSERT DEFAULT OF SYSUT1 BL
+        SUBOUT RETURN=(R14)        RETUNR TO THE OPEN SVC'S
+         SPACE 1
+         DROP  R1                  DROP DCB ADDRESSABILITY
+         EJECT
+***********************************************************************
+*        READ SUB-ROUTINES                                            *
+***********************************************************************
+         SPACE 1
+READ     SUBIN ,                   READ FROM SYSIN
+         GET   SYSIN               GET NEXT RECORD
+         AP    CNTIN,ONE           INCREMENT COUNTER
+READ3    LR    R6,R1               SAVE BUFFER ADDRESS
+        SUBOUT ,                   RETURN TO MAIN-LINE
+         SPACE 2
+GET      SUBIN SAVE=(R4)           READ FROM SYSUT1
+         GET   SYSUT1              GET NEXT RECORD
+         ST    R1,ADRUT1           STORE SYSUT1 RECORD ADDRESS
+         AP    CNTUT1,ONE          INCREMENT COUNTER
+         L     R3,COMPLGTH         LOAD LENGTH OF KEYS
+         LA    R3,1(R3)            ADD ONE LENGTH OF CONTROL CHAR.
+         LA    R2,0(R3,R3)         GET ADDRESS OF SAVE AREA FOR PRECE-
+         LA    R2,0(R2,R9)          DING SYSUT1 KEYS
+         LA    R1,0(R9)            ADDRESS OF PRECEDING KEYS
+         BAL   R4,RECDMOVE         PERFORM MOVE AREA TO ANOTHER
+         L     R10,ADRUT1          ADDRESS OF RECORD FROM SYSUT1
+         LA    R2,1(R9)            ADDRESS OF WA FOR KEYS SYSUT1 RECORD
+         BAL   R4,FORMKEYS         GO FORMAT KEYS IN ORDER FOR COMP.
+         L     R3,COMPLGTH         LOAD LENGTH OF KEYS
+         LA    R2,3(R3,R3)         GET ADDRESS OF SAVE AREA FOR PRECE-
+         LA    R2,0(R2,R9)          DING SYSUT1 KEYS
+         LA    R1,1(R9)            ADDRESS OF PRECEDING KEYS
+         BAL   R4,COMPA            GO TEST IF SYSUT1 IS IN SEQUENCE
+         B     ENDGUT1             BRANCH TO END GET UT1
+         B     ENDGUT1             BRANCH TO END GET UT1
+ENDUT1   L     R3,COMPLGTH         LOAD LENGTH OF KEYS
+         LA    R2,3(R3,R3)         GET ADDRESS OF SAVE AREA FOR PRECE-
+         LA    R2,0(R2,R9)          DING SYSUT1 KEYS
+         LA    R1,1(R9)            ADDRESS OF PRECEDING KEYS
+         BAL   R4,RECDMOVE         PERFORM MOVE AREA TO ANOTHER
+         L     R2,COMPLGTH         LOAD LENGTH OF KEYS
+         LA    R2,1(R2)            ADD ONE (L'CONTROL CHAR.)
+         LR    R1,R9               ADDRESS OF SYSUT1 KEYS
+         MVI   PROPAGCH+1,X'FF'    MOVE PADDING CHAR.
+         BAL   R4,OOINIT           GO MOVE HIGH-VALUES
+ENDGUT1  EQU   *                   WA FOR SYSUT1 KEYS
+         SUBOUT RESTORE=(R4)       RETURN TO MAIN-LINE
+         SPACE 1
+ABEND    OI    PRINTSW,PRINTON     INDICATE SYSPRINT ON
+         MVC   5(L'LINE30,R5),LINE30 MOVE IN ERROR MESSAGE
+         BAL   R4,PRINT               AND PRINT IT ON SYSPRINT
+         WTO   'UT485   ***  SYSUT1 DATA SET OUT OF SEQUENCE  ***'
+         ABEND 485,DUMP            ABEND U0485
+         EJECT
+***********************************************************************
+*                                                                     *
+*        THIS SUB-ROUTINE RETRIEVES SUB-FIELDS FROM THE               *
+*         PARM FIELD IN THE EXEC STATEMENT.  CONTROL RETURNS TO       *
+*         R4+0 IF NO PARAMETER IS PRESENT, OR IF THE PARAMETER        *
+*         HAS BEEN EXHAUSTED.  CONTROL RETURNS TO R4+4 IF A           *
+*         SUB-FIELD HS BEEN LOCATED, WITH R2 CONTAINING THE           *
+*         SUB-FIELD ADDRESS AND R3 CONTAINING THE LENGTH.             *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+GETPARM  SUBIN PREFIX=G,SAVE=(R7,R8) RETRIEVE PARAMTTER SUB-FIELD
+         LM    R7,R8,PARMR7R8      RETRIEVE R7 AND R8 VALUES
+         BC    0,GETPARM2          FIRST TIME SWITCH
+         OI    *-3,X'F0'           SET UP FIRST TIME BRANCH
+         L     R9,PARMPNTR         RETRIEVE PARM POINTER
+         L     R9,0(,R9)           POINT R8  AT PARAMETER AREA
+         LH    R8,0(R9)            RETRIEVE COUNT FIELD
+         LTR   R8,R8               TEST IF PARM SUPPLIED
+         BNZ   GETPARM3            BRANCH IF YES
+        SUBOUT PREFIX=G,RESTORE=(R7,R8),RETURN=(R4) NO - RETURN
+GETPARM3 LA    R9,2(,R9)           POINT TT START OF DATA
+         LR    R7,R9               POINT R7 AT PARAMETER AREA
+         AR    R9,R8               POINT R9 AT END OF PARM
+         LA    R9,0(,R9)           PURIFY HIGH ORDER BYTE
+         BCTR  R9,0                RE-ADJUST R9 FOR USE AS BXLE COMPAR
+GETPARM2 LA    R8,1                ESTABLISH BXLE INCREMENT
+         CR    R7,R9               TEST IF PARM EXHAUSTED
+         BNH   GETPARM4            BRANCH IF NO
+        SUBOUT PREFIX=G,RESTORE=(R7,R8),RETURN=(R4) NO - RETURN
+GETPARM4 LR    R2,R7               POINT R2 AT START OF SUB-FIELD
+PARMLOOP CLI   0(R7),OPENBRAK      TEST FOR OPEN PARENTHESIS
+         BNE   TCOMMA              BRANCH IF NO
+BRAKLOOP CLI   0(R7),CLOSEBRA      TEST FOR CLOSE PARENTHESIS
+         BE    PARMADD             BRANCH IF YES
+         BXLE  R7,R8,BRAKLOOP      TEST NEXT CHARACTER
+         B     PARMLGTH            BRANCH IF NO
+TCOMMA   CLI   0(R7),COMMA         TEST FOR COMMA
+         BE    PARMLGTH            BRANCH IF NOT
+PARMADD  BXLE  R7,R8,PARMLOOP      TEST NEXT CHARACTER
+PARMLGTH LR    R3,R7               POINT AT END OF SUBFIELD
+         SR    R3,R2               DETERMINE SUBFIELD LENGTH
+         LA    R7,1(,R7)           POINT AT START OF NEXT SUBFIELD
+         BCTR  R3,0                DECREMENT FOR EXECUTE
+         LTR   R3,R3               TEST IF R3 NEGATIVE
+         BM    GETPARM2            GET NEXT SUB-FIELD IF YES
+         AP    CNTPARM,ONE         INCREMENT COUNTER
+         STM   R7,R8,PARMR7R8      PRESERVE R7 AND R8 FOR FUTURE
+        SUBOUT PREFIX=G,RESTORE=(R7,R8),RETURN=4(R4) RETURN TO R4+4
+         EJECT
+***********************************************************************
+*        SYNAD ROUTINES FOR ALL I/O                                   *
+***********************************************************************
+         SPACE 1
+IOERROR  SUBIN ,                   PROCESS I/O ERROR
+         BAL   R4,IOERROR3         ANALYSE I/O ERROR & TELL OPERATOR
+         TM    PRINTSW,DDOPEN      TEST FOR SYSPRINT DATA SET
+         BZ    JOBEND              TERMINATE JOB IF NOT
+         BAL   R4,PRINT            PRINT BLAKK LINE
+         MVC   5(L'LINE15,R5),LINE15 MOVE IN ERROR MESSAGE
+         BAL   R4,PRINT            WRITE ERROR MESSAGE
+         MVI   0(R5),SPCE2AFT      ESTABLISH DOUBLE SPACE
+         MVC   5(L'LINE16,R5),LINE16 TELL OF TERMINATION
+         BAL   R4,PRINT             AND WRITE LINE
+        SUBOUT RETURN=PRINTCDE     PRINT CONDITION CODE
+         SPACE 5
+IOERROR2 SUBIN ,                   PROCESS SYSPRINT I/O ERROR
+         BAL   R4,IOERROR3         ANALYSE I/O ERROR & TELL OPERATOR
+         NI    PRINTSW,255-DDOPEN  'DIS-CONNECT' SYSPRINT
+         BAL   R4,PRINT            PRINT BLANK LINE
+         MVC   5(L'LINE15,R8),LINE15 MOVE IN ERROR MESSAGE
+         BAL   R4,PRINT            PRINT ERROR MESSAGE
+         MVI   0(R8),SPCE2AFT      ESTABLISH DOUBLE SPACE
+         MVC   5(L'LINE16,R8),LINE16 MOVE IN TERMINATION MESSAGE
+         BAL   R4,PRINT             AND WRITE IT
+        SUBOUT RETURN=PRINTCDE     TERMINATE JOB
+         SPACE 5
+IOERROR3 SUBIN ,                   ANALYSE ERROR & TELL OPERATOR
+         MVC   COMPCODE,COND12     SET CONDITION CODE
+         SYNADAF ACSMETH=QSAM      CALL O.S. ROUTINE
+         MVC   LINE15+12(86),50(R1) SAVE RESULT OF ANALYSIS
+         SYNADRLS ,                RELEASE O.S. BUFFER
+         WTO   MF=(E,LINE14)       TELL OPERATOR OF ERROR
+        SUBOUT ,                   RETURN TO CALLER
+         EJECT
+*        MISCELLANAOUS EQUATES
+         PRINT NOGEN               SUPPRESS MACRO EXPANSION
+         SPACE 1
+MAXDS    EQU   6                   *** ALTER IF DD NAMES ADDED ***
+*                                   NUMBER OF DATA SETS UT485 CAN OPEN
+SORTDS   EQU   5                   ***** ALTER IF SORT IS CHANGED*****
+*                                   NUMBER OF SORT DD STATEMENTS THAT
+*                                   MUST BE PRESENT BEFORE THE SORT
+*                                   IS INVOKED.
+DELETE   EQU   4                   TELL SORT TO DELETE
+NORETURN EQU   8                   TELL THE SORT NOT TO RETURN
+INSERT   EQU   12                  TELL SORT TO INSERT RECORD
+DDSTAT   EQU   1                   DD STATEMENT FOUND
+DDOPEN   EQU   2                   DATA SET OPEN
+SPCE1AFT EQU   X'09'               ADVANCE 1 AFTER PRINTING
+SPCE2AFT EQU   X'11'               ADVANCE 2 AFTER PRINTING
+SPCE3AFT EQU   X'19'               ADVANCE 3 AFTER PRINTING
+PAGESKIP EQU   X'8B'               SKIP TO NEW PAGE
+COMMA    EQU   C','                COMMA FOR PARM SCAN
+OPENBRAK EQU   C'('                OPENING PARENTHESIS
+CLOSEBRA EQU   C')'                CLOSING PARENTHESIS
+BLANK    EQU   X'40'               BLANK
+SPACE    EQU   X'40'               BLANK
+PRINTON  EQU   4                   PRINT DATA SET INTERESTED
+PRINTOFF EQU   X'FB'               SET OFF INTERESTED SWITCH
+EXTRACOR EQU   1                   GETMAIN IS EXECUTED
+KEYSON   EQU   2                   KEYS PARAMETER FOUND IN PARM
+DELETEON EQU   4                   DELETE PARAMETER FOUND IN PARM
+EXITON   EQU   8                   EXIT PARAMETER FOUND IN PARM
+         SPACE 5
+BINSTORE DS    0F
+         DC    X'00'
+STORCOL3 DS    0CL3
+         DC    X'00'
+STORCOL2 DS    0CL2
+         DC    X'00'
+STORCOL1 DC    X'00'
+         EJECT
+LINE01   DC    C'UT485 - INITIATION MESSAGES'
+LINE02   DC    C'THE FOLLOWING DD STATEMENTS WERE ENCOUNTERED -'
+LINE03   DC    C'NUMBER OF SUB-FIELDS FOUND IN THE PARM ='
+LINE04   DC    C'NUMBER OF RECORDS READ FROM SYSUT1     ='
+LINE05   DC    C'NUMBER OF RECORDS READ FROM SYSIN      ='
+LINE06   DC    C'NUMBER OF RECORDS WRITTEN TO SYSUT2    ='
+LINE07   DC    C'CONDITION CODE ='
+LINE08   DC    C'***** NO SYSUT1 STATEMENT *****'
+LINE09   DC    C'***** PROCESSING BYPASSED *****'
+LINE10   DC    C'END OF UT485'
+LINE11   DC    C'PRECEDING PARM INVALID - IGNORED'
+LINE12   DC    C'***** NO SYSIN STATEMENT  *****'
+LINE13   DC    C'IN THE ABSENCE OF A PARM -'
+LINE14   DS    0F
+         DC    AL2(WTOEND-*),H'0',C'UT485 - '
+LINE15   DS    0CL98
+         DC    C'I/O ERROR - '
+         DC    CL86' '
+WTOEND   EQU   *
+LINE16   DC    C'***** PROCESSING TERMINATED *****'
+LINE17   DC    C'UT485 - TERMINATION MESSAGES'
+LINE18   DC    C'INSUFFICIENT SORT DD STATEMENTS FOUND'
+LINE19   DC    C'THE FOLLOWING MANDATORY DD STATEMENTS WERE MISSING -'
+LINE20   DC    C'***** SORT FAILED     *****'
+LINE23   DC    C'END OF REPORT'
+LINE24   DC    C'IN THE ABSENCE OF ''KEYS'' PARAMETER -'
+LINE26   DC    C'PRECEDING PARM INVALID - ALL PARMS IGNORED'
+LINE29   DC    C'THE FOLLOWING PARM SUB-FIELD IS UNRECOGNISABLE -'
+LINE30   DC    C'ABEND U0485 - SYSUT1 DATA SET OUT OF SEQUENCE'
+LINE34   DC    C'NUMBER OF RECORDS WRITTEN TO SYSUT3    ='
+LINE35   DC    C'NUMBER OF RECORDS ADDED                ='
+LINE36   DC    C'NUMBER OF RECORDS REPLACED             ='
+LINE37   DC    C'NUMBER OF RECORDS MODIFIED             ='
+LINE38   DC    C'NUMBER OF RECORDS DELETED              ='
+LINE39   DC    C'NUMBER OF RECORDS UNMATCHED SYSUT1     ='
+         EJECT
+SORTPARM DS    0F                  ADDRESS OF SORT PARAMETERS
+         DC    X'80',AL3(SORTLIST) ADDRESS OF SORT PARAMETERS
+         DC    X'0000'             FILLER
+SORTLIST DC    X'0028'             LENGTH OF PARAMETER AREA
+FLDADDR  DC    A(SORTST1)          ADDRESS OF DEFAULT FIELD
+SORTND1  DC    A(0)                END OF DEFAULT SORT FIELD
+         DC    A(RECSTART)         START OF RECORD STATEMENT
+         DC    A(RECEND)           END OF RECORD STATEMENT
+         DC    A(E15)              ADDRESS OF E15 SORT EXIT
+         DC    A(E35)              ADDRESS OF E35 SORT EXIT
+         DC    X'00',C'MAX'        REQUEST CORE OPTIMISATION
+         DC    X'01',AL3(1028)     RESERVE 1K FOR SAFETY
+         DC    X'03',AL3(LISTSW+4) SPECIFY MESSAGE DD-NAME
+         DC    X'FF',X'00',C'AP'   REQUEST ALL MESSAGES TO THE PRINTER
+         SPACE 1
+SORTST1  DC    C' SORT FIELDS=('
+SORT1D   DC    CL150' '
+SORCHAC  DC    C'CH,A,'
+SORCHAE  DC    C',CH,A)'
+         SPACE 1
+RECSTART DC    C' RECORD LENGTH=('
+RECLSORT DC    CL4' '
+         DC    C'),TYPE=F'
+RECEND   DC    C' '
+         SPACE 1
+SORTABLE DS    0F
+LISTSW   DC    X'00',AL3(0),CL8'SORTLIST'
+         DC    X'00',AL3(0),CL8'SORTLIB'
+         DC    X'00',AL3(0),CL8'SORTWK01'
+         DC    X'00',AL3(0),CL8'SORTWK02'
+         DC    X'00',AL3(0),CL8'SORTWK03'
+TABEND   EQU   *                   END OF SORT'S DD TABLE
+TABSIZE  EQU   *-SORTABLE          LENGTH OF TABLE
+NTRYSIZ2 EQU   TABSIZE/SORTDS      SIZE OF TABLE ENTRY
+         SPACE 1
+TABSOFIL DC    20H'0'              TABLE FOR 10 ELS. OF KEYS PARM PP,LL
+ENDTASOF EQU   *                   INDICATE END OF TABLE
+         EJECT
+WORKAREA DS    D
+DECIMAL  DS    D                   WORK AREA FOR PACKED OPERATIONS
+ADRUT3   DS    F                   ADDRESS OF SYSUT3 BUFFER
+ADRUT2   DS    F                   ADDRESS OF SYSUT2 BUFFER
+CORELGTH DS    F                   LENGTH OF GETMAINED AREA
+RECDLGTH DS    F                   LENGTH OF INPUT RECORDS
+COMPLGTH DS    F                   LENGTH OF RECORD KEY FIELD
+ZEROWORD DC    F'0'
+PARMPNTR DS    F                   POINTER TO PARM
+PARMR7R8 DS    2F                  SAVE AREA FOR R7 & R8 USED IN GETPA
+COMPCODE DC    H'0'
+COND4    DC    H'4'                ERROR IN PARM FIELD
+COND12   DC    H'12'               I/O ERROR CONDITION CODE
+COND16   DC    H'16'
+SPFDI    DS    H                   START POSITION
+LNFDI    DS    C                   LENGTH OF CONSTANT
+DELIND   DC    CL8' '              CONSTANT
+EXITNAME DC    CL8' '              EXIT NAME
+DLTKEYS  DS    C                   IF Y = SYSUT1 RECORD WITH THE SAME
+*                                         KEYS THAT SORT RECORD MUST
+*                                         BE DELETED
+BUFUT2LG DS    F                   LRECL OF SYSUT2
+ADREXIT  DS    F                   ENTRY POINT ADDRESS OF USER EXIT
+PARMUSEX DS    0F                  PARM.LIST FOR USER EXIT
+ADRUT1   DS    F                   ADDRESS OF RECORD FROM SYSUT1
+ADRSREC  DS    F                   ADDRESS OF RECORD FROM SORT
+ADRBUFUE DS    F                   ADDRESS OF PSEUDO-BUFFER SYSUT2
+         DC    B'10000000',AL3(FLAGUSEX)
+FLAGUSEX DC    C' '                FLAG BYTE FOR USER EXIT
+         SPACE 2
+HEADINGO DC    C'LISTING OF RECORDS KEYS ADDED , REPLACED , MODIFIED AN*
+               D DELETED'
+HEADO1   DS    0CL133
+         DC    X'11'               WRITE AND SPACE 2 AFTER
+         DC    CL5' '
+         DC    CL12'ACTION TAKEN'
+         DC    CL5' '
+         DC    CL15'*--- KEYS IMAGE'
+         DC    CL95' '
+         SPACE 2
+         EJECT
+CNTRADD  DC    PL3'0'              COUNT OF RECORDS ADDED
+CNTRREP  DC    PL3'0'              COUNT OF RECORDS REPLACEDS
+CNTRMOD  DC    PL3'0'              COUNT OF RECORDS MODIFIED
+CNTRDEL  DC    PL3'0'              COUNT OF RECORDS DELETEDD
+CNTRUNM  DC    PL3'0'              COUNT OF SSYSUT1 RECORDS UNMATCHED
+CNTPARM  DC    PL3'0'              COUNT OF SUB-PRRMS
+CNTUT1   DC    PL3'0'              COUNT OF SYSUT1 RECORDS READ
+CNTUT2   DC    PL3'0'              COUNT OF SYSUT2 RECORDS WRITTEN
+CNTIN    DC    PL3'0'              COUNT OF SYSIN RECORDS READ
+CNTLINE  DC    PL2'0'              LINE COUNT FOR SYSOUT
+CNTPAGE  DC    PL2'0'              PAGE COUNT FOR SYSOUT
+CNTUT3   DC    PL3'0'              COUNT OF SYSUT3 RECORDS WRITTEN
+ZERO     DC    PL2'0'              ZERO
+ONE      DC    PL2'1'              ONE
+SIX      DC    PL2'6'              SIX
+ENDOPAGE DC    PL2'55'             END OF PAGE
+         EJECT
+EDITMASK DC    X'4020206B202120'   EDIT WORD FOR PL3
+CONDMASK DC    X'40202120'
+EDITCVD  DC    X'40202020202020202020202020202120'
+EDITPAGE DC    X'40202120'
+         SPACE 1
+DISPLAY  DS    CL16                EBCDIC WORK AREA
+SAFETY   DS    CL133               PSEUDO-BUFFER
+UT2REC   DS    CL110               SYSUT2 RECORD FOR SUBSTITUTE BUFF
+         SPACE 2
+PAGE     DC    C'PAGE'             PAGE
+ZEROES   DC    8C'0'               EBCDIC CONCSTANT OF ZERO
+KEYS     DC    C'KEYS='            KEYS KEYWORD
+DELET    DC    C'DELETE='          DELETE KEYWORD
+EXIT     DC    C'EXIT='            EXIT KEYWORD
+         SPACE 1
+INPUT    DC    CL8'INPUT'          INPUT CONSTANT FOR OPEN ROUTINE
+         SPACE 1
+SWITCH   DC    X'00'               GENERAL PURPOSE INDICATOR BYTE
+         SPACE 1
+         LTORG
+         EJECT
+DCBTABLE DS    0F
+PRINTSW  DC    X'00',AL3(SYSPRINT),CL8'SYSPRINT',CL8'OUTPUT'
+SYSOUTSW DC    X'00',AL3(SYSOUT),CL8'SYSOUT',CL8'OUTPUT'
+SYSINSW  DC    X'00',AL3(SYSIN),CL8'SYSIN',CL8'INPUT'
+SYSUT1SW DC    X'00',AL3(SYSUT1),CL8'SYSUT1',CL8'INPUT'
+SYSUT2SW DC    X'00',AL3(SYSUT2),CL8'SYSUT2',CL8'OUTPUT'
+SYSUT3SW DC    X'00',AL3(SYSUT3),CL8'SYSUT3',CL8'OUTPUT'
+TABLEEND EQU   *                   END OF AD-CON TABLE
+TABLESIZ EQU   *-DCBTABLE          LENGTH OF TABLE
+NTRYSIZE EQU   TABLESIZ/MAXDS      SIZE OF TABLE ENTRY
+         SPACE 1
+EXITLIST DC    X'85',AL3(BLKSZRTN) ENTRY FOR DCB MODIFICATION
+EXITLST2 DC    X'85',AL3(EXITRTN2)
+         SPACE 4
+SYSPRINT DCB   DDNAME=SYSPRINT,                                        *
+               DSORG=PS,                                               *
+               MACRF=PL,                                               *
+               RECFM=FBM,                                              *
+               LRECL=133,                                              *
+               SYNAD=IOERROR2,                                         *
+               EXLST=EXITLIST
+         SPACE 4
+SYSOUT   DCB   DDNAME=SYSOUT,                                          *
+               DSORG=PS,                                               *
+               MACRF=PL,                                               *
+               RECFM=FBM,                                              *
+               LRECL=133,                                              *
+               SYNAD=IOERROR,                                          *
+               EXLST=EXITLIST
+         SPACE 4
+SYSUT1   DCB   DDNAME=SYSUT1,                                          *
+               DSORG=PS,                                               *
+               MACRF=GL,                                               *
+               RECFM=FB,                                               *
+               EODAD=ENDUT1,                                           *
+               SYNAD=IOERROR,                                          *
+               EXLST=EXITLIST
+         EJECT
+SYSUT2   DCB   DDNAME=SYSUT2,                                          *
+               DSORG=PS,                                               *
+               MACRF=PL,                                               *
+               RECFM=FB,                                               *
+               SYNAD=IOERROR,                                          *
+               EXLST=EXITLST2
+         SPACE 5
+SYSUT3   DCB   DDNAME=SYSUT3,                                          *
+               DSORG=PS,                                               *
+               MACRF=PL,                                               *
+               RECFM=FB,                                               *
+               SYNAD=IOERROR,                                          *
+               EXLST=EXITLST2
+         SPACE 5
+SYSIN    DCB   DDNAME=SYSIN,                                           *
+               DSORG=PS,                                               *
+               MACRF=GL,                                               *
+               RECFM=FB,                                               *
+               EODAD=E15EXIT,                                          *
+               SYNAD=IOERROR,                                          *
+               EXLST=EXITLIST
+         EJECT
+*        PRINT GEN                 ALLOW DCB DSECT EXPANSION
+         DCBD  DSORG=PS            GENERATE DCB DSECT
+UT485    CSECT
+         PRINT NOGEN               SUPPRESS MACRO EXPANSION
+         SPACE 1
+         LTORG
+         SPACE 1
+$L       EQU   *-UT485
+$L1      EQU   $L/100000*100000
+$L2      EQU   ($L-$L1)/10000*10000
+$L3      EQU   ($L-$L1-$L2)/1000*1000
+$L4      EQU   ($L-$L1-$L2-$L3)/100*100
+$L5      EQU   ($L-$L1-$L2-$L3-$L4)/10*10
+$L6      EQU   ($L-$L1-$L2-$L3-$L4-$L5)
+         SPACE 1
+$LENGTH  EQU   $L1/100000*1048576+$L2/10000*65536+$L3/1000*4096+$L4/100*
+               256+$L5/10*16+$L6
+         SPACE 1
+         END

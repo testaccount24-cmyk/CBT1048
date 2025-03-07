@@ -1,0 +1,115 @@
+//JEAEDIT JOB (1140,5),'JEA GETDATAQ',CLASS=N,NOTIFY=JEA
+// EXEC LIBRARYN,FILE=MVS,BLKSIZE=6480
+//SYSIN DD DATA,DLM='??'
+-OPT NOLIST,EXEC
+-DLM GETDATAQ,GDTQ
+-ADD GETDATAQ,GDTQ
+-PGMR JEABBEY
+-DESC SERVICE ROUTINE FOR SUPREDIT
+         TITLE ALLOCATE A DATA Q ELEMENT
+***********************************************************************
+*
+*            ON ENTRY TO THIS ROUTINE, REG1 WILL ADDRESS A PARAMETER
+*        LIST OF TWO ENTRIES:
+*
+*        1)    ADDRESS OF A Q ELEMENT AFTER WHICH THE NEW ONE IS TO
+*              BE PLACED.
+*        2)    ADDRESS OF THE USER PARAMETER AREA
+*
+*            ON EXIT FROM THIS ROUTINE, A NEW DATA Q ELEMENT WILL
+*        HAVE BEEN INITIALISED ONTO THE DATA STACK AFTER THE ONE
+*        INITIALLY ADDRESSED BY THE FIRST PARAMETER
+*            REGISTER 1 WILL CONTAIN THE ADDRESS OF THE NEW ELEMENT
+*
+*
+***********************************************************************
+         EJECT
+***********************************************************************
+*        ALLOCATE A DATA Q ELEMENT
+***********************************************************************
+         SPACE 2
+GETDATAQ ZCSECT GETMAIN=1
+         LM    REG1,REG2,0(REG1)   LOAD PASSED PARAMETERS
+         USING USERPARM,REG2       ADDRESSABILITY
+         L     REG10,UPEDITWK      LOAD ADDRESS OF EDIT WORK AREA
+         USING WDSECT,REG10        ADDRESSABILITY
+         EJECT
+***********************************************************************
+*        TEST FOR A FREE ELEMENT AND ALLOCATE IT
+***********************************************************************
+         SPACE 2
+         CLI   0(REG1),X'EE'       ARE WE AT END OF FILE ?
+         BNE   *+8                 NO. INSERT POINT IS VALID
+         L     REG1,8(REG1)        OTHERWISE LOAD ADDRESS OF PREVIOUS
+         ST    REG1,GETSAVE        SAVE THE EDDRESS OF INSERT POINT
+DQLOOP1  EQU   *
+         L     REG14,DATASTAK      LOAD TOP OF PREBUILT STAK
+         LTR   REG14,REG14         ANYTHING THERE ?
+         BNZ   GETGOON             YES. CARRY ON AND PROCESS
+         BAL   REG11,BUILDAGN      NO. GO FETCH A NEW BLOCK
+         B     DQLOOP1             AND START ALL OVER AGAIN
+GETGOON  EQU   *
+         L     REG1,GETSAVE        RELOAD ADDRESS OF INSERTION POINT
+         MVC   DATASTAK,4(REG14)   UPDATE THE STACK
+         LA    REG15,12(REG14)     ADDRESS OF DATA PORTION
+         ST    REG15,0(REG14)      UPDATE START OF THIS BLOCK
+         L     REG15,4(REG1)       LOAD CURRENT DOWN POINTER
+         ST    REG14,4(REG1)       CHAIN ME ONTO HIS DOWN POINTER
+         ST    REG14,8(REG15)      CHAIN UP CHAIN TO ME
+         ST    REG15,4(REG14)      PUT REST OD DOWN CHAIN ON ME
+         ST    REG1,8(REG14)       MAKE HIM MY UP CHAIN POINTER
+         L     REG15,4(REG13)      LOAD ADDRESS OF CALLER'S SAVE AREA
+         ST    REG14,24(REG15)     ARRANGE RELOAD OF CORRECT REG1
+         L     REG14,0(REG14)      LOAD ADDRESS OF DATA AREA
+         LH    REG15,LRECL         LOAD LENGTH OF DATA PART
+         XR    REG0,REG0           CLEAR A WORK REGISTER
+         XR    REG1,REG1           CLEAR A WORK REGISTER
+         MVCL  REG14,REG0          CLEAR THE AREA
+         EJECT
+***********************************************************************
+*        RETURN CONTROL TO CALLER
+***********************************************************************
+         SPACE 2
+         ZRETURN
+         EJECT
+***********************************************************************
+*        GETMAIN AND INTIIALISE A FRESH BLOCK OF ELEMENTS
+***********************************************************************
+         SPACE 2
+BUILDAGN DS    0H
+         LH    REG1,LRECL          LOAD THE LENGTH OF A RECORD
+         LA    REG1,12(REG1)       ADD LENGTH OF CONTROL FIELDS
+         MH    REG1,=H'100'        GET LENGTH FOR 100 RECORDS
+         GETMAIN R,LV=(1),SP=120   GETMAIN THE CORE FOR IT
+         ST    REG1,DATASTAK       UPDATE TOP OF STACK ADDRESS
+         AR    REG0,REG1           ADDRESS OF END OF AREA
+AGNLOOP  EQU   *
+         LA    REG14,12(REG1)      LOAD WORK REGISTER
+         AH    REG14,LRECL         ADDRESS OF NEXT ENTRY IN THAT AREA
+         CR    REG14,REG0          ARE WE AT END OF AREA
+         BNL   AGNEXIT             YES. RETURN TO RETRY GETDATAQ
+         ST    REG14,4(REG1)       MAKE LAST ONE POINT AT THIS ONE
+         LR    REG1,REG14          AND UPDATE START ADDRESS
+         B     AGNLOOP             KEEP DOING THAT THING
+AGNEXIT  EQU   *
+         XC    4(4,REG1),4(REG1)   CLEAR THE LAST CHAIN POINTER
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        DSECTS
+***********************************************************************
+         SPACE 2
+         USERPARM
+         SPACE 2
+         EDITWK2
+         END
+??
+// EXEC ASMFCL,L=H
+//SYSLIB DD
+// DD
+// DD DSN=JEA.MACLIB,DISP=SHR
+//SYSIN DD DSN=&OSJOB,DISP=(OLD,DELETE)
+//LKED.SYSLMOD DD DSN=JEA.LOADLIB,DISP=SHR
+ INCLUDE SYSLMOD(MOPE)
+ ENTRY MOPE
+ NAME MOPE(R)

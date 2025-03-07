@@ -1,0 +1,294 @@
+SHAD     TITLE 'MONSHD        VM/370               VERSION 3, LEVEL 0'  MON00110
+         ISEQ  73,80          VALIDATE SEQUENCING OF SYSIN              MON00120
+         COPY  OPTIONS                                                  MON00130
+         COPY  LOCAL                                                    MON00140
+*.                                                                      MON00150
+* MODULE NAME -                                                         MON00160
+*                                                                       MON00170
+*        MONSHD                                                         MON00180
+*                                                                       MON00190
+* FUNCTION -                                                            MON00200
+*                                                                       MON00210
+*        TO REFRESH THE SHADOW PAGE TABLES WITH AVAILABLE               MON00220
+*        INFORMATION AFTER PURGING THEM E.G. ON CHANGE OF CR.1          MON00230
+*                                                                       MON00240
+* ATTRIBUTES -                                                          MON00250
+*                                                                       MON00260
+*        REENTRANT,RESIDENT,DISABLED,ENTERED VIA BRANCH                 MON00270
+*                                                                       MON00280
+* ENTRY POINT -                                                         MON00290
+*                                                                       MON00300
+*        MONSHADO - UPDATE INVALID SHADOW TABLES                        MON00310
+*                                                                       MON00320
+* ENTRY CONDITIONS -                                                    MON00330
+*                                                                       MON00340
+*        GPR   9 = ARCHITECTURE CONTROL INDEX                           MON00350
+*        GPR  10 = ECBLOK ADDRESSABILITY                                MON00360
+*        GPR  11 = VMBLOK ADDRESSABILITY                                MON00370
+*        GPR  12 = BASE REGISTER                                        MON00380
+*        GPR  13 = REGISTER SAVE AREA POINTER                           MON00390
+*        GPR  14 = RETURN ADDRESS TO CALLER                             MON00400
+*                                                                       MON00410
+* EXIT CONDITIONS -                                                     MON00420
+*                                                                       MON00430
+*        ECBLOK,VMBLOK,SHADOW PAGE TABLES UPDATED                       MON00440
+*        GPRS 0-15 UNCHANGED                                            MON00450
+*                                                                       MON00460
+* EXTERNAL REFERENCES -                                                 MON00470
+*                                                                       MON00480
+*        NONE                                                           MON00490
+*                                                                       MON00500
+* TABLES / WORK AREAS -                                                 MON00510
+*                                                                       MON00520
+*        VMBLOK, ECBLOK, BALRSAVE, VIRTUAL AND SHADOW PAGE TABLES       MON00530
+*                                                                       MON00540
+         EJECT                                                          MON00550
+* REGISTER USAGE -                                                      MON00560
+*                                                                       MON00570
+*        GPR 12 = BASE REGISTER                                         MON00580
+*        GPR 11 = VMBLOK ADDRESSABILITY                                 MON00590
+*        GPR 10 = ECBLOK ADDRESSABILITY                                 MON00600
+*        GPR  9 = ARCHITECTURE CONTROL INDEX                            MON00610
+*        GPR 0-8  ARE WORK REGISTERS                                    MON00620
+*        GPRS 13-15 ARE EXTERNAL LINK REGISTERS AND WORK REGISTERS      MON00630
+*                                                                       MON00640
+* OPERATION -                                                           MON00650
+*                                                                       MON00660
+*        THIS ROUTINE IS ENTERED FROM A 'GOTO' INSERTED IN DMKVAT       MON00670
+*        AT THE END OF VATCKC1,THE 'NEW SEGMENT TABLE ORIGIN'           MON00680
+*        ROUTINE.IT FUNCTIONALLY REPLACES THE EXIT ROUTINE VACLEAN.     MON00690
+*                                                                       MON00700
+*        AT THIS POINT THE WHOLE SHADOW PAGE TABLE HAS BEEN             MON00710
+*        INVALIDATED AND A NEW SHADOW TABLE SET UP (IF NECESSARY).      MON00720
+*        THIS ROUTINE ATTEMPTS TO DISPENSE WITH MOST OF THE             MON00730
+*        PAGE FAULTS CREATED BY THE INVALID SHADOW TABLES BY            MON00740
+*        RE-BUILDING THEM IMMEDIATELY FROM THE SEGMENT AND PAGE         MON00750
+*        TABLES WHICH THE NEW CONTROL REGISTER ONE ADDRESSES.           MON00760
+*        IT DOES THIS BY TRANSLATING THE PAGE ADDRESS FROM THE VIRTUAL  MON00770
+*        PAGE/SEGMENT TABLES USING V/M 'S TRANSLATION TABLES AND        MON00780
+*        STORING THE REAL ADDRESSES OBTAINED IN THE SHADOW TABLES.      MON00790
+*        IF THE VIRTUAL TABLES ARE NOT IMMEDIATELY AVAILABLE THEY ARE   MON00800
+*        IGNORED, WHICH WILL CAUSE A PAGE FAULT AT A LATER TIME         MON00810
+*        WHEN IT MAY BE DEALT WITH BY A PSEUDO PAGE FAULT INTERRUPT.    MON00820
+*                                                                       MON00830
+*        THIS HAS BEEN DESIGNED TO SPEED UP RUNNING MVS UNDER VM/370    MON00840
+*        WITHOUT GOING TO THE EXPENSE OF IBM'S VM SYSTEM EXTENSIONS.    MON00850
+*                                                                       MON00860
+*        BASED ON AN ORIGINAL IDEA OF AND WRITTEN WITH MUCH ASSISTANCE  MON00870
+*        FROM JIM ABBEY.                                                MON00880
+*                                                                       MON00890
+*        D.CARTWRIGHT MONSANTO MISD/TSG BRUSSELS JUNE 1977              MON00900
+*.                                                                      MON00910
+         EJECT                                                          MON00920
+*********************************************************************** MON00930
+*        MONSHADO - VALIDATE SHADOW PAGE TABLE ENTRIES                * MON00940
+*********************************************************************** MON00950
+         SPACE 3                                                        MON00960
+MONSHD   START                                                          MON00970
+         USING MONSHD,R12          ESTABLISH FINAL BASE REGISTER        MON00980
+         USING PSA,0               PSA ADDRESSABILITY                   MON00990
+         USING VMBLOK,R11          VMBLOK ADDRESSABILITY                MON01000
+         USING ECBLOK,R10          VMBLOK EXTENSIONS ADDRESSABILITY     MON01010
+         USING SAVEAREA,R13        SAVE AREA ADDRESSABILITY             MON01020
+         ENTRY MONSHADO                                                 MON01030
+         SPACE 2                                                        MON01040
+MONSHADO DS    0H                  VALIDATE SHADOW PAGE TABLE           MON01050
+         L     R14,EXTCR1          PICK UP VIRTUAL SEGMENT TABLE        MON01060
+         N     R14,=X'00FFFFC0'    REDUCE TO ACTUAL ADDRESS             MON01070
+         L     R6,EXTSHSEG         PICK UP SHADOW SEGMENT TABLE         MON01080
+         N     R6,=X'00FFFFC0'     REDUCE TO ACTUAL ADDRESS             MON01090
+         LH    R7,EXTVSEGS         PICK UP LENGTH OF VIRTUAL SEGTABLE   MON01100
+         CH    R7,EXTSHLEN         COMPARE SHADOW/VIRTUAL               MON01110
+         BH    MONSHADZ            EXIT FAST ON ERROR                   MON01120
+         SRL   R7,2                GET NUMBER OF ENTRIES                MON01130
+         LCTL  C1,C1,VMSEG         POINT AT MY 'REAL' TABLES            MON01140
+         LRA   R4,0(,R14)          CHECK THAT VIRTUAL TABLES AVAILABLE  MON01150
+         BNZ   MONSHADZ            NO,GIVE UP HERE AND NOW              MON01160
+         B     MONSHADS+8          SKIP UPDATE FIRST TIME               MON01170
+         EJECT                                                          MON01180
+MONSHADS DS    0H                  VALIDATE SEGMENT TABLE               MON01190
+         SPACE 1                                                        MON01200
+         LA    R14,4(,R14)         POINT TO SEGMENT TABLE ENTRY         MON01210
+         LA    R6,4(,R6)           AND TO SHADOW ENTRY                  MON01220
+         TM    3(R14),INVSEGMT     IS USER'S SEGMENT VALID?             MON01230
+         BO    MONSHADT            NO,FORGET THIS ONE                   MON01240
+         LRA   R4,0(,R14)          TRANSLATE SEGMENT ADDRESS            MON01250
+         BNZ   MONSHADT            FORGET IT IF PAGE TABLES UNAVAILABLE MON01260
+         NI    0(R6),255-INVSEGMT  SAY SHADOW SEGMENT IS VALID          MON01270
+         SPACE 1                                                        MON01280
+         L     R15,0(,R14)         PICK UP PAGE TABLE ADDRESS           MON01290
+         L     R2,0(,R6)           AND CORRESPONDING SHADOW PAGE        MON01300
+         LRA   R4,0(,R15)          IS PAGE TABLE AVAILABLE              MON01310
+         BNZ   MONSHADT            NO,LEAVE IT FOR LATER                MON01320
+         SPACE 1                                                        MON01330
+         SR    R3,R3               CLEAR PAGE TABLE END REG.            MON01340
+         IC    R3,0(,R14)          GET PAGE TABLE LENGTH CODE           MON01350
+         CLM   R3,1,0(R6)          COMPARE SHADOW/VIRTUAL               MON01360
+         BNE   MONSHADZ            BALE OUT IF PROBLEMS                 MON01370
+         SRL   R3,4                .. RIGHT JUSTIFIED                   MON01380
+         LA    R3,1(,R3)           BUMP ONE FOR ZERO BASE               MON01390
+         MH    R3,PAGINCR(R9)      COMPUT LENGTH IN BYTES               MON01400
+         SRL   R3,1                GET NUMBER OF ENTRIES                MON01410
+         B     MONSHADP+8          SKIP UPDATE FIRST TIME               MON01420
+         SPACE 2                                                        MON01430
+MONSHADP DS    0H                  VALIDATE PAGE TABLE ENTRIES          MON01440
+         LA    R15,2(,R15)         POINT TO PAGE TABLE ENTRY            MON01450
+         LA    R2,2(,R2)           AND ITS SHADOW                       MON01460
+         IC    R4,PINVBIT(R9)      GET TABLE VALIDITY TEST              MON01470
+         EX    R4,MONSHADX         TEST PAGE VALIDITY                   MON01480
+         BO    MONSHADR            NO,FORGET IT                         MON01490
+         BAL   R4,MONSHADE         SET UP VALID SHADOW ENTRY            MON01500
+         SPACE 1                                                        MON01510
+MONSHADR DS    0H                  EXAMINE EVERY PAGE TABLE ENTRY       MON01520
+         BCT   R3,MONSHADP         FOR THIS SEGMENT                     MON01530
+         SPACE 2                                                        MON01540
+MONSHADT DS    0H                  EXAMINE EVERY SEGMENT                MON01550
+         BCT   R7,MONSHADS         IN THE SEGMENT TABLE                 MON01560
+         SPACE 2                                                        MON01570
+*********************************************************************** MON01580
+*        CLEAN UP AND EXIT IN PLACE OF  VACLEAN                       * MON01590
+*********************************************************************** MON01600
+         SPACE 1                                                        MON01610
+MONSHADZ DS    0H                  EMERGENCY EXIT                       MON01620
+         NI    VMESTAT,255-(VMNEWCR0+VMINVSEG+VMINVPAG)                 MON01630
+         LM    R0,R15,BALRSAVE     RESTORE REGISTERS AT ENTRY           MON01640
+         BR    R14                                                      MON01650
+         SPACE 1                                                        MON01660
+MONSHADX TM    1(R15),0            TEST FOR PAGE INVALID   *EXECUTED*   MON01670
+         EJECT                                                          MON01680
+*********************************************************************** MON01690
+*        MONSHADE - CREATE SHADOW PAGE TABLE ENTRY                    * MON01700
+*                                                                     * MON01710
+*        R2    =                   SHADOW PAGE TABLE ENTRY            * MON01720
+*        R6    =                   SHADOW SEGMENT TABLE ENTRY         * MON01730
+*        R14   =                   VIRTUAL SEGMENT TABLE ENTRY        * MON01740
+*        R15   =                   VIRTUAL PAGE TABLE ENTRY           * MON01750
+*********************************************************************** MON01760
+         SPACE 2                                                        MON01770
+MONSHADE DS    0H                  CREATE ENTRY IN SHADOW PAGE TABLE    MON01780
+         LR    R0,R4               SAVE A REGISTER                      MON01790
+         ICM   R4,6,0(R15)         PICK UP PAGE ADDRESS                 MON01800
+         SRL   R4,1                CLEAR GETMAIN BIT                    MON01810
+         SLL   R4,9                GET PAGE ADDRESS                     MON01820
+         LRA   R5,0(,R4)           GET PAGE REAL ADDRESS                MON01830
+         BNZ   MONSHADF            NOT THERE,LEAVE IT FOR LATER         MON01840
+         SRL   R5,8                CONVERT TO PAGE ADDRESS              MON01850
+         STH   R5,0(,R2)           SAVE IT IN SHADOW TABLE              MON01860
+         TM    3(R15),GETMAIN      WAS IT GETMAINED?                    MON01870
+         BNO   *+4+4               NO,SO DONT FLAG SHADOW               MON01880
+         OI    3(R5),GETMAIN       YES,FLAG SHADOW PAGE ENTRY           MON01890
+         SPACE 1                                                        MON01900
+MONSHADF DS    0H                  SHADOW TABLES UPDATED                MON01910
+         LR    R4,R0               RESTORE WORK REGISTER                MON01920
+         BR    R4                  RETURN TO CALLER                     MON01930
+         EJECT                                                          MON01940
+ARCHTECT DS    0F             ARCHITECTURE VARIABLES TABLE              MON01950
+*---------------------------------------------------------------------* MON01960
+*        ARCHTECT IS INDEXED WITH C-REG 0, BYTE 1 VALUE AS FOLLOWS:   * MON01970
+*                                                                     * MON01980
+*        INDEX X'40' - SMALL PAGE, SMALL SEG, HALFWORD ENTRIES        * MON01990
+*              X'50' - SMALL PAGE, LARGE SEG, HALFWORD ENTRIES        * MON02000
+*              X'60' - SMALL PAGE, SMALL SEG, FULLWORD ENTRIES        * MON02010
+*              X'70' - SMALL PAGE, LARGE SEG, FULLWORD ENTRIES        * MON02020
+*              X'80' - LARGE PAGE, SMALL SEG, HALFWORD ENTRIES        * MON02030
+*              X'90' - LARGE PAGE, LARGE SEG, HALFWORD ENTRIES        * MON02040
+*              X'A0' - LARGE PAGE, SMALL SEG, FULLWORD ENTRIES        * MON02050
+*              X'B0' - LARGE PAGE, LARGE SEG, FULLWORD ENTRIES        * MON02060
+*        INDEXES ARE ADJUSTED TO A BASE OF X'40' = X'00'              * MON02070
+*---------------------------------------------------------------------* MON02080
+GETMAIN  EQU   X'01'               PAGE TABLE ENTRY GETMAIN BIT         MON02090
+INVSEGMT EQU   X'01'               SEGMENT INVALID TEST                 MON02100
+PAGEMSK  DC    X'0000F800'    PAGE NUMBER MASK                          MON02110
+SEGMASK  DC    X'00FF0000'    SEGMENT NUMBER MASK                       MON02120
+PINVBIT  DC    X'04'          PAGE-INVALID BIT IN PTE                   MON02130
+ZEROBIT  DC    X'02'          "MUST BE ZERO" BITS IN PTE                MON02140
+PAGSHFT  DC    H'10'          SHIFT COUNT FOR PAGE-NO. JUSTIFY          MON02150
+SEGSHFT  DC    H'14'          SHIFT COUNT FOR SEG-NO. JUSTIFY           MON02160
+PTEINCR  DC    H'2'           HALFWORD PAGE TABLE ENTRIES               MON02170
+MAXSEGS  DC    H'15'          MAXIMUM SEGMENT-TABLE LENGTH CODE         MON02180
+PAGTLEN  DC    H'64'          MAXIMUM PAGE-TABLE LENGTH (BYTES)         MON02190
+PAGINCR  DC    H'4'           INCREMENT OF LENGTH FOR SEGTABLE CODE     MON02200
+         DS    5H             RESERVED FOR FUTURE USE                   MON02210
+         SPACE                                                          MON02220
+CODE50   DC    X'000FF800'                                              MON02230
+         DC    X'00F00000'                                              MON02240
+         DC    X'04',X'02'                                              MON02250
+         DC    H'10',H'18',H'2'                                         MON02260
+         DC    H'0',H'1024',H'64'                                       MON02270
+         DS    5H                                                       MON02280
+         SPACE                                                          MON02290
+CODE60   DC    X'0000F800'                                              MON02300
+         DC    X'0FFF0000'                                              MON02310
+         DC    X'04',X'02'                                              MON02320
+         DC    H'09',H'14',H'4'                                         MON02330
+         DC    H'255',H'128',H'8'                                       MON02340
+         DS    5H                                                       MON02350
+         SPACE                                                          MON02360
+CODE70   DC    X'000FF800'                                              MON02370
+         DC    X'7FF00000'                                              MON02380
+         DC    X'04',X'02'                                              MON02390
+         DC    H'09',H'18',H'4'                                         MON02400
+         DC    H'127',H'2048',H'128'                                    MON02410
+         DS    5H                                                       MON02420
+         SPACE                                                          MON02430
+CODE80   DC    X'0000F000'                                              MON02440
+         DC    X'00FF0000'                                              MON02450
+         DC    X'08',X'06'                                              MON02460
+         DC    H'11',H'14',H'2'                                         MON02470
+         DC    H'15',H'32',H'2'                                         MON02480
+         DS    5H                                                       MON02490
+         EJECT                                                          MON02500
+CODE90   DC    X'000FF000'                                              MON02510
+         DC    X'00F00000'                                              MON02520
+         DC    X'08',X'06'                                              MON02530
+         DC    H'11',H'18',H'2'                                         MON02540
+         DC    H'0',H'512',H'32'                                        MON02550
+         DS    5H                                                       MON02560
+         SPACE                                                          MON02570
+CODEA0   DC    X'0000F000'                                              MON02580
+         DC    X'0FFF0000'                                              MON02590
+         DC    X'08',X'06'                                              MON02600
+         DC    H'10',H'14',H'4'                                         MON02610
+         DC    H'255',H'64',H'4'                                        MON02620
+         DS    5H                                                       MON02630
+         SPACE                                                          MON02640
+CODEB0   DC    X'000FF000'                                              MON02650
+         DC    X'7FF00000'                                              MON02660
+         DC    X'08',X'06'                                              MON02670
+         DC    H'10',H'18',H'4'                                         MON02680
+         DC    H'127',H'1024',H'64'                                     MON02690
+         DS    5H                                                       MON02700
+         SPACE 3                                                        MON02710
+         LTORG                                                          MON02720
+         EJECT                                                          MON02730
+         COPY  EQU                                                      MON02740
+         COPY  VMBLOK                                                   MON02750
+         COPY  PGBLOK                                          @V2A3135 MON02760
+         EJECT                                                          MON02770
+         PSA                                                            MON02780
+         COPY  SAVE                                                     MON02790
+         END   MONSHD                                                   MON02800
+***********************************************************************
+*        HERE IS THE AUX FILE TO APPLY THIS MOD TO THE SYSTEM         *
+***********************************************************************
+M001VM
+***********************************************************************
+*        HERE IS DMKVAT M001VM                                        *
+***********************************************************************
+./  S 1000 1000
+./ *     THIS UPDATE FILE IS FOR MONSANTO MODIFICATION
+./ *     NUMBER M001 - VM/370 SHADOW PAGE TABLE REFRESHING
+./ *     DESIGNED FOR RUNNING MVS UNDER VM/370
+./ I 26000 $
+         EXTRN MONSHADO            SHADOW TABLE REFRESH ROUTINE  *M001*
+./ I 00184000 $
+         EJECT                                                   *M001*
+******************************************************************M001*
+*        THE FOLLOWING 'GOTO'  MONSHADO IS INSERTED TO TRANSFER  *M001*
+*        CONTROL TO THE MONSANTO SHADOW PAGE TABLE REFRESH       *M001*
+*        ROUTINE MONSHD.IT HAS A COPY OF THE VACLEAN CODE TO     *M001*
+*        RETURN DIRECTLY TO THE ORIGINAL CALLER.                 *M001*
+******************************************************************M001*
+         SPACE 2                                                 *M001*
+         GOTO  MONSHADO            GO REFRESH SHADOW TABLES      *M001*
+         SPACE 2                                                 *M001*

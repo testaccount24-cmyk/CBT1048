@@ -1,0 +1,624 @@
+T586P11  CSECT
+         SPACE 1
+**********************************************************************
+*                                                                     *
+*    ABSTRACT:    LIST ALL MEMBER NAMES IN A PARTITONED DATASET       *
+*              SHOWING ALIAI FOR EACH ROOT NAME. FOR LINK-EDITED      *
+*              MODULES, MAIN STORAGE USED, DATE LAST COMPILED AND     *
+*              SSI INFORMATION ARE LISTED.                            *
+*                 AN ERROR DATASET LISTS THOSE ALIAI FOR WHICH        *
+*              THERE IS NO ROOT NAME. THIS OCCURS WHEN THE ROOT       *
+*              NAME IS SCRATCHED WITHOUT SCRATCHING THE ALIAS.        *
+*              HOWEVER IF THE DATASET IS REORGANISED, THIS IND-       *
+*              ICATION DISSAPEARS.                                    *
+*                                                                     *
+*    AUTHOUR:     P.S.GRANT  -  MONSANTO EUROPEAN COMPUTER CENTRE.    *
+*                                                                     *
+*    DATE:        APRIL 1976                                          *
+*                                                                     *
+**********************************************************************
+         SPACE 3
+***********************************************************************
+*                                                                     *
+*                        EXECUTION INFORMATION                        *
+*                                                                     *
+*    MAIN STORAGE:    DEPENDS ON THE NUMBER OF MEMBERS IN THE PDS     *
+*                     BUT SHOULD RUN IN 52K FOR UP TO 1000 MEMBERS.   *
+*                                                                     *
+*    JCL:             //STEPNAME   EXEC PGM=T586P11                   *
+*                     //SYSPRINT   DD   SYSOUT=A,DCB=BLKSIZE=133      *
+*                     //SYSERR     DD   SYSOUT=A,DCB=BLKSIZE=80       *
+*                     //SYSLIB     DD   DSN=PDS.NAME,DISP=SHR         *
+*                     //STEPLIB    DD   DSN=PROG.LIBRARY,DISP=SHR     *
+*                                                                     *
+*              NOTES ON THE ABOVE:                                    *
+*                                                                     *
+*                SYSPRINT     NORMAL REPORT OUTPUT  DCB=(LREC=133,FBA)*
+*                SYSERR       LISTING OF ALIAI WITHOUT ROOT NAMES.    *
+*                             THERE ARE NO HEADINGS,BUT ASA CONTROL   *
+*                             CHARATERS ARE INCLUDED. THIS ENABLES    *
+*                             THE NAMES TO BE INCLUDED IN SCRATCH     *
+*                             STATEMENTS. DCB=(RECFM=FBA,LRECL=80)    *
+*                SYSLIB       PARTIONED DATASET INFORMATION IS DESIRED*
+*                             FROM. LAST DATE COMPILED CANNOT BE      *
+*                             FOUND FROM MODULES LINK-EDITED PRIOR    *
+*                             TO 0S R21.                              *
+*                STEPLIB      PROGRAM LIBRARY THAT T586P11 IS STORED  *
+*                             IN.                                     *
+*                                                                     *
+**********************************************************************
+         EJECT
+***********************************************************************
+*                        HOUSEKEEPING                                 *
+***********************************************************************
+         SPACE 1
+         PGMIN
+         PRINT ON,NOGEN
+         EJECT
+**********************************************************************
+*                        INITIALISATION                               *
+**********************************************************************
+         SPACE 1
+INITIAL  EQU   *
+         UT458 METHOD=LADE,UTDS=YES CALL UNIVERSAL DATE ROUTINE
+         MVC   HEADDATE,UTREPORT   MOVE DATE TO TITLE.
+         RDJFCB (PDSDCB)           READ JOB FILE CONTROL BLOCK
+         OI    JFCB+52,X'08'       INHIBIT REWRITE OF JFCB
+         MVC   HEADDSN,JFCB        MOVE DATASET NAME TO TITLE
+         OPEN  (SYSPRINT,OUTPUT,SYSERR,OUTPUT) OPEN PRINT D/S
+         BAL   R4,HEADINGS         PRINT HEADING LINE.
+         B     PHASE1              BRANCH TO FIRST MAINLINE PHASE
+         EJECT
+**********************************************************************
+*         PHASE ONE:  BUILD UP A TABLE OF INFORMATION ON EACH MEMBER  *
+*                     IN THE PDS DEFINED BY 'SYSLIB'.                 *
+*                                                                     *
+*         METHOD:  READ THE DIRECTORY OF THE PDS BREAKING OUT         *
+*                  DIRECTORY ENTRIES ONE AT A TIME.                   *
+*                  FOR EACH ENTRY OBTAIN 32 BYTES OF MAIN-MEMORY,     *
+*                  AND MOVE REQUIRED DATA INTO IT, CHAINING EACH      *
+*                  NEW ENTRY TO THOSE PREVIOUSLY SET-UP.              *
+**********************************************************************
+         SPACE 1
+PHASE1   EQU   *
+         LA    R5,CHNBASE          POINT TO BASE ADDRESS OF TABLE
+PH1LOOP  EQU   *
+         BAL   R4,GETPDE           OBTAIN A PDS DIRECTORY ENTRY
+         CLI   PDEADD,X'FF'        END DIRECTORY IND. ON?
+         BE    PHAS1END
+         BAL   R4,PDEFMT           ADD ENTRY TO TABLE.
+         B     PH1LOOP             GO ROUND AGAIN.
+         SPACE 1
+PHAS1END EQU   *
+         CLOSE (IDRDCB)
+         B     PHASE2
+         EJECT
+PHASE2   EQU   *
+**********************************************************************
+*         PHASE TWO:  LOCATE ALL ALIAI FOR EACH ROOT MODULE           *
+*                                                                     *
+*         METHOD:  SCAN THE TABLE FOR AN ALIAS ENTRY.                 *
+*                  SAVE ADDRESS OF NEXT TABLE ENTRY FOR RESUME SCAN   *
+*                  RE-SCAN WHOLE TABLE MATCHIN ON TTR FIELD TO FIND   *
+*                  ROOT MODULE AND ANY OTHER ALIAI.                   *
+*                  CHAIN SO THAT ROOT MODULE POINTS TO FIRST ALIAS    *
+*                  AND FIRST ALIAS POINTS TO OTHERS FOUND.            *
+*                  RESTORE SAVED ADDRESS AND CONTINUE THE ABOVE       *
+*                  PROCESS UNTIL THE END OF THE TABLE IS REACHED.     *
+**********************************************************************
+         SPACE 1
+CHNALIAI EQU   *         CHAIN ALIAI TO THEIR ROOT MODULE
+         USING DMASK,R5            USED FOR TABLE SCANING
+         USING SMASK,R6            USED FOR ALIAS WHEN LOCATED
+         MVC   CASAVE1,CHNBASE     INIT TABLE SCAN START POINT
+CASCAN1  EQU   *
+         L     R5,CASAVE1          RESTOR SCAN CKECK-POINT
+         LTR   R5,R5               END OF INTERNAL TABLE?
+         BZ    CAEND               YES. TERMINATE SCAN
+         SR    R2,R2               CLEAR WORK REG.
+         CL    R2,DALIAS           HAS THIS ENTRY BEEN CHAINED
+         BNE   CASCAN2             YES. SKIP THIS ENTRY
+         TM    DFLAG,DFALIAS       IS THIS AN ALIAS?
+         BE    CAFOUND             YES. GO FIND ITS ROOT.
+CASCAN2  EQU   *
+         MVC   CASAVE1,DNEXT       GET POINTER TO NEXT ENTRY
+         B     CASCAN1             CONTINUE SCAN FOR AN ALIAS.
+         SPACE 2
+CAFOUND  EQU   *         CHAIN ALIAS TO ROOT/OTHER ALIAI.
+         MVC   CASAVE1,DNEXT       SAVE ADDRESS OF NEXT ELEMENT
+*                                  SO ALIAS SCAN CAN BE RESUMED
+         ST    R5,CASAVE2          SAVE ADDRESS OF CURRENT ALIAS.
+         LR    R6,R5               USE 'SMASK' TO ADDRESS CURRENT ALIAS
+         L     R5,CHNBASE          USE 'DMASK' TO SCAN TABLE FROM START
+*                                  FOR ROOT/ALIAI TO CHAIN TO.
+         MVI   CHNBASE,X'00'       SETOFF ROOT FOUND FLAG
+CASCAN3  EQU   *         LOOK FOR ENTRIES WITH SAME TTR AS CURRENT ALS.
+         CR    R5,R6               THIS ENTRY LOOKING AT ITSELF?
+         BE    CASCAN4             YES. GO ON TO NEXT ENTRY
+         SR    R2,R2               CLEAR WORK REG.
+         CL    R2,DALIAS           TEST FOR EXISTING CHAIN
+         BNE   CASCAN4             GO TO NEXT ENTRY IF SO.
+         CLC   DTTR,STTR           SCAN ENTRY AND ALIAS HAVE
+*                                  SAME RELATIVE LOCATION?
+         BE    CACHAIN1            YES. GO DO ACTUAL CHAINING TOGETHER
+CASCAN4  EQU   *
+         L     R5,DNEXT            POINT TO NEXT ENTRY
+         LTR   R5,R5               LAST ENTRY JUST PROCESSED?
+         BZ    CAEND3              YES. BRANCH
+         B     CASCAN3             CONTINUE SCAN FOR DUPLICATE TTRS
+         SPACE
+CAEND3   EQU   *         THATS ALL FOR THIS ALIAS.
+         MVI   SALIAS,X'FF'        MOVE 'CHAINED' IND. TO LAST ALS FND
+         CLI   CHNBASE,X'FF'       ROOT FOUND FOR CURRENT ALIAS?
+         BE    CASCAN1             YES. RESUME SCAN FOR NEXT ALIAS.
+         L     R6,CASAVE2          POINT BACK TO CURRENT ALIAS.
+         OI    SFLAG,DFNOROOT      NO. INDICATE NO ROOT FOR THIS ALIAS
+*                      *NOTE*  ONLY FIRST IN CHAIN WILL HAVE FLAG ON.
+         B     CASCAN1             RESUME SCAN FOR NEXT ALIAS.
+         SPACE 3
+*        CHECK FOR DUPLICATE TTR BELONGING TO A ROOT MODULE OR
+*        ANOTHER ALIAS.
+*
+*        IF THE ROOT NAME IS FOUND, A POINTER IS MADE FROM THE
+*        ROOT TO THE CURRENT ALIAS FOUND BY 'CASCAN1'.
+*        A FLAG IS SET TO INDICATE THAT THE ROOT HAS BEEN LOCATED.
+*
+*        IF ANOTHER ALIAS IS FOUND, A POINTER IS MADE FROM THE
+*        CURRENT ALIAS TO THE FOUND ALIAS AND THEN EURTHER CHAINING
+*        IS MADE FROM THE FOUND ALIAS.
+         SPACE 1
+CACHAIN1 EQU   *         CHAIN ROOT MODULE TO ALIAS
+         TM    DFLAG,DFALIAS       FOUND NAME ALSO AN ALIAS?
+         BO    CACHAIN2            YES. BRANCH TO ALIAS CHAINING.
+         MVC   DALIAS,CASAVE2      CHAIN FROM ROOT TO ALIAS
+         MVI   CHNBASE,X'FF'       INDICATE ROOT HAS BEEN FOUND.
+         B     CASCAN4             CONTINUE SCAN FOR MORE PAIRINGS
+         SPACE 1
+CACHAIN2 EQU   *         CHAIN FROM CURRENT ALIAS TO FOUND ALIAS
+         ST    R5,SALIAS           STORE FOUND ADDRESS IN CURRENT ALIAS
+         LR    R6,R5               JUMP TO FOUND ALIAS.
+*                                  BECOMES REFERENCE FOR 'SMASK'
+*                                  OF 'SMASK'
+         B     CASCAN4             CONTINUE SCAN FOR MORE PAIRINGS
+         SPACE 3
+CAEND    EQU   *         END OF ALIAS CHAINING.
+         EJECT
+PHASE3   EQU   *
+***********************************************************************
+*        PHASE THREE:  PRINT INFORMATION FROM TABLE                   *
+*                                                                     *
+*        METHOD:  SEARCH TABLE FOR FIRST ROOT NAME.                   *
+*                 FORMAT PRINT LINE WITH INFO FROM ENTRY.             *
+*                 PRINT INFO. ON SYSPRINT DATASET.                    *
+*                 TEST FOR ANY ALIAI AND PRINT ON SUBSEQUENT LINES.   *
+*                 CONTINUE BY CHAINING THROUGH COMPLETE TABLE.        *
+*                 WHEN ALIAS ENTRIES ARE ENCOUNTERED, TEST FOR        *
+*                 NO ROOT MODULE FLAG SET. PRINT ANY FOUND            *
+***********************************************************************
+         SPACE 1
+PRNTINFO EQU   *         FIND FIRST ROOT MODULE
+         LA    R5,CHNBASE          POINT TO BASE ADDRESS OF TABLE
+         USING DMASK,R5
+PILOOP1  EQU   *
+         L     R5,0(0,R5)          JUMP TO NEXT ENTRY.
+         LTR   R5,R5               END OF CHAIN?
+         BZ    EOJ                 YES.END OF PROGRAM
+         TM    DFLAG,DFALIAS       THIS AN ALIAS
+         BNO   PIROOT1             NO. BRANCH
+         TM    DFLAG,DFNOROOT      LACK OF ROOT NAME
+         BNO   PILOOP1             NO. CHECK NEXT ENTRY
+         BAL   R4,PRTERROR         YES. PRINT ERROR REPORT.
+         B     PILOOP1             PROCEED TO NEXT ENTRY
+         SPACE 1
+         SPACE 1
+PIROOT1  EQU   *         FORMAT PRINT LINE
+         MVC   PNAME,DNAME         MEMBER NAME
+         L     R3,DMS-1            PICK-UP MAIN STORAGE
+         LA    R3,0(0,R3)          CLEAR HIGH ORDER BYTE
+         CVD   R3,DWORK            DECIMAL FOR PRINTING
+         MVC   PSTOREB,EDIT7       EDIT MASK
+         ED    PSTOREB,DWORK+4     FORMAT STORAGE USED
+         SR    R2,R2               CLEAR R2
+         D     R2,=F'1024'         DIVIDE R2 AND R3 BY KBYTES
+         LTR   R2,R2               TEST FOR ZERO REMAINDER
+         BZ    *+8                 SKIP NSI IF SO
+         LA    R3,1(0,R3)          ROUND UP.
+         CVD   R3,DWORK            CONVERT TO DECIMAL
+         MVC   PSTOREK,EDIT3       SET EDIT MASK
+         ED    PSTOREK,DWORK+6     FORMAT STORAGE  KBYTES.
+         UNPK  UTYYDDD,DDATE       UNPACK DATE FOR UT458
+         OI    UTYYDDD+4,X'F0'     CORRECT SIGN ON LAST DIGIT
+         UT458 METHOD=EXEC,OPCODE=6,DATE=UTYYDDD
+         MVC   PDATE,UTREPORT      MOVE REPORT FORMAT DATE
+         TM    DFLAG,DFSSI         TEST FOR SSI INFO
+         BNO   PINOSSI             BRANCH IF NONE
+         MVC   HEXAREA(4),DSSI     MOVE TO WORK AREA
+         LA    R1,HEXAREA          POINT TO HEXAREA
+         BAL   R4,HEXPAND          CHANGE TO PRINTABLE FORMAT
+         MVC   PSSI,HEXAREA        MOVE TO PRINTLINE
+         CLI   DSSI,X'49'          BEFORE START OF MOPP?
+         BL    PINOSSI             YES. BRANCH
+         CLI   DSSI,X'63'          AFTER YEAR 1999?
+         BH    PINOSSI             YES. BRANCH
+         SR    R2,R2               CLEAR WORK REG
+         IC    R2,DSSI             INSERT YEAR.
+         CVD   R2,DWORK            CONVERT TO DECIMAL
+         MVC   PMOPPYY-2(4),EDIT3  MOVE EDIT MASK
+         ED    PMOPPYY-2(4),DWORK+6 MOVE YEAR TO PRINTLINE
+         MVC   PMOPPH(6),EDITMOPP  MOVE EDIT INFO FOR MOPP NUMBER
+         L     R2,DSSI+1           LOAD REG WITH NNNNN PART OF SSI
+         LA    R2,0(0,R2)          CLEAR HIGH ORDER BYTE
+         SRL   R2,8                SHIFT OUT UNWANTED BYTE
+         CVD   R2,DWORK            CONVERT TO DECIMAL FORMAT
+         ED    PMOPPH(6),DWORK+5   MOVE TO PRINT LINE
+         CLI   PMOPPNN,C'-'        HYPHEN IN FIRST FILL CHAR.
+         BNE   PINOSSI             NO SKIP NSI
+         MVI   PMOPPNN,C'0'        YES. MOVE IN ZERO
+PINOSSI  EQU   *         END OF NORMAL PRINT-LINE FORMATTING
+         SPACE 1
+PIALIAS1 EQU   *         PICK UP ANY ALIAI FOR THIS ROOT
+         L     R6,DALIAS           LOAD ALIAS ADDRESS
+         USING SMASK,R6
+         CLI   DALIAS,X'FF'        END OF CHAIN?
+         BE    PIPRINT1            NO. BRANCH OUT OF LOOP
+PIALIAS2 EQU   *
+         MVC   PALIAS,SNAME        MOVE ALIAS NAME TO PRINT-LINE
+         CLI   SALIAS,X'FF'        END OF ALIAS CHAIN?
+         BE    PIPRINT1            YES. THEN BRANCH OUT OF LOOP.
+         L     R6,SALIAS           NO. CHAIN TO NEXT ALIAS
+         BAL   R4,PRINT            YES. PRINT LINE
+         B     PIALIAS2        AND LOOK FOR NEXT ALIAS.
+         SPACE
+PIPRINT1 EQU   *         PRINT LAST LINE FOR CURRENT MODULE
+         BAL   R4,PRINT            PRINT LINE
+         B     PILOOP1             LOOK FOR NEXT MODULE
+         EJECT
+***********************************************************************
+*        END OF JOB  PROCCESS                                         *
+***********************************************************************
+         SPACE
+EOJ      EQU   *
+         CLOSE (SYSPRINT,,SYSERR)  CLOSE PRINT DATASETS
+         PGMOUT ,                  RETURN TO HIGHER LEVEL
+         EJECT
+***********************************************************************
+*        ERROR SUBROUTINE FOR ROOTLESS ALIAI                          *
+***********************************************************************
+         SPACE 1
+PRTERROR EQU   *
+         MVC   PRTLINE(8),DNAME    MOVE NAME TO PRINTLINE
+         PUT   SYSERR,PRTAREA      PRINT ERROR MESSAGE
+         MVI   PRTCTL,C' '         * CLEAR
+         MVC   PRTLINE,PRTCTL      * PRINTLINE
+         EJECT
+***********************************************************************
+*        SUBROUTINE TO RETRIEVE PDS DIRECTORY ENTRIES FROM DISK       *
+***********************************************************************
+         SPACE 1
+GETPDE   SUBIN           GET PDS DIRECTORY ENTRY.
+GPFIRST  BC    0,GPNORM            BRANCH IF NOT FIRST TIME
+         MVI   GPFIRST+1,X'F0'     FORCE UNCONDITIONAL BRANCH
+         OPEN  (PDSDCB)            OPEN DCB FOR DIRECTORY
+         OPEN  (IDRDCB)
+         XC    PDEADD,PDEADD       FORCE READ FIRST TIME.
+GPNORM   EQU   *
+         USING PDEMASK,R2
+         L     R2,PDEADD           GET ADDR OF LAST ELEMENT RETRIEVED
+         LTR   R2,R2               CURRENT BLOCK EXHAUSTED?
+         BZ    GPREAD              YES. READ NEXT
+         NI    PDEC,X'1F'          TURN OFF NON LENGTH BITS IN LAST PDE
+         SR    R3,R3               CLEAR WORK REG
+         IC    R3,PDEC             LENGTH IND. OF CURRENT  PDE
+         LA    R2,12(R3,R2)        * POINT  TO
+         LA    R2,0(R3,R2)         * NEXT PDE
+         CL    R2,PDBUFEND         END OF CURRENT BUFFER
+         BL    GPENDTST            NO. TEST FOR LAST ENTRY
+         SPACE 2
+GPREAD   EQU   *
+         GET   PDSDCB              READ NEXT PDS RECORD
+         LR    R2,R1               TRANFER REGISTERS
+         CLI   2(R2),X'FF'         DELETED BLOCK?
+         BE    GPEND               YES. END OF DIR. PROCESS
+         CLI   2(R2),X'00'         UNUSED BLOCK?
+         BE    GPEND               YES. GO TO END OF DIR. PROCESS
+         LR    R3,R2               * FIND END OF
+         AH    R3,0(0,R2)          * BUFFER ADDRESS
+         ST    R3,PDBUFEND         * AND SAVE IT.
+         LA    R2,2(0,R2)          JUMP TO FIRST DIR. ENTRY
+         SPACE 2
+GPENDTST EQU   *
+         ST    R2,PDEADD           SAVE ADDRESS OF NEW DIR. ENTRY
+         CLI   0(R2),X'FF'         END OF DIR. ENTRIES?
+         BNE   GPEXIT              NO. EXIT FROM ROUTINE
+         SPACE 2
+GPEND    EQU   *
+         MVI   PDEADD,X'FF'        INDICATE END OF DIR.
+         CLOSE (PDSDCB)            CLOSE DATASET
+         SPACE 2
+GPEXIT   SUBOUT
+         EJECT
+***********************************************************************
+*        SUBROUTINE TO REFORMAT A PDS ENTRY FOR INTERNAL USE          *
+***********************************************************************
+         SPACE
+PDEFMT   SUBIN SAVE=(R4)
+         DROP  R2
+         USING PDEMASK,R6
+         USING DMASK,R5
+         L     R6,PDEADD           ADDRESS CURRENT PDS ENTRY
+         CLI   PDEADD,X'FF'        END OF PDS ENTRIES?
+         BE    PFEXIT              YES. EXIT FROM ROUTINE
+         GETMAIN R,LV=DMASKLEN     OBTAIN MAIN STORAGE FOR NEW ENTRY
+         ST    R1,DNEXT            STORE ADDRESS IN PREVIOUS ENTRY
+*                                  CHAIN POINTER.
+         LR    R5,R1               ADDRESS NEWLY AQUIRED MAIN MEMORY.
+         XC    DMASK(DMASKLEN),DMASK  CLEAR TO HEX ZEROES
+         MVC   DNAME(8),PDENAME    MOVE MEMBER NAME
+         MVC   DTTR(4),PDETTR      MOVE TTRC
+         TM    PDEC,X'80'          THIS NAME AN ALIAS?
+         BO    PFALIAS             YES. SKIP REMAINDER OF FORMATTING
+         NI    DC,X'1F'            ELIMINATE ALL BUT LENGTH IND
+         CLI   DC,X'0B'            TEST FOR LKED MIN USER DATA LENGTH.
+         BL    PFNOLKED            SKIP IF NOT A LKED MODULE.
+         OI    DFLAG,DFLKED        SETON LKED FLAG
+*              GET MAIN STORAGE REQUIREMENT FOR MODULE
+         MVC   DMS(3),PDEMS        MOVE FROM PDE TO INTERNAL FORMAT.
+         SPACE 3
+*              SEARCH PDE LENGTH TABLE TO DETECT ENTRIES WITH SSI INFO
+PFSRCH1  EQU   *
+         LA    R2,PDELTAB          GET ADDRESS OF LENGTH ATTRIBUTE TAB.
+PFLOOP1  EQU   *
+         CLI   0(R2),X'FF'         END OF TABLE?
+         BE    PFEND1              YES. BRANCH
+         CLC   DC,0(R2)            CORRECT LENGTH FOR NO SSI?
+         BE    PFEND1              YES. LEAVEROUTINE
+         CLC   DC,1(R2)            CORRECT LENGTH FOR SSI PRESENT.
+         BE    PFSSI           YES FORMAT IT.
+         LA    R2,2(0,R2)          NO. JUMP TO NEXT TABLE ENTRY.
+         B     PFLOOP1             GO ROUND LOOP AGAIN
+         SPACE 1
+PFSSI    EQU   *
+         OI    DFLAG,DFSSI         SETON SSI FLAG
+         SR    R3,R3               CLEAR REG.
+         IC    R3,0(R2)            INSERT LENGT ATTRIBUTE OF NON SSI
+         LA    R2,12(R3,R6)        * POINT TO
+         LA    R2,0(R3,R2)         * SSI INFO.
+         MVC   DSSI,0(R2)          MOVE SSI INFO TO INTERNAL ELEMENT
+PFEND1   EQU   *
+         SPACE 3
+*        RETREIVE LAST DATE COMPILED FOR LKED MEMBERS R21 AND ONWARDS.
+         MVC   DWORK(4),DTTR       MOVE TTR TO WORK AREA
+         MVI   DWORK+3,X'00'       MAKE SURE BYTE 4 IS ZERO
+         POINT IDRDCB,DWORK        POINT TO FIRST BLOCK OF MODULE
+PFIDREAD EQU   *
+         READ  IDRECB,SF,IDRDCB,IDRBUF,'S'   READ A MEMBER RECORD
+         CHECK IDRECB              WAIT FOR I/O TO COMPLETE
+         TM    DFLAG,DFIOERR       HAS AN IO-ERROR OCCURED.
+         BO    PFIDREND            YES. SKIP IDR INFO.
+         LA    R2,IDRBUF           GET ADDRESS OF DATA AREA
+         TM    0(R2),X'F0'         TEST FOR MODULE CONTROL REC.
+         BZ    PFIDREND            EXIT IF  FOUND
+         CLI   0(R2),X'80'         TEST FOR IDR RECORD
+         BNE   PFIDREAD            READ NEXT REC IF NOT FOUND.
+         TM    2(R2),X'02'         THIS THE LKED RECORD?
+         BNO   PFIENDTS            NO. BUT TEST FOR LAST IDR
+         MVC   DDATE,15(R2)        YES. MOVE PACKED DATE TO INT. RECORD
+         B     PFIDREND            BRANCH  TO EXIT
+         SPACE
+PFIENDTS EQU   *
+         TM    2(R2),X'80'         LAST IDR RECORD?
+         BNO   PFIDREAD            NO. READ NEXT.
+PFIDREND EQU   *
+         SPACE 3
+PFNOLKED EQU   *
+         B     PFEXIT              EXIT FROM ROUTINE
+         SPACE 1
+PFALIAS  EQU   *
+         OI    DFLAG,DFALIAS       SETON ALIAS FLAG
+         SPACE 1
+PFEXIT   SUBOUT ,                  RETURN TO MAINLINE.
+         EJECT
+***********************************************************************
+*        SYNAD ROUTINE INVOKED WHEN ERROR OCCURS RETRIEVING           *
+*        IDR INFORMATION. WILL NORMALLY HAPPEN WHEN A LENGTH          *
+*        CHECK OCCURS.                                                *
+***********************************************************************
+         SPACE 1
+IDRERR   EQU   *
+         USING DMASK,R5            R5 IS ASSUMED TO POINT TO CURRENT
+*                                  DIRECTORY ENTRY BEING FORMATTED.
+         OI    DFLAG,DFIOERR       INDICATE I/O ERROR HAS OCCURRED
+         BR    R14                 RETURN TO THE SYSTEM WHICH WILL
+*                                  RETURN TO PROGRAM AFTER THE CHECK
+*                                  MACRO.
+         EJECT
+***********************************************************************
+*        PRINT SUBROUTINE                                             *
+***********************************************************************
+         SPACE 1
+PRINT    SUBIN SAVE=R4
+         PUT   SYSPRINT,PRTAREA    PRINT CURRENT DETAIL LINE
+         AP    LINECTR,=P'1'       INCREMENT LINE COUNTER
+         MVI   PRTCTL,C' '         * CLEAR
+         MVC   PRTLINE,PRTCTL      * PRINT-LINE
+         CP    LINECTR,LINLIMIT    PAGE OVERFLOW?
+         BL    PRINTXIT            NO. EXIT
+         BAL   R4,HEADINGS         YES. PRINT NEW HEADINGS
+PRINTXIT SUBOUT RESTORE=R4         RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        HEADINGS SUBROUTINE                                          *
+***********************************************************************
+         SPACE 1
+HEADINGS EQU   *
+         AP    PAGECTR,=P'1'       INCREMENT PAGE-COUNTER
+         MVC   HEADPNO,EDIT3       SET-UP EDIT PATTERN
+         ED    HEADPNO,PAGECTR     MOVE CURRENT PAGE-NO. TO HEADING
+         PUT   SYSPRINT,HEAD1      PRINT FIRST HEADING
+         MVI   PRTCTL,C'-'         SET-UP TRIPLE SPACE
+         PUT   SYSPRINT,PRTAREA    SKIP TO SECOND HEADING
+         PUT   SYSPRINT,HEAD2      PRINT SECOND HEADING
+         PUT   SYSPRINT,HEAD3      PRINT THIRD HEADING
+         MVI   PRTCTL,C'0'         MOVE DOUBLE SPACE FOR 1ST DETAIL
+         ZAP   LINECTR,=P'7'       RESET LINE COUNTER.
+         BR    R4                  RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        TRANSLATE ONE FULLWORD OF HEX DATA TO DISPLAY FORMAT.        *
+*              ON ENTRY, R1 MUST POINT TO A 3-WORD AREA OF            *
+*              MAIN MEMORY CONTAING THE WORD TO BE TRANSLATED.        *
+*              ON EXIT, THE FIRST EIGHT BYTES CONTAIN THE DATA        *
+*              IN DISPLAY FORMAT.                                     *
+***********************************************************************
+HEXPAND  SUBIN SAVE=(R2,R3)        SAVE REGISTERS
+         LA    R2,8                SET-UP COUNTER
+         LR    R3,R1               SET-UP MOVING POINTER
+*  LOOP STARTS HERE
+         MVO   0(5,R3),0(4,R3)     MOVE 4-BYTES ALONG ONE
+*                                  FIRST FOUR BITS OF FIRST BYTE = ZERO
+         LA    R3,1(0,R3)          JUMP ONE BYTE
+         BCT   R2,*-10             LOOP BACK 8-TIMES.
+         TR    0(8,R1),=XL16'F0F1F2F3F4F5F6F7F8F9C1C2C3C4C5C6'
+*                        PREVIOUS INSTRUCTION FILLS IN ZONE IN 8-BYTES
+         SUBOUT RESTORE=(R2,R3)
+               EJECT
+***********************************************************************
+*        WORKING STORAGE                                              *
+***********************************************************************
+CASAVE1  DC    F'0'
+CASAVE2  DC    F'0'
+CHNBASE  DC    F'0'
+PDEADD   DC    F'0'
+PDBUFEND DC    F'0'
+DWORK    DS    D
+IDRBUF   DS    CL256
+HEXAREA  DC    CL12' '
+HEAD1    DS    0CL133
+HSKIPCTL DC    CL1'1'
+         DC    CL18'T586P11'
+         DC    CL32'PDS DIRECTORY INFORMATION FOR:- '
+HEADDSN  DC    CL44' '
+         DC    CL09' '
+HEADDATE DC    CL9' '
+         DC    CL12' '
+         DC    CL4'PAGE'
+HEADPNO  DC    CL4' '
+         SPACE 1
+HEAD2    DS    0CL133
+H2SKIP   DC    CL1' '
+         DC    CL44'          MEMBER    ALIAS      MAIN STORAGE '
+         DC    CL44'      DATE        SSI        MOPP      COMPI'
+         DC    CL44'LER     LANGUAGE                            '
+HEAD3    DS    0CL133
+H3SKIP   DC    CL1' '
+         DC    CL44'           NAME     NAMES      -BYTES  (K)- '
+         DC    CL44'    COMPILED      INFO      NUMBER          '
+         DC    CL44' '
+PRTAREA  DS    0CL133
+PRTCTL   DS    C
+PRTLINE  DS    0CL132
+DETLINE  DS    0CL132
+         DC    CL09' '
+PNAME    DC    CL08' '
+         DC    CL02' '
+PALIAS   DC    CL08' '
+         DC    CL02' '
+PSTOREB  DC    CL08' '
+         DC    CL01' '
+PSTOREK  DC    CL04' '
+         DC    CL05' '
+PDATE    DC    CL09' '
+         DC    CL04' '
+PSSI     DC    CL08' '
+         DC    CL03' '
+PMOPPYY  DC    CL02' '
+PMOPPH   DC    CL01' '
+PMOPPNN  DC    CL05' '
+         DC    CL05' '
+PCOMPLR  DC    CL09' '
+         DC    CL04' '
+PLANG    DC    CL09' '
+         DC    CL26' '
+PAGECTR  DC    PL2'0'
+LINECTR  DC    PL2'0'
+LINLIMIT DC    PL2'58'
+EDIT3    DC    XL4'40202120'
+EDIT7    DC    XL8'4020202020202120'
+EDITMOPP DC    XL6'602120202020'
+PDELTAB  DC    X'0B0D'             LKED NORENT NOSCATTER
+         DC    X'0F11'             LKED NORENT SCATTER
+         DC    X'1012'             LKED RENT   NOSCATTER
+         DC    X'1416'             LKED RENT   SCATTER
+         DC    X'0B0E'             * AS
+         DC    X'0F12'             * ABOVE
+         DC    X'1013'             * FOR
+         DC    X'1418'             * MVS
+         DC    X'1417'             * MVS
+         DC    X'FFFF'             END OF TABLE
+         EJECT
+***********************************************************************
+*        DATA CONTROL BLOCKS                                          *
+***********************************************************************
+         SPACE 1
+         DS    0F
+JFCBEXIT DC    X'87',AL3(JFCB)
+JFCB     DS    44F
+         SPACE
+IDRDCB   DCB   DDNAME=SYSLIB,MACRF=(R),DSORG=PO,EODAD=PFIDREND,        C
+               SYNAD=IDRERR,                                           C
+               RECFM=U,BLKSIZE=256,BUFNO=1,EXLST=JFCBEXIT
+         SPACE 1
+PDSDCB   DCB   DDNAME=SYSLIB,DSORG=PS,MACRF=GL,EODAD=GPEND,            C
+               RECFM=F,LRECL=256,BLKSIZE=256,EXLST=JFCBEXIT
+         SPACE 1
+SYSPRINT DCB   DDNAME=SYSPRINT,MACRF=PM,DSORG=PS,                      C
+               RECFM=FBA,LRECL=133
+         SPACE 1
+SYSERR   DCB   DDNAME=SYSERR,MACRF=PM,DSORG=PS,                        C
+               RECFM=FBA,LRECL=80
+         EJECT
+***********************************************************************
+*        LITERALS                                                     *
+***********************************************************************
+         LTORG
+         EJECT
+***********************************************************************
+*        DUMMY SECTIONS                                               *
+***********************************************************************
+         SPACE 1
+PDEMASK  DSECT           FORMAT OF A PDS DIRECTORY ENTRY.
+PDENAME  DS    CL8                 PDS MEMBER NAME
+PDETTR   DS    CL3                 RELATIVE ADDRESS
+PDEC     DS    CL1                 INDICATORS
+*                                  BIT 0  STATE 1  NAME IS AN ALIAS
+*                                  BIT 1-2  NO. OF TIRS IN USER DATA
+*                                  BIT 3-7  LENGTH OF USER DATA HALFWDS
+PDEUSER  DS    CL42                MAX LENGTH FOR USER DATA
+PDEMS    EQU   PDENAME+22
+         SPACE 3
+DMASK    DSECT           PDS DIR. ENTRY REFORMATTED FOR INTERNAL USE.
+DNEXT    DS    F                   CHAIN ADDRESS
+DALIAS   DS    F                   CHAIN ADDRESS FOR ALIAI
+DNAME    DS    CL8                 MEMBER NAME
+DTTR     DS    CL3                 TRACK ADDRESS OF MODULE 1ST BLOCK
+DC       DS    CL1                 PDS DIRECTORY INDICATOR BYTE.
+DFLAG    DS    CL1                 INTERNAL FLAG BYTE
+DFALIAS  EQU   X'80'               THIS IS AN ALIAS
+DFNOROOT EQU   X'40'               NO ASSOCIATED MODULE NAME
+DFLKED   EQU   X'20'               MODULE PRODUCED BY LKED
+DFSSI    EQU   X'10'               SSI INFO PRESENT
+DFIOERR  EQU   X'08'
+DMS      DS    CL3                 MAIN STORAGE REQD FOR MODULE
+DDATE    DS    CL3                 DATE. PACKED JULIAN FORMAT
+DSSI     DS    CL4                 SSI INFO FOR MODULE
+DSPARE   DS    CL1                 SPARE
+DMASKLEN EQU   *-DMASK
+         SPACE 3
+SMASK    DSECT           SEARCH MASK FOR PDS ENTRIESWHEN ALIAI CHAINING
+SNEXT    DS    F
+SALIAS   DS    F
+SNAME    DS    CL8
+STTR     DS    CL3
+SC       DS    C
+SFLAG    DS    C
+         END   T586P11

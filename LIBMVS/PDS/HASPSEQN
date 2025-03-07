@@ -1,0 +1,670 @@
+HASPSEQN CSECT                         *MAIN AND ONLY CSECT           *
+         USING HASPSEQN,R15            *ESTABLISH TEMPORARY ADDRESSING*
+         STM   R14,R12,12(R13)         *SAVE REGISTERS                *
+         BAL   R12,*+80                *BRANCH AROUND SAVE AREA       *
+SAVEAREA DS    18F                     *SAVE AREA                     *
+ADCON1   DC    A(SAVEAREA+4096)        *ADDRESSABILITY BOUNDARY       *
+         ST   R13,4(R12)               *CHAIN                         *
+         ST    R12,8(R13)              * SAVE AREAS                   *
+         LR    R13,R12                 *SET UP BASE REGISTER          *
+         DROP  R15                     *CEASE TEMPORARY ADDRESSING    *
+         USING SAVEAREA,R13            *ESTABLISH ADDRESSABILITY      *
+         SPACE 3                       *                              *
+***********************************************************************
+*                                                                     *
+* THIS PROGRAM ORDERS CARDS AS REQUIRED BY THE HASPGEN PROGRAM.       *
+*                                                                     *
+* D.CARTWRIGHT  CDC DATA SERVICES - SSG    MARCH 1974                 *
+*                                                                     *
+*        MODIFIED FOR GENERATION OF JES2 RELEASE 4.0                  *
+*        D.CARTWRIGHT MONSANTO MISD/TSG BRUSSELS FEBRUARY 1977        *
+*                                                                     *
+***********************************************************************
+         PRINT NOGEN               SUPPRESS MACRO EXPANSION
+    TITLE 'HASPSEQN - RESEQUENCES SORTED HASPMODS'
+         OPEN  (HASPIN,(INPUT,REREAD)) *OPEN INPUT FILE               *
+         SPACE 1                       *                              *
+         GETBUF HASPIN,R4              *GET AN INPUT BUFFER           *
+         LTR   R4,R4                   *WAS BUFFER OBTAINED?          *
+         BZ    IPABEND                 *NO,GO BLOW UP                 *
+         READ  ECBONE,SF,,(R4),MF=E    *READ A BLOCK INTO IT          *
+         GETBUF HASPIN,R5              *GET ANOTHER BUFFER            *
+         LTR   R5,R5                   *SUCCESSFUL?                   *
+         BZ    IPABEND                 *NO,GO AND EXPLODE             *
+         OPEN  (HASPOUT,(OUTPUT))      *OPEN OUTPUT FILE              *
+         SPACE 2                       *                              *
+         GETBUF HASPOUT,R8             *GET BUFFERS                   *
+         LTR   R8,R8                   *SUCCESSFUL?                   *
+         BZ    OPABEND                 *NO                            *
+         GETBUF HASPOUT,R9             * FOR OUTPUT                   *
+         LTR   R9,R9                   *SUCCESSFUL?                   *
+         BZ    OPABEND                 *NO                            *
+         SPACE 1                       *                              *
+         LA    R3,TABLETOP             *POINT AT SEQUENCE TABLE       *
+         SR    R2,R2                   *CLEAR REG 2                   *
+         IC    R2,0(R3)                *GET LENGTH OF FIRST IDENTIFIER*
+         ST    R5,INPTSAVE             *STORE ADDRESS OF FREE BUFFER  *
+         LH    R11,HASPOUT+62          *GET BLOCKSIZE FOR OUTPUT      *
+         AR    R11,R9                  *CORRECT FOR BUFFER LOCATION   *
+         BCTR  R11,0                   *LESS ONE FOR BXLE TEST        *
+         LA    R10,80                  *SET UP                        *
+         LA    R6,80                   * LRECL INDICATORS             *
+         OPEN  (PRINT,(OUTPUT))        *OPEN LISTING FILE             *
+         PUT   PRINT,TITLE             *WRITE HEADING                 *
+         SPACE 3                       *                              *
+STARTIT  DS    0H                      *START OF MAIN PROCESSING      *
+         CHECK ECBONE,DSORG=ALL        *TEST FOR I/O COMPLETION       *
+         LR    R5,R4                   *SWAP BUFFERS                  *
+         L     R4,INPTSAVE             *GET ADDRESS OF FREE BUFFER    *
+         ST    R5,INPTSAVE             *SAVE ADDRESS OF NEXT FREE BUFF*
+         L     R14,ECBONE+16           *GET ADDRESS OF IOB            *
+         LH    R7,HASPIN+62            *GET BLOCKSIZE                 *
+         SH    R7,14(,R14)             *CORRECT FOR SHORT LAST BLOCK  *
+         AR    R7,R5                   *THEN FOR BUFFER LOCATION      *
+         S     R7,=F'8'                *ADJUST FOR LAST IDENTIFIER    *
+         READ  ECBONE,SF,,(R4),MF=E    *START READING NEXT BLOCK      *
+TESTIT   DS    0H                      *TEST BLOCK ALREADY IN CORE    *
+         EX    R2,TESTBLOK             *IS THIS RECORD REQUIRED?      *
+         BL    STARTIT                 *NO                            *
+         SPACE 2                       *                              *
+SERCHBLK DS    0H                      *ROUTINE TO SCAN BLOCK         *
+         EX    R2,TESTRECD             *IS THIS RECORD REQUIRED?      *
+         BH    NOTIDENT                *NO ENTRIE THIS IDENT          *
+         BE    RECRDFND                *YES,MATCH FOUND               *
+RETESTRC DS    0H                      *TRY NEXT RECORD               *
+         BXLE  R5,R6,SERCHBLK          *                              *
+         B     STARTIT                 *THEN GET NEXT BLOCK           *
+         SPACE 2                       *                              *
+NOTIDENT DS    0H                      *NO ENTRIES FOR IDENT          *
+         BAL   R14,NEXTID              *GO GET NEXT IDENTIFIER        *
+         EX    R2,TESTRECD             *TEST FOR MATCHED IDENT        *
+         BE    RECRDFND                *MATCH FOUND                   *
+         BH    HIGHTEST                *RECORDS IDENT IS HIGH         *
+         EX    R2,TESTBLOK             *TEST FOR MATCH IN THIS BLOCK  *
+         BL    STARTIT                 *NO MATCH,TRY NEXT BLOCK       *
+         B     SERCHBLK                *MATCH OCCURS IN THIS BLOCK    *
+         SPACE 2                       *                              *
+HIGHTEST DS    0H                      *TEST BLOCK FOR NEXT IDENT     *
+         SR    R5,R6                   *POINT BACK AT LAST ENTRY      *
+         EX    R2,TESTRECD             *TEST FOR NEW IDENT            *
+         BNL   RESTART                 *IDENT OCCURS BEFORE THIS      *
+         AR    R5,R6                   *RESTORE POINTER               *
+         B     NOTIDENT                *GO TRY NEXT IDENTIFIER        *
+         SPACE 2                       *                              *
+ENDFILE  DS    0H                      *END OF FILE PROCESSING        *
+         LA    R14,CLOSEOFF            *NO MATCH FOUND                *
+         MVI   CLOZDOWN+1,X'F0'        *AT EOF SKIP LAST CHECK        *
+         B     NEXTID                  * SO TRY NEXT ID.              *
+         SPACE 1                       *                              *
+RESTART  DS    0H                      *GO BACK AND TRY AGAIN         *
+         CHECK ECBONE,DSORG=ALL        *TEST I/O COMPLETION           *
+CLOSEOFF DS    0H                      *CLOSE FILE                    *
+         CLOSE (HASPIN,REREAD),TYPE=T  *TEMPORARY CLOSE TO REPOSITION *
+         READ  ECBONE,SF,,(R4),MF=E    *START READING FILE AGAIN      *
+         MVI   CLOZDOWN+1,X'00'        *AT END OF TABLE CHECK I/O     *
+         B     STARTIT                 *GO BACK TO PROCESS FILE       *
+         SPACE 3                       *                              *
+NEXTID   DS    0H                      *ROUTINE TO GET NEXT TEST IDENT*
+         LA    R3,2(R2,R3)             *UPDATE POINTER                *
+         IC    R2,0(R3)                *PICK UP IDENTIFIER LENGTH     *
+         CLI   1(R3),X'FF'             *IS IT END OF TABLE?           *
+         BE    ENDIT                   *YES,FINISH                    *
+         BR    R14                     *ELSE GO BACK                  *
+         SPACE 3                       *                              *
+ENDIT    DS    0H                      *END OF PROGRAM                *
+         MVC   0(80,R9),OLDCARD        *MOVE FINAL RECORD             *
+         SH    R11,HASPOUT+62          *LOCATE START OF BUFFER        *
+         LA    R11,1(,R11)             *UPDATE TO EXACT ADDRESS       *
+         SR    R9,R11                  *GET LENGTH OF DATA            *
+         BNP  CLOZDOWN                 *SKIP OUTPUT IF NOTHING THERE  *
+         SPACE 2                       *                              *
+LASTPUT  DS    0H                      *THERE IS ONE MORE BLOCK OF O/P*
+         BC    15,LASTOUT              *SKIP CHECK IF NO I/O GOING    *
+         CHECK ECBTWO,DSORG=ALL        *TEST LAST WRITE               *
+LASTOUT  DS    0H                      *OUTPUT FINAL BLOCK            *
+         WRITE ECBTWO,SF,,(R11),(R9),MF=E TRUNCATED IF NECESSARRY     *
+         SPACE 2                       *                              *
+CLOZDOWN DS    0H                      *COME HERE TO AVOID I/O        *
+         BC    0,ENDINPUT              *BRANCH AROUND CHECK IF EOF    *
+         CHECK ECBONE,DSORG=ALL        *WAIT FOR ALL I/O TO END       *
+ENDINPUT DS    0H                      *NOW CLOSE FILES               *
+         CLOSE (HASPIN)                *CLOSE INPUT FILE              *
+         FREEBUF HASPIN,R5             *FREE CURRENT INPUT BUFFER     *
+         FREEBUF HASPOUT,R8            *FREE SPARE OUTPUT BUFFER      *
+         FREEBUF HASPIN,R4             *FREE SPARE INPUT BUFFER       *
+         FREEPOOL HASPIN               *FREE POOL OF INPUT BUFFERS    *
+         SPACE 2                       *                              *
+LASTCHEK DS    0H                      *TEST LAST WRITE,IF ANY        *
+         BC    15,ENDOUT               *BRANCH IGNORED IF ANY I/O     *
+         CHECK ECBTWO,DSORG=ALL        *TEST OUTPUT COMPLETION        *
+ENDOUT   DS    0H                      *ALL I/O COMPLETED             *
+         FREEBUF HASPOUT,R11           *FREE LAST OUTPUT BUFFER       *
+         CLOSE (HASPOUT)               *CLOSE OUTPUT FILE             *
+         FREEPOOL HASPOUT              *FREE OUTPUT BUFFER POOL       *
+         CLOSE (PRINT)                 *CLOSE LISTING FILE            *
+         SPACE 3                       *                              *
+         L     R13,4(R13)              *RESTORE SAVE AREA POINTER     *
+         RETURN (14,12),T,RC=0         *GO BACK TO O/S                *
+         SPACE 3                       *                              *
+IPABEND  DS    0H                      *UNABLE TO GET INPUT BUFFER    *
+         ABEND 1102,DUMP               *SO BLOE UP                    *
+         SPACE 2                       *                              *
+OPABEND  DS    0H                      *UNABLE TO GET OUTPUT BUFFER   *
+         ABEND 1103,DUMP               *SO BLOW UP                    *
+         TITLE 'HASPSEQN - OUTPUT PROCESSING'                         *
+RECRDFND DS    0H                      *MATCHING RECORD FOUND         *
+         LA    R14,73(R2,R5)            *POINT AT CHARACTER AFTER ID  *
+         TM    0(R14),X'F0'            *IS IT NUMERIC?                *
+         BNO   RETESTRC                *NO,NOT FOR THIS IDENT. THEN   *
+         CLC   OLDCARD+72(8),72(R5)    *COMPARE FOR DUPES             *
+         BE    DUPE                    *YES,GO PROCESS                *
+         CLC   OLDCARD+8(6),=C' SKIP ' * IS IT NIH SKIP CARD?         *
+         BE    DUPE                    *YES,GO PROCESS                *
+         CLC   OLDCARD+8(7),=C' LEVEL ' IS IT NIH LEVEL CARD?         *
+         BE    DUPE                    *YES,GO PROCESS                *
+         MVC   0(80,R9),OLDCARD        *MOVE PREVIOUS RECORD          *
+         MVC   OLDCARD,0(R5)           *SAVE CURRENT RECORD           *
+         BXLE  R9,R10,RETESTRC         *GO BACK IF BUFFER NOT COMPLETE*
+FIRSTPUT DS    0H                      *FIRST TIME SKIP CHECK         *
+         BC    15,OUTPUT               *BRANCH MODIFIED LATER         *
+    SPACE 2                            *                              *
+         CHECK ECBTWO,DSORG=ALL        *TEST PREVIOUS WRITES COMPLETE *
+         B     PUTOUT                  *SKIP BRANCH CHANGES           *
+         SPACE 2                       *                              *
+DUPE     DS    0H                      *PROCESS REJECT CARDS          *
+         PUT   PRINT,OLDCARD-1         *PRINT REJECT CARD             *
+         MVC   OLDCARD,0(R5)           *SAVE CURRENT RECORD           *
+         B     RETESTRC                *GO PROCESS NEXT CARD          *
+         SPACE 1                       *                              *
+OUTPUT   DS    0H                      *ENTRY FIRST TIME ROUND ONLY   *
+         MVI   FIRSTPUT+1,X'00'        *RESET BRANCH CONDITION        *
+         MVI   LASTPUT+1,X'00'         *SHOW OUTPUT                   *
+         MVI   LASTCHEK+1,X'00'        * I/O STARTED                  *
+         SPACE 1                       *                              *
+PUTOUT   DS    0H                      *ENTRY ALL OTHER TIMES         *
+         LR    R9,R8                   *SWAP BUFFERS                  *
+         SH    R11,HASPOUT+62          *CALCULATE START OF NEXT BUFFER*
+         LA    R8,1(,R11)              *AND POINT TO IT               *
+         LH    R11,HASPOUT+62          *GET OUTPUT BLOCKSIZE          *
+         WRITE ECBTWO,SF,,(R8),(R11),MF=E OUTPUT PREVIOUS BLOCK       *
+         AR    R11,R9                  *CORRECT FOR NEW BUFFER LOCN   *
+         BCT   R11,RETESTRC            *GO BACK FOR NEXT RECORD       *
+         SPACE 3                       *                              *
+         TITLE 'HASPSEQN - DCB EXIT ROUTINE'                  *
+POOLEXIT DS    0H                      *DCB EXIT ROUTINE              *
+         LR    R12,R13                 *PRESERVE ADDRESSABILITY       *
+         DROP  R13                     *CEASE USING BASE R13          *
+         USING SAVEAREA,R12            *ESTABLISH TEMPORARY ADDRESSING*
+         CNOP  4,8                     *LINE UP SAVE AREA             *
+         BAL   R13,*+80                *BRANCH ROUND SAVE AREA        *
+SAVE2    DS    19F                     *EXTENTED SAVE AREA            *
+         ST    R14,72(R13)             *SAVE RETURN ADDRESS           *
+         ST    R12,4(R13)              *CHAIN POINTERS BACK           *
+         SPACE 2                       *                              *
+         USING IHADCB,R1               *ADDRESS DCB FIELDS            *
+         LH    R0,DCBBLKSI             *SET BUFFER SIZE               *
+         A     R0,=F'131072'           *SET NUMBER OF BUFFERS TO TWO  *
+         SPACE 1                       *                              *
+         GETPOOL IHADCB,(0)            *PROCURE A BUFFER POOL         *
+         SPACE 2                       *                              *
+         L     R14,72(R13)             *RESTORE RETURN ADDRESS        *
+         LR    R13,R12                 *GET BACK                      *
+         DROP  R12                     * TO OLD                       *
+         USING SAVEAREA,R13            *  BASE                        *
+         DROP  R1                      *CEASE TO ADDRESS DCB FIELDS   *
+         BR    R14                     *RETURN TO MAINLINE            *
+         TITLE 'HASPSEQN - DECLARATIONS'                              *
+***********************************************************************
+*                                                                     *
+*                       D E C L A R A T I O N S                       *
+*                                                                     *
+***********************************************************************
+         SPACE 3                       *                              *
+HASPIN   DCB   DSORG=PS,MACRF=(R),EXLST=EXITDCB,                       X
+               EODAD=ENDFILE,DDNAME=SYSUT1
+         SPACE 2
+HASPOUT  DCB   DSORG=PS,MACRF=(W),EXLST=EXITDCB,                       X
+               DDNAME=SYSUT2
+PRINT    DCB   DSORG=PS,MACRF=PM,RECFM=FBA,LRECL=81,BLKSIZE=81,        X
+               DDNAME=SYSPRINT
+         SPACE 3                       *                              *
+EXITDCB  DS    0F                      *DCB EXIT LIST                 *
+         DC    X'85',AL3(POOLEXIT)     *DCB OPEN EXIT                 *
+         SPACE 1                       *                              *
+TESTRECD CLC   72(*-*,R5),1(R3)        *COMPARE FOR PARAMETER IN REC. *
+TESTBLOK CLC   0(*-*,R7),1(R3)         *TEST FOR RECORD IN BLOCK      *
+         SPACE 2                       *                              *
+         READ  ECBONE,SF,HASPIN,,MF=L  *READ PARAMETER LIST           *
+         WRITE ECBTWO,SF,HASPOUT,,,S,MF=L WRITE PARAMETER LIST        *
+TITLE    DC    CL81'   FOLLOWING CARDS REJECTED - LATER VERSION USED' *
+         DC    CL1' '                  *ASA CONTROL                   *
+OLDCARD  DC    CL80' ALL NIH SKIP AND LEVEL CARDS REJECTED'           *
+         LTORG
+         SPACE 2                       *                              *
+         DCBD  DSORG=PS                *DCB FIELD DEFINITIOND         *
+HASPSEQN CSECT                         *BACK TO MAIN CSECT            *
+INPTSAVE DS    F                       *SAVE AREA FOR BUFFER POINTER  *
+TABLETOP DS    0CL1                    *START OF IDENT TABLE          *
+         DC    X'03',CL4'PARM'         * MONSANTO HASP PARAMETERS     *
+         DC    X'01',CL2'AA'      -- $$POST -- POST HASP PCE AND
+         DC    X'01',CL2'AB'      -- $$WTO -- ISSUE DIRECT WTO
+         DC    X'01',CL2'AC'      -- $$WTOR -- ISSUE DIRECT WTOR
+         DC    X'01',CL2'AD'      -- $#ADD -- ADD A JOE TO THE J
+         DC    X'01',CL2'AF'      -- $#BLD -- BUILD WORK AND CHA
+         DC    X'01',CL2'AH'      -- $#CAN -- CANCEL ALL JOES FO
+         DC    X'01',CL2'AJ'      -- $#CKPT -- SET CHECKPOINT BI
+         DC    X'01',CL2'AL'      -- $#GET -- GET A JOE FROM THE
+         DC    X'01',CL2'AN'      -- $#JCT -- JCT RESIDENCE MANA
+         DC    X'01',CL2'AP'      -- $#PUT -- RETURN A JOE TO TH
+         DC    X'01',CL2'AR'      -- $#REM -- REMOVE A JOE FROM
+         DC    X'01',CL2'AT'      -- $ACB -- OS ACCESS METHOD CO
+         DC    X'01',CL2'AV'      -- $ACBXL -- OS ACB EXIT LIST
+         DC    X'01',CL2'AX'      -- $ACT -- HASP AUTOMATIC COMM
+         DC    X'01',CL2'AZ'      -- $ACTIVE -- INDICATE PROCESS
+         DC    X'01',CL2'A1'      -- $ALLOC -- ALLOCATE A HASP D
+         DC    X'01',CL2'A3'      -- $ASCB -- OS ADDRESS SPACE C
+         DC    X'01',CL2'A5'      -- $ASVT -- OS ADDRESS SPACE V
+         DC    X'01',CL2'A7'      -- $ATB -- OS ATTENTION TABLE
+         DC    X'01',CL2'A9'      -- $BASEA -- OS MASTER SCHEDUL
+         DC    X'01',CL2'BB'      -- $BFRBLD -- BUILD BUFFER PRE
+         DC    X'01',CL2'BC'      -- $BIND -- SNA BIND IMAGE FOR
+         DC    X'01',CL2'BD'      -- $BPM -- HASP BUFFER POOL MA
+         DC    X'01',CL2'BL'      -- $BUFFER -- HASP BUFFER DSEC
+         DC    X'01',CL2'BN'      -- $CAT -- HASP CLASS ATTRIBUT
+         DC    X'01',CL2'BP'      -- $CCA -- HASP CELL CONTROL A
+         DC    X'01',CL2'BR'      -- $CCE -- HASP CELL CONTROL E
+         DC    X'01',CL2'BT'      -- $CHEK -- CHECK FOR MISSING
+         DC    X'01',CL2'BV'      -- $CMB -- HASP CONSOLE MESSAG
+         DC    X'01',CL2'BX'      -- $CNVWORK -- HASP JCL CONVER
+         DC    X'01',CL2'BZ'      -- $COM -- HASP COMMAND PROCES
+         DC    X'01',CL2'B1'      -- $COMWORK -- HASP COMMAND PC
+         DC    X'01',CL2'B3'      -- $COUNT -- COUNT SELECTED OC
+         DC    X'01',CL2'B5'      -- $CSA -- HASP CONSOLE SERVIC
+         DC    X'01',CL2'B7'      -- $CSCB -- OS COMMAND SCHEDUL
+         DC    X'01',CL2'B9'      -- $CVT -- OS COMMUNICATION VE
+         DC    X'01',CL2'CB'      -- $DCB -- OS DATA CONTROL BLO
+         DC    X'01',CL2'CD'      -- $DCT -- HASP DEVICE CONTROL
+         DC    X'01',CL2'CF'      -- $DEB -- OS DATA EXTENT BLOC
+         DC    X'01',CL2'CH'      -- $DECODE -- DECODE MACRO ARG
+         DC    X'01',CL2'CJ'      -- $DECOD1 -- DECODE MACRO ARG
+         DC    X'01',CL2'CL'      -- $DISTERR -- INDICATE DISAST
+         DC    X'01',CL2'CN'      -- $DLENGTH -- COMPUTE DECIMAL
+         DC    X'01',CL2'CP'      -- $DOM -- DELETE OPERATOR MES
+         DC    X'01',CL2'CR'      -- $DORMANT -- INDICATE PROCES
+         DC    X'01',CL2'CT'      -- $DSAB -- OS DATA SET ASSOCI
+         DC    X'01',CL2'CV'      -- $DYN -- OS DYNAMIC ALLOCATI
+         DC    X'01',CL2'CX'      -- $ENTRY -- PROVIDE ENTRY TO
+         DC    X'01',CL2'CZ'      -- $ERROR -- INDICATE CATASTRO
+         DC    X'01',CL2'C0'      -- $EWA -- OS IOS/ERP WORK ARE
+         DC    X'01',CL2'C1'      -- $EXCP -- INITIATE INPUT/OUT
+         DC    X'01',CL2'C3'      -- $EXTP -- INITIATE REMOTE TE
+         DC    X'01',CL2'C4'      -- $FMH -- SNA FUNCTION MANAGE
+         DC    X'01',CL2'C5'      -- $FRECEL -- FREE A CSA STORA
+         DC    X'01',CL2'C7'      -- $FRECMB -- FREE CONSOLE MES
+         DC    X'01',CL2'C9'      -- $FREEBUF -- FREE A BUFFER
+         DC    X'01',CL2'DB'      -- $FRELOK -- FREE CMS LOCK
+         DC    X'01',CL2'DD'      -- $FREUNIT -- FREE A UNIT
+         DC    X'01',CL2'DF'      -- $GETBUF -- GET ONE OR MORE
+         DC    X'01',CL2'DH'      -- $GETCEL -- GET A CSA STORAG
+         DC    X'01',CL2'DJ'      -- $GETCMB -- GET CONSOLE MESS
+         DC    X'01',CL2'DL'      -- $GETLOK -- GET CMS LOCK
+         DC    X'01',CL2'DN'      -- $GETSMFB -- GET SMF BUFFER
+         DC    X'01',CL2'DP'      -- $GETUNIT -- GET A UNIT
+         DC    X'01',CL2'DR'      'HASP GLOBAL DEFINITIONS'
+         DC    X'01',CL2'DT'      -- $HCT -- HASP COMMUNICATION
+         DC    X'01',CL2'DV'      -- $HCTENT -- GENERATE HASP CO
+         DC    X'01',CL2'DX'      -- $HQR -- HASP HOLD QUEUE REC
+         DC    X'01',CL2'DZ'      -- $HQT -- HASP HOLD QUEUE TAB
+         DC    X'01',CL2'D0'      -- $ICE -- HASP INTERFACE CONT
+         DC    X'01',CL2'D1'      -- $IOCM -- OS I/O SUPERVISOR
+         DC    X'01',CL2'D3'      -- $IOERROR -- LOG HASP INPUT/
+         DC    X'01',CL2'D5'      -- $IOSB -- OS INPUT/OUTPUT SU
+         DC    X'01',CL2'D7'      -- $IOT -- HASP INPUT/OUTPUT T
+         DC    X'01',CL2'D9'      -- $JCAN -- CANCEL JOB
+         DC    X'01',CL2'EB'      -- $JCT -- HASP JOB CONTROL TA
+         DC    X'01',CL2'ED'      -- $JESCT -- OS JOB ENTRY SUBS
+         DC    X'01',CL2'EF'      -- $JFCB -- OS JOB FILE CONTRO
+         DC    X'01',CL2'EH'      -- $JOE -- HASP JOB OUTPUT ELE
+         DC    X'01',CL2'EJ'      -- $JOT -- HASP JOB OUTPUT TAB
+         DC    X'01',CL2'EK'      -- $JQB -- HASP JOB QUEUE BUFF
+         DC    X'01',CL2'EM'      -- $JQE -- HASP JOB QUEUE ELEM
+         DC    X'01',CL2'EN'      -- $JSCB -- OS JOB STEP CONTRO
+         DC    X'01',CL2'EO'      -- $KEYS -- OS INTERNAL TEXT K
+         DC    X'01',CL2'EP'      -- $LCCA -- OS LOGICAL CONFIGU
+         DC    X'01',CL2'EQ'      -- $LCT -- OS LINKAGE CONTROL
+         DC    X'01',CL2'ER'      -- $LINK -- BRANCH AND LINK TO
+         DC    X'01',CL2'ES'      -- $LRC -- HASP LOGICAL RECORD
+         DC    X'01',CL2'EU'      -- $MID -- ASSIGN HASP MESSAGE
+         DC    X'01',CL2'EV'      -- $MLMWORK -- HASP LINE MANAG
+         DC    X'01',CL2'EW'      -- $MODMAP -- HASP MODULE MAP
+         DC    X'01',CL2'E0'      -- $MSG -- WRITE TO OPERATOR M
+         DC    X'01',CL2'E3'      -- $NEL -- OS JCL CONVERTER/IN
+         DC    X'01',CL2'E7'      -- $NIB -- VTAM NODE INITIALIZ
+         DC    X'01',CL2'FB'      -- $NPEXIT -- GENERATE NON-PRO
+         DC    X'01',CL2'FF'      -- $OCR -- HASP OUTPUT CONTROL
+         DC    X'01',CL2'FG'      -- $OCT -- HASP OUTPUT CONTROL
+         DC    X'01',CL2'FH'      -- $ORE -- OS OPERATOR REPLY E
+         DC    X'01',CL2'FJ'      -- $OUTWORK -- HASP OUTPUT PCE
+         DC    X'01',CL2'FL'      -- $PATCHSP -- GENERATE PATCH
+         DC    X'01',CL2'FP'      -- $PCE -- HASP PROCESSOR CONT
+         DC    X'01',CL2'FQ'      -- $PCIE -- HASP PGM CONTROLLE
+         DC    X'01',CL2'FR'      -- $PDDB -- HASP PERIPHERAL DA
+         DC    X'01',CL2'FT'      -- $PGSRVC -- BRANCH ENTRY TO
+         DC    X'01',CL2'FV'      -- $PIT -- HASP PARTITION INFO
+         DC    X'01',CL2'FX'      -- $POST -- POST AN EVENT COMP
+         DC    X'01',CL2'FZ'      -- $PPPWORK -- HASP PRINT/PUNC
+         DC    X'01',CL2'F1'      -- $PSA -- OS PREFIXED SAVE AR
+         DC    X'01',CL2'F3'      -- $PSCB -- OS PROTECTED STEP
+         DC    X'01',CL2'F5'      -- $PSO -- HASP PROCESS SYSOUT
+         DC    X'01',CL2'F7'      -- $PURGE -- FREE DIRECT ACCES
+         DC    X'01',CL2'F9'      -- $QADD -- ADD ELEMENT TO HAS
+         DC    X'01',CL2'GB'      -- $QCKPT -- CHECKPOINT ELEMEN
+         DC    X'01',CL2'GD'      -- $QGET -- OBTAIN ELEMENT FRO
+         DC    X'01',CL2'GF'      -- $QLOC -- LOCATE ELEMENT IN
+         DC    X'01',CL2'GH'      -- $QMOD -- MODIFY ELEMENT IN
+         DC    X'01',CL2'GJ'      -- $QPUT -- CHANGE STATUS OF H
+         DC    X'01',CL2'GK'      -- $QREM -- REMOVE ELEMENT FRO
+         DC    X'01',CL2'GL'      -- $QSE -- HASP SHARED QUEUE C
+         DC    X'01',CL2'GM'      -- $QSUSE -- SYNCHRONIZE TO US
+         DC    X'01',CL2'GN'      -- $QUESMFB -- QUEUE SMF BUFFE
+         DC    X'01',CL2'GP'      -- $RAT -- HASP REMOTE ATTRIBU
+         DC    X'01',CL2'GR'      -- $RB -- OS GENERAL REQUEST B
+         DC    X'01',CL2'GS'      -- $RCPWORK -- HASP REMOTE CON
+         DC    X'01',CL2'GT'      -- $RDRWORK -- HASP INPUT SERV
+         DC    X'01',CL2'GU'      -- $RDT -- HASP REMOTE DESTINA
+         DC    X'01',CL2'GV'      -- $RETURN -- RETURN TO MAIN H
+         DC    X'01',CL2'GX'      -- $RMR -- OS RECORD MANAGEMEN
+         DC    X'01',CL2'GZ'      -- $RPL -- OS ACB REQUEST PARA
+         DC    X'01',CL2'G1'      5
+         DC    X'01',CL2'G3'      -- $SCAT -- HASP SYSOUT CLASS
+         DC    X'01',CL2'G4'      -- $SCR -- HASP SPOOL CONTROL
+         DC    X'01',CL2'G5'      -- $SDB -- HASP SUBSYSTEM DATA
+         DC    X'01',CL2'G6'      -- $SDWA -- OS SYSTEM DIAGNOST
+         DC    X'01',CL2'G7'      -- $SETPRT -- OS SETPRT PARAME
+         DC    X'01',CL2'G8'      -- $SIOT -- OS STEP INPUT/OUTP
+         DC    X'01',CL2'G9'      -- $SJB -- HASP SUBSYSTEM JOB
+         DC    X'01',CL2'HA'      -- OS SMF CONTROL TABLE DSECT
+         DC    X'01',CL2'HB'      -- $SMF -- HASP SMF BUFFER DSE
+         DC    X'01',CL2'HC'      -- $SPL -- HASP DYNAMIC SPOOL
+         DC    X'01',CL2'HD'      -- $SRB -- OS SERVICE REQUEST
+         DC    X'01',CL2'HF'      -- $SSCT -- OS SUBSYSTEM CVT D
+         DC    X'01',CL2'HH'      -- $SSIB -- OS SUBSYSTEM IDENT
+         DC    X'01',CL2'HJ'      -- $SSOB -- OS SUBSYSTEM OPTIO
+         DC    X'01',CL2'HL'      -- $STIMER -- TIME A SPECIFIED
+         DC    X'01',CL2'HN'      -- $SVT -- HASP SUBSYSTEM VECT
+         DC    X'01',CL2'HP'      -- $SVTC -- GENERATE HASP SSVT
+         DC    X'01',CL2'HR'      -- $SYSPARM -- RETRIEVE SYSTEM
+         DC    X'01',CL2'HS'      -- $TAB -- HASP TRACK ALLOCATI
+         DC    X'01',CL2'HT'      -- $TCB -- OS TASK CONTROL BLO
+         DC    X'01',CL2'HV'      -- $TCT -- OS TIMING CONTROL T
+         DC    X'01',CL2'HX'      -- $TED -- HASP TRACK EXTENT D
+         DC    X'01',CL2'HZ'      -- $TEXT -- OS INTERNAL TEXT P
+         DC    X'01',CL2'H0'      -- $TGB -- HASP ALLOCATION TRA
+         DC    X'01',CL2'H1'      -- $TGM -- HASP ALLOCATION TRA
+         DC    X'01',CL2'H3'      -- $TIME -- GET TIME OF DAY
+         DC    X'01',CL2'H5'      -- $TIOT -- OS TASK INPUT/OUTP
+         DC    X'01',CL2'H7'      -- $TQE -- HASP TIMER QUEUE EL
+         DC    X'01',CL2'H9'      -- $TRACE -- GENERATE ENTRY IN
+         DC    X'01',CL2'IB'      -- $TRACK -- GET A DIRECT ACCE
+         DC    X'01',CL2'ID'      -- $TTIMER -- REQUEST TIME REM
+         DC    X'01',CL2'IH'      -- $UCB -- OS UNIT CONTROL BLO
+         DC    X'01',CL2'IJ'      -- $UCM -- OS UNIT CONTROL MOD
+         DC    X'01',CL2'IK'      -- $VFL -- VFL INSTRUCTION SIM
+         DC    X'01',CL2'IL'      -- $WAIT -- WAIT ON AN EVENT T
+         DC    X'01',CL2'IM'      -- $WARMWRK -- HASP WARM START
+         DC    X'01',CL2'IN'      -- $WQE -- OS WTO QUEUE ELEMEN
+         DC    X'01',CL2'IP'      -- $WTO -- WRITE TO OPERATOR
+         DC    X'01',CL2'IR'      -- $XCTL -- BRANCH TO ANOTHER
+         DC    X'01',CL2'IT'      -- $XMPOST -- BRANCH ENTRY CRO
+         DC    X'01',CL2'KJ'      'HASP SMF INTERFACE ROUTINE'
+         DC    X'00',CL1'K'       'HASP COMMAND PROCESSOR - PROL
+         DC    X'00',CL1'L'       'HASP CONSOLE SUPPORT - PROLOG
+         DC    X'01',CL2'MD'      'HASP CONTROL BLOCK DOCUMENTAT
+         DC    X'00',CL1'M'       'HASP INITIALIZATION -- PROLOG
+         DC    X'00',CL1'N'       'HASP MISCELLANEOUS PROCESSORS
+         DC    X'00',CL1'P'       'HASP NUCLEUS PROLOG'
+         DC    X'00',CL1'Q'       'HASP PRINT/PUNCH SERVICE PROL
+         DC    X'00',CL1'R'       'HASP INPUT SERVICE PROLOG'
+         DC    X'00',CL1'S'       'HASP REMOTE SERVICES PROLOG'
+         DC    X'00',CL1'T'       'HASP SUBSYSTEM SUPPORT MODULE
+         DC    X'00',CL1'U'       'HASP EXECUTION SERVICES PROLO
+         DC    X'00',CL1'V'       'SYSTEM/360 WORK STATION PROGR
+         DC    X'00',CL1'W'       'RTPLOAD PROLOGUE'
+         DC    X'01',CL2'XB'      'NO'                STR CPU TE
+         DC    X'00',CL1'X'       'HASP SYSTEM/3 REMOTE JOB ENTR
+         DC    X'00',CL1'Y'       TITLE 'RTP1130 PROLOGUE'
+         DC    X'00',CL1'Z'       -- NULL -- DEFINE A SYMBOL
+         EJECT
+*******************************************************************
+*        MONSANTO ADDITIONAL MODULES                              *
+*******************************************************************
+         SPACE 1
+         DC    X'03',CL4'JCLK'     - HASPCOMM JCL
+         DC    X'03',CL4'JCLL'     - HASPCON JCL
+         DC    X'03',CL4'JCLM'     - HASPINIT JCL
+         DC    X'03',CL4'JCLN'     - HASPMISC JCL
+         DC    X'03',CL4'JCLP'     - HASPNUC JCL
+         DC    X'03',CL4'JCLQ'     - HASPPRPU JCL
+         DC    X'03',CL4'JCLR'     - HASPRDR JCL
+         DC    X'03',CL4'JCLS'     - HASP REMOTE SERVICES JCL
+         DC    X'03',CL4'JCLT'     - HASPSSSM JCL
+         DC    X'03',CL4'JCLU'     - HASPXEQ JCL
+         DC    X'03',CL4'JCLV'     - HASP 360 RTP JCL
+         DC    X'02',CL3'JCL'     -- JCL FOR JESGEN PROCESS
+         DC    X'02',CL3'LKD'     -- LINKEDIT CONTROL CARDS FOR JESGEN
+         DC    X'02',CL3'MAA'     -- $$POST -- POST HASP PCE AND
+         DC    X'02',CL3'MAB'     -- $$WTO -- ISSUE DIRECT WTO
+         DC    X'02',CL3'MAC'     -- $$WTOR -- ISSUE DIRECT WTOR
+         DC    X'02',CL3'MAD'     -- $#ADD -- ADD A JOE TO THE J
+         DC    X'02',CL3'MAF'     -- $#BLD -- BUILD WORK AND CHA
+         DC    X'02',CL3'MAH'     -- $#CAN -- CANCEL ALL JOES FO
+         DC    X'02',CL3'MAJ'     -- $#CKPT -- SET CHECKPOINT BI
+         DC    X'02',CL3'MAL'     -- $#GET -- GET A JOE FROM THE
+         DC    X'02',CL3'MAN'     -- $#JCT -- JCT RESIDENCE MANA
+         DC    X'02',CL3'MAP'     -- $#PUT -- RETURN A JOE TO TH
+         DC    X'02',CL3'MAR'     -- $#REM -- REMOVE A JOE FROM
+         DC    X'02',CL3'MAT'     -- $ACB -- OS ACCESS METHOD CO
+         DC    X'02',CL3'MAV'     -- $ACBXL -- OS ACB EXIT LIST
+         DC    X'02',CL3'MAX'     -- $ACT -- HASP AUTOMATIC COMM
+         DC    X'02',CL3'MAZ'     -- $ACTIVE -- INDICATE PROCESS
+         DC    X'02',CL3'MA1'     -- $ALLOC -- ALLOCATE A HASP D
+         DC    X'02',CL3'MA3'     -- $ASCB -- OS ADDRESS SPACE C
+         DC    X'02',CL3'MA5'     -- $ASVT -- OS ADDRESS SPACE V
+         DC    X'02',CL3'MA7'     -- $ATB -- OS ATTENTION TABLE
+         DC    X'02',CL3'MA9'     -- $BASEA -- OS MASTER SCHEDUL
+         DC    X'02',CL3'MBB'     -- $BFRBLD -- BUILD BUFFER PRE
+         DC    X'02',CL3'MBC'     -- $BIND -- SNA BIND IMAGE FOR
+         DC    X'02',CL3'MBD'     -- $BPM -- HASP BUFFER POOL MA
+         DC    X'02',CL3'MBL'     -- $BUFFER -- HASP BUFFER DSEC
+         DC    X'02',CL3'MBN'     -- $CAT -- HASP CLASS ATTRIBUT
+         DC    X'02',CL3'MBP'     -- $CCA -- HASP CELL CONTROL A
+         DC    X'02',CL3'MBR'     -- $CCE -- HASP CELL CONTROL E
+         DC    X'02',CL3'MBT'     -- $CHEK -- CHECK FOR MISSING
+         DC    X'02',CL3'MBV'     -- $CMB -- HASP CONSOLE MESSAG
+         DC    X'02',CL3'MBX'     -- $CNVWORK -- HASP JCL CONVER
+         DC    X'02',CL3'MBZ'     -- $COM -- HASP COMMAND PROCES
+         DC    X'02',CL3'MB1'     -- $COMWORK -- HASP COMMAND PC
+         DC    X'02',CL3'MB3'     -- $COUNT -- COUNT SELECTED OC
+         DC    X'02',CL3'MB5'     -- $CSA -- HASP CONSOLE SERVIC
+         DC    X'02',CL3'MB7'     -- $CSCB -- OS COMMAND SCHEDUL
+         DC    X'02',CL3'MB9'     -- $CVT -- OS COMMUNICATION VE
+         DC    X'02',CL3'MCB'     -- $DCB -- OS DATA CONTROL BLO
+         DC    X'02',CL3'MCD'     -- $DCT -- HASP DEVICE CONTROL
+         DC    X'02',CL3'MCF'     -- $DEB -- OS DATA EXTENT BLOC
+         DC    X'02',CL3'MCH'     -- $DECODE -- DECODE MACRO ARG
+         DC    X'02',CL3'MCJ'     -- $DECOD1 -- DECODE MACRO ARG
+         DC    X'02',CL3'MCL'     -- $DISTERR -- INDICATE DISAST
+         DC    X'02',CL3'MCN'     -- $DLENGTH -- COMPUTE DECIMAL
+         DC    X'02',CL3'MCP'     -- $DOM -- DELETE OPERATOR MES
+         DC    X'02',CL3'MCR'     -- $DORMANT -- INDICATE PROCES
+         DC    X'02',CL3'MCT'     -- $DSAB -- OS DATA SET ASSOCI
+         DC    X'02',CL3'MCV'     -- $DYN -- OS DYNAMIC ALLOCATI
+         DC    X'02',CL3'MCX'     -- $ENTRY -- PROVIDE ENTRY TO
+         DC    X'02',CL3'MCZ'     -- $ERROR -- INDICATE CATASTRO
+         DC    X'02',CL3'MC0'     -- $EWA -- OS IOS/ERP WORK ARE
+         DC    X'02',CL3'MC1'     -- $EXCP -- INITIATE INPUT/OUT
+         DC    X'02',CL3'MC3'     -- $EXTP -- INITIATE REMOTE TE
+         DC    X'02',CL3'MC4'     -- $FMH -- SNA FUNCTION MANAGE
+         DC    X'02',CL3'MC5'     -- $FRECEL -- FREE A CSA STORA
+         DC    X'02',CL3'MC7'     -- $FRECMB -- FREE CONSOLE MES
+         DC    X'02',CL3'MC9'     -- $FREEBUF -- FREE A BUFFER
+         DC    X'02',CL3'MDB'     -- $FRELOK -- FREE CMS LOCK
+         DC    X'02',CL3'MDD'     -- $FREUNIT -- FREE A UNIT
+         DC    X'02',CL3'MDF'     -- $GETBUF -- GET ONE OR MORE
+         DC    X'02',CL3'MDH'     -- $GETCEL -- GET A CSA STORAG
+         DC    X'02',CL3'MDJ'     -- $GETCMB -- GET CONSOLE MESS
+         DC    X'02',CL3'MDL'     -- $GETLOK -- GET CMS LOCK
+         DC    X'02',CL3'MDN'     -- $GETSMFB -- GET SMF BUFFER
+         DC    X'02',CL3'MDP'     -- $GETUNIT -- GET A UNIT
+         DC    X'02',CL3'MDR'     'HASP GLOBAL DEFINITIONS'
+         DC    X'02',CL3'MDT'     -- $HCT -- HASP COMMUNICATION
+         DC    X'02',CL3'MDV'     -- $HCTENT -- GENERATE HASP CO
+         DC    X'02',CL3'MDX'     -- $HQR -- HASP HOLD QUEUE REC
+         DC    X'02',CL3'MDZ'     -- $HQT -- HASP HOLD QUEUE TAB
+         DC    X'02',CL3'MD0'     -- $ICE -- HASP INTERFACE CONT
+         DC    X'02',CL3'MD1'     -- $IOCM -- OS I/O SUPERVISOR
+         DC    X'02',CL3'MD3'     -- $IOERROR -- LOG HASP INPUT/
+         DC    X'02',CL3'MD5'     -- $IOSB -- OS INPUT/OUTPUT SU
+         DC    X'02',CL3'MD7'     -- $IOT -- HASP INPUT/OUTPUT T
+         DC    X'02',CL3'MD9'     -- $JCAN -- CANCEL JOB
+         DC    X'02',CL3'MEB'     -- $JCT -- HASP JOB CONTROL TA
+         DC    X'02',CL3'MED'     -- $JESCT -- OS JOB ENTRY SUBS
+         DC    X'02',CL3'MEF'     -- $JFCB -- OS JOB FILE CONTRO
+         DC    X'02',CL3'MEH'     -- $JOE -- HASP JOB OUTPUT ELE
+         DC    X'02',CL3'MEJ'     -- $JOT -- HASP JOB OUTPUT TAB
+         DC    X'02',CL3'MEK'     -- $JQB -- HASP JOB QUEUE BUFF
+         DC    X'02',CL3'MEM'     -- $JQE -- HASP JOB QUEUE ELEM
+         DC    X'02',CL3'MEN'     -- $JSCB -- OS JOB STEP CONTRO
+         DC    X'02',CL3'MEO'     -- $KEYS -- OS INTERNAL TEXT K
+         DC    X'02',CL3'MEP'     -- $LCCA -- OS LOGICAL CONFIGU
+         DC    X'02',CL3'MEQ'     -- $LCT -- OS LINKAGE CONTROL
+         DC    X'02',CL3'MER'     -- $LINK -- BRANCH AND LINK TO
+         DC    X'02',CL3'MES'     -- $LRC -- HASP LOGICAL RECORD
+         DC    X'02',CL3'MEU'     -- $MID -- ASSIGN HASP MESSAGE
+         DC    X'02',CL3'MEV'     -- $MLMWORK -- HASP LINE MANAG
+         DC    X'02',CL3'MEW'     -- $MODMAP -- HASP MODULE MAP
+         DC    X'02',CL3'ME0'     -- $MSG -- WRITE TO OPERATOR M
+         DC    X'02',CL3'ME3'     -- $NEL -- OS JCL CONVERTER/IN
+         DC    X'02',CL3'ME7'     -- $NIB -- VTAM NODE INITIALIZ
+         DC    X'02',CL3'MFB'     -- $NPEXIT -- GENERATE NON-PRO
+         DC    X'02',CL3'MFF'     -- $OCR -- HASP OUTPUT CONTROL
+         DC    X'02',CL3'MFG'     -- $OCT -- HASP OUTPUT CONTROL
+         DC    X'02',CL3'MFH'     -- $ORE -- OS OPERATOR REPLY E
+         DC    X'02',CL3'MFJ'     -- $OUTWORK -- HASP OUTPUT PCE
+         DC    X'02',CL3'MFL'     -- $PATCHSP -- GENERATE PATCH
+         DC    X'02',CL3'MFP'     -- $PCE -- HASP PROCESSOR CONT
+         DC    X'02',CL3'MFQ'     -- $PCIE -- HASP PGM CONTROLLE
+         DC    X'02',CL3'MFR'     -- $PDDB -- HASP PERIPHERAL DA
+         DC    X'02',CL3'MFT'     -- $PGSRVC -- BRANCH ENTRY TO
+         DC    X'02',CL3'MFV'     -- $PIT -- HASP PARTITION INFO
+         DC    X'02',CL3'MFX'     -- $POST -- POST AN EVENT COMP
+         DC    X'02',CL3'MFZ'     -- $PPPWORK -- HASP PRINT/PUNC
+         DC    X'02',CL3'MF1'     -- $PSA -- OS PREFIXED SAVE AR
+         DC    X'02',CL3'MF3'     -- $PSCB -- OS PROTECTED STEP
+         DC    X'02',CL3'MF5'     -- $PSO -- HASP PROCESS SYSOUT
+         DC    X'02',CL3'MF7'     -- $PURGE -- FREE DIRECT ACCES
+         DC    X'02',CL3'MF9'     -- $QADD -- ADD ELEMENT TO HAS
+         DC    X'02',CL3'MGB'     -- $QCKPT -- CHECKPOINT ELEMEN
+         DC    X'02',CL3'MGD'     -- $QGET -- OBTAIN ELEMENT FRO
+         DC    X'02',CL3'MGF'     -- $QLOC -- LOCATE ELEMENT IN
+         DC    X'02',CL3'MGH'     -- $QMOD -- MODIFY ELEMENT IN
+         DC    X'02',CL3'MGJ'     -- $QPUT -- CHANGE STATUS OF H
+         DC    X'02',CL3'MGK'     -- $QREM -- REMOVE ELEMENT FRO
+         DC    X'02',CL3'MGL'     -- $QSE -- HASP SHARED QUEUE C
+         DC    X'02',CL3'MGM'     -- $QSUSE -- SYNCHRONIZE TO US
+         DC    X'02',CL3'MGN'     -- $QUESMFB -- QUEUE SMF BUFFE
+         DC    X'02',CL3'MGP'     -- $RAT -- HASP REMOTE ATTRIBU
+         DC    X'02',CL3'MGR'     -- $RB -- OS GENERAL REQUEST B
+         DC    X'02',CL3'MGS'     -- $RCPWORK -- HASP REMOTE CON
+         DC    X'02',CL3'MGT'     -- $RDRWORK -- HASP INPUT SERV
+         DC    X'02',CL3'MGU'     -- $RDT -- HASP REMOTE DESTINA
+         DC    X'02',CL3'MGV'     -- $RETURN -- RETURN TO MAIN H
+         DC    X'02',CL3'MGX'     -- $RMR -- OS RECORD MANAGEMEN
+         DC    X'02',CL3'MGZ'     -- $RPL -- OS ACB REQUEST PARA
+         DC    X'02',CL3'MG1'     5
+         DC    X'02',CL3'MG3'     -- $SCAT -- HASP SYSOUT CLASS
+         DC    X'02',CL3'MG4'     -- $SCR -- HASP SPOOL CONTROL
+         DC    X'02',CL3'MG5'     -- $SDB -- HASP SUBSYSTEM DATA
+         DC    X'02',CL3'MG6'     -- $SDWA -- OS SYSTEM DIAGNOST
+         DC    X'02',CL3'MG7'     -- $SETPRT -- OS SETPRT PARAME
+         DC    X'02',CL3'MG8'     -- $SIOT -- OS STEP INPUT/OUTP
+         DC    X'02',CL3'MG9'     -- $SJB -- HASP SUBSYSTEM JOB
+         DC    X'02',CL3'MHA'     -- OS SMF CONTROL TABLE DSECT
+         DC    X'02',CL3'MHB'     -- $SMF -- HASP SMF BUFFER DSE
+         DC    X'02',CL3'MHC'     -- $SPL -- HASP DYNAMIC SPOOL
+         DC    X'02',CL3'MHD'     -- $SRB -- OS SERVICE REQUEST
+         DC    X'02',CL3'MHF'     -- $SSCT -- OS SUBSYSTEM CVT D
+         DC    X'02',CL3'MHH'     -- $SSIB -- OS SUBSYSTEM IDENT
+         DC    X'02',CL3'MHJ'     -- $SSOB -- OS SUBSYSTEM OPTIO
+         DC    X'02',CL3'MHL'     -- $STIMER -- TIME A SPECIFIED
+         DC    X'02',CL3'MHN'     -- $SVT -- HASP SUBSYSTEM VECT
+         DC    X'02',CL3'MHP'     -- $SVTC -- GENERATE HASP SSVT
+         DC    X'02',CL3'MHR'     -- $SYSPARM -- RETRIEVE SYSTEM
+         DC    X'02',CL3'MHS'     -- $TAB -- HASP TRACK ALLOCATI
+         DC    X'02',CL3'MHT'     -- $TCB -- OS TASK CONTROL BLO
+         DC    X'02',CL3'MHV'     -- $TCT -- OS TIMING CONTROL T
+         DC    X'02',CL3'MHX'     -- $TED -- HASP TRACK EXTENT D
+         DC    X'02',CL3'MHZ'     -- $TEXT -- OS INTERNAL TEXT P
+         DC    X'02',CL3'MH0'     -- $TGB -- HASP ALLOCATION TRA
+         DC    X'02',CL3'MH1'     -- $TGM -- HASP ALLOCATION TRA
+         DC    X'02',CL3'MH3'     -- $TIME -- GET TIME OF DAY
+         DC    X'02',CL3'MH5'     -- $TIOT -- OS TASK INPUT/OUTP
+         DC    X'02',CL3'MH7'     -- $TQE -- HASP TIMER QUEUE EL
+         DC    X'02',CL3'MH9'     -- $TRACE -- GENERATE ENTRY IN
+         DC    X'02',CL3'MIB'     -- $TRACK -- GET A DIRECT ACCE
+         DC    X'02',CL3'MID'     -- $TTIMER -- REQUEST TIME REM
+         DC    X'02',CL3'MIH'     -- $UCB -- OS UNIT CONTROL BLO
+         DC    X'02',CL3'MIJ'     -- $UCM -- OS UNIT CONTROL MOD
+         DC    X'02',CL3'MIK'     -- $VFL -- VFL INSTRUCTION SIM
+         DC    X'02',CL3'MIL'     -- $WAIT -- WAIT ON AN EVENT T
+         DC    X'02',CL3'MIM'     -- $WARMWRK -- HASP WARM START
+         DC    X'02',CL3'MIN'     -- $WQE -- OS WTO QUEUE ELEMEN
+         DC    X'02',CL3'MIP'     -- $WTO -- WRITE TO OPERATOR
+         DC    X'02',CL3'MIR'     -- $XCTL -- BRANCH TO ANOTHER
+         DC    X'02',CL3'MIT'     -- $XMPOST -- BRANCH ENTRY CRO
+         DC    X'02',CL3'MKJ'     'HASP SMF INTERFACE ROUTINE'
+         DC    X'01',CL2'MK'      'HASP COMMAND PROCESSOR - PROL
+         DC    X'01',CL2'ML'      'HASP CONSOLE SUPPORT - PROLOG
+         DC    X'02',CL3'MMD'     'HASP CONTROL BLOCK DOCUMENTAT
+         DC    X'01',CL2'MM'      JES2B001 MODIFICATION-- PROLOG
+         DC    X'01',CL2'MN'      'HASP MISCELLANEOUS PROCESSORS
+         DC    X'01',CL2'MP'      JES2B000 MODIFICATION
+         DC    X'01',CL2'MQ'      JES2B313 MODIFICATION
+         DC    X'01',CL2'MR'      'HASP INPUT SERVICE PROLOG'
+         DC    X'01',CL2'MS'      'HASP REMOTE SERVICES PROLOG'
+         DC    X'01',CL2'MT'      'HASP SUBSYSTEM SUPPORT MODULE
+         DC    X'01',CL2'MU'      'HASP EXECUTION SERVICES PROLO
+         DC    X'01',CL2'MV'      'SYSTEM/360 WORK STATION PROGR
+         DC    X'01',CL2'MW'      'RTPLOAD PROLOGUE'
+         DC    X'02',CL3'MXB'     'NO'                STR CPU TE
+         DC    X'01',CL2'MX'      'HASP SYSTEM/3 REMOTE JOB ENTR
+         DC    X'01',CL2'MY'      TITLE 'RTP1130 PROLOGUE'
+         DC    X'01',CL2'MZ'      -- NULL -- DEFINE A SYMBOL
+         DC    X'01',CL2'ZZ'       *             SPARE                *
+         DC    X'01',CL2'ZZ'       *             SPARE                *
+         DC    X'01',CL2'ZZ'       *             SPARE                *
+         DC    X'01',CL2'ZZ'       *             SPARE                *
+         DC    X'01',CL2'ZZ'       *             SPARE                *
+         DC    X'01',CL2'ZZ'       *             SPARE                *
+         DC    X'01',CL2'ZZ'       *             SPARE                *
+         DC    X'00',X'FF'         END OF TABLE
+         DC    X'00',X'FF'         END OF TABLE
+         DC    X'00',X'FF'         END OF TABLE
+         TITLE 'HASPSEQN - REGISTER EQUATES'
+R0       EQU   0                       *                              *
+R1       EQU   1                       *                              *
+R2       EQU   2                       *                              *
+R3       EQU   3                       *                              *
+R4       EQU   4                       *                              *
+R5       EQU   5                       *                              *
+R6       EQU   6                       *                              *
+R7       EQU   7                       *                              *
+R8       EQU   8                       *                              *
+R9       EQU   9                       *                              *
+R10      EQU   10                      *                              *
+R11      EQU   11                      *                              *
+R12      EQU   12                      *                              *
+R13      EQU   13                      *                              *
+R14      EQU   14                      *                              *
+R15      EQU   15                      *                              *
+         END

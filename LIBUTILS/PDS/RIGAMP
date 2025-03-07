@@ -1,0 +1,488 @@
+         TITLE 'RIGAM FILE PARAMETERS'
+RIGAMP   START 0
+         SPACE 1
+***********************************************************************
+*        PROGRAM ID.               RIGAMP                             *
+*        AUTHOR                    J. NOLS                            *
+*        DATE WRITTEN              JUNE 1975                          *
+*        LOCATION                  EUROPEAN COMPUTER CENTER           *
+***********************************************************************
+         SPACE 2
+***********************************************************************
+*        REGISTERS EQUATES AND USAGE                                  *
+***********************************************************************
+         SPACE 1
+R0       EQU   0    WORK REGISTER AND SVC COMMUNICATIONS
+R1       EQU   1    WORK REGISTER AND SVC COMMUNICATIONS
+R2       EQU   2    WORK REGISTER
+R3       EQU   3    WORK REGISTER
+R4       EQU   4    BAL RETURN ADDRESS
+R5       EQU   5
+R6       EQU   6    BUFFER ADDRESS OF SYSPRINT
+R7       EQU   7
+R8       EQU   8
+R9       EQU   9
+R10      EQU   10
+R11      EQU   11
+R12      EQU   12   BASE REGISTER 2
+R13      EQU   13   SAVE AREA POINTER / BASE REGISTER 1
+R14      EQU   14   BALR RETURN ADDRESS
+R15      EQU   15   BALR ROUTINE ADDRESS
+         EJECT
+***********************************************************************
+*        HOUSEKEEPING                                                 *
+***********************************************************************
+         SPACE 1
+         PGMIN EQUATES=NO,USING=(R13,R12) ESTABLISH ADDRESSABILITY
+         SPACE 1
+         PRINT NOGEN
+         SPACE 2
+***********************************************************************
+*        SAVE PARM OF EXEC CARD ADDRESS, USE UT458 FOR IPL DATE,      *
+*         EXTRACT RIGAM D/S NAME FROM JOB FILE CONTROL BLOCK,         *
+*         TEST DEVICE TYPE FOR RIGAM DATA SET BEFORE OPEN AND         *
+*         PRINT HEAD LINES TO SYSPRINT                                *
+***********************************************************************
+         SPACE 1
+         L     R1,0(R1)       LOAD ADDRESS OF PARM OF EXEC CARD
+         ST    R1,PARMADD     STORE ADDRESS OF PARM OF EXEC CARD
+         UT458 ,              EXECUTE UT458 FOR IPL DATE
+         MVC   DATE,UTREPORT  MOVE IPL DATE TO FIRST HEAD LINE
+         RDJFCB IAMRIGAM           READ JOB FILE CONTROL BLOCK
+         MVC   LINE01+54(44),JFCBDSNM   MOVE DS NAME TO HEAD LINE 1
+         XC    IAMRIGAM+37(3),IAMRIGAM+37    EXIT LIST ADDRESS TO ZERO
+         BAL   R4,TSTYPDEV    GO TEST DEVICE TYPE
+         OPEN  (IAMRIGAM,,SYSPRINT,(OUTPUT))
+         BAL   R4,PRTHEADS    GO WRITE HEAD LINES TO SYSPRINT
+         LA    R4,FILEPARM         ASSUME GOOD CONTINUATION
+         EJECT
+***********************************************************************
+*        THIS ROUTINE CONVERT A RELATIVE TRACK ADDRESS (TTR) TO       *
+*         ACTUAL ADDRESS FOR READ A BLOCK FROM RIGAM D/S WITH         *
+*         'XDAP' MACRO.                                               *
+***********************************************************************
+         SPACE 1
+READBLK  SUBIN SAVE=(R4)
+         L     R0,TTR              LOAD TTR
+         L     R1,IAMRIGAM+44      LOAD ADDRESS OF DATA EXTENT BLOCK
+         LA    R2,MBBCCHHR         LOAD ADDRESS OF MBBCCHHR WORK AREA
+         L     R15,16              LOAD ADDRESS OF COMM. VECTOR TABLE
+         L     R15,28(R15)         LOAD EP ADDRESS OF MODULE IECPCNVT
+         STM   R9,R13,XDAPSA       SAVE REGISTERS
+         CNOP  2,4
+         BALR  R14,R15             GO CONVERT RELATIVE TRACK ADDRESS TO
+*                                   ACTUAL ADDRESS
+         BAL   R14,24(R14)         BRANCH AND LINK AROUND SAVE AREA REG
+XDAPSA   DS    5F                  REGISTERS SAVE AREA
+         LM    R9,R13,0(R14)       RESTORE REGISTERS
+         XDAP  XDAPECB,RI,IAMRIGAM,BLOCK,1693,,MBBCCHHR
+         WAIT  ECB=XDAPECB
+         CLI   XDAPECB,X'7F'       TEST IF SUCCESSFUL ?
+         BNE   XDAPERR             BRANCH IF NO
+         SUBOUT RESTORE=(R4)       RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        THIS ROUTINE FORMAT THE DETAIL LINE TO BE PRINTED WITH THE   *
+*         INFORMATIONS FROM THE FILE PARAMETER BLOCK OF RIGAM D/S.    *
+***********************************************************************
+         SPACE 1
+FILEPARM CLC   TTR(2),=X'0005'     TEST FOR TT (0005)
+         BE    EOP                 BRANCH IF YES
+         TM    BLOCK,X'F0'         TEST IF PARAMETER BLOCK
+         BNO   *+12                BRANCH IF NO
+         TM    BLOCK,X'0F'         TEST IF PARAMETER BLOCK
+         BNO   *+16                BRANCH IF NO
+         BAL   R4,NEXTTR           GO ADD ONE TO TTR
+         LA    R4,FILEPARM         ASSUME GOOD CONTINUATION
+         B     READBLK             GO READ NEXT BLOCK
+         MVC   DETLINE+1(131),DETLINE CLEAR DETAIL LINE
+         MVC   FILENO,BLOCK        MOVE FILE NO
+         MVC   FILEID,BLOCK+3      MOVE FILE ID
+         MVC   FILETYPE,BLOCK+6    MOVE FILE TYPE
+         MVC   CONVTTR,BLOCK+14    MOVE TTR OF DATA HIGH BLOCK NO
+         BAL   R4,TTRCONV          GO CONVERT TTR TO NNNNNNNN
+         LR    R5,R1               LOAD N INTO R5
+         LR    R7,R1               LOAD N INTO R7
+         BAL   R4,DFCONV           GO CONVERT TO DISPLAY FORMAT
+         MVC   DATAEB,WORKAREA+2   MOVE TO PRINT LINE
+         MVC   CONVTTR,BLOCK+28    LOAD TTRN OF END OF FILE REC.
+         BAL   R4,TTRCONV          GO CONVERT TTR TO NNNNNNNN
+         LR    R9,R1               LOAD VALUE N (EOF BLOCK) INTO R9
+         MVC   CONVTTR,BLOCK+11    MOVE TTR OF DATA LOW BLOCK NO
+         BAL   R4,TTRCONV          GO CONVERT TTR TO NNNNNNNN
+         SR    R5,R1               SUB N (LOW BLOCK) TO N (HIGH BLOCK)
+         SR    R9,R1               SUB N (LOW BLOCK) TO N (EOFBLOCK
+         XR    R8,R8               ZERO AND SUB
+         SR    R8,R1                 N (LOW BLOCK)
+         BAL   R4,DFCONV           GO CONVERT TO DISPLAY FORMAT
+         MVC   DATASB,WORKAREA+2   MOVE TO PRINT LINE
+         MVC   CONVTTR,BLOCK+19    MOVE TTR OF DATA LAST BLOCK USED
+         BAL   R4,TTRCONV          GO CONVERT TTR TO NNNNNNNN
+         AR    R8,R1               ADD N ( LAST BLOCK USED) TO N- (L.)
+         SR    R7,R1               SUB N (LAST USED) TO N (HIGH BLOCK)
+         BAL   R4,DFCONV           GO CONVERT TO DISPLAY FORMAT
+         MVC   DATALBU,WORKAREA+2  MOVE LAST BLOCK USED NUMBER TO PRT
+         XR    R1,R1               ZEROISE
+         IC    R1,BLOCK+22         LOAD LAST RECORD NUMBER USED
+         STH   R1,LARENOUS         STORE LAST RECORD NUMBER USED
+         BAL   R4,DFCONV           GO CONVERT TO DISPLAY FORMAT
+         MVC   DATALRU,WORKAREA+5  MOVE LAST RECORD NO  USED TO PRT LIN
+         XR    R1,R1               ZEROISE
+         IC    R1,BLOCK+23         LOAD NO OF DATA RECORDS PER BLOCK
+         STH   R1,NODAPEBL         STORE NO OF DATA RECORDS PER BLOCK
+         BAL   R4,DFCONV           GO CONVERT TO DISPLAY FORMAT
+         MVC   RECPBLK,WORKAREA+5  MOVE NO OF DATA RECDS PER BLOCK
+         MVC   DECIMAL(2),BLOCK+17 ALIGNMENT FOR 'LH' INSTRUCTION
+         LH    R1,DECIMAL          LOAD RECORD LENGTH
+         BAL   R4,DFCONV           GO CONVERT TO DISPLAY FORMAT
+         MVC   RECDL,WORKAREA+4    MOVE RECORD LENGTH TO PRINT LINE
+         A     R5,=F'1'            = NUMBER OF BLOCKS FOR DATA RECORD
+         MH    R5,NODAPEBL         = MAX. NO OF DATA RECORDS
+         ST    R5,NORECTOT         STORE MAX. NO OF DATA RECORDS
+         MH    R9,NODAPEBL         = NO RECS LOADED DURING CREATION -N
+         MH    R8,NODAPEBL         = NO RECS LOADED AND ADDED -N
+         XR    R1,R1               ZEROISE
+         IC    R1,BLOCK+31         LOAD N OF END OF FILE RECORD
+         AR    R9,R1               = NO RECS LOADED DURING CREATION
+         IC    R1,BLOCK+22         LOAD N OFLAST RECORD USED
+         AR    R8,R1               = NO RECS LOADED AND ADDED
+         SR    R8,R9               = NO RECS ADDED
+         AR    R9,R8               = NO RECS LOADED AND ADDED
+         A     R7,=F'1'            = NO OF BLOCK UNUSED
+         MH    R7,NODAPEBL         = MAX. NO OF DATA RECORDS UNUSED BLK
+         SH    R7,LARENOUS         SUB NO REC. USED IN THE LAST BLOCK
+         LR    R1,R7               LOAD VALUE INTO R1
+         BAL   R4,DFCONV           GO CONVERT TO DISPLAY FORMAT
+         MVC   NORECAV,WORKAREA+3  MOVE NO. OF DATA RECORDS AVAILABLE
+         CLI   BLOCK+6,TYPE1       TEST IF FILE TYPE IS 1 ?
+         BNE   WTOPRT1             BRANCH IF NO
+         LTR   R9,R9               TEST IF ZERO ?
+         BZ    SKIPDIV             BRANCH IF YES
+         ST    R9,DECIMAL          STORE VALUE
+         MH    R8,=H'10000'        MULT BY 10.000
+         SRDA  R8,32(0)            SHIFT NNNN0000 TO 0000NNNN
+         D     R8,DECIMAL            DIVIDE
+         LH    R1,=H'50'           LOAD VALUE FOR ROUNDED
+         AR    R1,R9               = % DISORGANIZATION XXX,XX
+         BAL   R4,DFCONV           GO CONVERT TO DISPLAY FORNAT
+         MVC   DISORG,WORKAREA+3   MOVE TO PRINT DETAIL LINE
+SKIPDIV  EQU   *
+         MVC   CONVTTR,BLOCK+33    MOVE TTR OF INDEX LOW BLOCK NO
+         BAL   R4,TTRCONV          GO CONVERT TTR TO NNNNNNNN
+         BAL   R4,DFCONV           GO CONVERT TO DISPLAY FORMAT
+         MVC   INDEXSB,WORKAREA+2  MOVE TO PRINT LINE
+         MVC   CONVTTR,BLOCK+36    MOVE TTR OF INDEX HIGH BLOCK NO
+         BAL   R4,TTRCONV          GO CONVERT TTR TO NNNNNNNN
+         BAL   R4,DFCONV           GO CONVERT TO DISPLAY FORMAT
+         MVC   INDEXEB,WORKAREA+2  MOVE TO PRINT LINE
+         XR    R1,R1               ZEROISE
+         IC    R1,BLOCK+32         LOAD NO. OF LEVELS OF INDEXING
+         BAL   R4,DFCONV           GO CONVERT TO DISPLAY FORMAT
+         MVC   NOFLEVEL,WORKAREA+7 MOVE NO OF LEVELS OF INDEXING TO PRT
+         IC    R1,BLOCK+42         LOAD KEY LENGTH
+         BAL   R4,DFCONV           GO CONVERT TO DISPLAY FORMAT
+         MVC   KEYLEN,WORKAREA+6   MOVE KEY LENGTH TO PRINT LINE
+         IC    R1,BLOCK+43         LOAD NO OF INDICIES PER BLOCK
+         BAL   R4,DFCONV           GO CONVERT TO DISPLAY FORMAT
+         MVC   INDPBLK,WORKAREA+5  MOVE NO OF IND. PER BLK TO PRINT LIN
+WTOPRT1  MVC   1(132,R6),DETLINE   MOVE DETAIL LINE TO BUFFER
+         MVI   0(R6),SPCE2AFT      ESTABLISH SPACE 2 AFTER WRITE
+         BAL   R4,PRTDET            AND GO WRITE
+         BAL   R4,NEXTTR           GO ADD ONE TO CURRENT TTR
+         BAL   R4,READBLK          GO READ A BLOCK
+         B     FILEPARM            PROCESS NEXT FILE PARAMETER
+         EJECT
+***********************************************************************
+*        INCREMENT TTR OF ONE                                         *
+***********************************************************************
+         SPACE 1
+NEXTTR   SUBIN
+         L     R3,TTR              LOAD TTRN
+         XR    R2,R2               ZEROISE
+         SLDA  R2,16(0)            SHIFT TT IN REG R2
+         SRA   R3,24(0)            SHIFT RN00 TO 000R
+         C     R3,BLKNOF           COMPARE IF R < MAX-NO-BLK-PER-TRK
+         BL    ADOTT               BRANCH IF YES
+         A     R2,=F'1'            ADD ONE TO TT
+         L     R3,=F'1'            FORCE R TO ONE
+STTR     SLA   R2,16(0)            00TT  TO  TT00
+         SLA   R3,8(0)             000R  TO  00R0
+         AR    R2,R3               ADD  00R0 TO TT00
+         ST    R2,TTR              STORE NEW TTR0
+         SUBOUT ,                  RETURN TO CALLER
+         SPACE 1
+ADOTT    A     R3,=F'1'            ADD 1 TO 000R
+         B     STTR                GO FORMAT NEW TTR0
+         EJECT
+***********************************************************************
+*        CLOSE DATA SET AND END OF PROGRAM                            *
+***********************************************************************
+         SPACE 1
+EOP      CLOSE (IAMRIGAM,,SYSPRINT) CLOSE DATA SETS
+         PGMOUT RC=(R15)            END OF PROGRAM
+         EJECT
+***********************************************************************
+*        CONVERT TTR TO NNNNNNNN                                      *
+***********************************************************************
+         SPACE 1
+TTRCONV  SUBIN ,              CONVERT TTR TO NNNNNNNN
+         LH    R1,CONVTTR          LOAD TT INTO R1
+         MH    R1,BLKNOH      MULT BY MAXIMUN NUMBER BLOCK PER TRACK
+         XR    R2,R2          ZEROISE
+         IC    R2,CONVTTR+2        LOAD R INTO R2
+         AR    R1,R2          ADD RECORD NUMBER TO (TT * MAX-BLK-TRK)
+         SUBOUT ,             RETURN TO CALLER
+         SPACE 3
+***********************************************************************
+*        CONVERT BINARY TO DISPLAY FORMAT                             *
+***********************************************************************
+         SPACE 1
+DFCONV   SUBIN ,              CONVERT BINARY TO DISPLAY FORMAT
+         CVD   R1,DECIMAL          CONVERT TO DECIMAL
+         UNPK  WORKAREA,DECIMAL+3(5)    UNPACK
+         OI    WORKAREA+7,SIGN     FORCE SIGN TO 'F'
+         LA    R2,8                ESTABLISH LOOP
+         LA    R3,WORKAREA         POINT R3 AT FIRST POS. OF WA
+LOOPDF   CLI   0(R3),X'F0'         TEST FOR X'F0'
+         BNE   DFEND               BRANCH IF NO
+         MVI   0(R3),BLANK         MOVE BLANK IF YES
+         LA    R3,1(R3)            INCREMENT POINTER
+         BCT   R2,LOOPDF           PROCESS NEXT POSITION
+DFEND    SUBOUT ,                  RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        THIS ROUTINE TEST THE DEVICE TYPE OF RIGAM D/S, AND RETURN   *
+*         THE MAXIMUN NUMBER OF BLOCKS PER TRACK.                     *
+***********************************************************************
+         SPACE 1
+TSTYPDEV SUBIN
+         DEVTYPE IAMRIGAM+40,TYPDEVWA,DEVTAB,RPS
+         LTR   R5,R15              RETURN CODE IS IT ZERO ?
+         BNZ   DNOK                BRANCH IF NO
+         LA    R2,NETAD            ESTABLISH LOOP
+         LA    R3,DEVTAB           POINT R3 AT FIRST TABLE ELEMENT
+LTSTAD   CLC   TYPDEVWA(4),0(R3)   TEST IF DEVICE T. IS IN TABLE
+         BE    DOK                 BRANCH IF YES
+         LA    R3,6(R3)            INCREMENT POINTER
+         BCT   R2,LTSTAD           PROCESS NEXT TABLE ELEMENT
+         B     DNOK                DEVICE TYPE UNKNOWN IF BRANCH
+DOK      MVC   BLKNOH,4(R3)        MOVE MAXIMUN NUMBER OF BLOCKS P. TRK
+         SUBOUT
+         SPACE 2
+DEVTAB   DC    X'30002001',H'2'    2 BLOCKS FOR 2311
+         DC    X'30C02008',H'4'    4 BLOCKS FOR 2314
+         DC    X'30502009',H'7'    7 BLOCKS FOR 3330
+         DC    X'3050200D',H'7'    7 BLOCKS FOR 3330-11
+         DC    X'FFFFFFFF',H'0'    FREE
+         DC    X'FFFFFFFF',H'0'    FREE
+         DC    X'FFFFFFFF',H'0'    FREE
+         DC    X'FFFFFFFF',H'0'    FREE
+         DC    X'FFFFFFFF',H'0'    FREE
+         DC    X'FFFFFFFF',H'0'    FREE
+         SPACE 1
+NETAD    EQU   10                  NUMBER OF TABLE ELEMENTS
+         EJECT
+***********************************************************************
+*        PRINT ROUTINE                                                *
+***********************************************************************
+         SPACE 1
+PRTHEADS SUBIN SAVE=(R4)           WRITE HEAD LINES
+         NOP   *+12
+         MVI   *-3,X'F0'           CHANGE SWITCH FIRST TIME
+         BAL   R4,WRITE            FIRST RECORD ADDRESS
+         AP    PAGENO,ONE          ADD ONE TO PAGE NO
+         ZAP   LINENO,SIX          ZERO AND ADD SIX TO LINE NO
+         MVC   PAGE,PAGEDIT        MOVE PATTERN EDIT TO FIRST HEAD LINE
+         ED    PAGE,PAGENO         EDIT PAGE NO TO FIRST HEAD LINE
+         MVC   0(133,R6),LINE01    MOVE HEAD LINE 1
+         BAL   R4,WRITE             AND WRITE
+         MVC   0(133,R6),LINE02    MOVE HEAD LINE 2
+         BAL   R4,WRITE             AND WRITE
+         MVC   0(133,R6),LINE03    MOVE HEAD LINE 3
+         BAL   R4,WRITE             AND WRITE
+         MVC   0(133,R6),LINE04    MOVE HEAD LINE 4
+         BAL   R4,WRITE             AND WRITE
+         SUBOUT RESTORE=(R4)       RETURN TO CALLER
+         SPACE 1
+PRTDET   SUBIN SAVE=(R4)           WRITE DETAIL LINE
+         CLI   0(R6),SPCE2AFT      TEST IF CTRL CHAR. = SPACE 2 AFTER
+         BE    SP2                 BRANCH IF YES
+         CLI   0(R6),SPCE3AFT      TEST IF CTRL CHAR. = SPACE 3 AFTER
+         BE    SP3                 BRANCH IF YES
+         MVI   0(R6),SPCE1AFT      MOVE DEFAULT 'SPACE 1 AFTER WRITE'
+         B     SP1                 SKIP NEXT TWO INSTRUCTIONS
+SP3      AP    LINENO,ONE          ADD ONE TO LINE COUNT
+SP2      AP    LINENO,ONE          ADD ONE TO LINE COUNT
+SP1      AP    LINENO,ONE          ADD ONE TO LINE COUNT
+         CP    LINENO,LINEMAX      TEST IF LINE NO > MAX LINE PER PAGE
+         BH    *+12                BRANCH IF YES
+         BAL   R4,WRITE            NO - WRITE
+         B     *+16                SKIP NEXT THREE INTRUCTIONS
+         MVI   0(R6),SKIPAFT       ESTABLISH SKIP PAGE AFTER WRITE
+         BAL   R4,WRITE            WRITE DETAIL LINE
+         BAL   R4,PRTHEADS         WRITE THE FOUR HEAD LINES
+         SUBOUT RESTORE=(R4)       RETURN TO CALLER
+         SPACE 1
+WRITE    PUT   SYSPRINT            WRITE SYSPRINT LOCATE MODE
+         LR    R6,R1               STORE BUFFER ADDRESS
+         MVI   0(R6),BLANK         CLEAR SYSPRINT CURRENT
+         MVC   1(132,R6),0(R6)      BUFFER.
+         BR    R4                  RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        DATA CONTROL BLOCKS                                          *
+***********************************************************************
+         SPACE 1
+IAMRIGAM DCB   DDNAME=IAMRIGAM,                                        *
+               DSORG=DA,                                               *
+               MACRF=(E),                                              *
+               RECFM=F,                                                *
+               EXLST=STRJFCB,                                          *
+               BLKSIZE=1693,                                           *
+               BUFNO=1,                                                *
+               EODAD=ENDERR,                                           *
+               SYNAD=DSERR
+         SPACE 1
+SYSPRINT DCB   DDNAME=SYSPRINT,                                        *
+               DSORG=PS,                                               *
+               MACRF=PL,                                               *
+               RECFM=FM,                                               *
+               LRECL=133,                                              *
+               BLKSIZE=133
+         SPACE 3
+***********************************************************************
+*        ABEND'S                                                      *
+***********************************************************************
+         SPACE 1
+XDAPERR  WTO   'RIGAMP - XDAP ERROR'
+         B     ABEND
+DNOK     WTO   'RIGAMP - DEVICE TYPE UNKNOWN'
+         B     ABEND
+ENDERR   WTO   'RIGAMP - END OF FILE ???'
+         B     ABEND
+DSERR    WTO   'RIGAMP - DISK ERROR'
+ABEND    ABEND 999,DUMP
+         EJECT
+***********************************************************************
+*        JOB FILE CONTROL BLOCK                                       *
+***********************************************************************
+         SPACE 1
+         DS    0D
+STRJFCB  DC    X'87'
+         DC    AL3(JFCBINFO)
+         PRINT GEN
+JFCBINFO IEFJFCBN
+         PRINT NOGEN
+         EJECT
+***********************************************************************
+*        WORK AREAS                                                   *
+***********************************************************************
+         SPACE 1
+PARMADD  DS    F                   ADDRESS OF PARM OF EXEC CARD
+         SPACE 1
+TTR      DC    X'00000100'         RELATIVE TRACK ADDRESS WA
+MBBCCHHR DS    D                   ACTUAL ADDRESS WA
+         SPACE 1
+TYPDEVWA DS    6F                  WA FOR DEVTYPE MACRO
+BLKNOF   DC    H'0'                MAXIMUN NUMBER OF
+BLKNOH   DC    H'0'                 BLOCKS PER TRACK
+         SPACE 1
+PAGENO   DC    PL2'0'              PAGE COUNT
+LINENO   DC    PL2'0'              LINE COUNT
+LINEMAX  DC    PL2'60'             MAXIMUN NUMBER OF LINES PER PAGE
+         SPACE 1
+BLOCK    DS    CL1693              WA FOR A BLOCK OF RIGAM D/S
+         SPACE 1
+WORKAREA DS    D
+DECIMAL  DS    D
+         SPACE 1
+CONVTTR  DS    F
+NOBLOCK  DS    F
+NODAPEBL DS    H
+LARENOUS DS    H
+NORECTOT DS    F
+         EJECT
+***********************************************************************
+*        DETAIL LINE FOR FILE PARAMETER INFO'S                        *
+***********************************************************************
+         SPACE 1
+DETLINE  DC    CL132' '
+         ORG   DETLINE
+         DS    CL2
+FILENO   DS    CL3  FILE NO.
+         DS    CL3
+FILEID   DS    CL3  FILE ID.
+         DS    CL3
+FILETYPE DS    C    FILE TYPE
+         DS    CL2
+DATASB   DS    CL6  DATA START BLOCK NUMBER
+         DS    CL2
+DATAEB   DS    CL6  DATA ENDING BLOCK NUMBER
+         DS    C
+DATALBU  DS    CL6  DATA LAST BLOCK USED
+         DS    C
+DATALRU  DS    CL3  DATA LAST RECORD USED IN THE BLOCK
+         DS    CL4
+RECPBLK  DS    CL3  NUMBER OF RECORDS PER BLOCK
+         DS    CL4
+RECDL    DS    CL4  RECORD LENGTH
+         DS    CL5
+NORECAV  DS    CL5  NUMBER OF RECORD AVAILABLE
+         DS    CL6
+INDEXSB  DS    CL6  INDEX START BLOCK NUMBER
+         DS    CL2
+INDEXEB  DS    CL6  INDEX ENDING BLOCK NUMBER
+         DS    CL6
+NOFLEVEL DS    C    NUMBER OF LEVELS
+         DS    CL6
+KEYLEN   DS    CL2  KEY LENGTH
+         DS    CL6
+INDPBLK  DS    CL3  NUMBER OF INDEX PER BLOCK
+         DS    CL8
+DISORG   DS    CL3
+         DS    CL11
+         SPACE 1
+         EJECT
+***********************************************************************
+*        CONSTANTS, EQUATES AND LITERAL POOL                          *
+***********************************************************************
+         SPACE 1
+ONE      DC    P'1'
+TWO      DC    P'2'
+SIX      DC    P'3'
+         SPACE 1
+PAGEDIT  DC    X'40202020'
+         SPACE 1
+LINE01   DC    X'11'
+         DC    C'R I G A M   F I L E   P A R A M E T E R S        D'
+         DC    C'SN=                                               '
+DATE     DS    CL9
+         DC    C'              PAGE '
+PAGE     DS    CL4
+         SPACE 1
+LINE02   DC    X'09'
+         DC    C' *---- FILE ----* '
+         DC    C'*----------------------  D A T A  -------------------'
+         DC    C'-* *------------   I N D E X   ------------*         '
+         DC    CL8' '
+         SPACE 1
+LINE03   DC    X'09'
+         DC    C'  NO    ID. TYPE   START  ENDING  LAST USED  R.PER  R'
+         DC    C'ECORD  NO OF REC.     START  ENDING  NO OF    KEY    '
+         DC    C'INDEX         %                 '
+         SPACE 1
+LINE04   DC    X'11'
+         DC    C'                   BLOCK   BLOCK  BLK.-REC.  BLOCK  L'
+         DC    C'ENGTH  AVAILABLE      BLOCK   BLOCK  LEVELS  LENGTH  '
+         DC    C'PER BLK    DISORG               '
+         SPACE 1
+BLANK    EQU   X'40'
+SIGN     EQU   X'F0'
+SPCE1AFT EQU   X'09'
+SPCE2AFT EQU   X'11'
+SPCE3AFT EQU   X'19'
+SKIPAFT  EQU   X'89'
+TYPE1    EQU   X'F1'
+TYPE2    EQU   X'F2'
+         LTORG
+        END

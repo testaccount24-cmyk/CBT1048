@@ -1,0 +1,167 @@
+         TITLE 'IEASMFEX EXTENSION TO CALCULATE I/O TIME CHARGES'       B0000010
+         MACRO                                                            000020
+&NAME    CSID  &NONAME                                                    000030
+         LCLC  &NAME1                                                     000040
+&NAME1   SETC  '&NAME'                                                    000050
+         AIF   ('&NONAME' EQ 'NONAME').A01                                000060
+&NAME1   DC    CL8'&SYSECT'        NAME OF CSECT                          000070
+&NAME1   SETC  ' '                                                        000080
+.A01           ANOP                                                       000090
+&NAME1   DC    CL8'&SYSDATE'       DATE OF ASSEMBLY                       000100
+         DC    CL8'&SYSTIME'       TIME OF ASSEMBLY                       000110
+         MEND                                                             000120
+         EJECT                                                            000130
+* WRITTEN BY D. R. HURTGEN                                              B0000140
+         SPACE 1                                                        B0000150
+* MONSANTO COMPANY - GENERAL OFFICES                                    B0000160
+         SPACE 1                                                        B0000170
+* AUGUST, 1976                                                          B0000180
+         SPACE 2                                                        B0000190
+* THE PURPOSE OF THIS MODULE IS TO CALCULATE I/O TIME CHARGES FOR EACH  B0000200
+* I/O REQUEST MADE BY PROBLEM PROGRAMS. THESE THEN BECOME PART OF THE   B0000210
+* ACCOUNTING SYSTEM FOR CHARGING BACK THE COST FOR THESE SERVICES AND   B0000220
+* FOR CONTROLLING TIME LIMITS. ENTRY TO THIS MODULE IS MADE VIA AN      B0000230
+* UNCONDITIONAL BRANCH PLACED IN IEASMFEX BY MODULE IEAVNPMC AT IPL     B0000240
+* TIME. THEREFORE, ANY SYSTEM ATTRIBUTES THAT IEASMFEX MAY HAVE WILL BE B0000250
+* EQUALLY APPLICABLE TO THIS MODULE.                                    B0000260
+         SPACE 2                                                        B0000270
+* REGISTER SETTINGS -                                                   B0000280
+*              UPON ENTRY TO IEASMFEX -                                 B0000290
+*                             0    TCB ADDRESS                          B0000300
+*                             1    COUNT TO BE APPLIED                  B0000310
+*                             3    DEB ADDRESS                          B0000320
+*                             4    DCB ADDRESS                          B0000330
+*                             7    UCB ADDRESS                          B0000340
+*                            14    RETURN ADDRESS                       B0000350
+*                            15    ADDRESS OF IEASMFEX                  B0000360
+*                                                                       B0000370
+*              DURING EXECUTION OF IEASMFEX -                           B0000380
+*                         10-13    WORK REGISTERS                       B0000390
+*                                                                       B0000400
+*              UPON ENTRY TO THIS EXTENSION -                           B0000410
+*                            11    ADDRESS OF TCT DD ENTRY              B0000420
+*                            15    ADDRESS OF THIS EXTENSION            B0000430
+*                                                                       B0000440
+*              REGISTERS 0, 2-9, AND 14 REMAIN UNCHANGED THROUGHOUT     B0000450
+*                   EXECUTION OF IEASMFEX AND THIS MODULE.              B0000460
+*              REGISTERS 1, 10-13, AND 15 ARE NOT RESTORED              B0000470
+         SPACE 2                                                        B0000480
+* ATTRIBUTES -                                                          B0000490
+*              ENABLED, PROTECT KEY ZERO, SUPERVISOR STATE,             B0000500
+*              LOCAL LOCK HELD                                          B0000510
+         EJECT                                                          B0000520
+SMFEXEXT CSECT                                                          B0000530
+         USING *,BASEREG           ESTABLISH ADDRESSABILITY             B0000540
+         B     *+28                BRANCH AROUND IDENTIFIER               000550
+         CSID  ,                   IDENTIFY CSECT LEST WE DUMP            000560
+         L     WA,TCTDCTR(,WB)     INCREMENT THE                        B1000570
+         ALR   WA,R1                 SMF EXCP                           B1000580
+         ST    WA,TCTDCTR(,WB)         COUNT FIELD                      B1000590
+         L     WD,PSAAOLD          GET THE CURRENT ASCB                 B1000600
+*        TM    ASCBFLG1(WD),ASCBTOFF    Q.-IS JOB STEP TIMIMG ACTIVE    B1000610
+*        BO    BUMPIOSM            B.-NO                                B1000620
+         TM    TCTFLGS(WB),TCTVAMDS     Q.-IS THIS A VAM DATA SET       B1000630
+         BO    BUMPIOSM            B.-YES, CURRENTLY NO CHARGE          B1000640
+         TM    UCBTBYT3(UCB),UCB3TAPE+UCB3DACC    Q.-TAPE OR DISK       B1000650
+         BZ    BUMPIOSM            B.-NO                                B1000660
+         LH    WC,ASCBASID(,WD)    GET ASID FOR                         B1000670
+         SLL   WC,2                  INDEXING INTO MVT                  B1000680
+         L     WA,FLCCVT           GET MVT ADDRESS                      B1000690
+         L     WA,CVTUSER(,WA)       VIO THE CVT                        B1000700
+         LTR   WA,WA               TEST IF MVT EXISTS                     000710
+         BZ    BUMPIOSM            BR IF NO MVT                           000720
+         L     WC,0(WC,WA)         WC = ASA ADDRESS FOR CURRENT ASCB    B1000730
+         LTR   WC,WC               Q.-DOES ADDRESS SPACE HAVE ONE       B1000740
+         BZ    BUMPIOSM            B.-NO                                B1000750
+         TM    DCBMACRF(DCB),DCBMRECP   ASSUME OPENED DATA SET - Q.-IS  B1000760
+         BZ    NOTEXCP                    IT EXCP - B.-NO               B1000770
+         L     WB,=A(125000+32*7294)    PUT IN DEFAULT CHARGE           B1000780
+         B     UPDATEIO            GO UPDATE ASA                        B1000790
+NOTEXCP  LH    WB,DCBBLKSI(,DCB)   GET WHAT SHOULD BE THE BLOCK SIZE    B1000800
+         N     WB,=A(X'7FFF')        AND COVER US IN CASE IT IS NOT     B1000810
+         TM    UCBTBYT3(UCB),UCB3TAPE   Q.-IS THE DEVICE TAPE           B1000820
+         BZ    DODISK              B.-NO                                B1000830
+         M     WA,=F'62'           CALCULATE TAPE TIME AS 6.2 MICRO-    B1000840
+         A     WB,=F'60000'          SECONDS/BYTE + 6 MILLISECONDS FOR  B1000850
+         B     UPDATEIO              TAPE START/STOP TIME               B1000860
+DODISK   M     WA,=F'32'           DISK TIME IS 3.2 MICROSECONDS/BYTE   B1000870
+         A     WB,=F'125000'         PLUS 12.5 MILLISECONDS FOR DELAY   B1000880
+UPDATEIO MR    WA,R1               MULTIPLY TIME BY VALUE IN COUNT REG. B1000890
+         L     WD,ASAIOBET-ASADSECT(,WC)     GET ACCUMULATED I/O TIME   B1000900
+TRYAGAIN LR    WA,WD               SET UP FOR CS INSTRUCTION            B1000910
+         ALR   WA,WB               ADD THIS CHARGE                      B1000920
+         CS    WD,WA,ASAIOBET-ASADSECT(WC)   ATTEMPT TO UPDATE          B1000930
+         BNE   TRYAGAIN            UNSUCCESSFUL - GO TRY AGAIN          B1000940
+         L     WD,PSAAOLD          RESTORE WD                           B1000950
+BUMPIOSM L     WA,ASCBIOSM(,WD)    GET THE I/O SERVICE MEASURE WHICH IS B1000960
+         SLL   R1,16                 IN THE FIRST HALF-WORD, HENCE THIS B1000970
+TRYOVER  LR    WB,WA                 SHIFT OF THE COUNT - SET UP FOR CS B1000980
+         ALR   WB,R1               INCREMENT                            B1000990
+         CS    WA,WB,ASCBIOSM(WD)  ATTEMPT TO UPDATE                    B1001000
+         BNE   TRYOVER             B.-UNSUCCESSFUL, TRY AGAIN           B1001010
+         L     WA,FLCCVT           GET CVT ADDRESS AND                  B1001020
+         L     BASEREG,CVTSMFEX(,WA) RESTORE R15 TO SMFEX ADDRESS       B1001030
+         BR    RETURN              RETURN TO CALLER OF SMFEX            B1001040
+         EJECT                                                          B5001050
+*                        EQUATES USED IN THIS MODULE                    B6001060
+         SPACE 3                                                        B6001070
+*                                  REGISTERS                            B6001080
+         SPACE 1                                                        B6001090
+*              0                   UNUSED - BUT CONTAINS TCB ADDRESS    B6001100
+R1       EQU   1                   EXCP COUNT INCREMENTAL VALUE         B6001110
+*              2                   UNUSED                               B6001120
+*              3                   UNUSED - BUT CONTAINS DEB ADDRESS    B6001130
+DCB      EQU   4                   DCB ADDRESS                          B6001140
+*              5                   UNUSED                               B6001150
+*              6                   UNUSED                               B6001160
+UCB      EQU   7                   UCB ADDRESS                          B6001170
+*              8                   UNUSED                               B6001180
+*              9                   UNUSED                               B6001190
+WA       EQU   10                  WORK                                 B6001200
+WB       EQU   11                  WORK - UPON ENTRY, CONTAINS TCT DD   B6001210
+*                                         ENTRY ADDRESS                 B6001220
+WC       EQU   12                  WORK                                 B6001230
+WD       EQU   13                  WORK                                 B6001240
+RETURN   EQU   14                  RETURN ADDRESS TO CALLER OF IEASMFEX B6001250
+BASEREG  EQU   15                  BASE REGISTER                        B6001260
+         EJECT                                                          B6001270
+*                        DISPLACEMENTS INTO THE -                       B6001280
+         SPACE 1                                                        B6001290
+*            - DEVICE ENTRY OF THE TCT I/O COUNTER TABLE -              B6001300
+TCTFLGS  EQU   3                   FLAG BYTE                            B6001310
+TCTVAMDS EQU   X'40'               *    VAM DATA SET                    B6001320
+TCTDCTR  EQU   4                   COUNTER OF EXCP'S ISSUED             B6001330
+         SPACE 1                                                        B6001340
+*                                - UCB -                                B6001350
+UCBTBYT3 EQU   18                  CLASS BITS                           B6001360
+UCB3TAPE EQU   X'80'               *    TAPE                            B6001370
+UCB3DACC EQU   X'20'               *    DIRECT ACCESS                   B6001380
+         SPACE 1                                                        B6001390
+*                                - PSA -                                B6001400
+FLCCVT   EQU   16                  ADDRESS OF CVT                       B6001410
+PSAAOLD  EQU   548                 ASCB OLD POINTER                     B6001420
+         SPACE 1                                                        B6001430
+*                                - DCB -                                B6001440
+DCBMACRF EQU   42                  MACRO INSTRUCTION REFERENCE          B6001450
+DCBMRECP EQU   X'80'               *    EXECUTE CHANNEL PROGRAM         B6001460
+DCBBLKSI EQU   62                  MAXIMUM BLOCK SIZE                   B6001470
+         SPACE 1                                                        B6001480
+*                                - ASCB -                               B6001490
+ASCBASID EQU   36                  ADDRESS SPACE IDENTIFIER             B6001500
+ASCBIOSM EQU   40                  I/O SERVICE MEASURE                  B6001510
+ASCBFLG1 EQU   103                 FLAG FIELD                           B6001520
+ASCBTOFF EQU   X'80'               *    MEMORY SHOULD NOT BE CHECKED    B6001530
+*                                       FOR JOB STEP TIMING             B6001540
+         SPACE 1                                                        B6001550
+*                                - CVT -                                B6001560
+CVTUSER  EQU   204                 ADDRESS OF MONSANTO VECTOR TABLE     B6001570
+CVTSMFEX EQU   456                 ADDRESS OF SMF EXCP COUNTING ROUTINE B6001580
+         EJECT                                                          B6001590
+*                        CONSTANTS AND WORK AREAS                       B7001600
+         SPACE 1                                                        B7001610
+         LTORG *                                                        B7001620
+         EJECT                                                          B7001630
+        $MASA                                                           B9001640
+SMFEXEXT CSECT                                                          B9001650
+        $MDLENTH                                                        B9001660
+         END                                                            B9001670

@@ -1,0 +1,473 @@
+//JEAGPMO2 JOB (1580,5),'0000 J ABBEY',CLASS=N,COND=(0,NE)
+// EXEC ASMFCL,LOPT='RENT,AC=1',L=H
+//SYSLIB DD DSN=SYS1.MACLIB,DISP=SHR
+// DD DSN=JEA.MACLIB,DISP=SHR
+// DD DSN=IMSVS.GENLIB,DISP=SHR
+         TITLE 'GAFMOII I/O PROCESSING ROUTINE'
+***********************************************************************
+*                          G A F M O I I                              *
+*                                                                     *
+*        GAFMOII I/O PROCESSING ROUTINE.                              *
+*                                                                     *
+*            THIS ROUTINE IS THE PRIMARY I/O PROCESSING ROUTINE FOR   *
+*        GAFMOII FILES. IT IS ENTERED DIRECTLY FROM THE APPLICATION   *
+*        PROGRAM WHEN IT WISHES TO ACCESS THE DATA BASE.              *
+*            ON FIRST ENTRY TO THE ROUTINE, CONTROL WILL PASS TO THE  *
+*        INITIALISATION ROUTINE TO OPEN THE DATA BASE FILE(S) AND     *
+*        INITIALISE THE CONTROL BLOCKS FOR PROCESSING.                *
+*            FOR SUBSEQUENT CALLS, THE FUNCTION CODE WILL BE ANALYSED *
+*        AND CONTROL ROUTED ACCORDINGLY.                              *
+*                                                                     *
+*            PARAMETERS INPUT TO THE ROUTINE ARE:                     *
+*                                                                     *
+*        1)    A FOUR BYTE FUNCTION CODE. THIS WILL BE ONE OF:        *
+*                                                                     *
+*              'OPEN'              INITIALISE THE FILE(S) FOR WORK    *
+*              'CLOS'              CLOSE THE FILES                    *
+*              'GN'                GET NEXT SEGMENT                   *
+*              'GU'                GET A SPECIFIC OCCURRENCE          *
+*              'GNP'               GET THE NEXT SEGMENT AT SAME LEVEL *
+*              'DELT'              DELETE A SEGMENT                   *
+*              'ISRT'              INSERT A NEW SEGMENT               *
+*              'REPL'              REPLACE THE CONTENTS OF A SEGMENT  *
+*                                                                     *
+*        2)    AN I/O WORK AREA TO CONTAIN THE REQUESTED DATA WHICH   *
+*              MUST BE LONG ENOUGH TO CONTAIN ALL THE RETURNED DATA   *
+*                                                                     *
+*        3)    A 100 BYTE WORK AREA FOR THE PROCESSING ROUTINE, THE   *
+*              FIRST 8 BYTES OF WHICH MUST CONTAIN THE NAME OF THE    *
+*              PSB TO BE USED.                                        *
+*                                                                     *
+*        4)    A REQUEST PARAMETER LIST WHICH CONTAINS DETAILS OF     *
+*              THE SEGMENT REQUESTED.                                 *
+*                                                                     *
+*        RETURN CODES ISSUED: (IN REGISTER 15)                        *
+*                                                                     *
+*        4     AN ATTEMPT WAS MADE TO INSERT AN INVALID SEGMENT TYPE  *
+*              OR TO REPLACE ONE SEGMENT TYPE WITH ANOTHER            *
+*        8     END OF FILE WAS REACHED DURING AN INPUT OPERATION      *
+*        12    FOR A GET NEXT WITHIN PARENT, NO SEGMENT SUITABLE      *
+*              WAS FOUND TO SATISFY THE REQUEST.                      *
+*        16    AN INVALID DBD NAME WAS SPECIFIED.                     *
+*        20    AN INVALID FUNCTION WAS SPECIFIED.                     *
+*        24    IN UPDAT MODE, AN ATTEMPT WAS MADE TO ADD NEW DATA TO  *
+*              THE FILE OR DELETE DATA FROM IT                        *
+*                                                                     *
+*                                                                     *
+*        REGISTER USAGE.                                              *
+*                                                                     *
+*        REG0  PARAMETER REGISTER AND WORK REGISTER.                  *
+*        REG1  PARAMETER REGISTER AND WORK REGISTER.                  *
+*        REG2  WORK REGISTER.                                         *
+*        REG3  ADDRESS OF THE I/O AREA IN CALLERS REGION              *
+*        REG4  ADDRESS OF GAFMO WORK AREA IN CALLERS REGION           *
+*        REG5  ADDRESS OF REQUEST PARAMETER LIST                      *
+*        REG6  ADDRESS OF PCB FOR THIS REQUEST                        *
+*        REG7  ADDRESS OF THE I/O WORK AREA FOR CURRENT REQUEST       *
+*        REG8  ADDRESS OF SENSITIVE SEGMENT TABLE                     *
+*        REG9                                                         *
+*        REG10 WORK REGISTER.                                         *
+*        REG11 LINK REGISTER BETWEEN SUBROUTINES.                     *
+*        REG12 BASE ADDRESS REGISTER.                                 *
+*        REG13 ADDRESS OF REGISTER SAVE AREA.                         *
+*        REG14 PROGRAM LINK REGISTER AND WORK REGISTER.               *
+*        REG15 PROGRAM LINK REGISTER AND WORK REGISTER.               *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        EQUATES USED IN THIS MODULE                                  *
+***********************************************************************
+         SPACE 2
+*
+*        THE FOLLOWING ARE THE EQUATES FOR RETURN CODES ISSUED TO
+*        THE CALLER IN CASE OF A DETECTED ERROR IN PROCESSING
+*
+BADISRTR EQU   4                   ATTEMPT MADE TO PLACE INVALID SEG IN
+EODADR   EQU   8                   END OF FILE DETECTED ON INPUT
+GWPNONER EQU   12                  GNP - NO DATA FOUND FOR REQUEST
+BADDBDR  EQU   16                  INVALID DBD NAME SPECIFIED
+BADCODER EQU   20                  INVALID FUNCTION CODE SPECIFIED
+INPLERRR EQU   24                  INSERT OR DELETE SPECIFIED IN PLACE
+         SPACE 2
+*
+EQUAL    EQU   X'95'               USED BY CLI INST. TO SET C.C. EQUAL
+UNEQUAL  EQU   X'96'               USED TO SET C.C. NOT EQUAL
+         EJECT
+***********************************************************************
+*        DSECTS USED IN THIS MODULE                                   *
+***********************************************************************
+         SPACE 2
+GAFMOWK  DSECT ,                   GAFMO'S WORK AREA IN CALLER'S REGION
+GAFNAME  DS    CL8                 NAME OF PSB TO USE
+GAFPSBAD DS    F                   ADDRESS OF INITIALISED PSB
+GAFLINK  DS    F                   SAVE AREA FOR LINK REGISTER
+GAFSAVE  DS    4F                  SAVE AREA FOR WORK REGISTERS
+GAFPARM  DS    2F                  CALL PARAMETER LIST
+GAFFLG   DS    X                   FLAG FOR PROCESSING LOGIC
+GAFFLGSS EQU   X'80'               USER IS SENSITIVE TO SEG IN BUFFER
+GAFCROK  EQU   X'40'               USER'S CRITERIA ARE MET FOR THIS SEG
+         DS    X
+         DS    CL62                WORK AREA
+         SPACE 2
+RPL      DSECT ,                   REQUEST PARAMETER LIST
+RPLDBD   DS    CL8                 NAME OF DBD FOR THIS REQUEST.
+RPLSEG   DS    CL8                 NAME OF REQUESTED SEGMENT
+         SPACE 2
+JCB      DSECT ,                   WORK AREA FOR DCB'S ETC. (1 PER DBD)
+JCBDBD   DS    F                   ADDRESS OF DBD FOR THIS PCB
+JCBINBUF DS    F                   ADDRESS OF CURRENT SEGMENT BUFFER
+JCBWORK  DS    F                   WORK FULLWORD
+JCBSEGTB DS    H                   ADDRESS OF SEGTAB ENTRY OF CURR. SEG
+JCBPARNT DS    H                   OFFSET TO PARENT SEG ENTRY
+JCBDCBXX DS    0CL1                START OF DCB AREA
+JCBOPN   DS    F                   WORK AREA FOR OPEN MACRO
+JCBCLS   DS    F                   WORK AREA FOR CLOSE MACRO
+JCBINDCB DS    CL96                INPUT QSAM DCB
+JCBEXDCB DS    CL96                OUTPUT QSAM DCB
+DCBXLEN  EQU   *-JCBDCBXX          LENGTH FOR MOVE INST
+JCBLEN   EQU   *-JCB               LENGTH OF AREA
+         SPACE 2
+SENSEGTB DSECT ,                   SENSITIVE SEGMENT TABLE ENTRY
+SEGNAME  DS    CL8                 NAME OF SENSITIVE SEGMENT
+SEGOPT   DS    CL4                 PROCESSING OPTIONS
+SEGPCB   DS    0F                  FULLWORD ADDRESS OF PCB
+SEGFLG   DS    X                   FLAG FIELD
+SEGLAST  EQU   X'80'               LAST ENTRY IN SEGMENT TABLE
+SEGPCBA  DS    AL3                 ADDRESS OF PCB FOR THE SEGMENT
+SEGPARNT DS    H                   OFFSET FROM START TO PARENT ENTRY
+SEGSOUR  DS    H                   OFFSET TO SOURCE SEGMENT
+SEGLENZ  EQU   *-SEGNAME           LENGTH OF TABLE ENTRY
+         SPACE 2
+         IDBD
+         IDLI PSBBASE=0,DPCBASE=0
+         DCBD  DSORG=QS,DEVD=DA
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING                                   *
+***********************************************************************
+         SPACE 2
+GAFMOII  ZCSECT GETMAIN=1
+         LM    REG2,REG5,0(REG1)   LOAD INCOMING PARAMETER ADDRESSES
+         USING GAFMOWK,REG4        ADDRESSABILITY FOR MY WORK AREA
+         USING RPL,REG5            ADDRESS FOR REQUEST PARAMETER LIST
+         USING JCB,REG7            ADDRESSABILITY FOR I/O WORK AREA
+         EJECT
+***********************************************************************
+*        ANALYSE THE FUNCTION CODE AND ROUTE CONTROL                  *
+***********************************************************************
+         SPACE 2
+ANALYSE  DS    0H
+         LA    REG10,CODTABLE      START OF VALID CODE TABLE
+         LA    REG15,ENDTABLE-1    ADDRESS OF END OF TABLE
+         LA    REG14,LENTABLE      LENGTH OF EACH ENTRY IN TABLE
+CODELOOP CLC   0(LENCODES,REG10),0(REG2) IS THIS CORRECT CODE
+         BE    FOUNDIT             YES. GO INVOKE PROCESSING ROUTINE
+         BXLE  REG10,REG14,CODELOOP NO. TRY NEXT ENTRY IN TABLE
+         B     BADCODE             CODE NOT FOUND. WHO IS THIS GUY?
+FOUNDIT  L     REG15,4(REG10)      LOAD ADDRESS OF ROUTINE
+         BALR  REG14,REG15         GO PROCESS THE REQUEST
+         B     EXITPGM             RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        COMMON PROGRAM EXIT                                          *
+***********************************************************************
+         SPACE 2
+EXITPGM  ZRETURN RC=(15)
+         EJECT
+***********************************************************************
+*        INVOKE THE FILE INITIALISATION ROUTINE                       *
+***********************************************************************
+         SPACE 2
+OPENIT   DS    0H
+         ST    REG14,GAFLINK       SAVE LINK REGISTER
+         LA    REG1,GAFPARM        LOAD ADDRESS OF PARM LIST
+         LA    REG14,GAFNAME       ADDRESS OF PSB NAME
+         LA    REG15,GAFPSBAD      RETURN AREA FOR ADDRESS
+         STM   REG14,REG15,0(REG1) STORE IN PARAMETER LIST
+         OI    4(REG1),X'80'       TURN ON VL BIT
+         LINK  EP=GAFMOIOI         INVOKE INITIALISATION ROUTINE
+         L     REG14,GAFLINK       RELOAD LINK REGISTER
+         BR    REG14               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        INVOKE THE FILE TERMINATION ROUTINE                          *
+***********************************************************************
+         SPACE 2
+CLOSIT   DS    0H
+         ST    REG14,GAFLINK       SAVE LINK REGISTER
+         LA    REG1,GAFPARM        LOAD ADDRESS OF PARM LIST
+         LA    REG14,GAFNAME       ADDRESS OF PSB NAME
+         LA    REG15,GAFPSBAD      ADDRESS OF THE PSB TO BE CLOSED
+         STM   REG14,REG15,0(REG1) STORE IN PARAMETER LIST
+         OI    4(REG1),X'80'       TURN ON VL BIT
+         LINK  EP=GAFMOIOT         INVOKE TERMINATION ROUTINE
+         L     REG14,GAFLINK       RESTORE LINK REGISTER
+         BR    REG14               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        LOCATE AND RETURN THE NEXT SENSITIVE SEGMENT                 *
+***********************************************************************
+         SPACE 2
+GETNEXT  DS    0H
+         ST    REG14,GAFLINK       SAVE LINK REGISTER
+         BAL   REG11,FINDPCB       GO LOCATE PCB, IOWORK ETC.
+GETNLOOP BAL   REG11,OUTIO         WRITE OUT ANY SEGS TO NEW FILE
+         BAL   REG11,INIO          READ NEXT SEGMENT FROM DATA BASE
+         BAL   REG11,TESTSENS      IS HE ALLOWED TO LOOK AT THAT
+         BNE   GETNLOOP            NO. REWRITE AND FETCH NEXT ONE
+         USING SENSEGTB,REG8       ADDRESSABILITY FOR SEGTAB ENTRY
+         LH    REG2,SEGPARNT       LOAD OFFSET TO HIS PARENT
+         L     REG1,GAFPSBAD       RELOAD ADDRESS OF PSB
+         L     REG1,0(REG1)        LOAD ADDRESS OF SEGTAB ITSELF
+         LA    REG1,0(REG1)        STRIP OF FLAG BYTE AT TOP
+         SR    REG8,REG1           CALCULATE OFFSET TO SEGTAB ENTRY
+         STH   REG8,JCBSEGTB       SAVE ADDRESS OF THIS SEGTAB ENTRY
+         STH   REG2,JCBPARNT       SAVE ADDRESS OF PARENT SEGMENT ALSO
+         USING DBPCB,REG6          ADDRESSABILITY FOR PCB
+         MVC   DBPCBSFD,4(REG1)    SAVE NAME OF THAT SEGMENT
+         BAL   REG11,COPYOUT       GO MOVE DATA TO USER AREA
+         L     REG14,GAFLINK       RELOAD LINK REGISTER
+         XR    REG15,REG15         SET ZERO RETURN CODE
+         BR    REG14               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        LOCATE AND RETURN THE NEXT SEGMENT WITHIN THE SAME PARENT    *
+***********************************************************************
+         SPACE 2
+GETWPAR  DS    0H
+         ST    REG14,GAFLINK       SAVE LINK REGISTER
+         BAL   REG11,FINDPCB       LOCATE PCB ETC.
+         L     REG10,GAFPSBAD      LOAD ADDRESS OF PSB
+         L     REG10,0(REG10)      LOAD ADDRESS OF SENS. SEGMENT TAB
+         LA    REG10,0(REG10)      STRIP OFF FLAG BYTE
+GWPNXTRY BAL   REG11,OUTIO         WRITE OUT LAST SEGMENT IF NECC.
+         BAL   REG11,INIO          READ IN THE NEXT SEGMENT
+         BAL   REG11,TESTSENS      TEST SENSITIVITY AND LOCATE SEGTAB
+         LR    REG2,REG8           LOAD SECOND SEGTAB ENTRY REGISTER
+         DROP  REG8                RELEASE OLD ADDRESSABILITY
+         USING SENSEGTB,REG2       ADDRESSABILITY FOR SEGTAB ENTRY
+GWPLOOP  LH    REG1,SEGPARNT       LOAD OFFSET TO PARENT SEGMENT
+         CH    REG1,JCBPARNT       SAME PARENT AS LAST SEGMENT ?
+         BE    STILLOK             YES. WE ARE STILL WITHIN PARENT
+         LA    REG2,0(REG1,REG10)  ADDRESS OF PARENT SEGTAB ENTRY
+         CR    REG2,REG10          OUTSIDE TABLE LIMITS YET ?
+         BNL   GWPLOOP             NO. TRY NEXT LEVEL
+         B     GWPNONE             YES. WE HAVE LEFT THAT PARENT
+STILLOK  TM    GAFFLG,GAFFLGSS     IS HE SENSITIVE TO THIS SEGMENT ?
+         BZ    GWPNXTRY            NO. TRY NEXT SEGMENT
+         BAL   REG11,TESTCRIT      IS HE INTERESTED IN THIS ANYWAY
+         BNE   GWPNXTRY            NO. TRY NEXT SEGMENT
+         BAL   REG11,COPYOUT       MOVE DATA TO HIS BUFFER
+         L     REG1,GAFPSBAD       RELOAD ADDRESS OF PSB
+         L     REG1,0(REG1)        LOAD ADDRESS OF SEGTAB ITSELF
+         LA    REG1,0(REG1)        STRIP OF FLAG BYTE AT TOP
+         SR    REG8,REG1           CALCULATE OFFSET TO SEGTAB ENTRY
+         STH   REG8,JCBSEGTB       SAVE ADDRESS OF THIS SEGTAB ENTRY
+         USING DBPCB,REG6          ADDRESSABILITY FOR PCB
+         MVC   DBPCBSFD,4(REG1)    SAVE NAME OF THAT SEGMENT
+         XR    REG15,REG15         SET GOOD RETURN CODE
+         B     GWPEXIT             RETURN TO CALLER
+GWPNONE  LA    REG15,GWPNONER      SET RETURN CODE
+GWPEXIT  L     REG14,GAFLINK       RESTORE LINK REGISTER
+         BR    REG14               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        REPLACE THE CURRENT INPUT SEGMENT CONTENTS                   *
+***********************************************************************
+         SPACE 2
+REPLCIT  DS    0H
+         ST    REG14,GAFLINK       STORE LINK REGISTER
+         BAL   REG11,FINDPCB       LOCATE PCB AND WORK AREA
+         L     REG14,JCBINBUF      LOAD ADDRESS OF INPUT BUFFER
+         CLC   0(12,REG14),0(REG3) USER'S DATA MATCH THIS ?
+         BNE   BADREP              NO. HE'S TRYING SOMETHING ON HERE
+         LH    REG15,0(REG14)      LOAD LENGTH OF SEGMENT
+         LR    REG0,REG3           LOAD MVCL SOURCE DATA REGISTER
+         LR    REG1,REG15          LOAD SECOND LENGTH REGISTER
+         MVCL  REG14,REG0          MOVE DATA TO BUFFER
+         L     REG14,GAFLINK       RELOAD LINK REGISTER
+         XR    REG15,REG15         SET ZERO RETURN CODE
+         BR    REG14               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        INSERT A NEW SEGMENT IN FRON OF LAST RETURNED                *
+***********************************************************************
+         SPACE 2
+INSRTIT  DS    0H
+         ST    REG14,GAFLINK       STORE LINK REGISTER IN SAVE AREA
+         BAL   REG11,FINDPCB       LOCATE PCB AND WORK AREA THIS REQ
+         TM    DBPCBFLG,DBPCBCH    UPDATE THIS DCB IS IN PLACE ?
+         BO    INPLERR             CAN'T PUT OUT A NEW RECORD HERE MATE
+         MVC   JCBWORK,JCBINBUF    SAVE ADDRESS OF CURRENT BUFFER
+         ST    REG3,JCBINBUF       USE HIS AREA AS BUFFER FOR NOW
+         BAL   REG11,TESTSENS      IS HE ALLOWED TO DO THIS
+         BNE   BADINSRT            LIKE HELL HE IS. EXIT
+         BAL   REG11,OUTIO         WRITE AWAY THE NEW SEGMENT
+         MVC   JCBINBUF,JCBWORK    RESTORE THE CORRECT BUFFER REFERENCE
+         XR    REG15,REG15         SET GOOD RETURN CODE
+         L     REG14,GAFLINK       RESTORE LINK REGISTER
+         BR    REG14               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        LOCATE THE PCB AND WORK AREA FOR THIS REQUEST                *
+***********************************************************************
+         SPACE 2
+FINDPCB  DS    0H
+         L     REG2,GAFPSBAD       ADDRESS OF THE PSB TO USE
+         LA    REG2,12(REG2)       STEP OVER VECTOR TABLE
+         USING PSB,REG2            A TOUCH OF ADDRESSABILITY FOR IT
+         LA    REG10,PSBLIST       ADDRESS OF PCB LIST
+         AH    REG10,PSBDBOFF      ADD OFFSET TO FIRST DB TYPE PCB
+PCBLOOP  L     REG6,0(REG10)       LOAD ADDRESS OF THE PCB POINTED TO
+         USING DBPCB,REG6          ADDRESSABILITY FOR IT
+         CLC   DBPCBDBD,RPLDBD     IS THIS THE RIGHT DBD ?
+         BE    PCBHERE             HURRAY FOUND THE PCB SO EASILY
+         LA    REG10,4(REG10)      BOOH. STEP TO NEXT ENTRY IN LIST
+         LTR   REG6,REG6           ANY MORE TO LOOK AT
+         BP    PCBLOOP             YES. GO DO IT THEN
+         B     BADDBD              NO. HE MUST BE KIDDING ME
+PCBHERE  L     REG7,DBPCBJCB       LOAD ADDRESS OF THE WORK AREA
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        TEST TO SEE IF THE CALLER IS SENSITIVE TO THIS SEGMENT       *
+***********************************************************************
+         SPACE 2
+TESTSENS DS    0H
+         L     REG2,GAFPSBAD       ADDRESS OF PSB FOR THIS PROGRAM
+         L     REG8,0(REG2)        ADDRESS OF SENSITIVE SEGMENT TABLE
+         USING SENSEGTB,REG8       ADDRESSABILITY FOR IT
+         L     REG2,JCBINBUF       LOAD ADDRESS OF THE SEGMENT BUFFER
+         LA    REG2,4(REG2)        STEP OVER LENGTH FIELD
+SENLOOP  CLC   SEGNAME,0(REG2)     THIS SEGMENT SENSITIVE
+         BNE   SENRETRY            NO. TEST NEXT SEGMENT IN TABLE
+         CLM   REG6,7,SEGPCBA      SEGMENT BELONG TO CORRECT DBD ?
+         BE    SENGOTIT            YES. HE'S ALLOWED TO LOOK AT THIS
+SENRETRY TM    SEGFLG,SEGLAST      LAST ENTRY IN TABLE ?
+         BE    SENNOGO             YES. HE IS NOT SENSITIVE TO IT
+         LA    REG8,SEGLENZ(REG8)  STEP TO NEXT ENTRY IN TABLE
+         B     SENLOOP             LOOP DOWN ALL SENSITIVE SEGMENTS
+SENNOGO  NI    GAFFLG,255-GAFFLGSS RESET SENSITIVE SEGMENT FLAG
+         CLI   *,UNEQUAL           SET NOT EQUAL CONDITION CODE
+         B     SENEXIT             RETURN TO CALLER
+SENGOTIT OI    GAFFLG,GAFFLGSS     SET SENSITIVE SEGMENT FLAG
+         CLI   *,EQUAL             SET EQUAL C.C. (SEG IS SENSITIVE)
+SENEXIT  BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        SEE IF THIS SEGMENT SATISFIES THE USER'S CRITERIA            *
+***********************************************************************
+         SPACE 2
+TESTCRIT DS    0H
+         CLC   RPLSEG,BLANKS       SEGMENT NAME SPECIFIED
+         BE    CRITOK              NO. WHATEVER IT IS, HE'LL HAVE IT
+         L     REG1,JCBINBUF       LOAD ADDRESS OF INPUT BUFFER
+         CLC   RPLSEG,4(REG1)      SEGMENT NAME CORRECT ?
+         BE    CRITOK              YES. THIS IS THE ONE HE WANTS
+CRITFAIL NI    GAFFLG,255-GAFCROK  SIGNAL FAILURE OF CRITERIA
+         CLI   *,UNEQUAL           SET UNEQUAL RETURN CODE
+         BR    REG11               RETURN TO CALLER
+CRITOK   OI    GAFFLG,GAFCROK      CRITERIA ARE OK
+         CLI   *,EQUAL             SET PSW CONDITION CODE
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        READ THE NEXT SEGMENT INTO CORE                              *
+***********************************************************************
+         SPACE 2
+INIO     DS    0H
+         LA    REG1,JCBINDCB       LOAD ADDRESS OF INPUT DCB
+         USING IHADCB,REG1         ADDRESSABILITY FOR DCB
+         MVC   DCBEODA,INEODAD     SET UP ADDRESS FOR EODAD
+         GET   (1)                 READ NEXT RECORD INTO CORE
+         ST    REG1,JCBINBUF       SAVE ADDRESS OF RECORD
+         BR    REG11               RETURN TO CALLER
+         SPACE 2
+INEODAD  DC    AL3(INIOEOF)        ADDRESS OF END OF DATA ROUTINE
+INIOEOF  DS    0H
+         LA    REG15,EODADR        SET RETURN CODE FOR CALLER
+         L     REG14,GAFLINK       RELOAD LINK REGISTER
+         BR    REG14               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        WRITE OUT A SEGMENT IF NECCESSARY (I.E IF OUT FILE EXISTS)   *
+***********************************************************************
+         SPACE 2
+OUTIO    DS    0F
+         STM   REG14,REG1,GAFSAVE  SAVE PARAMETER REGISTERS
+         NC    JCBINBUF,JCBINBUF   FIRST ENTRY TO ROUTINE ?
+         BZ    OUTIOEX             YES. RETURN TO CALLER NO IO DONE
+         TM    DBPCBFLG,DBPCBCH    UPDATE BEING DONE IN PLACE ?
+         BZ    OUTNOTIP            NO. TRY OUTPUT ONLY DCB
+         LA    REG1,JCBINDCB       ADDRESS OF UPDAT DCB
+         PUTX  (1)                 RETURN LAST RECORD TO FILE
+         B     OUTIOEX             RETURN TO CALLER
+OUTNOTIP LA    REG1,JCBEXDCB       ADDRESS OF OUTPUT DCB
+         USING IHADCB,REG1         ADDRESSABILITY FOR IT
+         TM    DCBOFLGS,DCBOFOPN   OUTPUT FILE OPEN OK ?
+         BZ    OUTIOEX             NO. NO OUTPUT I/O CAN BE DONE
+         PUT   (1)                 OBTAIN ADDRESS OF A BUFFER
+         LR    REG0,REG1           LOAD MVCL REGISTER
+         L     REG14,JCBINBUF      ADDRESS OF LAST INPUT RECORD
+         LH    REG15,0(REG14)      LENGTH OF RECORD
+         LR    REG1,REG15          SECOND LENGTH REGISTER
+         MVCL  REG0,REG14          MOVE DATA TO OUT BUFFER
+OUTIOEX  XC    JCBINBUF,JCBINBUF   CLEAR ADDRESS OF INPUT BUFFER
+         LM    REG14,REG1,GAFSAVE  RESTORE PARAMETER REGISTERS
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        RETURN THE SEGMENT TO THE USER'S I/O BUFFER                  *
+***********************************************************************
+         SPACE 2
+COPYOUT  DS    0H
+         STM   REG14,REG1,GAFSAVE  SAVE PARAMETER REGISTERS
+         L     REG14,JCBINBUF      LOAD ADDRESS OF SOURCE DATA
+         LH    REG15,0(REG14)      LOAD LENGTH OF DATA
+         LR    REG0,REG3           LOAD SECOND MVCL REGISTER
+         LR    REG1,REG15          DITTO FOR SECOND LENGTH REGISTER
+         MVCL  REG0,REG14          MOVE SEGMENT TO USER AREA
+         LM    REG14,REG1,GAFSAVE  RELOAD PARAMETER REGISTERS
+         BR    REG11               RETURN TO CALLER
+         EJECT
+         SPACE 2
+***********************************************************************
+*        ERROR ROUTINES                                               *
+***********************************************************************
+         SPACE 2
+BADCODE  DS    0H
+         LA    REG15,BADCODER      SET BAD OP CODE INDICATION
+         B     EXITPGM             RETURN TO CALLER
+BADDBD   DS    0H
+         LA    REG15,BADDBDR       LOAD BAD DBD RETURN CODE
+         B     EXITPGM             RETURN TO CALLER
+BADINSRT DS    0H                  HE TRIED TO INSERT INVALID DATA
+BADREP   DS    0H                  OR HE TRIED TO INVALIDLY REPLACE IT
+         LA    REG15,BADISRTR      SET APPROPRIATE CODE
+         B     EXITPGM             RETURN TO CALLER
+INPLERR  DS    0H                  ATTEMPT TO ADD NEW SEGMENT IN PLACE
+         LA    REG15,INPLERRR      SET IN PLACE ERROR RET CODE
+         B     EXITPGM             RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        CONSTANTS AND LITERALS                                       *
+***********************************************************************
+         SPACE 2
+CODTABLE DS    0F                  TABLE OF VALID OP CODES
+         DC    CL4'OPEN',A(OPENIT)
+         DC    CL4'CLOS',A(CLOSIT)
+         DC    CL4'GN  ',A(GETNEXT)
+*        DC    CL4'GU  ',A(GETUNIQ)
+         DC    CL4'GNP ',A(GETWPAR)
+*        DC    CL4'DELT',A(DELETIT)
+         DC    CL4'ISRT',A(INSRTIT)
+         DC    CL4'REPL',A(REPLCIT)
+ENDTABLE EQU   *                   END OF VALID CODES TABLE
+LENTABLE EQU   8                   LENGTH OF EACH ENTRY IN TABLE
+LENCODES EQU   4                   LENGTH OF FUNCTION CODE PART
+BLANKS   DC    CL8' '              USED TO TEST FOR BLANK SEG NAME
+         END
+//LKED.SYSLMOD DD DSN=SYS2.TESTLIB,DISP=SHR
+ NAME GAFMOII(R)
+// EXEC RELEASE,JOB=JEAIMSZZ

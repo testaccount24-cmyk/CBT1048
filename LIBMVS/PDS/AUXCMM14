@@ -1,0 +1,597 @@
+//AUXCMM14 JOB (1586,5),'** FOR J. NOLS **',CLASS=N
+//STEP01       EXEC GENASMOD
+         TITLE 'AUXCMM14: COPY REAL CORE TO TAPE FOR CARPET LIFT'
+***********************************************************************
+*                    A U X C M M 1 4                                  *
+*                                                                     *
+*            THIS ROUTINE PROCESSES THE OPERATOR COMMAND 'TAPEOUT'    *
+*        BY COPYING THE CONTENTS OF REAL CORE TO A TAPE IN SUCH A     *
+*        WAY THAT A SUBSEQUENT RE-IPL FROM THAT TAPE WILL CAUSE THE   *
+*        CONTENTS TO BE RELOADED AND EXECUTION TO CONTINUE FROM THE   *
+*        SAME POINT.                                                  *
+*            THE ROUTINE FIRST OF ALL SETS THE WHOLE SYSTEM NON       *
+*        DISPATCHABLE, DISABLES THE PSW, OBTAINS THE LOCAL LOCK AND   *
+*        THE DISPATCHER GLOBAL LOCK, AND TURNS OFF DYNAMIC ADDRESS    *
+*        TRANSLATION. IT THEN SAVES THE CONTENTS OF LOW CORE, THE     *
+*        CONTROL REGISTERS AND THE CPU TIMERS IN ITS WORK AREA AND    *
+*        WRITES IPL TEXT TO THE TAPE FOLLOWED BY AN IMAGE OF REAL     *
+*        CORE IN 2K BLOCKS.                                           *
+*            WHEN THE OPERATOR IPL'S FROM THE TAPE, THE IPL PROGRAM   *
+*        RELOADS THE CORE IMAGE, RESETS ALL THE STORAGE PROTECT KEYS  *
+*        AND BRANCHES BACK THE THIS ROUTINE. NO INTERVENING IPL       *
+*        OTHER THAN FROM THE TAPE IS PERMISSIBLE.
+*            WHEN IT REGAINS CONTROL, THIS ROUTINE RESTORES THE       *
+*        CONTROL REGISTERS, TIMERS, AND LOW CORE TO THEIR ORIGINAL    *
+*        STATE AND RELEASES THE LOCKS, RESETS SYSTEM DISPATCHABILITY  *
+*        TURNS DYNAMIC ADDRESS TRANSLATION BACK ON, AND RETURNS       *
+*        CONTROL TO THE MASTER SCHEDULER TO CONTINUE PROCESSING       *
+*                                                                     *
+*        ATTRIBUTES. REENTRANT, REUSABLE, SUPERVISOR MODE.            *
+*                                                                     *
+*        REGISTER USAGE.                                              *
+*        REG0  PARAMETER REGISTER AND WORK REGISTER                   *
+*        REG1  PARAMETER REGISTER AND WORK REGISTER                   *
+*        REG2  WORK REGISTER                                          *
+*        REG3  ADDRESS OF INTERNAL WORK AREA                          *
+*        REG10 WORK REGISTER                                          *
+*        REG11 LINK REGISTER BETWEEN ROUTINES                         *
+*        REG12 BASE REGISTER FOR THIS MODULE                          *
+*        REG13 ADDRESS OF THE REGISTER SAVE AREA FOR THIS ROUTINE     *
+*        REG14 RETURN ADDRESS TO ESTAE AND WORK REGISTER              *
+*        REG15 ENTRY POINT ADDRESS AND WORK REGISTER                  *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        DSECTS USED IN THIS MODULE                                   *
+***********************************************************************
+         SPACE 2
+XSA      DSECT ,                   FORMAT OF EXTENDED SAVE AREA
+XSAP     DS    F                   PTR TO XCTL NAME
+XSAD     DS    F                   DCB POINTER
+XSAX     DS    D                   XCTL NAME
+XSAE     DS    0C                  ERROR CODE FOR IEE0503D
+XSAR     DS    F                   ADDRESS OF PARM LIST
+XSAN     DS    0C                  VERB INDEX
+XSAL     DS    F                   PTR TO LIST POSITION
+XSAVERB  DS    D                   VERB ENTERED BY OPERATOR
+XSAS     DS    D                   TEMPORARY SAVE AREA
+XSAU     DS    C                   UCM ENTRYINDICATOR
+         DS    C                   RESERVED
+XSAJ     DS    H                   TJID ENTRY INDICATOR
+         SPACE 2
+         PRINT NOGEN
+         IHAPSA
+         CVT
+         PRINT GEN
+         EJECT
+***********************************************************************
+*        EQUATES USED IN THIS MODULE                                  *
+***********************************************************************
+         SPACE 2
+CSW      EQU   X'40'               OFFSET TO CHANNEL STATUS WORD
+UNEX     EQU   X'01'               UNIT EXCEPTION ON IO DEVICE
+UNCHK    EQU   X'02'               UNIT CHECK
+CAW      EQU   X'48'               OFFSET TO CHANNEL ADDRESS WORD
+PCNEWPSW EQU   X'68'               OFFSET TO PROGRAM NEW PSW
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING                                   *
+***********************************************************************
+         SPACE 2
+AUXCMM14 ZCSECT 12,GETMAIN=1
+PGMSTART EQU   *
+         USING PSA,0               SHOW PSA AT LOCATION 0
+         USING XSA,REG2            ADDRESSABILITY FOR EXTENDED S/A
+         USING CVTMAP,REG4         ADDRESSABILITY FOR CVT
+         EJECT
+***********************************************************************
+*        EXAMINE THE OPERAND FIELD FOR VALID DATA                     *
+***********************************************************************
+         SPACE 2
+         PRINT NOGEN
+         L     REG2,XSAL           LOAD ADDRESS OF PARAMETER LIST
+         LA    REG2,0(REG2)        STRIP OFF TOP BYTE
+         LTR   REG2,REG2           ANY PARAMETERS CODED ?
+         BZ    NOTAPE              NO. RETURN IN DISGUST
+         SCAN  DATA=(REG2),END=(' '),DELIM=(','),RETAREA=CHAIN
+         PRINT GEN
+         L     REG2,CHAIN          LOAD ADDRESS OF FIRST DESCR BLK
+         LTR   REG2,REG2           ANYTHING CODED ?
+         BZ    NOTAPE              NO. ERROR ASK FOR TAPE DRIVE
+         XR    REG14,REG14         CLEAR LENGTH REGISTER
+         IC    REG14,4(REG2)       LOAD LENGTH OF DATA
+         L     REG15,4(REG2)       LOAD ADDRESS OF IT
+         CLI   0(REG15),C'?'       REQUEST FOR INFORMATION ?
+         BE    AUXCMMZZ            YES. GO TELL HIM ABOUT ME
+         BCT   REG14,PRMEX         SUBTRACT FROM LENGTH AND EXECUTE
+TRINST   TR    0(0,REG15),HEXTABLE CONVERT DATA TO USABLE FORM
+PACKINST PACK  WORK1,0(0,REG15)    PACK ADDRESS OF DEVICE
+PRMEX    EX    REG14,TRINST        EXECUTE THE TRANSLATE
+         EX    REG14,PACKINST      EXECUTE THE PACK
+         L     REG15,WORK1         LOAD PACKED DEVICE ADDRESS
+         SRL   REG15,4             STRIP OFF THE SIGN BYTE
+         ST    REG15,IODEVICE      STORE DEVICE ADDRESS
+         EJECT
+***********************************************************************
+*        SET THE SYSTEM NON-DISPATCHABLE                              *
+***********************************************************************
+         SPACE 2
+         STATUS SET,ND,SYSTEM      MAKE SYSTEM   NON-DISPATCHABLE
+         EJECT
+***********************************************************************
+*        EXAMINE ANY OUTSTANDING I/O OPERATIONS                       *
+***********************************************************************
+         SPACE 2
+         STIMER WAIT,BINTVL=IOWAIT WAIT FOR A REASONABLE TIME
+         B     GETLOCKS            BRANCH TO NEXT ROUTINE
+         SPACE 2
+IOWAIT   DC    F'2000'             TWENTY SECONDS WAIT
+         EJECT
+***********************************************************************
+*        OBTAIN THE NECCESSARY LOCKS TO RETAIN CONTROL                *
+***********************************************************************
+         SPACE 2
+GETLOCKS SETLOCK OBTAIN,TYPE=LOCAL,REGS=USE,RELATED=('NONE'),          X
+               MODE=UNCOND
+         SETLOCK OBTAIN,TYPE=DISP,REGS=USE,MODE=UNCOND,                X
+               RELATED=('NONE')
+         EJECT
+***********************************************************************
+*        ENSURE THAT FRAME 0 IS CORRECTLY REFERENCED                  *
+***********************************************************************
+         SPACE 2
+         STNSM SYSMASK,0           TURN OFF DYNAMIC ADDRESS TRANSLATION
+         L     REG1,PSASTOR        LOAD MASTER SCHEDULERS CR 1
+         N     REG1,STORMASK       REMOVE UNWANTED BITS
+         L     REG1,0(REG1)        LOAD ADDRESS OF FIRST PAGE TABLE
+         LA    REG15,1             LOAD SUITABLE PAGE TABLE ENTRY
+         STH   REG15,0(REG1)       SET/RESET ADDRESS OF PAGE 0
+         EJECT
+***********************************************************************
+*        SAVE CONTENTS OF LOW CORE, REGISTERS AND CLOCKS              *
+***********************************************************************
+         SPACE 2
+SAVEDATA DS    0H
+         XR    REG0,REG0           START ADDRESS OF MOVE
+         LA    REG1,2048           LENGTH OF DATA TO MOVE
+         LA    REG14,CORESAVE      ADDRESS OF SAVE AREA
+         LR    REG15,REG1          SECOND LENGTH REGISTER
+         MVCL  REG14,REG0          SAVE LOW CORE IN WORK AREA
+         STCTL 0,15,CTRLREGS       SAVE CONTROL REGISTERS
+         STCKC CLKCOMPR            SAVE CLOCK COMPARATOR
+         STPT  CPUTIMER            SAVE CPU TIMER
+         STM   REG0,REG15,SAVEREGS SAVE NORMAL REGISTERS
+         EJECT
+***********************************************************************
+*        WRITE THE IPL TEXT TO THE OUTPUT TAPE                        *
+***********************************************************************
+         SPACE 2
+         L     REG8,ADADCON        ADDRESS OF RELOADER ADCON
+         LA    REG9,RESTORE        ADDRESS OF RETURN POINT
+         ST    REG9,0(REG8)        SET UP RELOADER ADCON
+         L     REG0,IODEVICE       LOAD ADDRESS OF THE TAPE
+         LA    REG1,IPLWRITE       LOAD ADDRESS OF CCW FOR IPL TEXT
+         L     REG15,IORTNAD       LOAD ADDRESS OF IO ROUTINE
+         BALR  REG14,REG15         CALL THE IO ROUTINE
+         EJECT
+***********************************************************************
+*        SET UP HIGH ADDRESS OF REAL CORE POINTER                     *
+***********************************************************************
+         SPACE 2
+         L     REG4,16             LOAD ADDRESS OF CVT
+         L     REG4,CVTEORM        LOAD ADDRESS OF TOP OF REAL CORE
+         EJECT
+***********************************************************************
+*        WRITE THE CONTENTS OF REAL CORE TO THE TAPE                  *
+***********************************************************************
+         SPACE 2
+COREOUT  DS    0H
+         LA    REG3,2048           LOAD BLOCK ADDRESS REGISTER
+         XR    REG6,REG6           CLEAR PROTECT KEY REGISTER
+LOOP     ISK   REG6,REG3           GET PROTECT KEY OF BLOCK
+         STC   REG6,KEY            SAVE IT READY FOR WRITE
+         STCM  REG3,7,OUTCCW2+1    SET UP WRITE CCW
+         LA    REG1,CORECCW1       ADDRESS OF WRITE CCW'S
+         L     REG0,IODEVICE       LOAD ADDRESS OF THE TAPE
+         L     REG15,IORTNAD       LOAD ADDRESS OF IO ROUTINE
+         BALR  REG14,REG15         CALL THE IO ROUTINE
+         LA    REG3,2048(REG3)     ADDRESS OF NEXT BLOCK
+         CR    REG3,REG4           TEST FOR END OF CORE YET ?
+         BL    LOOP                CARRY ON WITH NEXT BLOCK
+PUTTAPMK LA    REG1,WRTM           WRITE TAPE MARK CCW
+         L     REG0,IODEVICE       LOAD ADDRESS OF TAPE
+         L     REG15,IORTNAD       LOAD ADDRESS OF IO ROUTINE
+         BALR  REG14,REG15         CALL THE IO ROUTINE
+         EJECT
+***********************************************************************
+*        SET UP THE RESTART PSW AND PUT MACHINE IN A WAIT             *
+***********************************************************************
+         SPACE 2
+         MVC   0(8,0),RESTART      SET UP RESTART PSW
+         LPSW  WAITPSW             LOAD UP A WAIT PSW
+         SPACE 2
+         DS    0D
+RESTART  DC    X'0000000000'
+         DC    AL3(RESTORE)
+WAITPSW  DC    X'0002000000'
+         DC    AL3(100)
+         EJECT
+***********************************************************************
+*        RE-ESTABLISH THE ENVIRONMENT AFTER A RESTART                 *
+***********************************************************************
+         SPACE 2
+RESTORE  DS    0H
+         BALR  REG15,0             SET UP TEMPORARY BASE REGISTER
+         PUSH  USING               SAVE NORMAL ADDRESSABILITY
+         USING *,REG15             INITIAL ENTRY ADDRESSABILITY
+         LM    REG0,REG15,SAVEREGS RESTORE ALL REGISTERS
+         POP   USING               REVERT TO NORMAL ADDRESSABILITY
+         EJECT
+***********************************************************************
+*        RESTORE LOW CORE, CONTROL REGISTERS AND CLOCKS               *
+***********************************************************************
+         SPACE 2
+RESET    DS    0H
+         LCTL  0,15,CTRLREGS       RESTORE CONTROL REGISTERS
+         SCKC  CLKCOMPR            RESTORE CLOCK COMPARATOR
+         SPT   CPUTIMER            RESET CPU TIMER
+         XR    REG0,REG0           STAR ADDRESS OF LOW CORE
+         LA    REG1,2048           LENGTH OF CORE SAVED
+         LA    REG14,CORESAVE      ADDRESS OF SAVED BLOCK
+         LR    REG15,REG1          SECOND LENGTH REGISTER
+         MVCL  REG0,REG14          RESTORE LOW CORE
+         EJECT
+***********************************************************************
+*        RESTORE PSW TO EC MODE DYNAMIC TRANSLATION ON.               *
+***********************************************************************
+         SPACE 2
+RESTPSW  DS    0H
+         LPSW  NEWECPSW            LOAD NEW EC MODE PSW
+NEWPSWGO B     RESETLK             BRANCH TO NEXT ROUTINE
+         SPACE 2
+NEWECPSW DS    0D                  NEW PSW
+         DC    X'04'               DYNAMIC ADDRESS TRANSLATION ON
+         DC    X'08'               EC MODE
+         DC    X'0000'             INTERRUPT CODE
+         DC    X'00'               UNUSED
+         DC    AL3(NEWPSWGO)       ADDRESS TO CARRY ON
+         EJECT
+***********************************************************************
+*        RELEASE THE LOCKS HOLDING CONTROL                            *
+***********************************************************************
+         SPACE 2
+RESETLK  SETLOCK RELEASE,TYPE=DISP,REGS=USE,RELATED=('NONE')
+         SETLOCK RELEASE,TYPE=LOCAL,REGS=USE,RELATED=('NONE')
+         EJECT
+***********************************************************************
+*        SET THE SYSTEM DISPATCHABLE AGAIN                            *
+***********************************************************************
+         SPACE 2
+         STATUS RESET,ND,SYSTEM    RESET SYSTEM NON DISPATCHABILITY
+         EJECT
+***********************************************************************
+*        ISSUE A MESSAGE TO SAY THAT RELOAD IS COMPLETE               *
+***********************************************************************
+         SPACE 2
+TERMMSG  DS    0H
+         LOADMSG DATA=FINAL,LENGTH=L'FINAL,TYPE=D
+         LR    REG9,REG1           SAVE ADDRESS OF OUTPUT ELEMENT
+         L     REG2,4(REG13)       ADDRESS OF HIGHER SAVE AREA
+         L     REG2,28(REG2)       ADDRESS OF EXTENDED SAVE AREA
+         OUTPUT (9),UCMID=XSAU     OUTPUT THE TERMINATION MESSAGE
+         B     EXITPGM             RETURN TO CALLER
+         SPACE 2
+FINAL    DC    C'*** TAPEOUT *** REAL CORE RELOAD COMPLETE **********'
+         EJECT
+***********************************************************************
+*        RETURN CONTROL THE THE CALLER                                *
+***********************************************************************
+         SPACE 2
+EXITPGM  ZRETURN RC=0
+         EJECT
+***********************************************************************
+*        RETURN WITH ERROR CONDITION INDICATED                        *
+***********************************************************************
+         SPACE 2
+NOTAPE   DS    0H
+         ZRETURN RC=4
+         EJECT
+***********************************************************************
+*        COMMAND QUERY RESPONSE ROUTINE                               *
+***********************************************************************
+         SPACE 2
+AUXCMMZZ DS    0H
+         L     REG2,4(REG13)       LOAD ADDRESS OF CALLER'S SAVE AREA
+         L     REG2,28(REG2)       RELOAD ADDRESS OF XSA
+         LA    REG9,CHAINHDR       LOAD ADDRESS HEAD OF OUTPUT QUEUE
+         LA    REG6,L'LINE1        LOAD LENGTH OF OUTPUT LINES
+         LA    REG8,LINE1          LOAD ADDRESS FIRST LINE
+         LA    REG7,LINEX          LOAD ADDRESS OF LAST LINE
+ZZLOOP   LOADMSG DATA=(REG8),LENGTH=L'LINE1,TYPE=D
+         ST    REG1,0(REG9)        CHAIN THIS ELEMENT TO OTHERS
+         LR    REG9,REG1           SAVE ADDRESS OF END OF CHAIN
+         BXLE  REG8,REG6,ZZLOOP    LOOP FOR ALL OUTPUT LINES
+         LH    REG15,8(REG9)       RELOAD LENGTH OF WTO PARMS
+         LA    REG15,8(REG15,REG9) LOAD ADDRESS OF DESCR CODES
+         OI    0(REG15),X'10'      TURN ON END OF MLWTO
+         OUTPUT CHAINHDR,UCMID=XSAU
+         B     EXITPGM             RETURN TO CALLER
+         SPACE 2
+LINE1    DC    CL70'TAPEOUT: THE PURPOSE OF THIS COMMAND IS TO COPY THEX
+                '
+         DC    CL70'CONTENTS OF REAL CORE TO A TAPE SO THAT IT CAN LATEX
+               R BE '
+         DC    CL70'RESTORED BY IPL-ING FROM THE TAPE.                 X
+                '
+         DC    CL70'TO USE THE COMMAND, ENTER ''TAPEOUT CUU'' WHERE CUUX
+                IS THE '
+         DC    CL70'ADDRESS OF A FREE TAPE DRIVE. WHEN THE COPY IS COMPX
+               LETE,'
+LINEX    DC    CL70'A DISABLED WAIT PSW WITH AN ADDRESS OF ''64'' WILL X
+               BE LOADED.'
+         EJECT
+***********************************************************************
+*        WORK AREA, SAVE AREAS, AND CONSTANTS                         *
+***********************************************************************
+         SPACE 2
+IORTNAD  DC    A(STARTIO)          ADDRESS OF COMMON IO ROUTINE
+ADADCON  DC    A(ADCON)            ADDRESS OF RELOADER ADCON
+IODEVICE DC    F'0'                ADDRESS OF OUTPUT TAPE
+CHAINHDR DC    F'0'                START OF OUTPUT CONSOLE CHAIN
+WORK1    DS    F                   WORK AREA
+CHAIN    DC    12F'0'              SCAN MACRO WORK AREA
+STORMASK DS    0F                  USED TO STRIP UNWANTED BITS FROM CR1
+         DC    X'00FFFFF0'
+KEY      DC    X'00'               PROTECT KEY OF CURRENT 2K BLOCK
+SYSMASK  DC    X'00'               SYSTEM MASK AREA
+HEXTABLE DC    256X'00'            TRANSLATE TABLE FOR INPUT DATA
+         ORG   HEXTABLE+C'A'
+         DC    X'FAFBFCFDFEFF'
+         ORG   HEXTABLE+C'0'
+         DC    C'0123456789'
+         ORG
+         SPACE 2
+IPLWRITE DS    0D                  CCW TO WRITE IPL BOOTSTRAP
+         DC    X'01'               WRITE FORWARD
+         DC    AL3(BOOTSTRP)       FROM THE BOOTSTRAP AREA
+         DC    X'6000'             SILI BIT ON. COMMAND CHAINING
+         DC    AL2(24)             ONE PSW AND TWO CCW'S
+         SPACE 2
+LOADWRIT DS    0D                  CCW TO WRITE RELOAD PROGRAM
+         DC    X'01'               WRITE FORWARD
+         DC    AL3(RELODXX)        FREM RELOADER PROGRAM AREA
+         DC    X'2000'             SILI BIT ON. NO CHAINING
+         DC    AL2(LOADREND-RELODXX) FOR THE LENGTH OF THE CODE
+         SPACE 2
+WRTM     DS    0D                  WRITE A TAPE MARK AT END OF TAPE
+         DC    X'1F'               WRITE A TAPE MARK
+         DC    AL3(1)              FROM NOWHERE
+         DC    X'4000'             COMMAND CHAINING ON
+         DC    AL2(1)              FOR AN ARBITRARY LENGTH
+         SPACE 2
+WRTM2    DS    0D                  WRITE SECOND TM AFTER FIRST
+         DC    X'1F'               WRITE TAPE MARK
+         DC    AL3(1)              FROM NOWHERE
+         DC    X'4000'             COMMAND CHAINING ON
+         DC    AL2(1)              FOR AN ARBITRARY LENGTH
+         SPACE 2
+WRTM3    DS    0D                  REWIND TAPE TO START
+         DC    X'07'               REWIND THE TAPE
+         DC    AL3(1)              NO DATA NEEDED
+         DC    X'0000'             NO FLAGS SET
+         DC    AL2(1)              ARBITRARY LENGTH
+         SPACE 2
+CORECCW1 DS    0D                  WRITE PROTECT KEY OF THIS BLOCK
+         DC    X'01'               WRITE FORWARD
+         DC    AL3(KEY)            FROM THE PROTECT KEY AREA
+         DC    X'8000'             DATA CHAINING ON
+         DC    AL2(1)              FOR 1 BYTE
+         SPACE 2
+OUTCCW2  DS    0D                  SECOND WRITE CCW FOR DATA BLOCK
+         DC    X'01'               WRITE FORWARD
+         DC    AL3(0)              ADDRESS TO BE INSERTED
+         DC    X'2000'             SILI BIT ON. NO CHAINING
+         DC    AL2(2048)           FOR ONE 2K BLOCK OF CORE
+         SPACE 2
+BOOTSTRP DS    0H
+         DC    X'0000000000000008' START PSW. BEGIN EXECUTIONAT '8'
+         DC    X'02000000',X'2000',AL2(LOADREND-RELODXX)
+         DC    X'00000000',X'00000000'
+         SPACE 2
+         LTORG
+         SPACE 2
+CLKCOMPR DS    D                   SAVE AREA FOR CLOCK COMPARATOR
+CPUTIMER DS    D                   SAVE AREA FOR CPU TIMER
+CTRLREGS DS    16F                 SAVE AREA FOR CONTROL REGISTERS
+SAVEREGS DS    16F                 SAVE AREA FOR MY REGISTERS
+CORESAVE DS    CL2048              SAVE AREA FOR LOW CORE
+         EJECT
+***********************************************************************
+*        RELOADER PROGRAM TO RELOAD CORE                              *
+***********************************************************************
+         SPACE 2
+RELODXX  CSECT
+         DROP  REG12               RELEASE OLD ADDRESSABILITY
+         DC    X'0000000000'       START OF NEW PSW
+         DC    XL3'000100'         START POINT FOR RELOADER
+         DC    XL248'00'           LEAVE HARDWARE ASSIGNMENTS
+RELOADER DS    0H
+         BALR  REG12,0             SET NEW BASE REGISTER
+         USING *,REG12             ADDRESSABILITY
+         L     REG0,0(0)           LOAD ADDRESS OF INPUT IPL DEVICE
+         LA    REG1,INCCW1         ADDRESS OF INPUT CCW STRING
+         LA    REG2,ENRELOAD       LOAD ADDRESS OD EOF ROUTINE
+         LA    REG3,2048           START ADDRESS OF RELOAD.
+         LA    REG15,STARTIO       LOAD ADDRESS OF IO ROUTINE
+LOOP2    STCM  REG3,7,INCCW2+1     SET UP INPUT CCW
+         BALR  REG14,REG15         LINK TO IO ROUTINE
+         IC    REG6,KEY2           LOAD PROTECT KEY
+         SSK   REG6,REG3           GIVE IT THE CORRECT PROTECT KEY
+         LA    REG3,2048(REG3)     ADDRESS NEXT BLOCK
+         B     LOOP2               GO FETCH NEXT BLOCK FROM TAPE
+ENRELOAD LA    REG1,REWINDIT       ADDRESS OF REWIND CHANNEL COMMAND
+         BALR  REG14,REG15         LINK TO THE IO ROUTINE
+         L     REG15,ADCON         LOAD ADDRESS OF RETURN POINT
+         BR    REG15               RETURN TO CALLER
+KEY2     DC    X'00'               PROTECT KEY
+ADCON    DC    A(0)
+         SPACE 2
+INCCW1   DS    0D                  READ CCW FOR PROTECT KEY
+         DC    X'02'               READ FORWARD
+         DC    AL3(KEY2-RELODXX)   INTO PREPARED AREA
+         DC    X'8000'             DATA CHAINING ON
+         DC    AL2(1)              FOR 1 BYTE
+         SPACE 2
+INCCW2   DS    0D                  READ FOR REMAINING DATA
+         DC    X'02'               READ FORWARD
+         DC    AL3(0)              ADDRESS TO BE INSERTED LATER
+         DC    X'0000'             NO FLAGS SET
+         DC    AL2(2048)           FOR ONE 2K BLOCK OF CORE
+         SPACE 2
+REWINDIT DS    0D                  REWIND TAPE AT END OF RELOAD
+         DC    X'07'               REWIND COMMAND CODE
+         DC    AL3(1)              NO VALID DATA ADDRESS
+         DC    X'0000'             NO FLAGS SET
+         DC    AL2(1)              ARBITRARY LENGTH FIELD
+         EJECT
+***********************************************************************
+*        THE FOLLOWING ROUTINE IS THE COMMON I/O ROUTINE.             *
+*                                                                     *
+*        WHEN THE ROUTINE IS ENTERED, THE FOLLOWING REGISTERS MUST    *
+*        BE INITIALISED:-                                             *
+*        REG0  ADDRESS OF THE DEVICE TO WHICH I/O IS DIRECTED.        *
+*        REG1  ADDRESS OF THE CHANNEL PROGRAM TO BE EXECUTED.         *
+*        REG2  ADDRESS OF THE END OF DATA ROUTINE                     *
+*        REG14 NORMAL RETURN POINT TO CALLER OF THE ROUTINE           *
+*        REG15 ADDRESS OF ENTRY POINT OF THIS ROUTINE                 *
+*                                                                     *
+*        THE ROUTINE WILL SET UP THE CHANNEL ADDRESS WORD, ISSUE THE  *
+*        SIO INSTRUCTION, AND TEST FOR ERRORS. IF THE IO IS STARTED   *
+*        SUCCESSFULLY, THE ROUTINE WILL WAIT FOR IT TO COMPLETE AND   *
+*        AGAIN TEST FOR ERRORS.                                       *
+*            SHOULD ANY ERRORS BE DETECTED, A MESSAGE WILL BE ISSUED  *
+*        TO THE CONSOLE AND A WAIT PSW WITH AN ADDRESS OF '4' LOADED. *
+*                                                                     *
+*            ON EXIT FROM THE ROUTINE, ALL REGISTERS USED WILL BE     *
+*        RESTORED TO THEIR FORMER STATE.                              *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        START THE I/O OPERATION AND TEST FOR ANY ERRORS              *
+***********************************************************************
+         SPACE 2
+STARTIO  DS    0H
+         PUSH  USING               SAVE PREVIOUS ADDRESSABILITY
+         USING *,REG15             USING REG15 FOR THIS ROUTINE
+         STM   REG14,REG4,SIOSAVE  SAVE REGISTERS USED BY ROUTINE
+IORESTRT ST    REG1,CAW(0)         SET UP CHANNEL ADDRESS WORD
+         LR    REG2,REG0           LOAD ADDRESS OF THE DEVICE
+         SIO   0(REG2)             START THE I/O OPERATION
+         BC    2,*-4               BUSY ?. TRY AGAIN
+         BC    8,STRTOK            STARTED OK. GO WAIT FOR COMPLETION
+         BC    1,NOTOP             DEVICE IS NOT READY - TELL OP.
+         CLI   CSW+5(0),X'00'      ANY CHANNEL ERRORS HERE ?
+         BNE   CHERROR             YES. GO LOAD WAIT PSW
+         TM    CSW+4(0),UNCHK      UNIT CHECK ?
+         BO    NOTOP               YES. TELL OPERATOR TO READY IT
+         B     SIOEXIT             OTHER CONDITION - EXIT
+         EJECT
+***********************************************************************
+*        THE I/O IS STARTED. AWAIT COMPLETION AND TEST THE RESULT     *
+***********************************************************************
+         SPACE 2
+STRTOK   TIO   0(REG2)             TEST FOR COMPLETION
+         BC    2,STRTOK            LOOP IF BUSY
+         BC    8,SIOEXIT           DEVICE AVAILABLE ?  IGNORE IT
+         TM    CSW+4(0),UNEX       TAPE MARK READ ?
+         BO    EOFEXIT             YES. PASS CONTROL TO EOD EXIT
+         CLI   CSW+5(0),X'00'      ANY CHANNEL ERRORS
+         BNE   CHERROR             YES. TERMINATE
+         TM    CSW+4(0),UNCHK      UNIT ERROR ?
+         BO    CHERROR             YES. SHOULD NOT HAPPEN HERE
+         EJECT
+***********************************************************************
+*        IO IS COMPLETE. RETURN CONTROL TO CALLER                     *
+***********************************************************************
+         SPACE 2
+SIOEXIT  DS    0H
+         LM    REG14,REG4,SIOSAVE  RELOAD CALLER'S REGISTERS
+         BR    REG14               RETURN TO CALLER
+         SPACE 2
+EOFEXIT  DS    0H                  PASS CONTROL TO EOF EXIT
+         LM    REG14,REG4,SIOSAVE  RELOAD CALLER'S REGISTERS
+         BR    REG2                RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        THE ADDRESSED DEVICE IS NOT OPERATIONAL. TELL OPERATOR       *
+***********************************************************************
+         SPACE 2
+NOTOP    DS    0H
+         L     REG3,CONSOLE        LOAD DEVICE ADDRESS OF CONSOLE
+         TIO   0(REG3)             IS CONSOLE WORKING ?
+         BC    1,CHERROR           NO. TREAT IT AS PERMANENT ERROR
+         LA    REG4,INTRQMSG       LOAD ADDRESS OF MESSAGE TO GO OUT
+         STCM  REG4,7,CONSCCW+1    SET UP CHANNEL PROGRAM
+         LA    REG4,CONSCCW        LOAD ADDRESS OF CHANNEL PROGRAMD
+         ST    REG4,CAW(0)         SET UP CHANNEL ADDRESS WORD
+         SIO   0(REG3)             WRITE MESSAGE TO CONSOLE
+         TIO   0(REG3)             WAIT FOR IT TO GET THERE
+         BC    2,*-4               LOOP TILL IT DOES
+         TIO   0(REG2)             FIXED IT YET ?
+         BC    7,*-4               NO KEEP LOOPING
+         B     IORESTRT            START THE IO AGAIN
+         EJECT
+***********************************************************************
+*        AN UNRECOVERABLE ERROR HAS OCCURED. REPORT IT                *
+***********************************************************************
+         SPACE 2
+CHERROR  DS    0H
+         MVC   CHANCODE+2(2),CSW+4 SET ERROR CODE IN WAIT PSW
+         L     REG3,CONSOLE        LOAD ADDRESS OF CONSOLE
+         TIO   0(REG3)             CONSOLE WORKING ?
+         BC    1,LOADWAIT          NO. SKIP MESSAGE
+         LA    REG4,CHERRTXT       ADDRESS OF MESSAGE TO GO OUT
+         STCM  REG4,7,CONSCCW+1    SET UP CHANNEL COMMAND WORD
+         LA    REG4,CONSCCW        LOAD ADDRESS OF CHANNEL PROGRAM
+         ST    REG4,CAW(0)         SET UP CHANNEL ADDRESS WORD
+         SIO   0(REG3)             WRITE OUT THE MESSAGE
+         TIO   0(REG3)             TEST FOR COMPLETION
+         BC    2,*-4               LOOP TILL IT'S DONE
+         MVC   0(8,0),IOSYSRST     SET UP A RESTART PSW FOR HIM
+LOADWAIT LPSW  CHANCODE            LOAD ERROR CODE PSW
+         SPACE 2
+IOSYSRST DS    0D
+         DC    X'0000000000'
+         DC    AL3(RESTORE)        ADDRESS OF RESTART PROCESSING
+         SPACE 2
+CHANCODE DS    0D                  ERROR WAIT PSW
+         DC    X'0002000000'
+         DC    AL3(4)
+         EJECT
+***********************************************************************
+*        CONSTANTS AND LITERALS USED BY STARTIO ROUTINE               *
+***********************************************************************
+         SPACE 2
+         DS    0F
+SIOSAVE  DS    7F                  SAVE AREA FOR CALLER'S REGISTERS
+CONSOLE  DC    X'0000001F'         ADDRESS OF CONSOLE
+CHERRTXT DC    CL80'*** UN-RECOVERABLE I/O ERROR: WAIT PSW HAS CSW STATX
+               US CODES IN BYTES 2-3 ***'
+INTRQMSG DC    CL80'*** INTERVENTION REQUIRED ON ''TAPEOUT'' DEVICE ***X
+               '
+         SPACE 2
+CONSCCW  DS    0D                  WRITE MESSAGE TO CONSOLE
+         DC    X'01'               WRITE TO CONSOLE
+         DC    AL3(0)              FROM AN ADDRESS TO BE INSERTED
+         DC    X'0000'             NO FLAGS SET
+         DC    AL2(80)             FOR THE LENGTH OF THE MESSAGE
+         POP   USING               RE-ESTABLISH OLD ADDRESSABILITY
+LOADREND EQU   *
+         END
+//LKED.SYSIN   DD   *
+ NAME AUXCMM14(R)
+/*

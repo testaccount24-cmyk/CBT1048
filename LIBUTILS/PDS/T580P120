@@ -1,0 +1,149 @@
+T580P120 CSECT
+         ENTRY E15
+E15      PGMIN ,                   INITIALISATION
+         LR    R10,R1              PRESERVE PARAMETER ADDRESS
+         EJECT
+***********************************************************************
+*        FIRST-TIME ROUTINE                                           *
+***********************************************************************
+         SPACE 1
+         BC    0,ENTER             BYPASS AFTER FIRST TIME
+         OI    *-3,X'F0'           SET FIRST TIME SWITCH
+         OPEN  (T580RATE,(INPUT))  OPEN CONTROL CARD
+         GET   T580RATE            RETRIEVE CONTROL CARD
+         MVC   SDATE,0(R1)         SAVE START DATE OF PERIOD
+         MVC   EDATE,6(R1)         SAVE END DATE OF PERIOD
+         CLOSE T580RATE            CLOSE CONTROL CARD
+         OPEN  (TABLE05,(INPUT))   OPEN TABLE OF FULL-PROCE LOCNS
+READTAB5 GET   TABLE05             GET RECORD FROM TABLE
+         CLC   TAB5ID,0(R1)        TEST IF THIS IS A DATA ELEMENT
+         BNE   READTAB5            GO GET NEXT RECORD IF NOT
+         CLC   PRT,9(R1)           IS THIS THE PRINT LOCN LIST
+         BNE   *+14                BR IF NOT PRT LOCN LIST
+         MVC   PRTLIST,15(R1)      MOVE LIST TO STORAGE AREA
+         B     READTAB5            GO GET NEXT RECORD
+         CLC   PUN,9(R1)           IS THIS THE PUNCH LOCN LIST
+         BNE   READTAB5            GO GET NEXT RECORD IF NOT PUN LIST
+         MVC   PUNLIST,15(R1)      MOVE LIST TO STORAGE AREA
+         B     READTAB5            GO GET NEXT TABLE RECORD
+EOFTAB05 CLOSE TABLE05             CLOSE TABLE
+         EJECT
+***********************************************************************
+*        RECORD PROCESSING                                            *
+***********************************************************************
+         SPACE 1
+ENTER    EQU   *                   ENTRY AFTER FIRST TIME
+         L     R1,0(,R10)          GET ADDRESS OF RECORD FROM SORT
+         LA    R1,0(,R1)           PURIFY HIGH-ORDER BYTE
+         LTR   R1,R1               TEST FOR END OF DATA
+         BNZ   PROCESS             BRANCH IF NOT EOF TO CONTINUE
+         LA    R15,NORETURN        TELL SORT NOT TO RETURN
+RETURN  PGMOUT RC=(R15)            RETURN TO THE SORT
+         SPACE 1
+PROCESS  LA    R15,DELETE          ASSUME RECORD IS NOT REQUIRED
+         L     R10,4(R13)          GET ADDRESS OF PREVIOUS SAVE RREA
+         ST    R1,24(R10)          PRESERVE RECORD ADDRESS FOR THE SORT
+         CLC   13(5,R1),SDATE      TEST IF RECORD BEFOEE PERIOD
+         BL    RETURN              REJECT RECORD IF YES
+         CLC   13(5,R1),EDATE      TEST IF RECORD AFTER PERIOD
+         BH    RETURN              REJECT RECORD IF YES
+         LA    R15,ACCEPT          TELL SORT TO ACCEPT RECCORD
+         LA    R2,PRTLIST          POINT AT LIST OF PRT LOCNS
+         LA    R3,26(,R1)          POINT AT PRT LOCN ID IN RECORD
+         LA    R5,64(,R1)          POINT AT 'NUMBER OF LINES'
+         BAL   R4,SCANLIST         DETERMINE IF LOCN PASY FULL PRICE FO
+         BE    *+8                 BR IF PAY FULL PRICE
+         BAL   R4,HALFPRIC         HALVE NO OF LINES TO RECUCE CHARGE
+         LA    R2,PUNLIST          POINT AT LIST OF PUN LOCNS
+         LA    R3,28(,R1)          POINT AT PUN LOCN IN RECORD
+         LA    R5,61(,R1)          POINT AT 'NUMBER OF CARDS PUNCHED'
+         BAL   R4,SCANLIST         DETERMINE IF LOCN PAYS FULL PRICE
+         BE    *+8                 BR IF PAYS FULL PRICE
+         BAL   R4,HALFPRIC         HALVE NO OD CARDS TO REDUCE COST
+         B     RETURN              RETURN TO THE SORT
+         EJECT
+***********************************************************************
+*        SEARCH TABLE FOR LOCATION IDENTIFIER                         *
+***********************************************************************
+         SPACE 1
+*        ON ENTRY:
+*              R2 - ADDRESS OF LOCATION TABLE
+*              R3 - PRT/PUN LOCATION ID IN RECORD
+*        UPON RETURN:
+*              BE  - ID IS ON FULL-PRICE LIST
+*              BNE - ID IS NOT ON FULL-PRICE LIST
+         SPACE 1
+SCANLIST SUBIN ,                   START OF SUB-ROUTINE
+         CLC   0(2,R2),0(R3)       COMPARE LIST ENTRY WITH FLD IN RECOR
+         BE    SCANLSTX            BR IF MATCH TO RETURN
+         CLC   0(2,R2),PUNLEND     TEST FOR END OF LIST !BLANKS DELIMIT
+         BE    SCANLSTY            BR IF END TO INDICTAE NO MATCH
+         LA    R2,2(,R2)           INCREMENT TO NEXT LIST ENYRY
+         B     SCANLIST            LOOP BACK TO COMPARE
+SCANLSTY CLI   PUNLEND,C'Y'        COMPARE ' ' WITH 'Y' TO FORCE BNE
+SCANLSTX SUBOUT ,                  RETUR TO CALLER
+         SPACE 5
+***********************************************************************
+*        HALVE THE NUMERIC VALUE                                      *
+***********************************************************************
+         SPACE 1
+*        ON ENTRY:
+*              R5 - PACKED DECIMAL FIELD TO BE HALVED
+         SPACE 1
+HALFPRIC SUBIN ,                   START OF SUBROUTINE
+         ZAP   WORKPACK,0(3,R5)    MOVE VALUE TO WORK AREA
+         DP    WORKPACK,TWO        HALVE THE VALUE
+         ZAP   0(3,R5),WORKPACK(7) MOVE HALVED VALUE BACK TO RECORD
+        SUBOUT ,                   RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        ERROR CONDITION PROCESSING                                   *
+***********************************************************************
+         SPACE 1
+IOERROR  WTO   'T580P120 - I/O ERROR ON TABLE05 - RUN ABORTED'
+         CLOSE TABLE05             CLOSE INPUT TABLE
+ABORT    ABEND 32                  USER ABEND 32
+         SPACE 5
+ERROR    WTO   'T580P120 - NO CONTROL RECORD - RUN ABORTED'
+         CLOSE T580RATE            CLOSE ( EMPTY ) FILE
+         B     ABORT               GO ABORT RUN
+         EJECT
+***********************************************************************
+*        MISCELLANEOUS EQUATES AND WORK AREAS                         *
+***********************************************************************
+         SPACE 1
+ACCEPT   EQU   0                   ACCEPT THE RECORD
+DELETE   EQU   4                   DELETE THE RECORD
+NORETURN EQU   8                   DO NOT RETURN
+TERMIN8  EQU   16                  TERMINATE THE SORT
+         SPACE 1
+WORKPACK DS    CL8                 PACKED DECIMAL WORK AREA
+TWO      DC    PL1'2'              DECIMAL VALUE OF '2'
+SDATE    DC    CL5' '              START DATE OF RERIOD
+EDATE    DC    CL5' '              END DATE OF PERIOD
+PRTLIST  DC    CL56' '             LIST OF LOCNS PAYING FULL PRICE
+         DC    CL2' '              GUARRANTEE LIST RERMINATES WITH BLAN
+PUNLIST  DC    CL56' '             LIST OF LOCNS PAYING FULL PRICE
+PUNLEND  DC    CL2' '              GUARRANTEE LIST RERMINATES WITH BLAN
+TAB5ID   DC    C'TABLE05'          ID OF DATA RECORD SIN TABLE05
+PRT      DC    C'PRT'              PRT LIST IDENTIFIER
+PUN      DC    C'PUN'              PUN LIST IDENTIFIER
+         SPACE 1
+         PRINT NOGEN
+T580RATE DCB   DDNAME=T580RATE,                                        *
+               BUFNO=1,                                                *
+               DSORG=PS,                                               *
+               EODAD=ERROR,                                            *
+               MACRF=GL,                                               *
+               RECFM=FB,                                               *
+               SYNAD=ERROR
+         SPACE 1
+         SPACE 5
+TABLE05  DCB   DDNAME=TABLE05,                                         *
+               DSORG=PS,                                               *
+               EODAD=EOFTAB05,                                         *
+               MACRF=GL,                                               *
+               RECFM=FB,                                               *
+               SYNAD=IOERROR
+         LTORG
+         END

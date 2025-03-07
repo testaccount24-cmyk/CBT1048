@@ -1,0 +1,779 @@
+CMSDEBL  CSECT
+         PRINT ON,GEN
+         SPACE 2
+*******************************************************************
+*                                                                 *
+*        PROGRAM ID. :   CMSDEBL                                  *
+*                                                                 *
+*        DATE WRITTEN :  NOVEMBER 1977                            *
+*                                                                 *
+*        AUTHOR :        J.P. RAINSON                             *
+*                                                                 *
+*        LOCATION:       MISD BRUSSELS - TECHNICAL SUPPORT GROUP  *
+*                                                                 *
+*******************************************************************
+         SPACE 3
+*******************************************************************
+*                                                                 *
+*        PURPOSE                                                  *
+*       ---------                                                 *
+*        THIS PROGRAM  REFORMAT THE CMS DUMP TAPE UNDIFINED       *
+*        RECORD TAPE INTO A FIX LENGTH RECORD FORMAT.             *
+*                                                                 *
+*         OUTPUT RECORD :                                         *
+*              1 - 80 CMS RECORD                                  *
+*             81 - 83 CMS MACHINE ID                              *
+*             84 - 91 CMS FILE NAME                               *
+*             92 - 99 CMS FILE TYPE                               *
+*             99 - 100 CMS RECORD ID                              *
+*                                                                 *
+*******************************************************************
+         EJECT
+*******************************************************************
+*        DCB DSECT                                                *
+*******************************************************************
+         SPACE 3
+         PRINT ON,NOGEN
+         DCBD  DSORG=PS
+DCBLNGTH EQU   *-IHADCB            LENGTH OF DCB DSECT
+CMSDEBL  CSECT                     END OF DCB DSECT
+         EJECT
+*******************************************************************
+*        FORMAT OF SYSUT2 OUTPUT FILE                             *
+*******************************************************************
+         SPACE 3
+OUTREC   DSECT                     OUTPUT FILE REFERENCE ENTRY
+OUTDATA  DS    CL80                80 COLS DATA FROM CMS
+OUTMACH  DS    CL3                 CMS MACHINE ID
+OUTFILE  DS    CL8                 CMS FILE NAME
+OUTTYPE  DS    CL8                 CMS FILE TAPE
+OUTRECID DS    CL1                 OUTPUT RECORD ID
+OUTSIZE  EQU   *-OUTREC            OUTPUT RECORD LENGTH
+CMSDEBL  CSECT                     END OF OUTPUT RECORD DSECT
+         EJECT
+*******************************************************************
+*        FORMAT OF END OF JOB DDNAME CONTROL BLOCKS               *
+*******************************************************************
+         SPACE 3
+TBLENTRY DSECT                     OUTPUT FILE REFERENCE ENTRY
+TBLDCBPT DS    F                   POINTER TO OUTPUT DCB
+*                                  HI-ORDER BYTE USED AS TEST BYTE
+TBLDDNAM DS    CL8                 OUTPUT FILE DDNAME
+TBLDDTYP DS    CL8                 OUTPUT FILE TYPE
+TBLRECNT DS    PL4                 OUTPUT FILE RECORD COUNTER
+TBLLINK  DS    F                   POINTER TO NEXT ENTRY
+TBLENTSZ EQU   *-TBLENTRY          TABLE ENTRY LENGTH
+CMSDEBL  CSECT END OF TABLE ENTRY DSECT
+         PRINT ON,GEN
+         EJECT
+*******************************************************************
+*        REGISTER EQUATES AND USAGES.                             *
+*******************************************************************
+         SPACE 1
+R0       EQU   0    SVC COMMUNICATIONS AND WORK REGISTER
+R1       EQU   1    SVC COMMUNICATIONS AND WORK REGISTER
+R2       EQU   2    SUB-ROUTINE CONTROL INFORMATION AND WORK REG.
+R3       EQU   3    WORK REGISTER
+R4       EQU   4    BAL RETURN ADDRESS & WORK REGISTER
+R5       EQU   5    WORK REGISTER
+R6       EQU   6    WORK REGISTER
+R7       EQU   7    WORK REGISTER
+R8       EQU   8    DSECT ADDRESSABILITY REGISTER
+R9       EQU   9    UNUSED
+R10      EQU   10   UNUSED
+R11      EQU   11   UNUSED
+R12      EQU   12   BASE REGISTER 2
+R13      EQU   13   SAVE AREA POINTER / BASE REGISTER 1
+R14      EQU   14   BALR RETURN ADDRESS
+R15      EQU   15   BALR ROUTINE ADDRESS AND WORK REGISTER
+         SPACE 3
+*******************************************************************
+*        HOUSEKEEPING                                             *
+*******************************************************************
+         SPACE 1
+         PGMIN EQUATES=NO,USING=(R13,R12)  ESTABLISH ADDRESSABILITY
+         SPACE 3
+*******************************************************************
+*        SAVE ADDRESS AND LENGTH OF PARM OF EXEC CARD             *
+*******************************************************************
+         SPACE 1
+         SAVEPARM                  ENSURE NO 0C4
+         ST    R1,PARMSAVE         SAVE PARM ADDRESS
+         EJECT
+*******************************************************************
+*        TEST WHICH ARE THE DD'S SUPPLIED, AND OPEN DATA SETS     *
+*         PRESENT.                                                *
+*******************************************************************
+         SPACE 1
+         OI    SYSUT1SW,DDMAN      INDICATE DD MANDATORY
+         OI    SYSUT2SW,DDMAN      INDICATE DD MANDATORY
+         SPACE 1
+         LA    R3,MAXDS            ESTABLISH LOOP
+         LA    R2,DCBTABLE         POINT R2 AT DCB TABLE
+         OI    0(R2),DDINT         INDICATE DD INTEREST
+         BAL   R4,TESTIOT          GO TEST IF DD STATEMENT PRESENT
+         BAL   R4,OPEN             GO OPEN DATA SET
+         LA    R2,DCBNTRY(R2)      POINT AT NEXT TABLE ENTRY
+         BCT   R3,*-16             PROCESS NEXT DATA SET
+         SPACE 2
+SETPRINT EQU   *         SET-UP PRINT D/S IF REQUIRED
+         TM    PRINTSW,DDOPEN      PRINT D/S OPEN?
+         BNO   SPXIT               NO. SKIP
+         BAL   R4,PRINT            DUMMY FIRST WRITE FOR PUT LOCATE
+         MVI   0(R7),X'8B'         SKIP TO TOP OF NEXT PAGE
+         BAL   R4,PRINT            INVOKE
+         MVI   0(R7),SPCE3AFT      PRTCTL FOR HEADING
+         MVC   1(38,R7),=CL38'CMSDEBL - REFORMAT CMS DATA           '
+         BAL   R4,PRINT            PRINT HEADING
+         MVI   0(R7),SPCE2AFT      DOUBLE SPACING FOR DETAIL LINES.
+SPXIT    EQU   *
+         SPACE 3
+*******************************************************************
+*        TEST IF MANDATORY SYSUT1 PRESENT                         *
+*******************************************************************
+         SPACE 1
+DDUT1    TM    SYSUT1SW,DDPRES     TEST SYSUT1 DD PRESENT
+         BO    DDUT1X              YES - BRANCH
+         WTO   'CMSDEBL *  SYSUT1 DD STATEMENT NOT SUPPLIED *'
+         B     PROCBYP             BRANCH END MESSAGE AND CLOSE
+DDUT1X   EQU   *
+         SPACE 3
+*******************************************************************
+*        TEST IF MANDATORY SYSUT2 PRESENT                         *
+*******************************************************************
+         SPACE 1
+DDUT2    TM    SYSUT2SW,DDPRES     TEST SYSUT2 DD PRESENT
+         BO    DDUT2X              YES - BRANCH
+         WTO   'CMSDEBL *  SYSUT2 DD STATEMENT NOT SUPPLIED *'
+         B     PROCBYP             BRANCH END MESSAGE AND CLOSE
+DDUT2X   EQU   *
+         EJECT
+*******************************************************************
+*        ANALYSE PARAMETER FIELD                                  *
+*                                                                 *
+*        R2    ADDRESS OF PARM FIELD                              *
+*        R5    START OF PARM DETAIL.                              *
+*        R7    NO OF PARM CHARACTERS LEFT                         *
+*        R10   EXECUTE LENGTH FOR MACH/PGMR MOVE                  *
+*******************************************************************
+         SPACE 1
+         L     R1,PARMSAVE         LOAD PARAMETER ADDRESS POINTER
+         L     R2,0(0,R1)          LOAD ADDRESS OF PARM FIELD
+         LH    R7,0(0,R2)          LOAD PARM FIELD LENGTH
+         LA    R5,2(0,R2)          ADDRESS OF FIRST CHARACTER
+PARMPROC EQU   *
+         LTR   R7,R7               IS PARMFLD LENGTH ZERO
+         BZ    PARMEND             YES - GO END PARM ANALYSE
+         CLI   0(R5),C','          TEST IF DELIMITTER CHARACTER
+         BNE   *+16                NO - BYPASS FORWARD CHAINING
+         SH    R7,=H'1'            DECREMENT PARM LENGTH BY 1
+         LA    R5,1(0,R5)          INCREMENT POINTER PAST ','
+         B     PARMPROC            GO TEST NEXT PARM POSITION
+         CLC   0(6,R5),=C'NODUMP'  TEST IF NO DUMP REQUESTED?
+         BE    PARMDUMP            YES - BRANCH
+         CLC   0(5,R5),=C'MACH='   GET MACHINE NAME
+         BE    PARMMACH            YES - BRANCH
+         CLC   0(5,R5),=C'PGMR='   GET PROGRAMMER NAME
+         BE    PARMPGMR            YES - BRANCH
+         SPACE 1
+*        INVALID PARAMETER - DISPLAY ERROR AND SET CONDITION CODE
+         SPACE 1
+PARMINVL EQU   *
+         WTO   'CMSDEBL *  INVALID PARM IN EXEC CARD        *'
+         MVC   ENDPRPAR+90(L'PARMERMS),PARMERMS  ERR MESS TO PRT LINE
+         B     PROCBYP             GO TO PROCEESING BYPASS PROCESSING
+         SPACE 1
+PARMDUMP EQU   *
+         MVI   DUMPSW,C'N'         SET DUMP SWITCH TO 'NODUMP'
+         B     PARMNEXT            GO POINT TO NEXT PARAMETER
+         SPACE 1
+*        STORE MACHINE OR PROGRAMMER NAME
+         SPACE 1
+PARMMACH EQU   *
+         LA    R5,5(0,R5)          POINT R5 TO START OF MACHINE NAME
+         SH    R7,=H'5'            DECREMENT PARM LENGTH BY 7
+         B     PARMCOM             GO TO COMMUN MACH/PGMR PROCESS
+PARMPGMR EQU   *
+         LA    R5,5(0,R5)          POINT R5 TO START OF PGMR NAME
+         SH    R7,=H'5'            DECREMENT PARM LENGTH BY 5
+PARMCOM  EQU   *
+         LR    R8,R5               SAVE START POSITION OF MACH/PGMR
+         SR    R10,R10             ZEROISE EX LENGTH OF MACH/PGMR
+         SPACE 1
+PARMCOML EQU   *
+         LTR   R7,R7               IS PARM LENGTH ZERO?
+         BE    PARMCOMF            YES - GO TO END OF PARM LOOP
+         CLI   0(R5),C','          TEST IF DELIMITTER CHARACTER
+         BE    PARMCOMF            YES - GO TO END OF PARM LOOP
+         LA    R10,1(0,R10)        INCREMENT EXECUTE LENGTH BY 1
+         LA    R5,1(0,R5)          INCREMENT PARM POINTER BY 1
+         SH    R7,=H'1'            DECREMENT PARM LENGTH BY 1
+         B     PARMCOML            GO TEST NEXT PARM POSITION
+         SPACE 1
+PARMCOMF EQU   *
+         C     R10,=F'0'           PARM LENGTH ZERO?
+         BE    PARMINVL            YES - BRANCH TO PARAMETER ERROR
+         C     R10,=F'3'           PARM LENGTH > 3?
+         BH    PARMINVL            YES - BRANCH TO PARAMETER ERROR
+         BCTR  R10,0               DECREMENT PARM LENGTH FOR EXECUTE MV
+         SPACE 1
+PARMCOMP EQU   *
+         EX    R10,PARMCOMM        EXECUTE MOVE MACH/PGMR
+         B     PARMNEXT            GO POINT TO NEXT PARAMETER
+         SPACE 1
+PARMCOMM MVC   MACHPGMR(0),0(R8)   EX STORE MACH/PGMR NAME
+         SPACE 1
+*        POINT TO NEXT PARAMETER DELIMITTER
+         SPACE 1
+PARMNEXT EQU   *
+         LTR   R7,R7               IS PARMFLD LENGTH ZERO
+         BZ    PARMEND             YES - GO TO END OF PARM ANALYSE
+         CLI   0(R5),C','          TEST IF DELIMITTER CHARACTER
+         BE    PARMPROC            YES - GO TEST NEXT PARAMETER
+         SH    R7,=H'1'            DECREMENT PARM LENGTH BY 1
+         LA    R5,1(0,R5)          INCREMENT PARM POINTER BY 1
+         B     PARMNEXT            GO TEST NEXT POSITION
+         SPACE 1
+PARMEND  EQU   *
+         SPACE 1
+         EJECT
+***********************************************************************
+*        READ SYSUT1 AND IDENTIFY RECORD TYPE.                        *
+***********************************************************************
+         SPACE 1
+         SPACE 1
+READNEXT EQU   *
+         READ  DECB,SF,SYSUT1,BUFFER,4405  READ UNDEFINED BLOCK
+         CHECK DECB                TEST GOOD READ
+         LA    R1,DECB             GET DECB ADDR.
+         L     R1,16(R1)           GET IOB ADDR.
+         LA    R8,SYSUT1           GET DCB ADDRESS
+         USING IHADCB,R8           ESTABLISH DCB ADDRESSABILITY
+         LH    R2,DCBBLKSI         GET MAXIMUM BLOCKSIZE
+         DROP  R8                  DROP DCB ADDRESSABILITY
+         SH    R2,14(R1)           SUBTRACT RESIDUAL BYTES COUNT
+         SPACE 1
+*        IDENTIFY CMS RECORD TYPES.
+         SPACE 1
+         USING OUTREC,R8           ESTABLISH OUT RECORDS ADDRESSABITY
+         LA    R8,OUTAREA          LOAD ADDRESS OF OUTPUT AREA
+         SPACE 1
+         CLC   CMSID,=CL4'CMS '    DETAIL RECORD?
+         BE    BLOKLOOP            YES - BRANCH.
+         MVI   HEADSW,X'00'        RESET HEADER SWITCH
+         CLC   CMSID,=CL4'CMSH'    HEADER RECORD?
+         BE    CMSHEAD             YES - GO PROCESS CMS HEADER RECORD
+         CLC   CMSID,=CL4'CMSN'    END RECORD?
+         BE    READNEXT            YES - GO PROCESS AN OTHER BLOCK
+         SPACE 1
+*        UNDIFINED CMS RECORD TYPE - STOP PROCESSING
+         SPACE 1
+         WTO   'CMSDEBL **  INVALID CMS RECORD TYPE  **'
+         B     PROCBYP             GO TO PROCESSING BYPASS
+         EJECT
+***********************************************************************
+*        CMS HEADER RECORD PROCESSING
+***********************************************************************
+         SPACE 1
+CMSHEAD  EQU   *
+         CLC   BUFFER+77(10),=C'CMS     A0'  MACHINE ID RECORD?
+         BNE   CMSHEADH            NO - GO PROCESS NORMAL HEADDER REC
+         SPACE 1
+*        GET MACHINE ID FROM CMS TAPE IF SUPPLY IN RECORD CMS A0
+         SPACE 1
+         MVI   HEADSW,C'I'         INDICATE MACHINE ID BLOCK
+         MVC   MACHPGMR,BUFFER+69  STORE CMS MACHINE ID FROM RECORD
+         B     READNEXT            GO READ AN OTHER BLOCK
+         SPACE 1
+*        COMMUN HEADER RECORD PROCESSING
+         SPACE 1
+CMSHEADH EQU   *
+         MVI   HEADSW,C'H'         INDICATE HEADER FILE RECORD
+         MVC   OUTMACH,MACHPGMR    STORE MACHINE ID
+         MVC   OUTFILE,BUFFER+69   STORE FILE NAME
+         MVC   OUTTYPE,BUFFER+77   STORE CMS FILE TYPE
+         MVI   OUTRECID,C'*'       STORE RECORD ID
+         B     READNEXT            GO READ AN OTHER BLOCK
+         EJECT
+***********************************************************************
+*        CMS DETAIL RECORD PROCESSING
+***********************************************************************
+         SPACE 1
+BLOKLOOP EQU   *
+         CLI   HEADSW,C'I'         MACHINE ID RECORD?
+         BE    READNEXT            YES - IGNORE IT - GO READ NEXT FILE
+         SPACE 1
+         CLC   MACHPGMR,=CL8' '    MACHINE ID SUPPLY?
+         BNE   BLOKCON1            YES - BYPASS ABEND PROCESSING
+         WTO   'CMSDEBL * NO MHACHINE ID SUPPLY     *'
+         B     PROCBYP             GO TO BAD END PROCEESING
+         SPACE 1
+BLOKCON1 EQU   *
+         CLI   HEADSW,C'H'         HEADER RECORD SUPPLY?
+         BE    BLOKCON2            YES - BYPASS ABEND PROCESSING
+         WTO   'CMSDEBL * CMS HEADER RECORD NOT SUPPLY *'
+         B     PROCBYP             GO TO BAD END PROCEESING
+         SPACE 1
+BLOKCON2 EQU   *
+         SH    R2,=H'5'            SUBTRACT CMS HEADER FROM BLOCK LENG
+         LA    R5,CMSDATA          POINT TO START OF FIRST RECORD
+         LA    R6,80               SET BXLE INCREMENT
+         LA    R7,0(R2,R5)         SET BXLE END LIMIT
+         SR    R7,R6               DECREMENT END LIMIT BY 1 RECORD
+         SPACE 1
+RECLOOP  MVC   OUTDATA,0(R5)       MOVE RECORD IN OUTPUT AREA
+         CLI   OUTDATA,X'00'       FIRST BYTE LOW VALUE?
+         BNE   RECVALID            NO - CONTINUE RECORD PROCESSING
+         CLC   OUTDATA+1(79),OUTREC  ALL RECORD LOW VALUE?
+         BE    RECLOOPX            YES - BYPASS RECORD PROCESSING
+         SPACE 1
+RECVALID EQU   *
+         PUT   SYSUT2,OUTAREA      WRITE OUTPUT RECORD
+         SPACE 1
+RECLOOPX EQU   *
+         BXLE  R5,R6,RECLOOP       LOOP UNTIL ALL RECORDS PROCESSED
+         SPACE 1
+         B     READNEXT            GO READ NEXT BLOCK
+         SPACE 1
+         DROP  R8                  DROP OUTPUT RECORD ADDRESSABILITY
+         EJECT
+*******************************************************************
+*         END OF JOB PROCESSING.                                  *
+*******************************************************************
+         SPACE 1
+JOBEND   EQU   *
+         SPACE 1
+         BAL   R4,ENDING           PERFORM END OF JOB PRINT SECTION
+         SPACE 1
+         LA    R3,MAXDS            ESTABLISH LOOP
+         LA    R2,DCBTABLE         POINT AT START OF DCB TABLE
+         BAL   R4,CLOSE            CLOSE DATA SET IF OPEN
+         LA    R2,DCBNTRY(R2)      POINT AT NEXT TABLE ENTRY
+         BCT   R3,*-8              CLOSE NEXT DATA SET
+         SPACE 1
+*        DUMP IF CC16 AND DUMPSW = 'Y'
+         SPACE 1
+         CLC   COMPCODE,COND16     TEST IF CONDITION CODE = 16
+         BNE   JOBCODE             NO - BYPASS ABEND PROCESSING
+         WTO   'CMSDEBL ** BAD END OF PROGRAM          **'
+         ABEND 0496,,STEP          ABEND WITH U0496
+         SPACE 1
+*        RETURN WITH CONDITION CODE
+         SPACE 1
+JOBCODE  EQU   *
+         PGMOUT RC=COMPCODE        SET COND CODE AND RETURN
+         SPACE 1
+*******************************************************************
+*        PROCESSING BYPASSED DUE TO HARD ERROR                    *
+*******************************************************************
+         SPACE 1
+PROCBYP  EQU   *
+         MVC   COMPCODE,COND16     SET CONDITION CODE TO 16
+         WTO   'CMSDEBL **  PROCESSING BYPASSED            **'
+         B     JOBEND              BRANCH TO END OF JOB PROCESSING
+         EJECT
+*******************************************************************
+*        END OF PROGRAM SECTION                                   *
+*******************************************************************
+         SPACE 1
+ENDING   SUBIN SAVE=(R4)           ENDING SECTION
+         SPACE 1
+         TM    PRINTSW,DDINT+DDPRES+DDOPEN  TEST IF NEED TO PRINT
+         BNO   *+8                 NO - RETURN
+         BAL   R4,ENDPRT           PERFORM  ENDING PRINT ROUTINE
+         SPACE 1
+ENDINGX  SUBOUT RESTORE=(R4)       RETURN TO CALLER
+         EJECT
+*******************************************************************
+*        ENDING PRINT SECTION                                     *
+*******************************************************************
+         SPACE 1
+         USING TBLENTRY,R8         ESTABLISH ADDRESSABILITY OF END PRT
+         SPACE 1
+ENDPRT   SUBIN SAVE=(R4,R8)        PRESERV RETURN ADDRESS
+         TM    PRINTSW,DDINT+DDPRES+DDOPEN  TEST IF NEED TO PRINT
+         BNO   ENDPRTX             NO - RETURN
+         SPACE 1
+         LA    R8,DDOTABSW         POINT DSECT TO TBL ENTRY
+         SPACE 1
+         MVI   0(R5),SPCE3AFT      SET SPACE 3 AFTER
+         BAL   R4,LINEPRT          PRINT 3 BLANK LINES
+         SPACE 1
+*        PRINT STATUS OF SYSUT1 DATA SET
+         SPACE 1
+         MVC   TBLENTRY(20),SYSUT1SW   MOVE SYSUT1   CONTROL BLOCK
+         OI    TBLENTRY,DDMAN      SET SWITCH TO MANDATORY
+         ZAP   TBLRECNT,CNTUT1     MOVE SYSUT1   RECORD COUNTER
+         BAL   R4,ENDPRTED         EDIT THE PRINT LINE
+         SPACE 1
+*        PRINT STATUS OF SYSUT2 DATA SET
+         SPACE 1
+         MVC   TBLENTRY(20),SYSUT2SW   MOVE SYSUT2   CONTROL BLOCK
+         OI    TBLENTRY,DDMAN      SET SWITCH TO MANDATORY
+         ZAP   TBLRECNT,CNTUT2     MOVE SYSUT2   RECORD COUNTER
+         BAL   R4,ENDPRTED         EDIT THE PRINT LINE
+         SPACE 1
+*        PRINT EXEC PARAMETER INFORMATIONS
+         SPACE 1
+         MVI   0(R5),SPCE1AFT      SET SPACE 1 AFTER
+         MVC   1(L'ENDPRPAR,R5),ENDPRPAR  MOVE PARM MESSAGE IN PRT LINE
+         L     R1,PARMSAVE         LOAD PARAMETER ADDRESS POINTER
+         L     R2,0(0,R1)          LOAD ADDRESS OF PARM FIELD
+         LH    R7,0(0,R2)          LOAD PARM FIELD LENGTH
+         LA    R2,2(0,R2)          POINT R2 AT 1ST PARM CHARACTER
+         LTR   R7,R7               IS PARM FIELD LENGTH ZERO?
+         BZ    *+10                YES - BYPASS FORWARD CHAINING
+         BCTR  R7,0                DECREMENT PARM LENGTH BY 1
+         EX    R7,ENDPARMV         EXECUTE MOVE OF PARM TO PRT LINE
+         BAL   R4,LINEPRT          PRINT THE LINE
+         SPACE 1
+         MVI   0(R5),SPCE3AFT      SET SPACE 3 AFTER
+         BAL   R4,LINEPRT          PRINT 3 BLANK LINES
+         MVI   0(R5),SPCE1AFT      SET SPACE 1 AFTER
+         MVC   1(L'ENDCON00,R5),ENDCON00 MOVE COND.CODE 00 MESSAGE
+         CLC   COMPCODE,=H'0'      TEST IF COND. CODE = 0
+         BE    *+10                YES - SKIP NEXT INSTRUCTION
+         MVC   1(L'ENDCON16,R5),ENDCON16 MOVE COND. CODE 16 MESSAGE
+         BAL   R4,LINEPRT           AND GO WRITE IT
+         SPACE 1
+ENDPRTX  SUBOUT RESTORE=(R4,R8)    RETURN TO CALLER
+         SPACE 1
+ENDPARMV MVC   37(0,R5),0(R2)      MOVE PARAMETER IN PRT LINE
+         SPACE 1
+         DROP  R8                  DROP TBLENTRY ADDRESSABILITY
+         EJECT
+*******************************************************************
+*        THIS SUB-ROUTINE EDIT AND PRINT ENDING STATUS OF FILES   *
+*******************************************************************
+         SPACE 3
+         USING TBLENTRY,R8         ESTABLISH TABLE ENTRY ADDRESSABILITY
+         SPACE 1
+ENDPRTED SUBIN SAVE=(R4,R8)
+         LA    R8,DDOTABSW         POINT DSECT TO TBLENTRY
+         MVI   0(R5),SPCE1AFT      SET SPACE 1 AFTER
+         MVC   1(L'ENDPROPT,R5),ENDPROPT  MOVE OPTIONAL AND MISSING MES
+         TM    TBLENTRY,DDMAN      D/S MANDATORY?
+         BNO   *+10                NO - BYPASS FORWARD CHAINING
+         MVC   1(L'ENDPRMAN,R5),ENDPRMAN  MOVE MANDATORY IN PRT LINE
+         MVC   20(L'TBLDDNAM,R5),TBLDDNAM  MOVE DDNAME IN PRT LINE
+         TM    TBLENTRY,DDPRES     DD PRESENT?
+         BNO   *+10                NO - BYPASS FORWARD CHAINING
+         MVC   29(L'ENDPRPRE,R5),ENDPRPRE  MOVE  DD  PRESENT IN PRT LIN
+         CLC   TBLDDTYP,=CL8'INPUT '  INPUT  FILE?
+         BNE   *+10                NO - BYPASS FORWARD CHAINING
+         MVC   41(L'ENDPRRDR,R5),ENDPRRDR  MOVE READ  IN PRT LINE
+         CLC   TBLDDTYP,=CL8'OUTPUT'  OUTPUT FILE?
+         BNE   *+10                NO - BYPASS FORWARD CHAINING
+         MVC   41(L'ENDPRWTR,R5),ENDPRWTR  MOVE WRITE IN PRT LINE
+         MVC   75(L'CNTMASK,R5),CNTMASK MOVE MASK FOR EDIT
+         ED    75(L'CNTMASK,R5),TBLRECNT  EDIT NUMBER OF RECORDS
+         BAL   R4,LINEPRT          PRINT THE LINE
+         SPACE 1
+         SUBOUT RESTORE=(R4,R8)    RETURN TO CALLER
+         SPACE 1
+         DROP  R8                  DROP TBLENTRY ADDRESSABILITY
+         EJECT
+*******************************************************************
+*        PRINT ROUTINE                                            *
+*******************************************************************
+         SPACE 1
+LINEPRT  SUBIN SAVE=(R4)           PRESERV REGISTER
+         TM    PRINTSW,DDINT+DDPRES+DDOPEN  TEST IF NEED TO PRINT
+         BNO   LINEPRTX            BRANCH IF NO
+         CLI   0(R5),SPCE1AFT      TEST IF SPACE 1 AFTER
+         BNE   *+10                NO - BYPASS FORWARD CHAINING
+         AP    LINECOUN,=P'1'      ADD 1 TO LINE COUNT
+         CLI   0(R5),SPCE2AFT      TEST IF SPACE 2 AFTER
+         BNE   *+10                NO - BYPASS FORWARD CHAINING
+         AP    LINECOUN,=P'2'      ADD 2 TO LINE COUNT
+         CLI   0(R5),SPCE3AFT      TEST IF SPACE 3 AFTER
+         BNE   *+10                NO - BYPASS FORWARD CHAINING
+         AP    LINECOUN,=P'3'      ADD 3 TO LINE COUNT
+         CP    LINECOUN,MAXLINE    TEST IF OVERFLOW
+         BL    *+8                 NO - BYPASS FORWARD CHAINING
+         MVI   0(R5),PAGESKIP      SET SKIP TO NEW PAGE
+         BAL   R4,PRINT            PRINT THE LINE
+         CP    LINECOUN,MAXLINE    TEST OVERFLOW
+         BL    LINEPRTX            NO - BYPASS OVERFLOW
+         ZAP   LINECOUN,=P'0'      ZEROISE LINE COUNT
+         AP    PAGECOUN,=P'1'      ADD 1 TO PAGE COUNT
+         MVI   0(R5),SPCE3AFT      SET SPACE 3 AFTER
+         MVC   1(L'HEADLIN1,R5),HEADLIN1  MOVE HEADING LINE 1
+         BAL   R4,PRINT            PRINT THE LINE
+         MVI   0(R5),SPCE1AFT      SET SPACE 1 AFTER
+         MVC   1(L'HEADLIN2,R5),HEADLIN2  MOVE HEAD LINE 2
+         BAL   R4,PRINT            PRINT THE LINE
+         MVI   0(R5),SPCE2AFT
+         MVC   1(L'HEADLIN3,R5),HEADLIN3  MOVE HEAD LINE 3
+         BAL   R4,PRINT
+LINEPRTX SUBOUT RESTORE=(R4)       RETURN TO CALLER
+         EJECT
+*******************************************************************
+*        PATCH AREA FOR APPLYING SUPERZAP                         *
+*******************************************************************
+         SPACE 1
+*        ( 'B  *'  SIMPLIFIES CALCULATION ADDRESSES )
+         SPACE 1
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         TITLE 'I/O SUB-ROUTINES'
+*******************************************************************
+*        WRITE SUBROUTINE FOR SYSPRINT                            *
+*******************************************************************
+         SPACE 1
+PRINT    SUBIN ,
+         TM    PRINTSW,DDINT+DDPRES+DDOPEN   TEST IF NEED TO WRITE
+         BNO   PRINTX              BRANCH IF NO
+PRINTSVE MVC   PRINTRST+1(1),0(R7) SAVE CURRENT CONTROL CHAR
+         PUT   SYSPRINT            WRITE RECORD TO SYSPRINT D/S
+         LR    R7,R1               SAVE BUFFER ADDRESS
+         MVI   1(R7),BLANK         MOVE BLANK TO START OF LINE
+         MVC   2(131,R7),1(R7)      AND PROPAGANTE THROUGH
+PRINTRST MVI   0(R7),X'09'         RESTORE PRINT CONTROL CHARACTER
+*                                  TO NEXT BUFFER SEGMENT.
+*                                  NOTE. THE DATA BYTE IN THIS INSTN.
+*                                  IS MODIFIED BY MVC AT LABEL PRINTSVE
+PRINTX   SUBOUT ,                  RETURN TO CALLER
+         EJECT
+*******************************************************************
+*        SUPPLY DEFAULT RECORD LENGTH AND/OR BLOCK SIZE           *
+*         IF NOT CODED.                                           *
+*******************************************************************
+         SPACE 1
+BLKSZRTN SUBIN ,                   SUPPLY DEFAULT LRECL AND/OR BLKS
+         USING IHADCB,R1           ESTABLISH DCB ADDRESSABILITY
+         CLC   DCBLRECL,ZEROWORD   TEST IF LRECL SUPPLIED
+         BNE   *+8                 BYPASS DEFAULT IF YES
+         MVI   DCBLRECL+1,100      FORCE LRECL TO 100
+         CLC   DCBBLKSI,ZEROWORD   TEST IF BLKSIZE SUPPLIED
+         BNE   0(R14)              RETURN TO OPEN IF YES
+         MVC   DCBBLKSI,DCBLRECL   FORCE SINGLE BLOCKING
+         DROP  R1                  DROP DCB ADDRESSABILITY
+         SUBOUT RETURN=(R14)       RETURN TO OPEN ROUTINES
+         SPACE 2
+*******************************************************************
+*        I/O ERROR ROUTINE                                        *
+*******************************************************************
+         SPACE 1
+IOERROR  SUBIN ,                   ANALYSE I/O ERROR
+         MVC   COMPCODE,COND16     SET COMPLETION CODE
+         SYNADAF ACSMETH=QSAM      CALL ANALYSIS ROUTINE
+         MVC   WTOIOE+27(86),50(R1) ADD RESULT OF ANALYSIS TO LINE
+         SYNADRLS ,                RELEASE OS BUFFER
+         WTO   MF=(E,WTOIOE)       TELL OPERATOR OF ERROR
+         SUBOUT RETURN=JOBEND      TERMINATE JOB
+         EJECT
+*******************************************************************
+*        TEST IF A DD STATEMENT IS PRESENT BEFORE OPEN            *
+*******************************************************************
+         SPACE 1
+TESTIOT  SUBIN ,                   TEST TASK INPUT/OUTPUT TABLE
+         TESTIOT DDNAME=4(R2)      TEST IF DDNAME FOUND IN TIOT
+         B     *+4(R15)            TEST CONDITION CODE
+         OI    0(R2),DDPRES        TELL THAT DD STATEMENT SUPPLIED
+         SUBOUT ,                  RETURN TO CALLER
+         SPACE 3
+*******************************************************************
+*        OPEN ROUTINE                                             *
+*******************************************************************
+         SPACE 1
+OPEN     SUBIN SAVE=(R3)           OPEN DATA SET
+         TM    0(R2),DDINT+DDPRES  TEST IF DD INTERESTING AND
+         BNO   OPENX               BRANCH IF NO    / PRESENT.
+         L     R3,0(R2)            GET DCB ADDRESS
+         CLC   12(8,R2),=C'INPUT   ' TEST FOR INPUT D/S
+         BE    OPENZ               BRANCH IF INPUT D/S
+         OPEN  ((R3),(OUTPUT))     OPEN OUTPUT DATA SET
+         B     OPENY               GO SET SWITCH
+OPENZ    OPEN  ((R3),(INPUT))      OPEN INPUT DATA SET
+OPENY    OI    0(R2),DDOPEN        INDICATE DATA SET OPEN
+OPENX    SUBOUT RESTORE=(R3)       RETURN TO CALLER
+         SPACE 3
+*******************************************************************
+*        CLOSE ROUTINE                                            *
+*******************************************************************
+         SPACE 1
+CLOSE    SUBIN SAVE=(R3)           CLOSE DATA SET
+         TM    0(R2),DDOPEN        TEST IF DATA SET OPEN
+         BZ    CLOSEX              EXIT IF NOT
+         L     R3,0(R2)            GET DCB ADDRESS
+         CLOSE ((R3))              CLOSE DATA SET
+         NI    0(R2),FF-DDOPEN     SET OFF 'OPEN' SWITCH
+CLOSEX   SUBOUT RESTORE=(R3)       RETURN TO CALLER
+         TITLE 'DCB''S AND I/O CONTROL TABLES'
+*******************************************************************
+*        DCB'S TABLE                                              *
+*******************************************************************
+         SPACE 1
+DCBTABLE DS    0F
+PRINTSW  DC    X'00',AL3(SYSPRINT),CL8'SYSPRINT',CL8'OUTPUT'
+SYSUT1SW DC    X'00',AL3(SYSUT1),CL8'SYSUT1',CL8'INPUT'
+SYSUT2SW DC    X'00',AL3(SYSUT2),CL8'SYSUT2',CL8'OUTPUT'
+TABSIZE  EQU   *-DCBTABLE          DCB'S TABLE SIZE
+         SPACE 1
+DCBNTRY  EQU   20                  LENGTH OF ONE TABLE ELEMENT
+MAXDS    EQU   TABSIZE/DCBNTRY     MAXIMUN NUMBER OF DCB'S
+         SPACE 1
+DDOTABSW DC    X'00',X'000000',CL8' ',CL8' ',PL4'0',F'0'
+         SPACE 1
+DDMAN    EQU   32                  DD MANDATORY
+DDINT    EQU   16                  DD INTEREST
+DDPRES   EQU   8                   DD PRESENT
+DDOPEN   EQU   1                   DATA SET IS OPEN
+         SPACE 2
+EXITLIST DC    X'85',AL3(BLKSZRTN) ENTRY FOR DCB MODIFICATION
+         SPACE 2
+WTOIOE   DS    0F
+         DC    AL2(WTOEND-*),H'0',CL109'******** - I/O ERROR -'
+WTOEND   EQU   *
+         EJECT
+*******************************************************************
+*        DATA CONTROL BLOCKS                                      *
+*******************************************************************
+         SPACE 1
+         PRINT ON,NOGEN
+SYSPRINT DCB   DDNAME=SYSPRINT,                                        C
+               DSORG=PS,                                               C
+               SYNAD=IOERROR,                                          C
+               EXLST=EXITLIST,                                         C
+               RECFM=FBM,                                              C
+               MACRF=PL,                                               C
+               LRECL=133
+         SPACE 3
+SYSUT1   DCB   DDNAME=SYSUT1,                                          C
+               DSORG=PS,                                               C
+               BLKSIZE=4405,                                           C
+               RECFM=U,                                                C
+               SYNAD=IOERROR,                                          C
+               MACRF=R,                                                C
+               EODAD=JOBEND
+         SPACE 3
+SYSUT2   DCB   DDNAME=SYSUT2,                                          C
+               DSORG=PS,                                               C
+               SYNAD=IOERROR,                                          C
+               EXLST=EXITLIST,                                         C
+               RECFM=FB,                                               C
+               LRECL=100,                                              C
+               MACRF=PM
+         SPACE 3
+         TITLE 'MISCELLANIOUS EQUATES, CONSTANTS AND WORK AREAS'
+*******************************************************************
+*        EQUATES                                                  *
+*******************************************************************
+         SPACE 1
+FF       EQU   255                 FOR 'NI' INSTRUCTION
+BLANK    EQU   X'40'               BLANK
+ON       EQU   X'FF'               ON
+OFF      EQU   X'00'               OFF
+HIGHVAL  EQU   X'FF'               HIGH VALUE
+LOWVAL   EQU   X'00'               LOW VALUE
+SIGN     EQU   X'F0'               FOR FORCE SIGN TO 'F'
+PERIOD   EQU   C'.'                PERIOD CONSTANT
+         SPACE 1
+SPCE1AFT EQU   X'09'               SPACE 1 AFTER PRINTING
+SPCE2AFT EQU   X'11'               SPACE 2 AFTER PRINTING
+SPCE3AFT EQU   X'19'               SPACE 3 AFTER PRINTING
+PAGESKIP EQU   X'89'               SKIP TO NEW PAGE
+         EJECT
+*******************************************************************
+*        CONSTANTS                                                *
+*******************************************************************
+         SPACE 1
+ZEROWORD DC    F'0'                BINARY ZERO FULLWORD FOR TESTS
+         SPACE 1
+COND4    DC    H'4'                COMPLETION CODE OF 4
+COND8    DC    H'8'                COMPLETION CODE OF 8
+COND12   DC    H'12'               COMPLETION CODE OF 12
+COND16   DC    H'16'               COMPLETION CODE OF 16
+         SPACE 1
+ZERO     DC    PL1'0'              PACKED CONSTANT OF ZERO
+ONE      DC    PL2'1'              PACKED CONSTANT OF ONE
+         SPACE 1
+ENDPRPAR DC    CL132'THE CONTENT OF THE PARM FIELD ARE -'
+PARMERMS DC    C'** MARNING - INVALID PARM IN EXEC CARD'
+ENDPROPT DC    C' OPTIONAL DATA SET ........ MISSING'
+ENDPRMAN DC    C'MANDATORY'
+ENDPRRDR DC    C'- NUMBER OF RECORDS READ FROM  ='
+ENDPRWTR DC    C'- NUMBER OF RECORDS WRITTEN TO ='
+ENDPRPRE DC    C'PRESENT'
+ENDCON00 DC    C'CONDITION CODE = 0  - OPERATION SUCCESSFUL'
+ENDCON16 DC    C'CONDITION CODE = 16 - ONE OR MORE ERRORS DETECTED'
+HEADLIN1 DC    C'CMSDEBL - REFORMAT CMS DUMP TAPE                 '
+HEADLIN2 DC    C'--------------------------------                 '
+HEADLIN3 DC    C'                                                 '
+         EJECT
+*******************************************************************
+*        WORK AREAS                                               *
+*******************************************************************
+         SPACE 1
+PARMSAVE DS    F                   PARM ADDRESS POINTER
+DECIMAL  DS    D                   WA FOR DECIMAL OPERATIONS
+COMPCODE DC    H'0'                CONDITION CODE
+         SPACE 1
+PARMLGTH DC    F'0'                LENGTH OF PARM OF EXEC CARD
+PARMADDR DS    F                   ADDRESS OF PARM INFO'S
+         SPACE 1
+PAGECOUN DC    PL2'0'              COUNT OF PAGES
+LINECOUN DC    PL2'0'              COUNT OF LINES
+MAXLINE  DC    PL2'55'             MAXIMUM NUMBER OF LINES PER PAGE
+         SPACE 1
+CNTUT1   DC    PL4'0'
+CNTUT2   DC    PL4'0'
+CNTMASK  DC    X'40202020202021204060'  RECORDS COUNT PRINT MASK
+BINSTORE DC    F'0'                WORK AREA FOR PACKED OPERATIONS
+         SPACE 1
+MACHPGMR DC    CL3' '              MACHINE OR PROGRAMMER PARM
+DUMPSW   DC    C'Y'                DUMP ON CC16 SWITCH
+HEADSW   DC    X'00'               CMS HEADER RECORD SWITCH
+         SPACE 1
+OUTAREA  DS    CL100' '            OUTPUT BUFFER AREA
+         SPACE 1
+BUFFER   DS    0CL4405             INPUT BUFFER AREA
+CMSCC    DS    CL1                 CMS RECORD TYPE
+CMSID    DS    CL4                 CMS ID
+CMSDATA  DS    CL4400              CMS RECORD AREA
+         EJECT
+*******************************************************************
+*        LITERAL POOL                                             *
+*******************************************************************
+         SPACE 1
+         LTORG
+         END

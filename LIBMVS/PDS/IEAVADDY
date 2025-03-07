@@ -1,0 +1,209 @@
+//IEAVADDY JOB (1586,5),'** FOR J. NOLS **',CLASS=N
+//*********************  DYNAMO CTL BLOCKS  ***************************
+//STEP01       EXEC GENASMOD,AOS=C5
+         TITLE 'DYNAMO CONTROL BLOCK FORMATTING ROUTINE '
+***********************************************************************
+*                        I E A V A D D Y                              *
+*                                                                     *
+*        THIS MODULE IS INVOKED BY THE DRIVER 'XEAVAD02' AS PART OF   *
+*              ABEND PROCESSING. ITS PURPOSE IS TO ANALYSE THE        *
+*              DYNAMO CONTROL BLOCKS AND FORMAT THEM IN THE DUMP      *
+*              DATA SET. AN INITIAL TEST IS MADE TO SEE IF THIS       *
+*              TASK WAS USING THE DYNAMO FACILITY AND, IF IT WAS,     *
+*              THE CONTROL BLOCKS ARE OUTPUT. IF NOT, NO OUTPUT IS    *
+*              PRODUCED BY THIS MODULE.                               *
+*                                                                     *
+*        PARAMETERS. THE ABDUMP WORK AREA IS PASSED IN & OUT VIA R1   *
+*                                                                     *
+*        EXITS. THE ROUTINE RETURNS CONTROL TO THE CALLER             *
+*                                                                     *
+*        REGISTER USAGE.                                              *
+*        REG1  PARAMETER REGISTER, WORK REGISTER                      *
+*        REG2  WORK REGISTER                                          *
+*        REG3  ADDRESS OF INTERNAL WORK AREA                          *
+*        REG4  ADDRESS OF THE ABENDING TCB                            *
+*        REG5  ADDRESS OF CDE AND WORK REGISTER                       *
+*        REG6  ADDRESS OF DYNAMO HEADER BLOCK AND WORK REGISTER       *
+*        REG7  ADDRESS OF FORMAT CONTROL TABLE                        *
+*        REG8  ADDRESS OF CONTROL BLOCK NAME                          *
+*        REG9  ***NOT USED ***                                        *
+*        REG10 ADDRESS OF ABDUMP WORK AREA                            *
+*        REG11 INTERNAL LINKAGE REGISTER BETWEEN SEGMENTS             *
+*        REG12 BASE ADDRESS REGISTER                                  *
+*        REG13 ADDRESS OF DYNAMIC SAVE AREA                           *
+*        REG14 RETURN ADDRESS & WORK REGISTER                         *
+*        REG15 ENTRY POINT ADDRESS & WORK REGISTER                    *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        EQUATES USED IN THIS MODULE                                  *
+***********************************************************************
+         SPACE 2
+ELENGTH  EQU   28                  LENGTH OF A TABLE ENTRY
+         EJECT
+***********************************************************************
+*        DSECTS                                                       *
+***********************************************************************
+         SPACE 2
+         PRINT NOGEN
+         IHAABDA
+         IKJTCB
+         IHACDE
+         PRINT GEN
+         SPACE 2
+WKAREA   DSECT ,                   INTERNAL WORK AREA
+GETMNADD DS    F                   ADDRESS OF THIS AREA
+GETMNLEN DS    F                   LENGTH & SUBPOOL THIS GETMAIN
+PARMLIST DS    4F                  PARAMETER LIST FOR CALL ROUTINE
+DBLWORD  DS    D                   WORK AREA FOR CONVERSIONS
+WKAREND  EQU   *                   END OF WORK AREA
+WKARELEN EQU   WKAREND-WKAREA      LENGTH OF WORK AREA FOR GETMAIN
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING                                   *
+***********************************************************************
+         SPACE 2
+IEAVADDY ZCSECT GETMAIN=1
+         EJECT
+***********************************************************************
+*        LOAD UP WORKING ADDRESS OF CONTROL BLOCKS NEEDED             *
+***********************************************************************
+         LR    REG10,REG1          LOAD ADDRESS ABDUMP WORK AREA
+         USING ABDAREA,REG10       ADDRESSABILITY FOR WORK AREA
+         L     REG4,ABDTCB         LOAD ADDRESS OF TCB ABENDING
+         USING TCB,REG4            ADDRESSABILITY FOR TCB
+         L     REG5,TCBJPQ         LOAD ADDRESS OF CDE CHAIN
+         USING CDENTRY,REG5        ADDRESSABILITY FOR CDE
+         EJECT
+***********************************************************************
+*        GETMAIN & INITIALISE WORK AREAS                              *
+***********************************************************************
+         SPACE 2
+         LA    REG0,WKARELEN       LOAD LENGTH CORE FOR WORK AREA
+         GETMAIN R,LV=(0)          GETMAIN CORE FOR WORK AREA
+         LR    REG3,REG1           BASE ADDRESS FOR WORK AREA
+         USING WKAREA,REG3         ADDRESSABILITY TO WORK AREA
+         ST    REG1,GETMNADD       SAVE ADDRESS FOR FREEMAIN
+         ST    REG0,GETMNLEN       SAVE LENGTH FOR FREEMAIN
+         EJECT
+***********************************************************************
+*        SCAN THE CDE CHAIN AND DETERMINE IF THIS IS A DYNAMO JOB     *
+***********************************************************************
+         SPACE 2
+CDELOOP  LTR   REG5,REG5           TEST FOR FIRST/NEXT CDE
+         BZ    ENDTEST             END OF CHAIN. DYNAMO NOT FOUND
+         CLC   CDNAME,DYNMNAME     TEST FOR DYNAMO MODULE
+         BE    FOUNDIT             DYNAMO FOUND. GO PROCESS
+         L     REG5,CDCHAIN        LOAD ADDRESS OF NEXT CDE
+         B     CDELOOP             LOOP FOR ALL CDES
+ENDTEST  B     EXITPGM             END OF PROCESSING.
+         EJECT
+***********************************************************************
+*        THIS IS A DYNAMO JOB. PRINT A HEADING TO SAY SO              *
+***********************************************************************
+         SPACE 2
+FOUNDIT  DS    0H
+         XC    ABDLINE,ABDLINE     CLEAR THE OUTPUT AREA
+         MVC   ABDLINE(L'TITLE),TITLE IDENTIFY THE FOLLOWING OUTPUT
+         MVI   ABDCC,C'0'          FORCE DOUBLE SPACING
+         BAL   REG11,OUTPUTER      GO OUTPUT THE TITLE LINE
+         EJECT
+***********************************************************************
+*        FORMAT AND PRINT THE DYNAMO HEADER BLOCK                     *
+***********************************************************************
+         SPACE 2
+         DS    0H
+         L     REG6,CDENTPT        LOAD ADDRESS OF ENTRY POINT
+         LA    REG6,4(REG6)        LOAD ADDRESS OF HEADER BLOCK
+         LA    REG7,HEADTABL       LOAD ADDRESS OF FORMAT TABLE
+         LA    REG8,HEADTITL       LOAD ADDRESS OF HEAD TITLE
+         BAL   REG11,CALLFMT       GO CALL THE FORMATTING ROUTINE
+         EJECT
+***********************************************************************
+*        FORMAT AND PRINT THE DYNAMO TABLE ENTRIES                    *
+***********************************************************************
+         SPACE 2
+DOBLKS   DS    0H
+         L     REG5,4(REG6)        LOAD ADDRESS OF FIRST BLOCK
+LOOP2    LA    REG6,4(REG5)        LOAD ADDRESS OF FIRST ENTRY
+         LA    REG4,20             LOAD NUMBER OF ENTRIES PER BLOCK
+LOOP1    CLI   0(REG6),X'FF'       END OF ENTRIES ?
+         BE    DOBLKEND            YES. EXIT FROM PROCESSING
+         LA    REG7,BLKTABLE       LOAD ADDRESS DESCRIPTOR TABLE
+         LA    REG8,BLKHEADR       LOAD ADDRESS OF C.B. HEADER
+         BAL   REG11,CALLFMT       GO FORMAT THIS CONTROL BLOCK
+         LA    REG6,ELENGTH(REG6)  LOAD ADDRESS OF NEXT TABLE ENTRY
+         BCT   REG4,LOOP1          LOOP FOR ALL ENTRIES PER BLOCK
+         L     REG5,0(REG5)        LOAD ADDRESS NEXT BLOCK
+         B     LOOP2               LOOP FOR ALL ACTIVE BLOCKS
+DOBLKEND B     EXITPGM             BRANCH TO NEXT ROUTINE
+         EJECT
+***********************************************************************
+*        COMMON CLEANUP & PROGRAM EXIT ROUTINE                        *
+***********************************************************************
+         SPACE 2
+EXITPGM  DS    0H
+         L     REG1,GETMNADD       LOAD ADDRESS OF GETMAINED AREA
+         L     REG0,GETMNLEN       LOAD LENGTH OF GETMAINED AREA
+         FREEMAIN R,LV=(0),A=(1)   FREE UP THE WORK AREA
+         ZRETURN RC=0              RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        EFFECT LINKAGE WITH THE FORMATTING ROUTINE                   *
+***********************************************************************
+         SPACE 2
+CALLFMT  DS    0H
+         ST    REG10,PARMLIST      STORE ABDAREA ADDRESS IN PARAMETER
+         STM   REG6,REG8,PARMLIST+4 STORE REMAINING PARAMETERS
+         OI    PARMLIST+12,X'80'   TURN ON VL BIT
+         LA    REG1,PARMLIST       LOAD PARAMETER REGISTER 1
+         CALL  IEAVADFT            CALL THE FORMATTER
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        THIS IS THE ABDUMP OUTPUT ROUTINE LINKAGE                    *
+***********************************************************************
+         SPACE 2
+OUTPUTER DS    0H
+         LR    REG1,REG10          LOAD ADDRESS OF WORK AREA
+         L     REG15,IEAVAD11      LOAD ADDRESS OF FORMAT ROUTINE
+         BALR  REG14,REG15         LINK TO THE PRINT ROUTINE
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        LITERALS & CONSTANTS                                         *
+***********************************************************************
+         SPACE 2
+IEAVAD11 DC    V(IEAVAD11)         ADDRESS OF ABDUMP OUTPUT ROUTINE
+TITLE    DC    C'**** DYNAMO CONTROL BLOCKS ****************************
+               *****************************   MONSANTO.IEAVADDY.V0.0'
+DYNMNAME DC    CL8'DYNAMV00'       NAME OF MAIN DYNAMO ROUTINE
+HEADTITL DC    AL1(L'HEADERNM)     LENGTH OF HEADER NAME
+HEADERNM DC    C'HEADER'           HEADER NAME FOR DYNAMO
+HEADTABL DS    0F                  TABLE FOR DYNAMO HEADER FORMAT
+         FMTENT LEVEL,3,CONVERT=N0
+         FMTENT VERSION,1
+         FMTENT INUSE,1
+         FMTENT FBLK,3
+         FMTENT LAST,8,CONVERT=NO
+         FMTENT PREV,8,CONVERT=NO
+         DC    AL1(255)            END OF TABLE
+BLKHEADR DC    AL1(L'BLKTITLE)
+BLKTITLE DC    C'ENTRY '
+BLKTABLE DS    0F                  DESCRIPTOR TABLE OF ENTRIES
+         FMTENT FLAG,1
+         FMTENT EPA,3
+         FMTENT USE-CNT,2
+         FMTENT EXED,2
+         FMTENT EXEC,2
+         FMTENT RESERVED,2
+         FMTENT PGM,8,CONVERT=NO,NL=YES
+         FMTENT RET,4
+         FMTENT PARM,4
+         DC    AL1(255)            END OF TABLE INDICATOR
+         LTORG
+         END
+//LKED.SYSIN   DD   *
+ NAME IEAVADDY(R)
+/*

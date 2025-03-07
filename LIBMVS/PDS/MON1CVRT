@@ -1,0 +1,187 @@
+//JEATRACE JOB (1330,5),'TRACE PREPROCESS',CLASS=N,NOTIFY=JEA,
+// COND=(0,NE),MSGCLASS=T
+//STEP01   EXEC   ASMFCL,L=H,PRINT='*'
+***********************************************************************
+*                    M O N 1 C V R T                                  *
+*                                                                     *
+*        THIS ROUTINE IS DESIGNED TO PREPROCESS OUTPUT FROM THE       *
+*        MONITOR1 TRACE ROUTINE. THAT DATA MUST FIRST BE SORTED       *
+*        BY JOBNAME, VIRTUAL ADDRESS, AND TIME. THIS ROUTINE WILL     *
+*        THEN PROCESS THE RECORDS IN PAGE I/O START AND STOP PAIRS.   *
+*            FOR EACH PAIR OF RECORDS, THE START TIME IS SUBTRACTED   *
+*        FROM THE STOP  TIME TO GIVE THE TIME TAKEN TO PROCESS THE    *
+*        I/O REQUEST. THE TIME ON THE START RECORD IS THEN CONVERTED  *
+*        INTO DISPLAY FORMAT AND A FILE CREATED OF COMPOSITE RECORDS. *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING                                   *
+***********************************************************************
+         SPACE 2
+MON1CVRT ZCSECT
+         EJECT
+***********************************************************************
+*        OPEN THE FILES TO BE PROCESSED                               *
+***********************************************************************
+         SPACE 2
+         OPEN  (SYSUT1,INPUT)      INPUT SOURCE FILE
+         TM    SYSUT1+48,X'10'     OPEN SUCESSFUL
+         BZ    OPENFAIL            NO. TERMINATE PROCESSING
+         OPEN  (SYSUT2,OUTPUT)     OUTPUT FILE
+         TM    SYSUT2+48,X'10'     OPEN SUCESSFUL
+         BO    OPENOK              ALL OPENS COMPLETE
+OPENFAIL EQU   *
+         ABEND 1,DUMP              NO. ABEND AND EXIT
+OPENOK   EQU   *
+         EJECT
+***********************************************************************
+*        READ THROUGH THE WHOLE INPUT FILE
+***********************************************************************
+         SPACE 2
+READLOOP DS    0H
+         GET   SYSUT1              GET FIRST/NEXT RECORD
+         LR    REG3,REG1           LOAD BASE REGISTER
+         USING DATABLOK,REG3       ADDRESSABILITY FOR IT
+         TM    DATAFLAG,FLAGSTRT   IS IT AN I/O START ?
+         BZ    READLOOP            NO. MUST BE SOMETHING WRONG
+         LA    REG5,DATAJOBN       ADDRESS OF JOBNAME FOR MATCHING
+         LA    REG6,DATAPCB+26     ADDRESS OF VIRT BLOCK NO
+         GET   SYSUT1              READ THE MATCHING RECORD
+         LR    REG4,REG1           LOAD A BASE REGISTER
+         DROP  REG3                RELEASE OLD ADDRESSABILITY
+         USING DATABLOK,REG4       AND SET UP NEW ADDRESSABILITY
+         TM    DATAFLAG,FLAGSTOP   IS THIS A TERMINATION RECORD
+         BZ    READLOOP            NO. GO START AGAIN
+         CLC   DATAJOBN,0(REG5)    SAME JOBNAME
+         BNE   READLOOP            WELL IT DAMN WELL SHOULD BE !!
+         CLC   DATAPCB+26(2),0(REG6) SAME VBN ?
+         BNE   READLOOP            NO. DIFFERENT PAGE ALTOGETHER
+         BAL   REG11,GETTIME       GO GET I/O TIME
+         BAL   REG11,CONVERT       GO CONVERT THE TOD CLOCK
+         PUT   SYSUT2,(3)          AND RE-WRITE THE RECORD
+         B     READLOOP            PROCESS THE WHOLE FILE
+         SPACE 2
+EODAD    EQU   *
+         DROP  REG4                RELEASE OLD ADDRESSABILITY
+         EJECT
+***********************************************************************
+*        CLOSE FILES.
+***********************************************************************
+         SPACE 2
+         CLOSE (SYSUT1,,SYSUT2)    CLOSE THE UPDATED FILES
+         EJECT
+***********************************************************************
+*        COMMON PROGRAM EXIT ROUTINES                                 *
+***********************************************************************
+         SPACE 2
+         ZRETURN
+         EJECT
+***********************************************************************
+*        CALCULATE THE TIME TAKEN TO PERFORM THE PAGE I/O             *
+* NOTE:  THIS ROUTINE EXPECTS TO WORK ON TIME FIELDS IN TOD CLOCK     *
+*        FORMAT. RESULT IS IN MICRO SECONDS (8 BYTES)                 *
+***********************************************************************
+         SPACE 2
+GETTIME  DS    0H                  REG3=START REC, REG4=STOP REC
+         USING DATABLOK,REG3       ADDRESSABILITY FOR START RECORD
+         LM    REG6,REG7,DATACLOK  START TIME OF PAGE I/O
+         LM    REG8,REG9,DATACLOK-DATABLOK(REG4) END TIME OF I/O
+         SRDL  REG6,12             DOWN TO MICRO SECONDS
+         SRDL  REG8,12             ALSO DOWN TO MICROSECONDS
+         SLR   REG9,REG7           SUBRACT START FROM END
+         BC    3,NOCARRY           COMPLIMENT ADDITION GAVE CARRY OUT
+         LA    REG6,1(REG6)        OTHERWISE IT TOOK A CARRY IN
+NOCARRY  EQU   *
+         SLR   REG8,REG6           GET TOP OF NUMBER
+         STM   REG8,REG9,DATAMICS  STORE RESULT IN THE RECORD
+         BR    REG11               RETURN TO CALLER
+         DROP  REG3                RELEASE ADDRESSABILITY
+         EJECT
+***********************************************************************
+*        CONVERT THE EIGHT BYTE TOD CLOCK TO EBCDIC                   *
+* NOTE:  THIS ROUTINE CONCERNS ITSELF ONLY WITH THE TIME OF DAY.      *
+*        THE YEAR AND DATA ARE NOT CALCULATED.                        *
+***********************************************************************
+         SPACE 2
+CONVERT  DS    0H
+         USING DATABLOK,REG3       ADDRESSABILITY START I/O RECORD
+         LM    REG4,REG5,DATACLOK  LOAD TOD CLOCK VALUE FROM RECORD
+         SRDL  REG4,8              SHIFT EVERYTHING EIGHT BITS LEFT
+         SRL   REG5,4              AND SHIFT RIGHT HAND WORD 4 MORE
+         CVD   REG4,PACKED1        CONVERT LEFT HALF TO DECIMAL
+         CVD   REG5,PACKED2        AND THEN CONVERT THE OTHER HALF
+         MP    PACKED0,FACTOR      MULTIPLY LEFT BY SUITABLE POWER 2
+         AP    PACKED0,PACKED2     AND ADD THE RIGHT HALF. DATE NOW PD
+         DP    PACKED0,TENTHOU     GET TIME IN HUNDREDS OF A SECOND
+         ZAP   PACKED9,PACKED0(L'PACKED0-L'TENTHOU) COPY RESULT OUT
+         ZAP   PACKED0,PACKED9     AND COPY BACK FOR FULL LENGTH
+         DP    PACKED0,HUNDRED     GET TIME IN SECONDS
+         UNPK  EBCDIC,REMAINS      CONVERT TO EBCDIC
+         OI    EBCDIC+L'EBCDIC-1,X'F0' GIVE IT A GOOD SIGN
+         MVC   10(2,REG3),EBCDIC+L'EBCDIC-2 AND COPY TO OUT FIELD
+         ZAP   PACKED9,PACKED0(L'PACKED0-L'TENTHOU) COPY RESULT OUT
+         ZAP   PACKED0,PACKED9     AND COPY BACK FOR FULL LENGTH
+         DP    PACKED0,SIXTY       GET TIME IN MINUTES
+         UNPK  EBCDIC,REMAINS      CONVERT TO EBCDIC
+         OI    EBCDIC+L'EBCDIC-1,X'F0' GIVE IT A GOOD SIGN
+         MVC   8(2,REG3),EBCDIC+L'EBCDIC-2 AND COPY TO OUT FIELD
+         ZAP   PACKED9,PACKED0(L'PACKED0-L'TENTHOU) COPY RESULT OUT
+         ZAP   PACKED0,PACKED9     AND COPY BACK FOR FULL LENGTH
+         DP    PACKED0,SIXTY       GET TIME IN HOURS
+         UNPK  EBCDIC,REMAINS      CONVERT TO EBCDIC
+         OI    EBCDIC+L'EBCDIC-1,X'F0' GIVE IT A GOOD SIGN
+         MVC   6(2,REG3),EBCDIC+L'EBCDIC-2 AND COPY TO OUT FIELD
+         ZAP   PACKED9,PACKED0(L'PACKED0-L'TENTHOU) COPY RESULT OUT
+         ZAP   PACKED0,PACKED9     AND COPY BACK FOR FULL LENGTH
+         DP    PACKED0,TWENTY4     GET TIME IN DAYS
+         UNPK  EBCDIC,REMAINS      CONVERT TO EBCDIC
+         OI    EBCDIC+L'EBCDIC-1,X'F0' GIVE IT A GOOD SIGN
+         MVC   4(2,REG3),EBCDIC+L'EBCDIC-2 AND COPY TO OUT FIELD
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        CONSTANTS AND WORK AREAS                                     *
+***********************************************************************
+         SPACE 2
+         DS    0D                  GET ALIGNMENT
+PACKED9  DC    PL16'0'             WORK AREA
+PACKED0  DC    PL16'0'             CONVERTED TOD CLOCK VALUE
+         ORG   PACKED0             GO BACK TO START FOR REDEFINES
+         DS    CL8                 STEP OVER FIRST EIGHT BYTES
+PACKED1  DS    0PL8                FIRST LEVEL UNPACK
+         DS    CL5                 PADDING
+REMAINS  DS    PL3                 REMAINDER FROM DIVIDES
+PACKED2  DC    PL8'0'              SECOND LEVEL UNPACK
+TENTHOU  DC    PL3'10000'          DIVISION FACTOR
+HUNDRED  DC    PL3'100'            DIVISION FACTOR
+SIXTY    DC    PL3'60'             DIVISION FACTOR
+TWENTY4  DC    PL3'24'             DIVISION FACTOR
+FACTOR   DC    P'268435456'        POWER OF 2 FOR DBLWORD CVD
+EBCDIC   DC    CL4'0'              CONVERT TO EBCDIC AREA
+         PRINT NOGEN
+SYSUT1   DCB   DDNAME=SYSUT1,DSORG=PS,MACRF=GL,EODAD=EODAD
+SYSUT2   DCB   DDNAME=SYSUT2,DSORG=PS,MACRF=PM,LRECL=DATALEN,          X
+               RECFM=VB,BLKSIZE=13028
+         PRINT GEN
+         EJECT
+***********************************************************************
+*        DSECTS USED IN THIS ROUTINE                                  *
+***********************************************************************
+         SPACE 2
+DATABLOK DSECT ,                   IMAGE OF DATA PASSED TO TRACE
+DATACHN  DS    F                   CHAINING FIELDS
+DATACLOK DS    2F                  TOD CLOCK VALUE
+DATAJOBN DS    CL8                 NAME OF THE JOB/TSO/STC
+DATAPCB  DS    CL36                IMAGE OF THE PCB
+DATAXPTE DS    CL12                IMAGE OF THE XPTE
+DATAMICS DS    2F                  TIME FOR I/O IN MICROSECONDS
+DATAFLAG DS    X                   FLAGS FOR TRACE RECORD
+FLAGSTRT EQU   X'80'               THIS IS THE START OF A PAGE IO
+FLAGSTOP EQU   X'40'               THIS IS THE END OF A PAGE IO
+DATAFREE DS    XL3                 SPARE FOR EXPANSION
+DATALEN  EQU   *-DATABLOK          LENGTH OF THE DATA
+         END
+//LKED.SYSLMOD DD DSN=JEA.LOADLIB,DISP=SHR
+ NAME MON1CVRT(R)
+/*

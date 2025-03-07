@@ -1,0 +1,849 @@
+LGET     TITLE 'LIBRARYN - QSAM INTERFACE'
+LYBRNGET CSECT
+         SPACE 3
+***********************************************************************
+*                                                                     *
+*        PURPOSE.                                                     *
+*        ---------                                                    *
+*                                                                     *
+*        THIS PROGRAM READS A LIBRARYN DATASET MODULE AND             *
+*        WRITES IT OUT TO AN O/S SEQUENTIAL DATASET.                  *
+*        IT HAS BEEN WRITTEN TO SIMPLIFY THE CREATION OF THE          *
+*        MONSANTO GOODIES TAPES,FOR THIS REASON IT HAS OPTIONAL       *
+*        OUTPUTS FOR A DESCRIPTION FILE AND A FILE IN IEBUPDTE        *
+*        './ ADD' FORMAT - ON THIS FILE ANY './' CARDS IN THE         *
+*        INPUT STREAM ARE CHANGED TO ',/' CARDS.                      *
+*                                                                     *
+*        D.CARTWRIGHT MONSANTO MISD/TSG BRUSSELS 17-2-78              *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*                                                                     *
+*        INPUT                                                        *
+*        -----                                                        *
+*                                                                     *
+*        PARM     - SPECIFIES NAME OF MODULE WITHIN LIBRARIAN D/S.    *
+*        SYSIN    - OPTIONAL INPUT FILE OF MODULE NAMES (CC 3)        *
+*        MASTER   - DEFINES LIBRARIAN DATA SET                        *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*                                                                     *
+*        OUTPUT     - ALL OUTPUT FILES ARE OPTIONAL                   *
+*        ------                                                       *
+*                                                                     *
+*        SYSUT2     - DEFINES OUTPUT FILE                             *
+*        SYSUT3     - DEFINES OUTPUT FILE COPY                        *
+*        SYSUT4     - DEFINES OUTPUT FILE COPY                        *
+*                                                                     *
+*        SYSUPDTE   - DEFINES THE IEBUPDTE STREAM                     *
+*        SYSUPDT2   - DEFINES THE IEBUPDTE STREAM COPY                *
+*        SYSUPDT3   - DEFINES THE IEBUPDTE STREAM COPY                *
+*                                                                     *
+*        SYSINDEX   - DEFINES THE INDEX DESCRIPTION FILE              *
+*        SYSINDE2   - DEFINES THE INDEX DESCRIPTION FILE COPY         *
+*        SYSINDE3   - DEFINES THE INDEX DESCRIPTION FILE COPY         *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*                                                                     *
+*        TECHNIQUE                                                    *
+*        -----------                                                  *
+*                                                                     *
+*        USES 'FAIR' ROUTINES WHICH MUST BE LINK-EDITED               *
+*        INTO THE LOAD MODULE.SEE LIBRARIAN DOCUMENTATION             *
+*        FOR DETAILS OF THESE ROUTINES.                               *
+*                                                                     *
+***********************************************************************
+         TITLE 'LYBRNGET - CONTROL BLOCKS USED.'
+***********************************************************************
+*        THE FOLLOWING DSECT DESCRIBES THE MONSANTO DCB TABLE         *
+*        ALLOWING MUCH MORE OPTIONAL PROCESSING THAN IS POSSIBLE      *
+*        WITH STRAIGHT DCB ADDRESSING.                                *
+***********************************************************************
+         SPACE 1
+MDCBTAB  DSECT                     MONSANTO DCB TABLE
+         SPACE 1
+MDCBDCB  DS    0F                  ADDRESS OF DATA CONTROL BLOCK
+MDCBFLAG DS    XL1                 FLAGS
+*        VALUES OF MDCBFLAG
+DDINT    EQU   16                  DD INTEREST
+DDPRES   EQU   8                   DD PRESENT
+DDOPEN   EQU   1                   DD IS OPEN
+         SPACE 1
+MDCBADCB DS    AL3(0)              ADDRESS OF DCB
+MDCBTYPE DS    CL8'OUTPUT'         INPUT OR OUTPUT
+MDCBCNT  DS    PL4'0'              RECORD COUNT
+MDCBRECL DS    AL2(0)              DEFAULT RECORD LENGTH
+MDCBBLK  DS    AL2(0)              DEFAULT BLOCKSIZE
+MDCBOPEN DS    A(0)                ADDRESS OF OPEN ROUTINE
+MDCBRTNE DS    A(0)                ADDRESS OF I/O ROUTINE
+MDCBCLOS DS    A(0)                ADDRESS OF CLOSE ROUTINE
+         SPACE 1
+MDCBLGTH EQU   *-MDCBTAB           LENGTH OF DCB TABLE ENTRY
+         SPACE 1
+LYBRNGET CSECT                     RETURN TO PROGRAM
+         EJECT
+***********************************************************************
+*        LIBRARIAN CONTROL FIELDS                                     *
+***********************************************************************
+         SPACE 1
+         SUMCRCD ,                 MAP LIBRARIAN CONTROL FIELDS
+         SPACE 2
+LYBRNGET CSECT                     RETURN TO PROGRAM
+         EJECT
+***********************************************************************
+*        REGISTER EQUATES AND USAGES.                                 *
+***********************************************************************
+         SPACE 1
+R0       EQU   0    SVC COMMUNICATIONS AND WORK REGISTER
+R1       EQU   1    SVC COMMUNICATIONS AND WORK REGISTER
+R2       EQU   2    MDCB POINTER AND WORK REG.
+R3       EQU   3    I/O POINTER AND WORK REGISTER
+R4       EQU   4    BAL RETURN ADDRESS
+R5       EQU   5
+R6       EQU   6
+R7       EQU   7
+R8       EQU   8
+R9       EQU   9
+R10      EQU   10
+R11      EQU   11
+R12      EQU   12
+R13      EQU   13   SAVE AREA POINTER / BASE REGISTER 1
+R14      EQU   14   BALR RETURN ADDRESS
+R15      EQU   15   BALR ROUTINE ADDRESS AND WORK REGISTER
+         SPACE 3
+***********************************************************************
+*        HOUSEKEEPING                                                 *
+***********************************************************************
+         SPACE 1
+         PRINT ON,NOGEN            SUPPRESS MACRO EXPANSIONS
+         PGMIN EQUATES=NO,USING=(R13) ESTABLISH ADDRESSABILITY
+         TITLE 'LYBRNGET - PROCESSING ROUTINES'
+***********************************************************************
+*        SAVE ADDRESS AND LENGTH OF PARM OF EXEC CARD                 *
+***********************************************************************
+         SPACE 1
+         L     R1,0(R1)            LOAD ADDRESS OF PARM INTO R1
+         MVC   PARMLGTH,0(R1)      STORE LENGTH OF PARM INFO
+         CLC   PARMLGTH,MAXPARM    TEST FOR VALID PARM FIELD
+         BH    LASTCALL            ASSUME LAST ENTRY IF INVALID
+         LA    R1,2(R1)            GET ADDRESS OF PARM INFO
+         ST    R1,PARMADDR         STORE ADDRESS OF PARM INFO
+         EJECT
+***********************************************************************
+*        TEST WHICH ARE THE DD'S SUPPLIED, AND OPEN DATA SETS         *
+*         PRESENT IF THEY HAVE NOT ALREADY BEEN OPENED.               *
+***********************************************************************
+         SPACE 1
+         LA    R3,MAXDS            ESTABLISH LOOP
+         LA    R2,DCBTABLE         POINT R2 AT DCB TABLE
+         USING MDCBTAB,R2          ESTABLISH TABLE ADDRESSABILITY
+DDTEST   DS    0H                  TEST ALL DD TABLE ENTRIES
+         TM    MDCBFLAG,DDOPEN     HAS ENTRY BEEN DONE?
+         BO    DDTESTX             YES,TRY NEXT ONE
+         OI    MDCBFLAG,DDINT      INDICATE DD INTEREST
+         BAL   R4,TESTIOT          GO TEST IF DD STATEMENT PRESENT
+         BAL   R4,OPEN             GO OPEN DATA SET
+DDTESTX  DS    0H                  CYCLE ROUND TABLE ENTRIES
+         LA    R2,MDCBLGTH(,R2)    POINT AT NEXT TABLE ENTRY
+         BCT   R3,DDTEST           PROCESS NEXT DATASET
+         SPACE 1
+         DROP  R2                  END DCB TABLE ADDRESSABILITY
+         EJECT
+***********************************************************************
+*        LOCATE REQUESTED (OR NEXT) LIBRARIAN MODULE                  *
+***********************************************************************
+         SPACE 1
+         SR    R2,R2               CLEAR A WORK REGISTER
+         ICM   R2,3,PARMLGTH       PICK UP PARM LENGTH
+         BZ    PARMNULL            TEST FOR NAME SUPPLIED
+         BCTR  R2,0                REDUCE LENGTH FOR EXECUTE
+         EX    R2,PARMMOVE         SET UP MODULE NAME
+         B     MASTMOD             GO LOCATE MODULE
+         SPACE 1
+PARMNULL DS    0H                  NO PARM SUPPLIED,TRY AN INPUT CARD
+         MVI   DESCNAME,BLANK      CLEAR DESCRIPTION NAME
+         MVC   DESCNAME+1(L'DESCNAME-1),DESCNAME    TO BLANKS
+         LA    R2,SYSINSW          PICK AN INPUT FILE
+         LA    R3,DESCRPTN         AND AN INPUT AREA
+         BAL   R4,READ             TO READ A RECORD
+         MVC   MODULE,DESCNAME     MOVE NAME OR BLANKS(FOR NEXT MODULE)
+         SPACE 1
+MASTMOD  DS    0H                  FAIR CALL TO LOCATE MODULE
+         CALL  MASTMOD,(MODULE,RETCODE,INFO,INCCODE),VL FIND MODULE
+         CLI   RETCODE,CHARONE     TEST FOR END-OF-FILE
+         BL    DESCRIBE            CARRY ON IF NO ERROR
+         BE    NEXTCALL            YES,SEE IF ANY MORE REQUESTED
+         BAL   R4,ABEND            OTHERWISE RETIRE HURT
+         SPACE 1
+NEXTCALL DS    0H                  SEE IF AT END OR JUST NOT FOUND
+         CLI   MODULE,BLANK        SEE IF SPECIFIC REQUEST
+         BE    LASTCALL            NO,SO E-O-F.GO FINISH
+         ICM   R2,3,PARMLGTH       SEE IF ONLY ONE MODULE
+         BNZ   LASTCALL            YES,SO FINISHED
+         B     PARMNULL            NO,SO FIND NEXT IN THE LIST
+         SPACE 2
+PARMMOVE MVC   MODULE(0),2(R1)     SAVE MODULE NAME        * EXECUTED *
+         EJECT
+***********************************************************************
+*        OUTPUT MODULE DESCRIPTION TO SEQUENTIAL FILE(S)              *
+***********************************************************************
+         SPACE 1
+DESCRIBE DS    0H                  OUTPUT MODULE DESCRIPTION
+         MVC   DESCNAME,MODULE     MOVE MODULE NAME
+         MVC   DESCDESC,INFODESC   AND DESCRIPTION
+         LA    R3,DESCRPTN         TO DESCRIPTION RECORD
+         LA    R2,INDEX1SW         PICK AN OUTPUT FILE
+         ICM   R2,8,DESCCOPY       AND A NUMBER OF COPIES
+         BAL   R4,WRITE            GO OUTPUT RECORD
+         SPACE 2
+***********************************************************************
+*        OUTPUT IEBUPDTE CONTROL CARD FOR OPTIONAL FILES              *
+***********************************************************************
+         SPACE 1
+         MVC   UPDTNAME,MODULE     MOVE MODULE NAME
+         LA    R3,UPDTCARD         TO ./ ADD RECORD
+         LA    R2,SYSUPDSW         PICK AN OUTPUT FILE
+         ICM   R2,8,UPDTCOPY       AND A NUMBER OF COPIES
+         BAL   R4,WRITE            GO OUTPUT RECORD
+         EJECT
+***********************************************************************
+*                                                                     *
+*        READ A LIBRARIAN RECORD,WRITE IT OUT.                        *
+*                                                                     *
+***********************************************************************
+         SPACE 3
+PROCESS  DS    0H                  MAIN LINE OF PROGRAM
+         LA    R2,MASTERSW         PICK AN INPUT FILE
+         LA    R3,RECORD           AND AN INPUT AREA
+         BAL   R4,READ             GO READ A RECORD
+         SPACE 1
+PROCESS2 DS    0H                  COPY THE LIBRARIAN RECORD
+         LA    R2,SYSUT2SW         PICK AN OUTPUT FILE
+         ICM   R2,8,RECCOPY        AND A NUMBER OF COPIES
+         LA    R3,RECAREA          POINT TO OUTPUT RECORD
+         BAL   R4,WRITE            AND GO OUTPUT IT
+         CLC   DOTCRD,RECAREA      IS IT A ./ CARD?
+         BNE   PROCESS3            NO,CARRY ON
+         MVI   RECAREA,C','        CHANGE TO ,/ CARD
+         SPACE 1
+PROCESS3 DS    0H                  CREAT IEBUPDTE STREAM
+         LA    R2,SYSUPDSW         PICK AN OUTPUT FILE
+         ICM   R2,8,UPDTCOPY       AND A NUMBER OF COPIES
+         LA    R3,RECAREA          POINT TO OUTPUT RECORD
+         BAL   R4,WRITE            AND GO OUTPUT IT
+         B     PROCESS             GO FOR NEXT RECORD
+         SPACE 3
+***********************************************************************
+*        LIBRARIAN END-OF-MODULE ROUTINE.                             *
+***********************************************************************
+         SPACE 1
+PROCEND  DS    0H                  END OF CURRENT MODULE
+         ICM   R2,3,PARMLGTH       TEST FOR PARM SUPPLIED
+         BNZ   LASTCALL            YES,SO NOW FINISHED
+         B     PARMNULL            NO,SO TRY NEXT MODULE
+         EJECT
+***********************************************************************
+*                                                                     *
+*        TERMINATION                                                  *
+*        CLOSE FILES AND EXIT.                                        *
+*                                                                     *
+***********************************************************************
+         SPACE 3
+LASTCALL DS    0H                  END-OF-FILE DETECTED
+         LA    R3,MAXDS            ESTABLISH LOOP
+         LA    R2,DCBTABLE         POINT R2 AT DCB TABLE
+         USING MDCBTAB,R2          ESTABLISH TABLE ADDRESSABILITY
+CLSTEST  DS    0H                  TEST ALL DD TABLE ENTRIES
+         TM    MDCBFLAG,DDOPEN     HAS ENTRY BEEN OPENED?
+         BNO   CLSTESTX            NO, TRY NEXT ONE
+         BAL   R4,CLOSE            GO CLOSE DATA SET
+CLSTESTX DS    0H                  CYCLE ROUND TABLE ENTRIES
+         LA    R2,MDCBLGTH(,R2)    POINT AT NEXT TABLE ENTRY
+         BCT   R3,CLSTEST          PROCESS NEXT DATASET
+         SPACE 1
+         DROP  R2                  END DCB TABLE ADDRESSABILITY
+         PGMOUT RC=COMPCODE        MONSANTO EXIT TO SUPERVISOR
+         TITLE 'LYBRNGET - INPUT I/O SUB-ROUTINES'
+***********************************************************************
+*        READ SUBROUTINE                                              *
+***********************************************************************
+         SPACE 1
+READ     SUBIN SAVE=(R2,R3,R4)     SUB-ROUTINE ENTRY
+         USING MDCBTAB,R2          ESTABLISH MDCB ADDRESSABILITY
+         TM    MDCBFLAG,DDINT+DDPRES+DDOPEN IS I/O WANTED ?
+         BNO   READX               NO,STRAIGHT OUT
+         CLC   MDCBTYPE,INPUT      CHECK FOR INPUT FILE
+         BNE   READX               EXIT IF NOT
+         ICM   R1,7,MDCBADCB       PICK UP DCB ADDRESS
+         BZ    READX               EXIT IF NONE
+         SPACE 1
+         L     R15,MDCBRTNE        GET I/O ROUTINE ADDRESS
+         BALR  R4,R15              GO EXECUTE ROUTINE
+         AP    MDCBCNT,ONE         INCREMENT RECORD COUNTER
+         SPACE 1
+READX    SUBOUT RESTORE=(R2,R3,R4) RETURN TO CALLER
+         SPACE 2
+***********************************************************************
+*        GET MOVE READ ROUTINE                                        *
+***********************************************************************
+         SPACE 1
+READGM   SUBIN ,                   GET/MOVE ROUTINE
+         GET   (R1),(R3)           GET A RECORD
+         SUBOUT ,                  RETURN TO CALLER
+         SPACE 2
+***********************************************************************
+*        LIBRARIAN READ ROUTINE                                       *
+***********************************************************************
+         SPACE 1
+READLIBN SUBIN ,                   LIBRARIAN 'FAIR' READ
+         CALL  MASTRCD,((R3),RETCODE,INCSTATE),VL READ LIBRARIAN RECORD
+         CLI   RETCODE,CHARONE     TEST COMPLETION
+         BE    PROCEND             ON E-O-F GOTO OUT OF HERE
+         BL    READLIBX            RETURN TO CALLER IF OK
+         BAL   R4,ABEND            BLOW UP ON ERROR
+READLIBX SUBOUT ,                  RETURN TO CALLER
+         SPACE 2
+         DROP  R2                  END MDCB ADDRESSABILITY
+         TITLE 'LYBRNGET - OUTPUT I/O SUB-ROUTINES'
+***********************************************************************
+*        WRITE SUBROUTINE                                             *
+***********************************************************************
+         SPACE 1
+WRITE    SUBIN SAVE=(R2,R3,R4,R6)  SUB-ROUTINE ENTRY
+         USING MDCBTAB,R2          ESTABLISH MDCB ADDRESSABILITY
+         LR    R6,R2               GET COUNT/ADDRESS
+         SRL   R6,24               ISOLATE COUNT
+         LTR   R6,R6               TEST FOR A VALUE
+         BNZ   *+4+4               IF SUPPLIED,SKIP DEFAULT
+         LA    R6,1                ELSE GIVE ONE LOOP
+         SPACE 1
+WRITELP  DS    0H                  OUTPUT LOOP HEADER
+         TM    MDCBFLAG,DDINT+DDPRES+DDOPEN IS I/O WANTED ?
+         BNO   WRITELPX            NO,STRAIGHT ROUND
+         CLC   MDCBTYPE,OUTPUT     CHECK FOR OUTPUT FILE
+         BNE   WRITELPX            IGNORE IT IF NOT
+         SPACE 1
+         ICM   R1,7,MDCBADCB       PICK UP DCB ADDRESS
+         BZ    WRITELPX            EXIT IF NONE
+         L     R15,MDCBRTNE        GET I/O ROUTINE ADDRESS
+         BALR  R4,R15              GO EXECUTE ROUTINE
+         AP    MDCBCNT,ONE         INCREMENT RECORD COUNTER
+         SPACE 1
+WRITELPX DS    0H                  ATTEMPT TO OUTPUT TO NEXT FILE
+         LA    R2,MDCBLGTH(,R2)    POINT TO NEXT MDCB ENTRY
+         BCT   R6,WRITELP          PRODUCE ANOTHER COPY
+         SPACE 1
+WRITEX   SUBOUT RESTORE=(R2,R3,R4,R6) RETURN TO CALLER
+         SPACE 2
+***********************************************************************
+*        PUT MOVE WRITE ROUTINE                                       *
+***********************************************************************
+         SPACE 1
+WRITEPM  SUBIN ,                   PUT/MOVE ROUTINE
+         PUT   (R1),(R3)           WRITE A RECORD
+         SUBOUT ,                  RETURN TO CALLER
+         SPACE 1
+         DROP  R2                  END MDCB ADDRESSABILITY
+         SPACE 2
+***********************************************************************
+*                                                                     *
+*        ERROR ROUTINE                                                *
+*        ON ANY ERROR THE PROGRAM ABENDS U2048.                       *
+*                                                                     *
+***********************************************************************
+         SPACE 3
+ABEND    DS    0H                  AN ERROR HAS OCCURRED
+         CALL  MASTCLS             ENSURE LIBRARIAN CLOSED
+         ABEND 2048,DUMP           HALT EXECUTION
+         EJECT
+***********************************************************************
+*        SUPPLY DEFAULT RECORD LENGTH AND/OR BLOCK SIZE               *
+*         IF NOT CODED.                                               *
+***********************************************************************
+         SPACE 1
+BLKSZRTN SUBIN ,                   SUPPLY DEFAULT LRECL AND/OR BLKS
+         USING IHADCB,R1           ESTABLISH DCB ADDRESSABILITY
+         USING MDCBTAB,R2          ESTABLISH MDCB ADDRESSABILITY
+         CLC   DCBLRECL,ZEROWORD   TEST IF LRECL SUPPLIED
+         BNE   *+4+6               BYPASS DEFAULT IF YES
+         MVC   DCBLRECL,MDCBRECL   SET UP DEFAULT VALUE
+         CLC   DCBBLKSI,ZEROWORD   TEST IF BLKSIZE SUPPLIED
+         BNE   *+4+6               BYPASS DEFAULT IF YES
+         MVC   DCBBLKSI,MDCBBLK    SET UP DEFAULT VALUE
+         DROP  R1                  DROP DCB ADDRESSABILITY
+         DROP  R2                  DROP MDCB ADDRESSABILITY
+         SPACE 1
+         SUBOUT RETURN=(R14)       RETURN TO OPEN ROUTINES
+         TITLE 'LYBRNGET - I/O ERROR ROUTINE'
+***********************************************************************
+*        I/O ERROR ROUTINE                                            *
+***********************************************************************
+         SPACE 1
+IOERROR  SUBIN ,                   ANALYSE I/O ERROR
+         MVC   COMPCODE,COND16     SET COMPLETION CODE
+         SYNADAF ACSMETH=QSAM      CALL ANALYSIS ROUTINE
+         MVC   WTOIOE+27(86),50(R1) ADD RESULT OF ANALYSIS TO LINE
+         SYNADRLS ,                RELEASE OS BUFFER
+         WTO   MF=(E,WTOIOE)       TELL OPERATOR OF ERROR
+         SUBOUT RETURN=ABEND       TERMINATE JOB
+         TITLE 'LYBRNGET - OPEN ROUTINES'
+***********************************************************************
+*        TEST IF A DD STATEMENT IS PRESENT BEFORE OPEN                *
+***********************************************************************
+         SPACE 1
+TESTIOT  SUBIN SAVE=(R2,R3,R4)     TEST TASK INPUT/OUTPUT TABLE
+         USING IHADCB,R3           ESTABLISH DCB ADDRESSABILITY
+         USING MDCBTAB,R2          ESTABLISH MDCB ADDRESSABILITY
+         L     R3,MDCBDCB          PICK UP DCB ADDRESS
+         TESTIOT DDNAME=DCBDDNAM   TEST IF DDNAME FOUND IN TIOT
+         B     *+4(R15)            TEST CONDITION CODE
+         OI    MDCBFLAG,DDPRES     TELL THAT DD STATEMENT SUPPLIED
+         SUBOUT RESTORE=(R2,R3,R4) RETURN TO CALLER
+         SPACE 1
+         DROP  R2,R3               END DCB,MDCB ADDRESSABILITY
+         SPACE 3
+***********************************************************************
+*        OPEN ROUTINE                                                 *
+***********************************************************************
+         SPACE 1
+OPEN     SUBIN SAVE=(R3,R4)        OPEN DATA SET
+         USING MDCBTAB,R2          ESTABLISH MDCB ADDRESSABILITY
+         TM    MDCBFLAG,DDINT+DDPRES TEST IF DD INTERESTING AND
+         BNO   OPENX               BRANCH IF NO    / PRESENT.
+         ICM   R3,7,MDCBADCB       GET DCB ADDRESS
+         BZ    OPENX               EXIT IF NONE
+         L     R15,MDCBOPEN        PICK UP OPEN ROUTINE ADDRESS
+         BALR  R4,R15              GO OPEN DATASET
+OPENX    SUBOUT RESTORE=(R3,R4)    RETURN TO CALLER
+         SPACE 2
+***********************************************************************
+*        NORMAL DCB OPEN ROUTINE                                      *
+***********************************************************************
+         SPACE 1
+OPENDCB  SUBIN ,                   OPEN A DCB SUB-ROUTINE
+         CLC   MDCBTYPE,INPUT      TEST FOR INPUT D/S
+         BE    OPENZ               BRANCH IF INPUT D/S
+         OPEN  ((R3),(OUTPUT))     OPEN OUTPUT DATA SET
+         B     OPENY               GO SET SWITCH
+OPENZ    OPEN  ((R3),INPUT)        OPEN INPUT DATA SET
+OPENY    OI    MDCBFLAG,DDOPEN     INDICATE DATA SET OPEN
+         SUBOUT ,                  RETURN TO CALLER
+         SPACE 2
+***********************************************************************
+*        LIBRARIAN OPEN ROUTINE                                       *
+***********************************************************************
+         SPACE 1
+OPENLIBN SUBIN ,                   OPEN A LIBRARIAN DATA SET
+         CALL  MASTOPN,(0,RETCODE),VL OPEN LIBRARIAN MASTER FILE
+         CLI   RETCODE,CHARZERO    TEST FOR SUCCESSFUL OPEN
+         BNE   OPENLIBX            SKIP FLAG SET IF NO
+         OI    MDCBFLAG,DDOPEN     FLAG MDCB IF GOOD OPEN
+OPENLIBX SUBOUT ,                  RETURN TO CALLER
+         SPACE 1
+         DROP  R2                  END MDCB ADDRESSABILITY
+         TITLE 'LYBRNGET - CLOSE ROUTINES'
+***********************************************************************
+*        CLOSE ROUTINE                                                *
+***********************************************************************
+         SPACE 1
+CLOSE    SUBIN SAVE=(R3,R4)        CLOSE DATA SET
+         USING MDCBTAB,R2          ESTABLISH MDCB ADDRESSABILITY
+         TM    MDCBFLAG,DDOPEN     TEST IF DATA SET OPEN
+         BZ    CLOSEX              EXIT IF NOT
+         L     R3,MDCBDCB          GET DCB ADDRESS
+         L     R15,MDCBCLOS        PICK UP CLOSE ROUTINE ADDRESS
+         BALR  R4,R15              GO CLOSE DATASET
+         NI    MDCBFLAG,FF-DDOPEN  SET OFF 'OPEN' SWITCH
+CLOSEX   SUBOUT RESTORE=(R3,R4)    RETURN TO CALLER
+         SPACE 2
+         DROP  R2                  END MDCB ADDRESSABILITY
+         SPACE 2
+***********************************************************************
+*        DCB CLOSE SUB-ROUTINE                                        *
+***********************************************************************
+         SPACE 1
+CLOSEDD  SUBIN ,                   CLOSE A DCB
+         CLOSE ((R3),LEAVE)        CLOSE THE DCB
+CLOSEDDX SUBOUT ,                  RETURN TO CALLER
+         SPACE 2
+***********************************************************************
+*        LIBRARIAN CLOSE SUB-ROUTINE                                  *
+***********************************************************************
+         SPACE 1
+CLOSELIB SUBIN ,                   CLOSE A LIBRARIAN MASTER
+         CALL  MASTCLS             CLOSE LIBRARYN MASTER FILE
+         SUBOUT ,                  RETURN TO CALLER
+         TITLE 'MDCB''S AND I/O CONTROL TABLES'
+***********************************************************************
+*        DCB'S TABLE                                                  *
+***********************************************************************
+         SPACE 1
+DCBTABLE DS    0F                  MONSANTO DCB TABLE ENTRIES
+         SPACE 5
+***********************************************************************
+*        INPUT FILE CONTROL TABLES                                    *
+***********************************************************************
+         SPACE 1
+MASTERSW DS    0F                  LIBRARIAN MASTER MDCB TABLE
+         DC    XL1'00'             FLAGS
+         DC    AL3(MASTER)         ADDRESS OF DCB (FRIG)
+         DC    CL8'INPUT'          INPUT OR OUTPUT
+         DC    PL4'0'              RECORD COUNT
+         DC    AL2(0)              DEFAULT RECORD LENGTH
+         DC    AL2(0)              DEFAULT BLOCKSIZE
+         DC    A(OPENLIBN)         ADDRESS OF OPEN ROUTINE
+         DC    A(READLIBN)         ADDRESS OF I/O ROUTINE
+         DC    A(CLOSELIB)         ADDRESS OF CLOSE ROUTINE
+         SPACE 1
+SYSINSW  DS    0F                  CONTROL FILE MDCB TABLE
+         DC    XL1'00'             FLAGS
+         DC    AL3(SYSIN)          ADDRESS OF DCB
+         DC    CL8'INPUT'          INPUT OR OUTPUT
+         DC    PL4'0'              RECORD COUNT
+         DC    AL2(80)             DEFAULT RECORD LENGTH
+         DC    AL2(80)             DEFAULT BLOCKSIZE
+         DC    A(OPENDCB)          ADDRESS OF OPEN ROUTINE
+         DC    A(READGM)           ADDRESS OF I/O ROUTINE
+         DC    A(CLOSEDD)          ADDRESS OF CLOSE ROUTINE
+         EJECT
+***********************************************************************
+*        CARD IMAGE COPY OUTPUT FILES                                 *
+***********************************************************************
+         SPACE 1
+SYSUT2SW DS    0F                  OUTPUT COPY FILE 1 MDCB TABLE
+         DC    XL1'00'             FLAGS
+         DC    AL3(SYSUT2)         ADDRESS OF DCB
+         DC    CL8'OUTPUT'         INPUT OR OUTPUT
+         DC    PL4'0'              RECORD COUNT
+         DC    AL2(80)             DEFAULT RECORD LENGTH
+         DC    AL2(800)            DEFAULT BLOCKSIZE
+         DC    A(OPENDCB)          ADDRESS OF OPEN ROUTINE
+         DC    A(WRITEPM)          ADDRESS OF I/O ROUTINE
+         DC    A(CLOSEDD)          ADDRESS OF CLOSE ROUTINE
+         SPACE 1
+SYSUT3SW DS    0F                  OUTPUT COPY FILE 2 MDCB TABLE
+         DC    XL1'00'             FLAGS
+         DC    AL3(SYSUT3)         ADDRESS OF DCB
+         DC    CL8'OUTPUT'         INPUT OR OUTPUT
+         DC    PL4'0'              RECORD COUNT
+         DC    AL2(80)             DEFAULT RECORD LENGTH
+         DC    AL2(800)            DEFAULT BLOCKSIZE
+         DC    A(OPENDCB)          ADDRESS OF OPEN ROUTINE
+         DC    A(WRITEPM)          ADDRESS OF I/O ROUTINE
+         DC    A(CLOSEDD)          ADDRESS OF CLOSE ROUTINE
+         SPACE 1
+SYSUT4SW DS    0F                  OUTPUT COPY FILE 3 MDCB TABLE
+         DC    XL1'00'             FLAGS
+         DC    AL3(SYSUT4)         ADDRESS OF DCB
+         DC    CL8'OUTPUT'         INPUT OR OUTPUT
+         DC    PL4'0'              RECORD COUNT
+         DC    AL2(80)             DEFAULT RECORD LENGTH
+         DC    AL2(800)            DEFAULT BLOCKSIZE
+         DC    A(OPENDCB)          ADDRESS OF OPEN ROUTINE
+         DC    A(WRITEPM)          ADDRESS OF I/O ROUTINE
+         DC    A(CLOSEDD)          ADDRESS OF CLOSE ROUTINE
+         SPACE 2
+RECCOPY  EQU   (*-SYSUT2SW)/MDCBLGTH NO. OF DIRECT COPIES
+         EJECT
+***********************************************************************
+*        IEBUPDTE CONTROL OUTPUT FILES                                *
+***********************************************************************
+         SPACE 1
+SYSUPDSW DS    0F                  IEBUPDTE FILE 1 MDCB TABLE
+         DC    XL1'00'             FLAGS
+         DC    AL3(SYSUPDTE)       ADDRESS OF DCB
+         DC    CL8'OUTPUT'         INPUT OR OUTPUT
+         DC    PL4'0'              RECORD COUNT
+         DC    AL2(80)             DEFAULT RECORD LENGTH
+         DC    AL2(800)            DEFAULT BLOCKSIZE
+         DC    A(OPENDCB)          ADDRESS OF OPEN ROUTINE
+         DC    A(WRITEPM)          ADDRESS OF I/O ROUTINE
+         DC    A(CLOSEDD)          ADDRESS OF CLOSE ROUTINE
+         SPACE 1
+SYSUP2SW DS    0F                  IEBUPDTE FILE 2 MDCB TABLE
+         DC    XL1'00'             FLAGS
+         DC    AL3(SYSUPDT2)       ADDRESS OF DCB
+         DC    CL8'OUTPUT'         INPUT OR OUTPUT
+         DC    PL4'0'              RECORD COUNT
+         DC    AL2(80)             DEFAULT RECORD LENGTH
+         DC    AL2(800)            DEFAULT BLOCKSIZE
+         DC    A(OPENDCB)          ADDRESS OF OPEN ROUTINE
+         DC    A(WRITEPM)          ADDRESS OF I/O ROUTINE
+         DC    A(CLOSEDD)          ADDRESS OF CLOSE ROUTINE
+         SPACE 1
+SYSUP3SW DS    0F                  IEBUPDTE FILE 3 MDCB TABLE
+         DC    XL1'00'             FLAGS
+         DC    AL3(SYSUPDT3)       ADDRESS OF DCB
+         DC    CL8'OUTPUT'         INPUT OR OUTPUT
+         DC    PL4'0'              RECORD COUNT
+         DC    AL2(80)             DEFAULT RECORD LENGTH
+         DC    AL2(800)            DEFAULT BLOCKSIZE
+         DC    A(OPENDCB)          ADDRESS OF OPEN ROUTINE
+         DC    A(WRITEPM)          ADDRESS OF I/O ROUTINE
+         DC    A(CLOSEDD)          ADDRESS OF CLOSE ROUTINE
+         SPACE 2
+UPDTCOPY EQU   (*-SYSUPDSW)/MDCBLGTH NO. OF COPIES
+         EJECT
+***********************************************************************
+*        INDEX OUTPUT FILES                                           *
+***********************************************************************
+         SPACE 1
+INDEX1SW DS    0F                  INDEX FILE 1 MDCB TABLE
+         DC    XL1'00'             FLAGS
+         DC    AL3(SYSINDEX)       ADDRESS OF DCB
+         DC    CL8'OUTPUT'         INPUT OR OUTPUT
+         DC    PL4'0'              RECORD COUNT
+         DC    AL2(80)             DEFAULT RECORD LENGTH
+         DC    AL2(800)            DEFAULT BLOCKSIZE
+         DC    A(OPENDCB)          ADDRESS OF OPEN ROUTINE
+         DC    A(WRITEPM)          ADDRESS OF I/O ROUTINE
+         DC    A(CLOSEDD)          ADDRESS OF CLOSE ROUTINE
+         SPACE 1
+INDEX2SW DS    0F                  INDEX FILE 2 MDCB TABLE
+         DC    XL1'00'             FLAGS
+         DC    AL3(SYSINDE2)       ADDRESS OF DCB
+         DC    CL8'OUTPUT'         INPUT OR OUTPUT
+         DC    PL4'0'              RECORD COUNT
+         DC    AL2(80)             DEFAULT RECORD LENGTH
+         DC    AL2(800)            DEFAULT BLOCKSIZE
+         DC    A(OPENDCB)          ADDRESS OF OPEN ROUTINE
+         DC    A(WRITEPM)          ADDRESS OF I/O ROUTINE
+         DC    A(CLOSEDD)          ADDRESS OF CLOSE ROUTINE
+         SPACE 1
+INDEX3SW DS    0F                  INDEX FILE 3 MDCB TABLE
+         DC    XL1'00'             FLAGS
+         DC    AL3(SYSINDE3)       ADDRESS OF DCB
+         DC    CL8'OUTPUT'         INPUT OR OUTPUT
+         DC    PL4'0'              RECORD COUNT
+         DC    AL2(80)             DEFAULT RECORD LENGTH
+         DC    AL2(800)            DEFAULT BLOCKSIZE
+         DC    A(OPENDCB)          ADDRESS OF OPEN ROUTINE
+         DC    A(WRITEPM)          ADDRESS OF I/O ROUTINE
+         DC    A(CLOSEDD)          ADDRESS OF CLOSE ROUTINE
+         SPACE 1
+TABSIZE  EQU   *-DCBTABLE          DCB'S TABLE SIZE
+MAXDS    EQU   TABSIZE/MDCBLGTH    MAXIMUN NUMBER OF DCB'S
+         TITLE 'LYBRNGET - I/O EXIT LISTS'
+         SPACE 5
+EXITLIST DC    X'85',AL3(BLKSZRTN) ENTRY FOR DCB MODIFICATION
+         SPACE 2
+WTOIOE   DS    0F
+         DC    AL2(WTOEND-*),H'0',CL109'******** - I/O ERROR -'
+WTOEND   EQU   *
+         TITLE 'LYBRNGET - DATA CONTROL BLOCK DEFINITIONS'
+***********************************************************************
+*        DATA CONTROL BLOCKS                                          *
+***********************************************************************
+         SPACE 1
+SYSIN    DCB   DDNAME=SYSIN,                                           C
+               DSORG=PS,                                               C
+               SYNAD=IOERROR,                                          C
+               EXLST=EXITLIST,                                         C
+               RECFM=FB,                                               C
+               MACRF=GM,                                               C
+               EODAD=LASTCALL
+         SPACE 5
+***********************************************************************
+*        DUMMY DCB FOR LIBRARIAN MASTER FILE                          *
+***********************************************************************
+         SPACE 1
+MASTER   DCB   DDNAME=MASTER,                                          C
+               DSORG=DA,                                               C
+               MACRF=RK,                                               C
+               EODAD=LASTCALL
+         EJECT
+***********************************************************************
+*        OUTPUT COPY DCB'S                                            *
+***********************************************************************
+         SPACE 1
+SYSUT2   DCB   DDNAME=SYSUT2,                                          C
+               DSORG=PS,                                               C
+               SYNAD=IOERROR,                                          C
+               EXLST=EXITLIST,                                         C
+               RECFM=FB,                                               C
+               MACRF=PM
+         SPACE 3
+SYSUT3   DCB   DDNAME=SYSUT3,                                          C
+               DSORG=PS,                                               C
+               SYNAD=IOERROR,                                          C
+               EXLST=EXITLIST,                                         C
+               RECFM=FB,                                               C
+               MACRF=PM
+         SPACE 3
+SYSUT4   DCB   DDNAME=SYSUT4,                                          C
+               DSORG=PS,                                               C
+               SYNAD=IOERROR,                                          C
+               EXLST=EXITLIST,                                         C
+               RECFM=FB,                                               C
+               MACRF=PM
+         EJECT
+***********************************************************************
+*        IEBUPDTE FILE DCB'S                                          *
+***********************************************************************
+         SPACE 1
+SYSUPDTE DCB   DDNAME=SYSUPDTE,                                        C
+               DSORG=PS,                                               C
+               SYNAD=IOERROR,                                          C
+               EXLST=EXITLIST,                                         C
+               RECFM=FB,                                               C
+               MACRF=PM
+         SPACE 3
+SYSUPDT2 DCB   DDNAME=SYSUPDT2,                                        C
+               DSORG=PS,                                               C
+               SYNAD=IOERROR,                                          C
+               EXLST=EXITLIST,                                         C
+               RECFM=FB,                                               C
+               MACRF=PM
+         SPACE 3
+SYSUPDT3 DCB   DDNAME=SYSUPDT3,                                        C
+               DSORG=PS,                                               C
+               SYNAD=IOERROR,                                          C
+               EXLST=EXITLIST,                                         C
+               RECFM=FB,                                               C
+               MACRF=PM
+         EJECT
+***********************************************************************
+*        INDEX DESCRIPTION FILE DCB'S                                 *
+***********************************************************************
+         SPACE 1
+SYSINDEX DCB   DDNAME=SYSINDEX,                                        C
+               DSORG=PS,                                               C
+               SYNAD=IOERROR,                                          C
+               EXLST=EXITLIST,                                         C
+               RECFM=FB,                                               C
+               MACRF=PM
+         SPACE 3
+SYSINDE2 DCB   DDNAME=SYSINDE2,                                        C
+               DSORG=PS,                                               C
+               SYNAD=IOERROR,                                          C
+               EXLST=EXITLIST,                                         C
+               RECFM=FB,                                               C
+               MACRF=PM
+         SPACE 3
+SYSINDE3 DCB   DDNAME=SYSINDE3,                                        C
+               DSORG=PS,                                               C
+               SYNAD=IOERROR,                                          C
+               EXLST=EXITLIST,                                         C
+               RECFM=FB,                                               C
+               MACRF=PM
+         TITLE 'MISCELLANIOUS EQUATES, CONSTANTS AND WORK AREAS'
+***********************************************************************
+*        EQUATES                                                      *
+***********************************************************************
+         SPACE 1
+FF       EQU   255                 FOR 'NI' INSTRUCTION
+BLANK    EQU   X'40'               BLANK
+ON       EQU   X'FF'               ON
+OFF      EQU   X'00'               OFF
+HIGHVAL  EQU   X'FF'               HIGH VALUE
+LOWVAL   EQU   X'00'               LOW VALUE
+SIGN     EQU   X'F0'               FOR FORCE SIGN TO 'F'
+CHARZERO EQU   C'0'                CHARACTER ZERO
+CHARONE  EQU   C'1'                CHARACTER ONE
+         SPACE 1
+SPCE1AFT EQU   X'09'               SPACE 1 AFTER PRINTING
+SPCE2AFT EQU   X'11'               SPACE 2 AFTER PRINTING
+SPCE3AFT EQU   X'19'               SPACE 3 AFTER PRINTING
+PAGESKIP EQU   X'89'               SKIP TO NEW PAGE
+         EJECT
+***********************************************************************
+*        CONSTANTS                                                    *
+***********************************************************************
+         SPACE 1
+ZEROWORD DC    F'0'                BINARY ZERO FULLWORD FOR TESTS
+         SPACE 1
+COND4    DC    H'4'                COMPLETION CODE OF 4
+COND8    DC    H'8'                COMPLETION CODE OF 8
+COND12   DC    H'12'               COMPLETION CODE OF 12
+COND16   DC    H'16'               COMPLETION CODE OF 16
+         SPACE 1
+ZERO     DC    PL1'0'              PACKED CONSTANT OF ZERO
+ONE      DC    PL2'1'              PACKED CONSTANT OF ONE
+         SPACE 2
+INPUT    DC    CL8'INPUT'          INPUT FILE IDENTIFIER
+OUTPUT   DC    CL8'OUTPUT'         OUTPUT FILE IDENTIFIER
+         EJECT
+***********************************************************************
+*        WORK AREAS                                                   *
+***********************************************************************
+         SPACE 1
+DECIMAL  DS    D                   WA FOR DECIMAL OPERATIONS
+COMPCODE DC    H'0'                CONDITION CODE
+         SPACE 1
+MAXPARM  DC    H'8'                MAXIMUM ALLOWABLE PARM LENGTH
+PARMLGTH DC    H'0'                LENGTH OF PARM OF EXEC CARD
+PARMADDR DS    F                   ADDRESS OF PARM INFO'S
+         SPACE 1
+PAGECOUN DC    PL2'0'              COUNT OF PAGES
+LINECOUN DC    PL2'0'              COUNT OF LINES
+MAXLINE  DC    PL2'55'             MAXIMUM NUMBER OF LINES PER PAGE
+         SPACE 5
+***********************************************************************
+*        DESCRIPTION / INPUT RECORD WORKAREA                          *
+***********************************************************************
+         SPACE 1
+DESCRPTN DS    0CL80               DESCRIPTION LINE (CARD IMAGE)
+         DC    CL2' '              BLANKS (ASA PRINT)
+DESCNAME DC    CL8' '              MODULE NAME
+         DC    CL10' '             BLANKS
+DESCDESC DC    CL30' '             DESCRIPTION
+         DC    CL30' '             BLANKS
+         SPACE 1
+DESCCOPY DC    AL1(3)              NO. COPIES TO ATTEMPT
+         SPACE 2
+***********************************************************************
+*        IEBUPDTE ./ ADD CARD                                         *
+***********************************************************************
+         SPACE 1
+UPDTCARD DS    0CL80               IEBUPDTE CONTROL CARD
+         DC    CL3'./'             IEBUPDTE CONTROL STATEMENT
+         DC    CL9'ADD NAME='      OPERATION
+UPDTNAME DC    CL8' '              MEMBER NAME
+         DC    CL52' '             BLANK PADDING
+         DC    CL8'MONSANTO'       CARD IDENTIFIER
+         EJECT
+***********************************************************************
+*                                                                     *
+*                        DATA AREAS.                                  *
+*                                                                     *
+***********************************************************************
+         SPACE 3
+MODULE   DC    CL8' '              LIBRARIAN MODULE NAME
+INCCODE  DC    CL1'0'              REPLACE -INC CARDS WITH RECORDS
+INCSTATE DC    CL1'0'              -INC PROCESSING STATUS
+RETCODE  DC    XL1'00'             LIBRARIAN RETURN CODE
+         SPACE 1
+INFO     DS    0CL100              LIBRARIAN MODULE INFORMATION
+INFOPSWD DS    CL4                 PASSWORD
+INFOADD  DS    CL6                 MMDDYY ADDED TO MASTER
+INFOUPDT DS    CL10                MMDDYYHHMM OF LAST UPDATE
+INFONUMB DS    PL3                 NUMBER OF CARDS
+INFOPROG DS    CL15                PROGRAMMER NAME
+INFOPROC DS    CL8                 'PROC' PARAMETER
+INFODESC DS    CL30                MODULE DESCRIPTION
+INFOPAD  DS    CL24                SEQUENCE INFORMATION + PADDING
+         SPACE 1
+RECORD   DS    0CL100              LIBRARIAN RECORD AREA
+RECAREA  DC    CL80' '             CARD IMAGE
+         DC    CL20' '             ADDITIONAL INFORMATION
+         SPACE 1
+DOTCRD   DC    C'./ '              IEBUPDTE CARD IDENTIFIER
+         EJECT
+***********************************************************************
+*        LITERAL POOL                                                 *
+***********************************************************************
+         SPACE 1
+         LTORG
+         TITLE 'DCB DSECT'
+***********************************************************************
+*        DCB DSECT                                                    *
+***********************************************************************
+         SPACE 1
+         PRINT GEN
+         DCBD  DSORG=PS            GENERATE DCB DSECT
+         END

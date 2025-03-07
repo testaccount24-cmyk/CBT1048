@@ -1,0 +1,171 @@
+KIVIDATA CSECT                     KIVIATGRAPH DATA PREPARATION
+         PGMIN ,                   MONSANTO ENTRY MCLRO
+         SPACE 2
+***********************************************************************
+*                                                                     *
+* THIS PROGRAM ANALYSES TYPE 4 RECORDS PRODUCED BY THE HOOVER MONITOR *
+* AND WRITES A RECORD FOR PROCESSING BY THE MOORCROFT KIVIATGRAPH PGM *
+*                                                                     *
+*        D.CARTWRIGHT    MONSANTO  MISD/TSG       NOVEMBER 1975       *
+*                                                                     *
+***********************************************************************
+         TITLE 'KIVIDATA - PRODUCE DATA FOR PERFORMANCE KIVIATGRAPH'
+         OPEN  (FILEIN,,FILEOUT,(OUTPUT)) OPEN FILES
+LOOP1    DS    0H                  MAJOR LOOP
+         GET   FILEIN,HOOVDATA     READ A RECORD
+         CLI   TYPE,C'4'           IS IT A TYPE 4 RECORD?
+         BNE   LOOP1               NO,IGNORE IT
+         SPACE 2
+         LA    R1,18               SET NUMBER OF MINOR LOOPS
+         LA    R2,STATUS-1         SET BASE FROM WHICH WE OFFSET
+LOOP2    DS    0H                  MINOR LOOP
+         LA    R3,0(R1,R2)         POINT AT BYTE TO BE TESTED
+         AP    PCOUNT,PONE         COUNT THIS BYTE
+         SPACE 1
+         TM    0(R3),SCPUB         TEST FOR CPU BUSY
+         BO    TESTWAIT            NO,IT IS IN WAIT
+         AP    PCPUB,PONE          YES,COUNT IT
+         TM    0(R3),SCHANB        ANY SELECTOR CHANNELS BUSY
+         BZ    BNOCHANS            NO,GO COUNT IT
+         AP    PCPUCHAN,PONE       YES,COUNT OVELAP
+         AP    PCHANB,PONE         COUNT CHANNEL BUSY
+         SPACE 1
+BPROB    DS    0H                  PROBLEM PROGRAM TEST
+         TM    0(R3),SPROB         IS IT IN PROBLEM STATE?
+         BNO   BSUPVR              NO,COUNT SUPERVISOR TIME
+         AP    PPROB,PONE          COUNT PROBLEM BUSY
+         B     LOOP2END            FINISHED ANALYSIS
+         SPACE 2
+BNOCHANS DS    0H                  COUNT NO CHANNELS ACTIVE
+         AP    PCPUO,PONE          CPU ONLY BUSY
+         B     BPROB               GO BACK TO TEST PROBLEM STATE
+         SPACE 1
+BSUPVR   DS    0H                  SUPERVISOR STATE
+         AP    PSUPV,PONE          COUNT IT
+         B     LOOP2END            FINISHED THIS GO
+         EJECT
+TESTWAIT DS    0H                  MACHINE WAS WAITING
+         TM    0(R3),SCHANB        ANY SELECTOR CHANNELS BUSY?
+         BZ    WNOSELS             NO,DONT COUNT
+         AP    PCHANO,PONE         YES,COUNT IT
+         AP    PCHANB,PONE         COUNT TOTAL CHANNEL BUSY
+         SPACE 1
+WNOSELS  DS    0H                  NO SELECTOR CHANNELS ACTIVE
+         TM    0(R3),SCPUWA        ANY ACTIVITY AT ALL?
+         BZ    LOOP2END            NO,FORGET THIS OBSERVATION
+         AP    PCPUWA,PONE         YES,COUNT IT
+         SPACE 2
+LOOP2END DS    0H
+         BCT   R1,LOOP2            EXAMINE EVERY STATUS BYTE
+         B     LOOP1               THEN GET THE NEXT RECORD
+         EJECT
+*        NOW PROCESS THE COUNTS
+         SPACE 2
+ENDDATA  DS    0H                  END OF FILE REACHED
+         CLOSE (FILEIN)            CLOSE INPUT FILE
+         LA    R1,8                SET NUMBER OF LOOPS
+         LA    R2,PCPUB            POINT AT FIRST COUNT
+         LA    R3,VALUES           POINT AT FIRST RESULT FIELD
+         LA    R4,SCALEVAL         POINT AT FIRST EXPLANATION
+         SPACE 3
+LOOP3    DS    0H                  RESULTS CALCULATION LOOP
+         MP    0(8,R2),PPERCENT    MULTIPLY BY 10,000
+         DP    0(8,R2),PCOUNT      GET PERCENTAGEX100
+         MVC   0(3,R3),0(R2)       MOVE IT TO OUTPUT RECORD
+         MVC   0(7,R4),EDITMASK    MOVE MASK TO DISPLAY FIELD
+         ED    0(7,R4),0(R2)       MAKE THE ANSWER READABLE
+         SPACE 1
+         LA    R2,8(,R2)           UPDATE
+         LA    R3,3(,R3)            ALL
+         LA    R4,66(,R4)            POINTERS
+         BCT   R1,LOOP3            UNTIL WE HAVE PROCESSED THEM ALL
+         EJECT
+*        NOW PASS RESULTS TO THE KIVIATGRAPH PROGRAM
+         SPACE 1
+         PUT   FILEOUT,KIVISTAR    OUTPUT ONE RECORD
+         SPACE 2
+         CLOSE (FILEOUT)           THEN CLOSE THE FILE AND EXIT
+         SPACE 2
+         PGMOUT
+         TITLE 'KIVIDATA - DECLARATIONS'
+         PRINT ON,NOGEN
+FILEIN   DCB   DSORG=PS,MACRF=GM,DDNAME=FILEIN,EODAD=ENDDATA
+         SPACE 3
+FILEOUT  DCB   DSORG=PS,MACRF=PM,DDNAME=FILEOUT,RECFM=F,BLKSIZE=684
+         EJECT
+HOOVDATA DS    0CL20               HOOVER MONITOR RECORDS INPUT
+TYPE     DS    CL1                 RECORD TYPE - ONLY WANT TYPE4
+         DS    CL1
+STATUS   DS    18CL1               CPU AND CHANNEL STATUS OBSERVATIONS
+         SPACE 2
+*        STATUS DEFINITIONS
+         SPACE 1
+SCPUB    EQU   X'02'               CPU WAIT
+SCPUO    EQU   X'00'               CPU ONLY
+SCPUCHAN EQU   X'00'               CPU/CHANNEL OVERLAP
+SCHANO   EQU   X'00'               CHANNEL ONLY
+SCHANB   EQU   X'78'               CHANNEL BUSY
+SCPUWA   EQU   X'F8'               WAIT,I/O ACTIVE (INCLUDE MPX)
+SPROB    EQU   X'01'               PROBLEM STATE
+SSUPV    EQU   X'00'               SUPERVISOR STATE
+         EJECT
+*        ACCUMULATORS
+         SPACE 1
+PCPUB    DC    PL8'0'              CPU BUSY
+PCPUO    DC    PL8'0'              CPU ONLY
+PCPUCHAN DC    PL8'0'              CPU/CHANNEL OVERLAP
+PCHANO   DC    PL8'0'              CHANNEL ONLY
+PCHANB   DC    PL8'0'              CHANNEL BUSY
+PCPUWA   DC    PL8'0'              WAIT,I/O ACTIVE
+PPROB    DC    PL8'0'              PROBLEM STATE
+PSUPV    DC    PL8'0'              SUPERVISOR STATE
+PCOUNT   DC    PL5'0'              NUMBER OF OBSERVATIONS
+         SPACE 2
+*        CONSTANTS
+         SPACE 1
+PONE     DC    PL1'1'              ONE
+PPERCENT DC    PL3'10000'          MULTIPLICATION FACTOR
+EDITMASK DC    X'402021204B2020'   EDIT MASK = XXX.XX
+         EJECT
+*        OUTPUT RECORD AREA
+         SPACE 2
+KIVISTAR DS    0CL684              OUTPUT RECORD
+         DC    CL30'   SYSTEM PERFORMANCE' TITLE
+         DC    CL80' '
+         DC    CL22'MONSANTO - 370/145'
+SCALES   DS    0CL1                AXES EXPLANATIONS - EACH 66 BYTES
+         DC    CL46'A) CPU BUSY'
+         DC    CL1'='
+SCALEVAL DC    CL7' '              SCALE VALUE
+         DC    CL12'%'             UNIT
+         DC    CL46'B) CPU BUSY AND NO SELECTOR CHANNEL BUSY'
+         DC    CL1'='
+         DC    CL7' '              VALUE
+         DC    CL12'%'
+         DC    CL46'C) CPU BUSY AND ANY SELECTOR CHANNEL BUSY'
+         DC    CL1'='
+         DC    CL7' '              VALUE
+         DC    CL12'%'
+         DC    CL46'D) CPU WAIT AND ANY SELECTOR CHANNEL BUSY'
+         DC    CL1'='
+         DC    CL7' '              VALUE
+         DC    CL12'%'
+         DC    CL46'E) ANY SELECTOR CHANNEL BUSY'
+         DC    CL1'='
+         DC    CL7' '              VALUE
+         DC    CL12'%'
+         DC    CL46'F) CPU WAIT AND ANY CHANNEL ACTIVE'
+         DC    CL1'='
+         DC    CL7' '              VALUE
+         DC    CL12'%'
+         DC    CL46'G) CPU BUSY IN PROBLEM PROGRAM'
+         DC    CL1'='
+         DC    CL7' '              VALUE
+         DC    CL12'%'
+         DC    CL46'H) CPU BUSY IN SUPERVISOR STATE'
+         DC    CL1'='
+         DC    CL7' '              VALUE
+         DC    CL12'%'
+VALUES   DC    8PL3'0'             VALUES TO BE PLOTTED
+         SPACE 3
+         END   KIVIDATA

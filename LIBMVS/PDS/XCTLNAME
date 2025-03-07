@@ -1,0 +1,102 @@
+//JEALNAME JOB (1580,5),'0000 J ABBEY',CLASS=N
+// EXEC ASMFCL,L=H,LOPT='''AC=1'''
+//SYSLIB DD
+// DD DSN=JEA.MACLIB,DISP=SHR
+         TITLE 'UTILITY INVOCATION ROUTINE'
+***********************************************************************
+*                       X C T L N A M E                               *
+*                                                                     *
+*            THIS ROUTINE CAN BE USED TO INVOKE ANOTHER UTILITY       *
+*        PROGRAM PASSING IT THE CONTENTS OF THE ORIGINAL JCL PARM     *
+*        FIELD AS SYSIN DATA.                                         *
+*            THE PARM FIELD IS SPLIT INTO SEPARATE FIELDS AND EACH    *
+*        FIELD IS PLACED ON A SEPARATE CARD WHICH IS WRITTEN TO A     *
+*        DD NAME OF 'SYSIN'. THE FIRST PARM FIELD BEGINS WITH AN      *
+*        ASTERISK FOLLOWED IMMEDIATELY BY THE NAME OF THE UTILITY TO  *
+*        BE INVOKED. THE REMAINING DATA FIELDS ARE DELIMITED BY TWO   *
+*        BLANKS. A TYPICAL PARM FIELD MIGHT BE:-                      *
+*                                                                     *
+*  // PARM='*IEHPROGM  CATALG DSNAME=X,VOL=3330=X   UNCATLG DSNAME=Y' *
+*                                                                     *
+*        THE ABOVE WILL INVOKE 'IEHPROGM' PASSING IT TWO SEPARATE     *
+*        CONTROL CARDS TO CATALOG 'X' AND UNCATALOG 'Y'. NOTE THAT    *
+*        IN BOTH THESE CASES, LEADING BLANKS HAVE BEEN INCLUDED AS    *
+*        PART OF THE PARAMETER CARD.                                  *
+*            JCL REQUIRED IS AS FOR THE UTILITY BEING INVOKED PLUS A  *
+*        'SYSIN' DD CARD REFERENCING A WORK FILE WHERE THE PARAMETER  *
+*        CARDS WILL BE WRITTEN AND LATER READ BY THE INVOKED UTILITY  *
+*        WHEN IT GAINS CONTROL.                                       *
+*            NOT THAT FULL DCB INFORMATION IS REQUIRED FOR THE SYSIN  *
+*        CARD.                                                        *
+*                                                                     *
+***********************************************************************
+         EJECT
+XCTLNAME ZCSECT
+         EJECT
+         L     REG2,0(REG1)        LOAD ADDRESS OF PARM LIST
+         LH    REG3,0(REG2)         LOAD LENTH OF PARAMETERS
+         OPEN  (SYSIN,OUTPUT)      OPEN THE PARAMETER FILE
+         LTR   REG3,REG3           TEST FOR PRESCENCE OF PARMS
+         BZ    EXITPGM             NONE. EXIT
+         LA    REG2,2(REG2)        LOAD ADDRESS START OF PARMS
+         LA    REG4,0(REG2,REG3)   LOAD ADDRESS END OF PARMS
+         CLI   0(REG2),C'*'        XCTLNAME FUNCTION ?
+         BNE   EXITPGM             NO. RETURN TO CALLER
+         BAL   REG11,GETNAME       GO EXTRACT THE NAME OF PROGRAM
+PARMLOOP CR    REG4,REG2           END OF PARM INFO ?
+         BNH   EXITPGM             YES. RETURN TO CALLER
+         BAL   REG11,DOCARD        GO OUTPUT A PARAMETER CARD
+         B     PARMLOOP            LOOP FOR EACH PSEUDO CARD
+         EJECT
+GETNAME  LA    REG2,1(REG2)        LOAD START ADDRESS OF NAME
+         CR    REG4,REG2           END OF PARM FIELD ?
+         BNH   ERROR               NO NAME PRESENT
+         CLI   0(REG2),C' '        BLANK NAME ?
+         BE    ERROR               YES. RETURN TO CALLER
+         LR    REG15,REG2          LOAD WORK REGISTER
+NAMELOOP LA    REG15,1(REG15)      LOAD ADDRES OF NEXT BYTE
+         CR    REG4,REG15          TEST FOR END OF PARM FIELD
+         BNH   MOVENAME            YES. GO MOVE THE NAME OUT
+         CLI   0(REG15),C' '       END OF NAME ?
+         BNE   NAMELOOP            NO. FETCH NEXT BYTE
+MOVENAME SR    REG15,REG2          CALCULATE LENGTH OF NAME
+         BCT   REG15,*+10          SUBTRACT 1 FOR EXECUTE
+         MVC   PGMNAME(0),0(REG2)  MOVE NAME TO WORK AREA
+         EX    REG15,*-6           EXECUTE THE MOVE
+         LA    REG2,2(REG15,REG2)  LOAD ADDRESS OF END PARMS
+         BR    REG11               RETURN TO CALLER
+PGMNAME  DC    CL8' '
+         EJECT
+DOCARD   PUT   SYSIN               GET AN INPUT BUFFER
+         LR    REG0,REG1           LOAD ADDRESS OF BUFFER
+         LH    REG1,SYSIN+X'52'    LOAD LENGTH OF A RECORD
+         LR    REG14,REG2          LOAD ADDRESS INPUT DATA
+         LR    REG15,REG14         PREPARE LENGTH REGISTER
+CARDLOOP LA    REG2,1(REG2)        STEP TO NEXT INPUT BYTE
+         LA    REG5,2(REG2)        LOAD ADDRESS OF HIGH END COMPARE
+         CR    REG5,REG4           TEST FOR END PARM DATA
+         BNH   TESTIT              NO. COMPARE WILL BE OK
+         LR    REG2,REG4           SIMULATE ENDING BLANKS
+         B     MOVEIT              GO MOVE TH DATA IN
+TESTIT   CLC   0(2,REG2),=C'  '    END OF INPUT ?
+         BNE   CARDLOOP            NO. FETCH NEXT BYTE
+MOVEIT   SR    REG15,REG2          CALCULATE LENGTH OF DATA
+         LPR   REG15,REG15         MAKE DIFFERENCE POSITIVE
+         ICM   REG15,8,=C' '       INSERT PADDING CHARACTER
+         MVCL  REG0,REG14          MOVE DATA TO BUFFER
+         LA    REG2,2(REG2)        STEP OVER DELIMITING BLANKS
+         BR    REG11               RETURN TO CALLER
+         EJECT
+ERROR    ABEND 1                   SIGNAL FAILURE OF PARM FIELD
+         EJECT
+EXITPGM  CLOSE (SYSIN)             CLOSE THE INPUT FILE
+         LINK  EPLOC=PGMNAME,      LINK TO REQUIRED PROGRAM            X
+               PARAM=(DUMMYPRM),VL=1 PASSING A NULL PARM LIST
+         ZRETURN RC=(15)
+DUMMYPRM DC    H'0'                DUMMY PARAMETER LIST
+         EJECT
+SYSIN    DCB   DDNAME=SYSIN,DSORG=PS,MACRF=PL
+         EJECT
+         LTORG
+         END
+//LKED.SYSLMOD DD DSN=SYS1.LINKLIB2(XCTLNAME),DISP=SHR

@@ -1,0 +1,84 @@
+         MACRO
+&N       SPMODE &MODE,&PK,&MF=I
+         GBLB  &GSPMDSW
+         GBLC  &GN
+         LCLA  &A
+.*
+.*  THE SPMODE MACRO ALLOWS USERS TO CONTROL BOTH THE MODE (PROBLEM OR
+.*  SUPERVISOR) AND THE PROTECTION KEY (ZERO OR USER TASK) UNDER WHICH
+.*  THEIR TASK WILL RUN.
+.*
+.*  TWO PARAMETERS ARE REQUIRED - THE FIRST SPECIFIES THE MODE AS
+.*  'PROB' OR 'SUPV' ('PROB' IS THE DEFAULT), THE SECOND SPECIFIES THE
+.*  PROTECTION KEY AS '0' OR '*' ('*' IS THE DEFAULT AND MEANS USE THE
+.*  KEY FROM THE TCB).
+.*
+.*  EXAMPLES OF USE...
+.*       SPMODE  PROB,0      GIVES USER ZERO PROTECT KEY.
+.*       SPMODE  PROB,*      REVERT TO NORMAL USER PROTECT KEY
+.*       SPMODE  SUPV,0      ALLOWS PRIVILEGED OPERATIONS WITH ZERO KEY
+.*
+.*
+         AIF   ('&MF' EQ 'L').LROUT
+         AIF   ('&MODE' EQ 'PROB').C1
+         AIF   ('&MODE' NE 'SUPV').E1
+&A       SETA  8
+.C1      AIF   ('&PK' EQ '*').C2
+         AIF   ('&PK' NE '0').E2
+&A       SETA  &A+4
+.C2      ANOP
+         AIF   ('&MF' EQ 'I').C3
+         AIF   ('&MF(1)' EQ 'E' AND N'&MF EQ 2).C4
+         MNOTE 4,'INVALID MF IGNORED'
+.C3      CNOP  0,4
+         BAL   15,*+8              BRANCH AROUND CONSTANT.
+         DC    V($SPMODE)          ADDRESS OF SUPVR MODE ROUTINE.
+         L     15,0(0,15)          SET GR15 -> SUPVR MODE ROUTINE.
+         AGO   .C5
+.C4      AIF   ('&MF(2)'(1,1) EQ '(').C6
+         L     15,&MF(2)           SET GR15 -> SUPVR MODE ROUTINE.
+         AGO   .C5
+.C6      LR    15,&MF(2)           SET GR15 -> SUPVR MODE ROUTINE.
+.C5      AIF   (&A EQ 0).C7
+         LA    1,&A.(0,0) .            SET R1 = MODE CODE
+         AGO   .C8
+.C7      SR    1,1 .                   SET R1 = MODE CODE
+.C8      SVC   12 .                ISSUE SYNCH SVC
+         AIF   (&GSPMDSW).EXIT
+&GSPMDSW SETB  1
+&GN      SETC  'IHB'.'&SYSNDX'
+$SPMODE  CSECT
+         STM   14,12,12(13) .      SAVE REGISTERS
+         BAL   12,80(,15) .
+&GN.B    DS    18F .               SAVE AREA
+         ST    13,4(,12) .         CHAIN
+         ST    12,8(,13) .          SAVEAREAS
+         LR    13,12
+         USING &GN.B,12 .          ADDRESSABILITY
+         L     3,16 .              CVT
+         L     3,0(,3) .           CVTTCB
+         L     3,4(,3) .           OUR TCB
+         LR    4,3 .               SAVE TCB POINTER
+         L     3,0(,3) .           RB POINTER
+         L     3,28(,3) .          RBLINK
+         MVZ   17(1,3),28(4) .     STORE PROTECT KEY IN RESTART PSW
+         OI    17(3),X'01' .       SET PROBLEM STATE IN RESTART PSW
+         EX    0,&GN.D(1) .        SET STATE REQUESTED
+         L     13,4(,12) .         PICK UP LSA
+         LM    14,12,12(13) .      RESTORE REGISTERS
+         BR    14                  RETURN.
+         DROP  12 .                DROP BASE
+&GN.D    OI    17(3),X'01'            SET P/P MODE WITH USER KEY.
+         NI    17(3),X'0F'            SET P/P MODE WITH ZERO KEY.
+         NI    17(3),X'FE'            SET SUP MODE WITH USER KEY.
+         NI    17(3),X'0E'            SET SUP MODE WITH ZERO KEY.
+&SYSECT  CSECT
+.EXIT    MEXIT
+.E1      MNOTE *,'INVALID MODE SPECIFICATION - ''PROB'' ASSUMED'
+         AGO   .C1
+.E2      MNOTE *,'INVALID PROTECT KEY SPECIFICATION - ''*'' ASSUMED'
+         AGO   .C2
+.LROUT   ANOP
+&N       DC    V($SPMODE)          ADDRESS OF SUPVR MODE ROUTINE.
+         MEXIT
+         MEND

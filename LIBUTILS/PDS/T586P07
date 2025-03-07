@@ -1,0 +1,1094 @@
+         TITLE  'T586P07 ACTIVE PRODUCTION PROGRAM LIST AND TRANSFER'
+***********************************************************************
+*                                                                     *
+*                                                                     *
+*        **********     ESTABLISH BASE REGISTORS,       **********    *
+*        **********     SAVE AREA, CONTROL SECTION      **********    *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+*
+*
+*
+T586P07  CSECT
+         PRINT ON,GEN
+         PGMIN EQUATES=NO,SAVEFLD=SAVEAREA,USING=(R10,R11)
+         PRINT ON,NOGEN
+         EJECT
+***********************************************************************
+*                                                                     *
+*                                                                     *
+*              **********     PROCESS RECORDS     **********          *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+*
+*
+*        *****     PROCESS PARM INFORMATION     *****
+*
+         USING PARMDSCT,R4              ESTABLISH ADDRESSABILITY
+         L     R4,0(0,R1)               ADDRESS OF PARM LIST
+         CLC   0(2,R4),=AL2(0)          IS PARM SUPPLIED
+         BNE   PARMSUP                  BRANCH IF YES
+         LA    R15,16                   INSERT RETURN CODE
+         B     BADPARM                  EXIT
+*
+PARMSUP  EQU   *
+         SR    R8,R8               CLEAR WORK REG.
+         LH    R8,0(0,R4)          INSERT PARM LENGTH
+         LA    R4,2(0,R4)          JUMP OVER LENGTH SPEC.
+PARM1    CLC   PARMOPT1(5),=C'DAYS='    CHECK CONSTANT
+         BNE   INVAL1                   BRANCH IF INVALID
+         TRT   PDAYS(3),NUMTAB-240      TEST FOR NUMERIC
+         BZ    PARM2                    BRANCH IF VALID
+INVAL1   LA    R15,20                   INSERT RETURN CODE
+         B     BADPARM                  EXIT
+*
+PARM2    PACK  CUTOFF(2),PDAYS(3)       PACK DAYS FOR CUTOFF
+         SH    R8,=H'8'            REDUCE LENGTH FOR REMAINING PARM
+         LTR   R8,R8               ZERO?
+         BNP   LOADTAB             YES. LOAD PROD SYSTEM TABLE
+         LA    R4,8(0,R4)          JUMP OVER DAYS PARM
+         CLC   0(8,R4),=CL8',SYSTEM='
+         BE    *+12                YES. SKIP OVER ERROR PROC.
+         LA    R15,24              INSET RETURN CODE
+         B     BADPARM             EXIT
+         SPACE
+         SH    R8,=H'8'            RECUCE LENGTH
+         BCTR  R8,0                AND ONCE MORE FOR LENGTH SPEC.
+         LA    R4,8(0,R4)          JUMP TO SYSTEM NAME
+         EX    R8,ALPHATST         TEST FOR VALID CHARACTERS
+         BZ    PARM2MOV            BRANCH IF O.K.
+         LA    R15,28              INSET RETURN CODE
+         B     BADPARM             EXIT
+         SPACE
+PARM2MOV EQU   *
+         EX    R8,PARMMOVE         SAVE SYSTEM NAME
+         OI    SYSTMSW,X'80'       INDICATE SINGLE SYSTEM PROCESS.
+         B     LOADTAB             BRANCH ROUN EXECUTED INSTNS.
+         SPACE
+ALPHATST TRT   0(0,R4),ALPHATAB-193  EXECUTED ALPHA CHAR. TEST
+PARMMOVE MVC   PARMSYS(0),0(R4)    EXECUTED MOVE OF SYSTEM NAME
+         SPACE 2
+*
+*        *****     BUILD PRODUCTION SYSTEM TABLE     *****
+*
+LOADTAB  EQU   *
+         OPEN  (TABLE)
+         LA    R2,TABBASE          GET ADDRESS OF TABLE BASE
+LOADLOOP EQU   *
+         GETMAIN R,LV=TABLNTH
+         ST    R1,0(0,R2)          SAVE ADDRESS OF CORE JUST AQUIRED
+         LR    R2,R1               POINT TO AQUIRED CORE
+         USING TABMASK,R2
+         XC    TABENTRY,TABENTRY   CLEAR IT
+LOADREAD EQU   *
+         GET   TABLE               GET NEXT TABLE RECORD
+         MVC   TABELMNT,0(R1)      MOVE RECORD TO IT
+         CLC   TABCLASS(4),=C'LT1 '    IS TABLE RECORD VALID?
+         BNE   LOADREAD            NO. READ NEXT RECORD
+         B     LOADLOOP            RECORD OK. GET NEXT.
+         SPACE 2
+TABEND   EQU   *
+         CLOSE TABLE
+         SPACE 5
+*        BUILD -MCD CARD AND CALL DATE ROUTINE
+         UT458 ,                       CALL UNIVERSAL DATE ROUTINE
+         PACK  WORK,UTMM(4)            PACK MONTH AND DAY
+         AP    WORK,MCDCODE
+         MVC   MCDAREA+4(6),PTRN5
+         ED    MCDAREA+4(6),WORK+5
+         MVI   MCDAREA+5,C' '
+*
+*        *****     BUILD DDNAME TABLE FOR COPY DATASETS     *****
+*        *****     AND INITIALISE THEM                      *****
+*
+BLDDDTAB EQU   *
+         USING DDMASK,R4
+         LA    R4,DDBASE               GET ADDRESS OF DDNAME TABLE BASE
+         L     R2,16(0)                GET CVT ADDRESS
+         L     R2,0(0,R2)              ADDRESS OF TCB DISPATCH FIELDS
+         L     R2,4(0,R2)              ADDRESS OF CURRENT TCB
+         L     R2,12(0,R2)             ADDRESS OF TIOT
+         LA    R2,24(0,R2)             JUMP TO FIRST DDNAME ENTRY
+         SR    R3,R3                   CLEAR REG FOR TIOT ENTRY LENGTHS
+         SR    R5,R5                   CLEAR REG FOR ZERO COMPARE
+DDTABLD  EQU   *
+         GETMAIN R,LV=DDLNTH           GET CORE FOR DDNAME ENTRY
+         ST    R1,DDPNTR               STORE ADDR IN CURRENT POINTER
+*                                      FIRST TIME IN DDBASE
+         LR    R4,R1                   POINT TO NEW CORE
+         XC    DDENTRY,DDENTRY         CLEAR IT
+DDLOOP   EQU   *
+         CL    R5,0(0,R2)              END OF DDNAMES?
+         BE    DDTIOEND                YES. BRANCH.
+         SR    R3,R3
+         IC    R3,0(0,R2)              INSERT LENGTH OF ENTRY
+         LA    R3,0(R3,R2)             GET ADDRESS OF NEXT ENTRY
+         CLI   4(R2),C'C'              DO WE WANT THIS ENTRY
+         BNE   DDRELOOP                NO. JUMP TO NEXT ENTRY
+         MVC   DDNAME,4(R2)            YES. INSERT DDNAME IN TABLE
+         GETMAIN R,LV=96               GET CORE FOR DCB
+         ST    R1,DDADDR               STORE ITS ADDRESS
+         NI    DDADDR,X'00'        CLEAR SWITCH
+         MVC   0(96,R1),DUMMYDCB       MOVE DCB PATTERN
+         MVC   40(8,R1),DDNAME         MOVE DDNAME
+         LR    R6,R1                   MOVE DCB ADDRESS
+         BAL   R9,OPCOPY               OPEN D/S FOR DDNAME FOUND
+         MVC   COPYAREA,UTILMSG        MOVE OPT UTILITY MSG
+         BAL   R9,PTCOPY
+         MVC   COPYAREA(10),MCDAREA
+         BAL   R9,PTCOPY
+         MVC   COPYAREA,OPTMSG         MOVE SECOND OPT MSG
+         BAL   R9,PTCOPY
+         MVC   COPYAREA(10),MCDAREA
+         BAL   R9,PTCOPY
+         LR    R2,R3                   POINT TO NEXT DDENTRY
+         B     DDTABLD                 GET NEXT ELEMENT FOR DD TABLE
+         SPACE
+DDRELOOP EQU   *
+         LR    R2,R3                   POINT TO NEXT DD ENTRY
+         B     DDLOOP                  LOOK AT NEXT DDNAME IN TIOT
+         SPACE
+DDTIOEND EQU   *                       DDNAME TABLE NOW COMPLETE
+*
+*        *****     OPEN DATA SETS     *****
+*
+OPEN1    BAL   R9,OPINDX1               LINK TO I/O
+         TM    INDEX1+48,X'10'          TEST FOR SUCCESSFUL OPEN
+         BO    OPEN4                   BRANCH IF GOOD
+         MVC   DDMISS+8(8),=C'INDEX   ' INSERT MISSING DDNAME
+         LA    R15,32                   INSERT RETURN CODE
+         B     NODDRET                  EXIT
+*
+OPEN4    BAL   R9,OPDELT1               LINK TO I/O
+         TM    DELETE1+48,X'10'         TEST FOR SUCCESSFUL OPEN
+         BO    OPEN5                    BRANCH IF GOOD
+         MVC   DDMISS+8(8),=C'DELETE1 ' INSERT DDNAME
+         LA    R15,32                   INSERT RETURN CODE
+         B     NODDRET                  EXIT
+*
+OPEN5    BAL   R9,OPPRINT               LINK TO I/O
+         TM    INDXLST+48,X'10'         TEST FOR SUCCESSFUL OPEN
+         BO    ALLOPEN                  BRANCH IF GOOD
+         MVC   DDMISS+8(8),=C'INDXLST ' INSERT DDNAME
+         LA    R15,32                   INSERT RETURN CODE
+         B     NODDRET                  EXIT
+*
+*        *****     PROCESS RECORDS     *****
+*
+ALLOPEN  EQU   *
+         MVC   H1DATE(9),UTREPORT      MOVE DATE TO HEADING LINE
+         ZAP   LINECNT,=P'60'          FORCE PAGE EJECT ON FIRST RECORD
+         BAL   R9,TIME                  LINK TO I/O
+         ST    R1,DATE                  STORE DATE
+         BAL   R9,PTDELT1               LINK TO I/O
+         MVC   DELAREA(10),MCDAREA
+         BAL   R9,PTDELT1
+         BAL   R9,CLRPRINT             CLEAR PRINT LINE FOR FIRST TIME
+*
+*        *****     READ INITIAL INDEX RECORD     *****
+*
+READINIT EQU   *
+         USING INDEXID1,R3
+         BAL   R9,GTINDX1              READ NEXT RECORD
+         LR    R3,R1                   GET ADDRESS FOR MASK
+         LA    R1,IPRGMR1               GET ADDRESS OF PGMR NAME
+         BAL   R9,TABLKUP              IS IT A VALID SYSTEM NAME
+         LTR   R1,R1                   ?
+         BZ    READINIT                NO. READ NEXT RECORD
+         ST    R1,TABPTR               YES. STORE POINTER TO TAB ENTRY
+         MVC   CURSYSTM,IPRGMR1        STORE CURRENT SYSTEM NAME
+         XC    DDPTR,DDPTR             INDICATE COPY O/P D/S NOT KNOWN
+         B     NOCHANGE                JUMP OVER NORMAL READ ROUTINE.
+         EJECT
+***********************************************************************
+*        *****     PROGRAM MAINLINE     *****                         *
+***********************************************************************
+         SPACE 5
+*
+*        *****     READ ROUTINE     *****
+*
+READRTN  EQU   *
+         BAL   R9,GTINDX1              READ NEXT RECORD
+         LR    R3,R1                   PUT MASK ON IT
+         CLC   CURSYSTM,IPRGMR1        SAME SYSTEM?
+         BE    NOCHANGE                YES. BRANCH TO NORMAL PROCESSING
+         LA    R1,IPRGMR1              NO. GET SYSTEM NAME
+         BAL   R9,TABLKUP              LOOKUP SYSTEM TABLE
+         LTR   R1,R1                   IS NAME IN TI?
+         BZ    READRTN                 NO. READ NEXT RECORD
+         ST    R1,TABPTR               STORE TABLE POINTER
+         B     WRAPUP                  WRAPUP CUURENT SYSTEM.
+         SPACE
+*
+*        *****     FORMAT PRINT RECORD ROUTINE     *****
+*
+NOCHANGE AP    MODCNT(3),=P'1'          INCREMENT ACCUMULATOR
+         MVC   PJOB(8),IMOD1            MODULE NAME
+         MVC   PASSWORD(4),IPSWORD1     PASSWORD
+         MVC   PALIAS,IALIAS11     ALIAS
+         MVC   PGMDESC,IDESC1          DESCRIPTION
+         MVC   PSLANG,ISLANG1      SOURCE LANGUAGE
+         MVC   PGMADAY,IDAYA1          DAY ADDED
+         MVI   PSLSH3,C'/'             SEPARATOR
+         MVC   PGMAMON,IMOA1           MONTH ADDED
+         MVI   PSLSH4,C'/'             SEPARATOR
+         MVC   PGMAYR,IYEARA1          YEAR ADDED
+         CLI   IYEARU1,C'0'            HAS MODULE BEEN UPDATED
+         BE    NOUPDATE                NO. SKIP FORMATTING FOR IT
+         MVC   PGMUDAY,IDAYU1          DAY OF LAST UPDATE
+         MVI   PSLSH5,C'/'             SEPARATOR
+         MVC   PGMUMON,IMOU1           MONTH OF LAST UPDATE
+         MVI   PSLSH6,C'/'             SEPARATOR
+         MVC   PGMUYR,IYEARU1          YEAR OF LAST UPDATE
+         MVC   PTIME,ITIME1            TIME LAST UPDATE
+NOUPDATE EQU   *
+         MVC   PRECRDS,PTRN5           MOVE EDIT PATTERN
+         ED    PRECRDS,IRECORD1        RECORD COUNT
+         AP    RECCNT,IRECORD1         ADD TO SYSTEM RECORD COUNT
+         MVC   PBLOCKS,PTRN5           PATTERN FOR BLOCK COUNT
+         SR    R5,R5                   CLEAR A REG
+         IC    R5,ISIZE1               GET BLOCK COUNT
+         CVD   R5,WORK
+         ED    PBLOCKS,WORK+5          MOVE TO PRINT LINE
+         AP    BLKCNT,WORK+5(3)        ADD TO SYSTEM BLOCK COUNT
+         ZAP   SVBLKCNT,WORK+6(2)      SAVE FOR POSSIBLE COPY
+*
+*        *****     PROJECTED COPY DATE ROUTINE     *****
+*
+         CLI   IYEARU1,C'0'            HAS MODULE BEEN UPDATED?
+         BE    ADDONLY                 NO. GET DATE MODULE ADDED
+         PACK  WORK+5(3),IYEARU1(2)     YEAR(UPDATE)
+         MVC   DATESAVE(6),IDTEUPD1    SAVE DARE LAST UPDATED
+         B     BYPASS                   AROUND
+ADDONLY  PACK  WORK+5(3),IYEARA1(2)     YEAR(ADD)
+         MVC   DATESAVE(6),IDTEADD1    SAVE DATE MODULE ADDED
+BYPASS   DP    WORK+5(3),=P'4'          DETERMINE IF LEAP YEAR
+         CP    WORK+7(1),=P'0'          ANY REMAINDER
+         BNE   NOLEAP                   IF NO - REG YEAR
+         LA    R8,LEAPTAB               LEAP YEAR TABLE
+         MVI   YEARTYPE,X'00'           LEAP YEAR INDICATOR
+         B     FINDMON                  BYPASS
+NOLEAP   LA    R8,REGTAB                REG YEAR TABLE
+         MVI   YEARTYPE,X'FF'           REG YEAR INDICATOR
+*
+FINDMON  CLC   4(2,R8),MONTH            FIND MONTH
+         BE    HITMON                   BRANCH IF YES
+         LA    R8,6(0,R8)               UPDATE TABLE ENTRY
+         B     FINDMON                  TRY AGAIN
+*
+HITMON   PACK  WORK(2),DAY(2)           PACK DAYS
+         AP    WORK(2),2(2,R8)          JULIAN DATE FROM START OF MONTH
+         AP    WORK(2),CUTOFF(2)        PROJECTED COPY DATE
+         CP    WORK(2),=P'367'          DETERMINE IF CHANGE IN YEAR
+         BL    NOYRCHNG                 BRANCH IF NO
+*
+         CLI   YEARTYPE,X'00'           CHECK TYPE OF OLD YEAR
+         BE    LEAPX                    BRANCH IF LEAP YEAR
+         SP    WORK(2),=P'365'          CALCULATE DISPLACEMENT
+         B     CHKYEAR                  BYPASS
+LEAPX    SP    WORK(2),=P'366'          CALCULATE DISPLACEMENT
+CHKYEAR  PACK  WORK+5(3),YEAR(2)        PACK OLD YEAR
+         AP    WORK+5(3),=P'1'          INCREMENT YEAR
+         UNPK  YEAR(2),WORK+6(2)        MOVE TO COMMON AREA
+         OI    YEAR+1,X'F0'             SET ZONE
+         DP    WORK+5(3),=P'4'          DETERMINE IF NEW YEAR IS LEAP
+         CP    WORK+7(1),=P'0'          ANY REMAINDER
+         BNE   NOLEAPX                  BRANCH IF NO
+         MVI   YEARTYPE,X'00'           LEAP YEAR INDICATOR
+         B     NOYRCHNG                 BYPASS
+NOLEAPX  MVI   YEARTYPE,X'FF'           RESET NOLEAP INDICATOR
+*
+NOYRCHNG MVC   PCPYYEAR(2),YEAR         MOVE YEAR TO PRINT
+         MVI   PSLSH2,C'/'              SLASH
+         CLI   YEARTYPE,X'00'           TYPE OF YEAR
+         BE    LEAP                     BRANCH IF LEAP
+         LA    R8,REGTAB                ADDRESS OF REG TABLE
+         B     FINDDAY                  BYPASS
+LEAP     LA    R8,LEAPTAB               ADDRESS OF LEAP TABLE
+*
+FINDDAY  CP    0(2,R8),WORK(2)          FIND HIGHEST DAY IN MONTH
+         BNL   HITDAY                   FOUND IT
+         LA    R8,6(0,R8)               UPDATE TABLE ENTRY
+         B     FINDDAY                  TRY AGAIN
+*
+HITDAY   ZAP   SAVEDAY(2),WORK(2)       SAVE DAY
+         SP    WORK(2),2(2,R8)          CALCULATE DAY
+         UNPK  PCPYDAY(2),WORK(2)       MOVE DAY TO PRINT
+         OI    PCPYDAY+1,X'F0'          CLEAR ZONE
+         MVI   PSLSH1,C'/'              SLASH
+         MVC   PCPYMO(2),4(R8)          MOVE MONTH TO PRINT
+*
+*        *****     ELIGIBILITY ROUTINE     *****
+*
+         TM    SYSTMSW,X'80'       SINGLE SYSTEM PROCESS ONLY?
+         BNO   COMPDATE            NO. COMPARE DATES
+         CLC   PARMSYS,CURSYSTM    THIS SYSTEM THE ONE TO BE PROCESSED?
+         BNE   READRTN             NO. READ NEXT RECORD
+         OI    SYSTMSW,X'40'       TURN ON ACTIVE SYSTM SYITCH
+COMPDATE EQU   *
+         PACK  PROJDATE(2),YEAR(3)      PACK YEAR - DUMMY BYTE AT END
+         ZAP   PROJDATE+1(2),SAVEDAY(2) DAY IN PACKED FORMAT
+         CP    PROJDATE(3),DATE+1(3)    CHECK ELIGIBILITY
+         BNH   CKOUTPUT                OK. CHECK FOR COPY D/S AVAIL.
+PRTONLY  EQU   *
+         BAL   R7,PRNTLINE             PRINT LINE FOR STATIC MODULE
+         B     READRTN                 GO FOR NEXT RECORD.
+         SPACE
+CKOUTPUT EQU   *
+         L     R2,TABPTR               GET ADDRESS OF TABLE ENTRY
+         USING TABMASK,R2
+         L     R4,DDPTR                GET O/P ELEMENT ADDRESS
+         LTR   R4,R4                   IS IT VALID?
+         BNZ REMOVE                    YES. OK TO MOVE THIS DS
+         LA    R4,DDBASE               GET DD TABLE BASE ADDRESS.
+         USING DDMASK,R4
+CKLOOP   EQU   *
+         L     R4,0(0,R4)              CHAIN TO NEXT DD ELEMENT
+         LTR   R4,R4                   END OF TABLE?
+         BZ    NOOUTPUT                YES. NO OUTPUT AVAILABLE
+         CLC   DDNAME+1(7),TABFILE     DOES DDNAME COMPARE WITH TABLE?
+         BNE   CKLOOP                  NO. CHECK NEXT DDNAME
+         MVC   DDFILE,TABFILE      SAVE FILE NAME
+         MVC   DDTMSTR,TABTMSTR    SAVE TESTMASTER NAME
+         ST    R4,DDPTR                YES. STORE ADDRESS OF ELEMENT
+         B     REMOVE                  OK TO COPY THIS MODULE
+         SPACE
+NOOUTPUT EQU   *
+         BAL   R7,PRNTLINE             PRINT MODULE NAME ETC.
+         MVC   PRNTAREA(24),=C' NO OUTPUT DDNAME FOR - '
+         MVC   PRNTAREA+24(8),TABFILE  MOVE OUTPUT FILE NAME
+         BAL   R7,PRNTLINE             PRINT ERROR MESSAGE
+         SP    LINECNT(2),=P'1'    CORRECT LINECOUNT
+         B     READRTN                 PROCESS NEXT RECORD
+         SPACE
+*
+*        *****     CREATE -DLM AND -COPY CONTROL CARDS     *****
+*
+REMOVE   EQU   *
+         MVI   COPYIND,C'*'            INDICATE MODULE TO BE COPIED.
+         BAL   R7,PRNTLINE             PRINT DETAIL LINE
+         AP    CMODCNT,=P'1'           INCREMENT COPIED MODULE CNTR.
+         AP    CRECCNT,IRECORD1        ADD TO COPIED RECORDS COUNT
+         AP    CBLKCNT,SVBLKCNT        ADD TO COPIED BLOCKS COUNT
+         MVC   OPERD(5),=C'-DLM '       OPERATION
+         MVC   MODNAMED(8),IMOD1        SCRATCH FROM INPUT1
+         LA    R8,MODNAMED              BEGINNING ADDRESS OF MOD NAME
+LOOP     CLI   0(R8),C' '               SCAN FOR END
+         BNE   INCR                     NOT YET
+         MVI   0(R8),C','               SEPARATOR
+         MVC   1(4,R8),IPSWORD1         PASSWORD
+         B     WRITE                    EXIT
+INCR     LA    R8,1(0,R8)               INCREMENT ADDRESS
+         B     LOOP                     TRY AGAIN
+*
+WRITE    EQU   *
+         BAL   R9,PTDELT1               WRITE RECORD
+*
+         MVC   OPERS(6),=C'-COPY '      OPERATION
+         MVC   MODNAMES(8),IMOD1        COPY FROM INPUT1
+         LA    R8,MODNAMES         GET NAME START ADDRESS
+WLOOP    EQU   *
+         CLI   0(R8),C' '          END OF MODNAME
+         BNE   WINCR               NO. GO ROUND AGIAN
+         MVC   0(23,R8),=CL23',STATUS=PROD2'
+         B     OPTRTN
+         SPACE
+WINCR    LA    R8,1(0,R8)          INCREMENT ALLONG ONE
+         B     WLOOP               GO ROUND LOOP AGAIN
+         SPACE
+*
+*        *****     WRITE COPY STATEMENT TO CORRECT OUTPUT     *****
+*
+OPTRTN   EQU   *
+         USING DDMASK,R4
+         L     R4,DDPTR                GET ADDRESS OF DD ELEMENT
+         OI    DDADDR,X'80'        INDICATE OUTPUT FOR THIS FILE
+         L     R6,DDADDR               GET DCB ADDRESS FOR OUTPUT
+         BAL   R9,PTCOPY               LINK TO WRITE COPY RTN.
+         B     READRTN                 PROCESS NEXT RECORD.
+         EJECT
+*
+*        *****     WRAPUP ROUTINE     *****
+*
+WRAPUP   EQU   *
+         TM    SYSTMSW,X'C0'       SINGLE SYSTEM AND COECT SYSTEM?
+         BM    NOWRAPUP            YES. BYPASS PART OF WRAPUP ROUTINE
+         NI    SYSTMSW,X'BF'       TURN OFF ACTIVE SYSTEM SWITCH
+         MVC   T1MODLS,PTRN5           *
+         MVC   T2MODLS,PTRN5           *
+         MVC   T1RECS,PTRN7            * MOVE PATTERNS
+         MVC   T2RECS,PTRN7            * TO TOTALS
+         MVC   T1BLKS,PTRN5            *
+         MVC   T2BLKS,PTRN5            *
+         SPACE
+         ED    T1MODLS,MODCNT          *
+         ED    T2MODLS,CMODCNT         *
+         ED    T1RECS,RECCNT           * EDIT  ACCUMULATORS
+         ED    T2RECS,CRECCNT          * INTO TOTAL LINES
+         ED    T1BLKS,BLKCNT           *
+         ED    T2BLKS,CBLKCNT          *
+         SPACE
+         LA    R1,CURSYSTM             POINT TO CURRENT SYSTEM NAME
+         BAL   R9,TABLKUP              FIND FILE NAME IN TABLE
+         LTR   R1,R1                   FOUND?
+         LR    R2,R1
+         USING TABMASK,R2
+         MVC   T2FILE,TABFILE          MOVE FILE NAME TO PRINT
+NOFILE   EQU   *
+         MVI   PRNTAREA,C'0'           MOVE DOUBLE SPACING
+         BAL   R9,PTPRINT              SPACE UP TWO LINESK
+         MVC   PRNTAREA,TRAILER1       MOVE FIRST TOTAL LINE
+         BAL   R9,PTPRINT              PRINT IT
+         MVC   PRNTAREA,TRAILER2       MOVE SECOND TOTAL LINE
+         BAL   R9,PTPRINT              PRINT IT
+         SPACE
+         AP    TRECCNT,RECCNT          *
+         AP    TCRECCNT,CRECCNT        *
+         AP    TMODCNT,MODCNT          * ADD TO
+         AP    TCMODCNT,CMODCNT        * FINAL TOTALS
+         AP    TBLKCNT,BLKCNT          *
+         AP    TCBLKCNT,CBLKCNT        *
+NOWRAPUP EQU   *
+         ZAP   RECCNT,=P'0'            *
+         ZAP   BLKCNT,=P'0'            *
+         ZAP   MODCNT,=P'0'            * RE-INITIALISE
+         ZAP   CRECCNT,=P'0'           * COUNTERS
+         ZAP   CBLKCNT,=P'0'           *
+         ZAP   CMODCNT,=P'0'           *
+         MVC   CURSYSTM,IPRGMR1        MAKE NEXT SYSTEM CURRENT
+         MVC   H2SYSTM,IPRGMR1         RE-INIT HEADER
+         XC    DDPTR,DDPTR             INDICATE NEXT O/P NOT KNOWN
+         ZAP   LINECNT(2),=P'60'        FORCE PAGE EJECTION
+         CLI   EODSW1,X'FF'             END OF INPUT1 FILE
+RETPOINT BE    ENDIT                    BRANCH IF YES
+         B     NOCHANGE                PROCESS NEXT RECORD IN BUFFER
+         EJECT
+*
+*        *****     EOD ROUTINE     *****
+*
+IND1EOD  EQU   *
+         MVI   EODSW1,X'FF'             SET INDICATOR
+         B     WRAPUP                   EXIT
+ENDIT    EQU   *
+*                  PRINT FINAL TOTALS
+         SPACE
+         MVI   TRAILER1,C'1'           SKIP TO NEXT PAGE
+         MVC   TRAILER1+14(5),=C'FINAL' *
+         MVI   TRAILER1+36,C'S'         * MODIFY TOTAL LINES
+         MVI   T2BLKS+6,C' '            *
+         MVC   T2BLKS+7(23),T2BLKS+6    *
+         SPACE
+         MVC   T1MODLS,PTRN5           *
+         ED    T1MODLS,TMODCNT         *
+         MVC   T1RECS,PTRN7            *
+         ED    T1RECS,TRECCNT          *
+         MVC   T1BLKS,PTRN5            * EDIT TOTALS
+         ED    T1BLKS,TBLKCNT          *
+         MVC   T2MODLS,PTRN5           *
+         ED    T2MODLS,TCMODCNT        *
+         MVC   T2RECS,PTRN7            *
+         ED    T2RECS,TCRECCNT         *
+         MVC   T2BLKS,PTRN5            *
+         ED    T2BLKS,TCBLKCNT
+         SPACE
+         MVC   PRNTAREA,TRAILER1       *
+         BAL   R9,PTPRINT              * PRINT
+         MVC   PRNTAREA,TRAILER2       * FINAL TOTALS
+         BAL   R9,PTPRINT              *
+         OPEN  (INTRDR,(OUTPUT))   OPEN INTERNAL READER
+         USING DDMASK,R4
+         LA    R4,DDBASE               GET ADDRESS OF TABLE START
+DDCLLOOP EQU   *
+         L     R4,0(0,R4)              GET ADDRESS OF NEXT ELEMENT
+         LTR   R4,R4                   END OF DDTABLE?
+         BZ    DDCLEND                 YES. END LOOP
+         L     R6,DDADDR               GET DCB ADDRESS
+         LTR   R6,R6                   DCB ADDRESS ZERO?
+         BZ    DDCLEND                 YES. END LOOP
+         MVC   OPERS(5),=C'-END '      MOVE END D/S MESSAGE
+         BAL   R9,PTCOPY               WRITE END RECORD
+         BAL   R9,CLCOPY               CLOSE COPY D/S
+         TM    DDADDR,X'80'        ANY MODULES TO BE COPIED
+         BNO   DDCLLOOP            NO. PROCESS NEXT COPY D/S
+         AP    JOBCTR,=P'1'        INCREMENT JOB COUNTER
+         UNPK  JOBNO,JOBCTR        COMPLETE JOBNAME. RESULT IS ALPHA
+         MVC   JOBFILE,DDFILE      MOVE FILE NAME TO BE UPDATED
+         MVC   EXECNAME,DDFILE     DITT/
+         MVC   EXECFILE,DDFILE     DITTO
+         MVC   EXECTMST,DDTMSTR    MOVE TESTMASTER NAME
+         LA    R8,EXECTMST+L'EXECTMST  LAST POSIBLE POSN OF TMSTR NAME
+EXECLOOP EQU   *
+         CLI   0(R8),C' '          END OF TESTMASTER NAME?
+         BNE   *+8                 YES. SKIP LOOPBACK
+         BCT   R8,EXECLOOP         GO BACK ONE AND LOOP BACK
+         SPACE 1
+         MVC   1(2,R8),=CL2''','   INSERT QUOTE COMMA AND END OF NAME
+         LA    R8,JOBSTRM          GET ADDRESS OF JOBSTREAM
+UPLOOP   EQU   *
+         PUT   INTRDR,(R8)         WRITE A JOBSTREAM RECORD
+         CLC   0(5,R8),=C'/*EOF'   END OF FLE?
+         BE    DDCLLOOP      YES. PROCESS NEXT DDNAME
+         LA    R8,80(0,R8)         JUMP TO NEXT CARD
+         B     UPLOOP
+         B     DDCLLOOP                GO PROCESS NEXT COPY D/S
+         SPACE
+DDCLEND  EQU   *
+         MVC   OPERD(5),=C'-END '       OPERATION
+         BAL   R9,PTDELT1               LINK TO I/O
+         SR    R9,R9                   SET RETURN CODE TO ZERO
+         B     RETURN                   EXIT
+         EJECT
+*
+*
+*        *****     PRINT ROUTINE     *****
+*
+PRNTLINE EQU   *
+         CP    LINECNT,=P'55'          HAS PAGE OVERFLOW OCCURED?
+         BNH   SKIPINIT                NO. SKIP HEADING LINES
+         MVC   HOLDREC,PRNTAREA        YES. SAVE CURRENT PRINT LINE
+         AP    PAGECNT,=P'1'           INCREMENT PAGE COUNTER
+         MVC   H1PAGENO(4),PTRN3
+         ED    H1PAGENO(4),PAGECNT     MOVE PAGE COUNT TO HEADING LINE
+         MVC   PRNTAREA,HEADER1        MOVE HEADER1 TO PRINT AREA
+         BAL   R9,PTPRINT              PRINT HEADER1
+         MVC   H2SYSTM,CURSYSTM        MOVE SYSTEM NAME
+         MVC   PRNTAREA(L'HEADER2),HEADER2 MOVE SECOND HEADING LINE
+         BAL   R9,PTPRINT              PRINT IT
+         MVC   PRNTAREA,HEADER3        MOVE THIRD
+         BAL   R9,PTPRINT              PRINT IT
+         MVC   PRNTAREA,HEADER4        MOVE FOURTH
+         BAL   R9,PTPRINT
+         MVI   PRNTAREA,C'0'           MOVE DOUBLE SPACING
+         BAL   R9,PTPRINT              PRINT A BLANK LINE
+         ZAP   LINECNT,=P'8'           REINIT LINE COUNTER
+         MVC   PRNTAREA,HOLDREC        RESTORE CURRENT PRINT LINE
+         SPACE
+SKIPINIT AP    LINECNT(2),=P'2'         INCREMENT LINE COUNT
+         BAL   R9,PTPRINT               LINK TO I/O
+         BR    R7                       RETURN
+         SPACE 4
+***********************************************************************
+*                  SEARCH SYSTEM TABLE FOR VALID ENTRY                *
+*                  R1 - ON ENTRY CONTAINS ADDRESS OF AGUEMENT         *
+*                  R1 - AT EXIT CONTAINS ADDRESS OF VALID ENTRY OR ZERO
+***********************************************************************
+         SPACE
+TABLKUP  SUBIN PREFIX=T,SAVE=(R2,R3,R4)
+         LR    R3,R1               R3 = ADDRES OF ARGUEMENT
+         XR    R1,R1               CLEAR R1 TO ZERO
+         LA    R2,TABBASE          GET FIRST ADDRESS OF TABLE
+         USING TABMASK,R2
+TABLOOP  EQU   *
+         L     R2,0(0,R2)          ADVANCE TO NEXT ENTRY
+         LTR   R2,R2               END OF TABLE?
+         BZ    TABEXIT             YES.GO TO EXIT. NO ENTRY FOUND.
+         CLC   TABSYSTM,0(R3)      DOES AGRUEMENT COMPARE WITH ENTRY
+         BNE   TABLOOP             NO. GO TO NEXT ENTRY.
+         LR    R1,R2               YES. R1 = ADDRESS OF ENTRY
+TABEXIT  SUBOUT PREFIX=T,RESTORE=(R2,R3,R4),RETURN=(R9)
+         SPACE 5
+*
+*        *****     EOJ ROUTINE     *****
+*
+BADPARM  EQU   *
+         LR    R8,R15                   SAVE REG CONTENTS
+         BAL   R9,PARMWTO               LINK TO I/O
+         LR    R15,R8                   RESTORE REG
+         B     ABEND                    ABTERM
+*
+NODDRET  EQU   *
+         LR    R8,R15                   SAVE REG CONTENTS
+         BAL   R9,DDWTO                 LINK TO I/O
+         LR    R15,R8                   RESTORE REG
+         B     ABEND                    ABTERM
+*
+RETURN   EQU   *
+         BAL   R9,CLINDX1               LINK TO I/O
+NEXTCLS  EQU   *
+         BAL   R9,CLDELT1               LINK TO I/O
+         BAL   R9,CLPRINT               LINK TO I/O
+         CLOSE INTRDR              CLOSE INTERNAL READER INTERFACE
+         LH    R15,RETCODE              SET RETURN CODE
+         L     R13,SAVEAREA+4           RESTORE CALLERS SAVE ADDRESS
+         RETURN (14,12),T,RC=(15)       RESTORE REGISTERS
+*
+*
+*
+         EJECT
+***********************************************************************
+*                                                                     *
+*                                                                     *
+*        **********     STORAGE AND CONSTANTS     **********          *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+*
+*
+*
+WORK     DS    D
+TABPTR   DS    F
+TABBASE  DS    F
+DDPTR    DS    F
+DDBASE   DS    F
+DATE     DS    F
+RETCODE  DS    H
+*
+*        *****     RETURN CODE TABLE     *****
+*
+*        REG 15 = 0      NO TRANSMIGRATION
+*               = 16     NO PARM SUPPLIED
+*               = 20     NON NUMERIC DAYS IN PARM
+*               = 24     INVALID TYPE IN PARM
+*               = 28     NON ALPHABETIC GROUP IN PARM
+*               = 32     MISSING DD CARD
+*
+CURSYSTM DS    CL8
+PROJDATE DS    CL3
+PARMSYS  DC    CL8' '
+SAVEDAY  DS    PL2
+*
+*        *****     DELETE - SELECT AREAS     *****
+*
+DELAREA  DS    0CL80
+DELMSG   DC    C'-OPT NOEXEC,NOLIST,NOPUNCH,NORESEQ,NOPC               +
+                                         '
+         ORG   DELAREA
+OPERD    DS    CL5
+MODNAMED DS    CL8
+FILLERD  DS    CL67
+*
+COPYAREA DS    0CL80
+OPERS    DS    CL6
+MODNAMES DS    CL8
+FILLERS  DS    CL66
+*
+DATESAVE DS    0CL6
+MONTH    DS    CL2
+DAY      DS    CL2
+YEAR     DS    CL2
+HOLDREC  DS    CL133
+PRNTAREA DS    CL133
+         ORG   PRNTAREA
+CARCONT  DS    C
+         DS    CL2
+COPYIND  DS    C
+         DS    CL1
+PJOB     DS    CL8
+         DS    CL2
+PASSWORD DS    CL4
+         DS    CL4
+PALIAS   DS    CL8
+         DS    CL4
+PGMDESC  DS    CL30
+         DS    CL4
+PSLANG   DS    CL5
+         DS    CL3
+PGMADD   DS    0CL8
+PGMADAY  DS    CL2
+PSLSH3   DS    C
+PGMAMON  DS    CL2
+PSLSH4   DS    C
+PGMAYR   DS    CL2
+         DS    CL4
+PGMUPD   DS    0CL8
+PGMUDAY  DS    CL2
+PSLSH5   DS    C
+PGMUMON  DS    CL2
+PSLSH6   DS    C
+PGMUYR   DS    CL2
+         DS    C
+PTIME    DS    CL4
+         DS    CL4
+PCPYDAY  DS    CL2
+PSLSH1   DS    C
+PCPYMO   DS    CL2
+PSLSH2   DS    C
+PCPYYEAR DS    CL2
+         DS    CL3
+PRECRDS  DS    CL6
+         DS    CL3
+PBLOCKS  DS    CL6
+         DS    C
+         ORG
+*
+LINECNT  DC    P'09'
+MCDCODE  DC    PL3'7142'
+CUTOFF   DC    P'030'
+PTRN3    DC    X'40202120'
+PTRN5    DC    X'402020202120'
+PTRN7    DC    X'4020202020202120'
+*
+NUMTAB   DC    10X'00'
+ALPHATAB DC    9X'00'
+         DC    7X'FF'
+         DC    9X'00'
+         DC    8X'FF'
+         DC    8X'00'
+         DC    6X'FF'
+         DC    10X'00'             1 - 9
+         DC    6X'FF'
+*
+*        *****     HEADERS     *****
+*
+HEADER1  DS    0CL133
+         DC    CL40'1T586P07            M.O.P.P.            '
+         DC    CL40'ACTIVE PRODUCTION PROGRAM LIST AND TRANS'
+         DC    CL40'FER REPORT           DD-MMM-YY          '
+         DC    CL13'     PAGE NNN'
+H1DATE   EQU   HEADER1+101
+H1PAGENO EQU   HEADER1+129
+         SPACE
+HEADER2  DS    0CL78
+         DC    CL53'0'
+         DC    CL10'FOR THE   '
+H2SYSTM  DC    CL8' '
+         DC    CL7' SYSTEM'
+         SPACE
+HEADER3  DS    0CL133
+         DC    CL40'0COPY MODULE   PASS     FIRST           '
+         DC    CL40' MODULE DESCRIPTION         SOURCE    DA'
+         DC    CL40'TE        LAST UPDATE       COPY     REC'
+         DC    CL13'ORDS   BLOCKS'
+         SPACE
+HEADER4  DS    0CL133
+         DC    CL40' IND.  NAME    WORD     ALIAS           '
+         DC    CL40'                             LANG.    AD'
+         DC    CL40'DED                         DATE        '
+         DC    CL13' '
+         SPACE
+TRAILER1 DS    0CL133
+         DC    CL20'-'
+         DC    CL29'TOTALS:-  SYSTEM    MODULES ='
+T1MODLS  DC    CL6' '
+         DC    CL13'    RECORDS ='
+T1RECS   DC    CL8' '
+         DC    CL12'   BLOCKS ='
+T1BLKS   DC    CL6' '
+         DC    CL39' '
+         SPACE
+TRAILER2 DS    0CL133
+         DC    CL28' '
+         DC    CL21'* COPIED    MODULES ='
+T2MODLS  DC    CL6' '
+         DC    CL13'    RECORDS ='
+T2RECS   DC    CL8' '
+         DC    CL12'   BLOCKS ='
+T2BLKS   DC    CL6' '
+         DC    CL16'    TO LIBRARYN.'
+T2FILE   DC    CL8' '
+         DC    CL15' '
+         SPACE 3
+OPTMSG   DC    CL80'-OPT NOEXEC,NOLIST,NOPUNCH,NORESEQ,NOPC'
+UTILMSG  DC    CL80'-OPT UTILITY,NOPC'
+MCDAREA  DC    CL10'-MCD'
+*
+*              JOBSTREAM FOR FILE UPDATES
+*
+JOBSTRM  EQU   *
+JOBCARD  DS    0CL80
+         DC    CL9'//MOPP03W'
+JOBNO    DC    CL1' '
+         DC    CL5' '
+         DC    CL32'JOB  (5860,9,,,104),''UPDATE LBN.'
+JOBFILE  DC    CL8' '
+         DC    CL25' '',CLASS=A'
+         SPACE
+EXECCARD DS    0CL80
+         DC    CL02'//'
+EXECNAME DC    CL08' '
+         DC    CL25' EXEC     MOPP03W,TMSTR='''
+EXECTMST DC    CL24' '
+         DC    CL21' '
+         SPACE 1
+EXECARD2 DS    0CL80
+         DC    CL10'// '
+         DC    CL5'FILE='
+EXECFILE DC    CL08' '
+         DC    CL57' '
+         SPACE
+EOFCARD  DC    CL80'/*EOF'
+JOBCTR   DC    P'0'
+*
+*        *****     CALENDAR TABLES     *****
+*
+REGTAB   DC    P'031',P'000',C'01'
+         DC    P'059',P'031',C'02'
+         DC    P'090',P'059',C'03'
+         DC    P'120',P'090',C'04'
+         DC    P'151',P'120',C'05'
+         DC    P'181',P'151',C'06'
+         DC    P'212',P'181',C'07'
+         DC    P'243',P'212',C'08'
+         DC    P'273',P'243',C'09'
+         DC    P'304',P'273',C'10'
+         DC    P'334',P'304',C'11'
+         DC    P'365',P'334',C'12'
+*
+LEAPTAB  DC    P'031',P'000',C'01'
+         DC    P'060',P'031',C'02'
+         DC    P'091',P'060',C'03'
+         DC    P'121',P'091',C'04'
+         DC    P'152',P'121',C'05'
+         DC    P'182',P'152',C'06'
+         DC    P'213',P'182',C'07'
+         DC    P'244',P'213',C'08'
+         DC    P'274',P'244',C'09'
+         DC    P'305',P'274',C'10'
+         DC    P'335',P'305',C'11'
+         DC    P'366',P'335',C'12'
+*
+*        *****     COUNTERS     *****
+*
+MODCNT   DC    PL3'0'
+TMODCNT  DC    PL3'0'
+CMODCNT  DC    PL3'0'
+TCMODCNT DC    PL3'0'
+         SPACE
+RECCNT   DC    PL4'0'
+TRECCNT  DC    PL4'0'
+CRECCNT  DC    PL4'0'
+TCRECCNT DC    PL4'0'
+         SPACE
+BLKCNT   DC    PL3'0'
+TBLKCNT  DC    PL3'0'
+CBLKCNT  DC    PL3'0'
+TCBLKCNT DC    PL3'0'
+         SPACE
+PAGECNT  DC    PL2'0'
+SVBLKCNT DC    PL2'0'
+*
+*        *****     SWITCHES     *****
+*
+SYSTMSW  DC    X'00'
+YEARTYPE DC    X'00'
+EODSW1   DC    X'00'
+*
+*
+*
+*        *****     PARM FIELD DESCRIPTION     *****
+*
+*        PARM='DAYS=NNN,SYSTEM=XXXXXXXX'
+*
+PARMDSCT DSECT
+PARMOPT1 DS    CL5                      DAYS=
+PDAYS    DS    CL3                      DDD            NO. OF DAYS
+PARMOPT2 DS    CL8                      ,SYSTEM=
+PSYSTEM  DS    CL8                      XXXXXXXX       SYSTEM NAME
+*
+*        *****     END OF PARM DESCRIPTION     *****
+*
+*        *****     INDEX INPUT DSECTS     *****
+*
+INDEXID1 DSECT
+IMOD1    DS    CL8                     MODULE NAME
+IPSWORD1 DS    CL4                     PASSWORD
+IDTEADD1 DS    0CL6                    DATE ADDED
+IMOA1    DS    CL2                          MONTH
+IDAYA1   DS    CL2                          DAY
+IYEARA1  DS    CL2                          YEAR
+IDTEUPD1 DS    0CL6                    DATE LAST UPDATE
+IMOU1    DS    CL2                          MONTH
+IDAYU1   DS    CL2                          DAY
+IYEARU1  DS    CL2                          YEAR
+ITIME1   DS    CL4                     TIME LAST UPDATE
+IRECORD1 DS    CL3                     NUMBER OF RECORDS  (PACKED)
+IPRGMR1  DS    CL10                    PROGRAMMER NAME
+         DS    CL5
+IPROC1   DS    CL8                     PROCEDURE
+IDESC1   DS    CL30                    DESCRIPTION
+ISEQC1   DS    C                       SEQUENCE  START COLUMN
+ISEQL1   DS    C                       SEQUENCE  LENGTH
+ISEQI1   DS    CL2                     SEQUENCE  INCREMENT
+ISEQV1   DS    CL2                     SEQUENCE  INITIAL VALUE (BINARY)
+IACCESS1 DS    CL2                     NUMBER OF ACCESSES      (BINARY)
+IUPDT1   DS    CL2                     NUMBER OF UPDATES       (BINARY)
+IEXTENT1 DS    CL1                     NUMBER OF EXTENTS       (BINARY)
+ISIZE1   DS    CL1                     NUMBER OF BLOCKS USED   (BINARY)
+IALIAS11 DS    CL8                     FIRST ALIAS NAME
+IALIAS21 DS    CL8                     SECOND ALIAS NAME
+ISLANG1  DS    CL5                     SOURCE LANGUAGE
+ISYSTM1  DS    CL8                     SYSTEM NAME FROM MODULE HISTORY
+TABMASK  DSECT
+TABENTRY DS    0CL56
+TABPNTR  DS    F
+TABELMNT DS    0CL52
+TABCLASS DS    CL3
+TABFILL1 DS    CL1
+TABSYSTM DS    CL8
+TABTMSTR DS    CL24
+TABFILE  DS    CL8
+TABPROJ  DS    CL4
+TABFILL2 DS    CL4
+TABLNTH  EQU   *-TABMASK
+DDMASK   DSECT
+DDENTRY  DS    0CL16
+DDPNTR   DS    F
+DDADDR   DS    F
+DDNAME   DS    CL8
+DDFILE   DS    CL8
+DDTMSTR  DS    CL24
+DDLNTH   EQU   *-DDMASK
+         EJECT
+T586P07  CSECT
+*
+*        **********     LITERAL POOL     **********
+*
+         LTORG
+         EJECT
+***********************************************************************
+*                                                                     *
+*                                                                     *
+*              **********     I/O MACROS     **********               *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+*
+*
+*
+TIME     TIME  DEC                      DATE IN REG 1
+         BR    R9                       RETURN
+*
+*
+*
+PARMWTO  WTO   '*****     PARM FIELD INVALID     *****',ROUTCDE=11
+         BR    R9                       RETURN
+*
+*
+*
+DDWTO    WTO   '****    XXXXXXXX DD CARD MISSING    ****',ROUTCDE=11
+         BR    R9                       RETURN
+*
+*
+*
+ABEND    ABEND 999,DUMP                 ABNORMAL TERMINATION
+*
+*
+*
+OPINDX1  OPEN  (INDEX1,(INPUT))         OPEN INDEX 1 DATA SET
+         BR    R9                       RETURN
+*
+*
+*
+OPCOPY   OPEN  ((R6),(OUTPUT))         OPEN A COPY DATASET
+         BR    R9                       RETURN
+*
+*
+*
+OPDELT1  OPEN  (DELETE1,(OUTPUT))       OPEN DELETE 1 DATA SET
+         BR    R9                       RETURN
+*
+*
+*
+OPPRINT  OPEN  (INDXLST,(OUTPUT))       OPEN PRINT DATA SET
+         BR    R9                       RETURN
+*
+*
+*
+CLINDX1  CLOSE INDEX1                   CLOSE INDEX 1 DATA SET
+         BR    R9                       RETURN
+*
+*
+*
+CLCOPY   CLOSE ((R6))                  CLOSE A COPY DATASET
+         BR    R9                       RETURN
+*
+*
+*
+CLDELT1  CLOSE DELETE1                  CLOSE DELETE DATA SET
+         BR    R9                       RETURN
+*
+*
+*
+CLPRINT  CLOSE INDXLST                  CLOSE PRINT DATA SET
+         BR    R9                       RETURN
+*
+*
+*
+GTINDX1  GET   INDEX1                   GET INDEX 1 RECORD
+         BR    R9                       RETURN
+*
+*
+*
+PTCOPY   PUT   (R6),COPYAREA           WRITE A COPY D/S RECORD
+         MVI   COPYAREA,C' '           CLEAR
+         MVC   COPYAREA+1(79),COPYAREA I/O AREA
+         BR    R9
+*
+*
+*
+PTDELT1  PUT   DELETE1,DELAREA          PUT DELETE 1 RECORD
+         MVI   DELAREA,C' '             PROPIGATE
+         MVC   DELAREA+1(79),DELAREA    BLANKS
+         BR    R9                       RETURN
+*
+*
+*
+PTPRINT  PUT   INDXLST,PRNTAREA         PUT PRINT RECORD
+CLRPRINT EQU   *
+         MVC   PRNTAREA(2),=C'0 '       CLEAR
+         MVC   PRNTAREA+2(131),PRNTAREA+1 PRINT AREA
+         BR    R9                       RETURN
+*
+*
+*
+         EJECT
+***********************************************************************
+*                        DATA CONTROL BLOCKS                          *
+***********************************************************************
+*
+*
+*
+INDEX1   DCB   DDNAME=INDEX,MACRF=GL,DSORG=PS,                         +
+               EODAD=IND1EOD
+         SPACE 5
+DUMMYDCB DCB   MACRF=PM,DSORG=PS,RECFM=FB,LRECL=80,DDNAME=DUMMY
+         SPACE 5
+DELETE1  DCB   DDNAME=DELETE1,                                         +
+               DSORG=PS,                                               +
+               MACRF=PM,                                               +
+               LRECL=80,                                               +
+               RECFM=FB
+         SPACE 5
+INDXLST  DCB   DDNAME=INDXLST,                                         +
+               DSORG=PS,                                               +
+               MACRF=PM,                                               +
+               RECFM=FBA,                                              +
+               LRECL=133
+         SPACE 5
+TABLE    DCB   DDNAME=TABLE,MACRF=GL,DSORG=PS,                         +
+               RECFM=FB,LRECL=80,EODAD=TABEND
+         SPACE 5
+INTRDR   DCB   DDNAME=INTRDR,MACRF=PM,DSORG=PS,RECFM=F,LRECL=80,       C
+               BLKSIZE=80,BUFNO=1
+         EJECT
+***********************************************************************
+*                                                                     *
+*                                                                     *
+*              **********     EQUATE STATEMENTS     **********        *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+*
+*
+*
+R0       EQU   0
+R1       EQU   1
+R2       EQU   2
+R3       EQU   3
+R4       EQU   4
+R5       EQU   5
+R6       EQU   6
+R7       EQU   7
+R8       EQU   8
+R9       EQU   9
+R10      EQU   10
+R11      EQU   11
+R12      EQU   12
+R13      EQU   13
+R14      EQU   14
+R15      EQU   15
+*
+DDMISS   EQU   DDWTO+8
+         END   T586P07

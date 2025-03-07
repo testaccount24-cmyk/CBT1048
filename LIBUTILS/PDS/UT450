@@ -1,0 +1,257 @@
+***********************************************************************
+*                                                                     *
+*  D I A G N O S  -  R O U T I N E                    VERSION 2  9/68 *
+*                                                     PL/I-F-VERSION 4*
+*                                                                     *
+*                             KLAUS D. PUHL, IBM GERMANY              *
+*                                            SINDELFINGEN, DEPT. 427  *
+*                                                                     *
+*      ROUTINE TO OUTPUT HELPFULL INFORMATIONS FOR TESTING            *
+*         (E.G. INFORMATIONS ABOUT ANY ERROR OCCURRED IN THE CALLING  *
+*         PROCEDURE, CHARACTERISTICS AND BUFFER-CONTENTS OF ALL OPEN- *
+*         ED FILES).                                                  *
+*                                                                     *
+*      DIAGNOS CAN BE CALLED FROM ANY POINT WITHIN A PL/I-PROGRAM AND *
+*         WILL RETURN TO THE CALLING PROCEDURE WITHOUT HAVING CHANGED *
+*         ANY DATA.                                                   *
+*         E.G.      ON ERROR CALL DIAGNOS;                            *
+*         ARGUMENTS ARE NOT REQUIRED. MULTITASKING OPTIONS ARE NOT    *
+*         ALLOWED.                                                    *
+*                                                                     *
+*      DIAGNOS IS CODED IN REENTRANT FORM.                            *
+*                                                                     *
+*      STRUCTURE OF THE PROGRAM:                                      *
+*         . DIAGNOS IS THE MAIN ROUTINE WHICH BUILDS THE DYNAMIC STO- *
+*           RAGE AREA, TESTS IF THERE WAS AN ERROR IN THE DIAGNOSTIC  *
+*           ROUTINE, TESTS THE INVOCATION COUNT - IF INCLUDED - ,     *
+*           LINKS TO DIAGERR AND DIAGFIL, AND RETURNS CONTROL TO THE  *
+*           CALLING PL/I-PROGRAM. THIS CSECT WILL BE INCLUDED INTO    *
+*           THE PL/I-PROGRAM BY THE LINKAGE EDITOR, THEREFOR THIS     *
+*           MODULE SHOULD BE LINKED INTO SYS1.PL1LIB.                 *
+*         . DIAGERR IS LINKED BY DIAGNOS. IT SAVES SYSPRINT-INFORMA-  *
+*           TIONS, PRINTS THE HEADING LINE AND THE ERROR-DIAGNOSTIC   *
+*           AND INITIALIZES THE FILE-DIAGNOSTIC.                      *
+*           THIS CSECT SHOULD BE LINKED INTO SYS1.LINKLIB OR A        *
+*           JOBLIB-LIBRARY.                                           *
+*         . DIAGFIL IS LINKED BY DIAGNOS. IT PRINTS THE FILE-DIAGNOS- *
+*           TIC AND TERMINATES THE DIAGNOSTIC OUTPUT.                 *
+*           THIS CSECT SHOULD BE LINKED INTO SYS1.LINKLIB OR A        *
+*           JOBLIB-LIBRARY.                                           *
+*                                                                     *
+*      THE DIAGNOS-INVOCATIONS MAY BE COUNTED. INSERT THE INSTRUC-    *
+*         TIONS MARKED WITH  ***  TO GET AN INVOCATION-COUNT. IF      *
+*         DIAGNOS IS CALLED THE 16.TH TIME THE CURRENT TASK WILL BE   *
+*         TERMINATED ABNORMALLY. CHANGE THE FIELD  LIMIT  TO GET      *
+*         HIGHER INVOCATION COUNT. NOTE THAT IN THIS CASE DIAGNOS IS  *
+*         NOT REENTRANT.                                              *
+*                                                                     *
+*      BUILTIN-FUNCTION  ONCOUNT  IS NOT SUPPORTED BY PL/I, HOWEVER   *
+*         CODE HAS BEEN INSERTED INTO DIAGNOS AS COMMENTS FOR FUTURE  *
+*         IMPLEMENTATION.                                             *
+*                                                                     *
+***********************************************************************
+          EJECT
+***********************************************************************
+*
+* REGISTER USAGE
+*
+*         REG 0     PARAMETER-REG / WORKREG
+*         REG 1     PARAMETER-REG / WORKREG
+*         REG 2     PARAMETER-REG / WORKREG
+*         REG 3     POINTER TO DCLCB
+*         REG 4     POINTER TO FCB
+*         REG 5     POINTER TO DCB
+*         REG 6     POINTER TO IOCB
+*         REG 7     POINTER TO ADCON-LIST
+*         REG 8     WORKREGISTER
+*         REG 9     ADDRESSING-REGISTER / WORKREG
+*         REG 10    BASE REGISTER OF DIAGNOS
+*         REG 11    POINTER TO STATIC AREA
+*         REG 12    POINTER TO PSEUDO-REGISTER-VECTOR (PRV)
+*         REG 13    POINTER TO CURRENT DSA
+*         REG 14    RETURN-REGISTER / WORKREG
+*         REG 15    BRANCH-REGISTER / WORKREG
+*
+* PSEUDO-REGISTERS USED
+*
+*         IHEQFOP   ANCHOR CELL FOR OPENED FILES (CHAIN)
+*         IHEQSPR   SYSPRINT FILE-REGISTER = ADDR(FCB)
+*
+***********************************************************************
+          EJECT
+*
+DIAGNO    CSECT
+*
+          USING     DSA,13
+          USING     DIAGNOS,15
+*
+***********************************************************************
+*
+          ENTRY     DIAGNOS
+*
+***********************************************************************
+*
+DIAGNOS   B         DIAG1
+          DC        AL1(7)
+          DC        C'DIAGNOS'
+DIAG1     STM       14,11,12(13)        SAVE REGISTERS
+          DROP      15
+          BALR      10,0                SET BASE-REGISTER
+          USING     *,10
+          LA        0,328               LENGTH OF DSA
+          L         15,ASADA            ADDR(IHESADA)
+          BALR      14,15               GET DSA
+          MVI       0(13),X'80'         FLAG DSA
+          LA        7,ADCLCB            ADDRESS OF ADCON-LIST
+*
+***********************************************************************
+*
+*         TEST IF THERE WAS AN ERROR IN DIAGNOS ...
+*
+***********************************************************************
+*
+          LA        1,PARML
+          LA        15,DLSDV
+          ST        15,PARML
+          L         15,ACFAA            GET ONLOC
+          BALR      14,15
+          L         15,DLSDV
+          CLC       0(7,15),CDIAG       ONLOC = DIAGNOS ...
+          BNE       CONT
+*
+***********************************************************************
+*
+*         THE INSTRUCTIONS MARKED WITH  ***  HAVE TO BE INSERTED IN
+*         ORDER TO COUNT THE DIAGNOS-INVOCATIONS AND TO TERMINATE
+*         AFTER THE 15.TH CALL.
+*
+***********************************************************************
+*
+NOCONT    EQU       *
+          L         15,AOSEA            TERMINATE TASK WITH USER
+          BALR      14,15               COMPLETION CODE 1000 + IHEQRTC
+CONT      EQU       *
+*         LH        1,INVCOUNT          ***
+*         CH        1,LIMIT             ***
+*         BE        NOCONT              ***
+*         LA        2,1                 ***
+*         AR        1,2                 ***
+*         STH       1,INVCOUNT          ***
+*
+***********************************************************************
+*
+*         LINK TO DIAGNOSTIC ROUTINES (DIAGERR, DIAGFIL)
+*         AND RETURN TO CALLING PL/I-PROGRAM.
+*
+***********************************************************************
+*
+          LINK      EP=DIAGERR          LINK TO ERROR-DIAGNOSTIC ROUT.
+          LINK      EP=DIAGFIL          LINK TO FILE-DIAGNOSTIC ROUT.
+*                                       FREE DSA + RETURN
+          L         15,ASAFA
+          BCR       15,15
+*
+          EJECT
+***********************************************************************
+*
+* CONSTANTS AREA
+*
+***********************************************************************
+*
+*  PSEUDO-REGISTERS
+*
+IHEQFOP   DXD       A         ANCHOR CELL FOR OPENED FILES (CHAIN)
+IHEQSPR   DXD       A         SYSPRINT FILE-REGISTER = ADDR(FCB)
+*
+*
+* ADDRESSES OF USED PL/I-LIBRARY-ROUTINES
+*
+          DS        0F
+ADCLCB    DC        V(IHESPRT)          SYSPRINT DCLCB
+AIOBB     DC        V(IHEIOBB)          INIT PUT WITH PAGE
+ADOBB     DC        V(IHEDOBB)          A-FORMAT-OUTPUT
+          DC        V(IHEVSC)           USED IN IHEDOBB
+AIOBC     DC        V(IHEIOBC)          INIT PUT WITH SKIP
+AIOBT     DC        V(IHEIOBT)          TERMINATE PUT
+AOCLB     DC        V(IHEOCLB)          CLOSE
+ASADA     DC        V(IHESADA)          GET       DSA
+ASAFA     DC        V(IHESAFA)          FREE      DSA
+ACFAA     DC        V(IHECFAA)          ONLOC
+ACFBA     DC        V(IHECFBA)          ONCODE
+ASRCB     DC        V(IHESRCB)          ONCHAR
+ASRCC     DC        V(IHESRCC)          DATAFIELD
+ASRCE     DC        V(IHESRCE)          ONFILE
+ASRCF     DC        V(IHESRCF)          ONSOURCE
+ASRDA     DC        V(IHESRDA)          ONKEY
+AOSEA     DC        V(IHEOSEA)          TERMINATE TASK
+*
+*         HAS TO BE INSERTED IF ONCOUNT-BUILTIN-FUNCTION IS
+*         SUPPORTED
+* ACFCA   DC        V(IHECFCA)          ONCOUNT
+*
+AQFOP     DC        QL2(IHEQFOP)        PSEUDO-REGISTER OF OPEN CHAIN
+AQSPR     DC        QL2(IHEQSPR)        PSEUDO-REGISTER OF SYSPRINT
+*
+*  ARE TO BE INSERTED IF COUNTING THE DIAGNOS-INVOCATIONS.
+*
+* INVCOUNT  DC        H'0'              ***
+* LIMIT     DC        H'15'             ***
+*
+CDIAG     DC        C'DIAGNOS'
+*
+          EJECT
+*
+*         DYNAMIC SAVE AREA (DSA) OF DIAGNOS
+*
+DSA       DSECT               DYNAMIC SAVE AREA OF DIAGNOS
+DSA1      DS        CL1       DSA-FLAGS = X'80'
+DSA2      DS        CL3       LENGTH OF DSA = AL3(328)
+DSA3      DS        2F        CHAIN FORWARD/BACKWARD
+RSA       DS        15F       REGISTER SAVE AREA
+CF        DS        2F        CURRENT FILE
+IC        DS        2F        INVOCATION COUNT
+MULT      DS        5F        FOR MULTITASKING-ENVIRONMENT
+FLAGS     DS        CL1       FLAGS (SEE NOTE)
+RESERV    DS        CL1       RESERVED
+STLNN     DS        CL2       SAVE AREA FOR CURRENT LINENO
+STCNT     DS        F         SAVE AREA FOR NO.(TRANSM. ITEMS)
+STREM     DS        F         SAVE AREA FOR TREM/TMAX
+SKIP      DS        F         SKIP-VALUE
+PARML     DS        F         PARAMETER LIST
+PARMIO    DS        3F        OUTPUT-PARAMETER-LIST
+SDV       DS        2F        SDV FOR PARAMETERS
+DLSDV     DS        2F        SDV FOR ONLOC
+SDVOUT    DS        2F        OUTPUT-STRING-DOPEVECTOR
+STR0      DS        F         REG 14 - RETURN ADDR TO MAIN ROUTINE
+STR1      DS        2F        STRING-FIELD / BINARY FIELD
+STR2      DS        2F        (WORKING-STORAGE)
+STR3      DS        2F
+STR4      DS        2F
+PLINE     DS        CL120     OUTPUT-LINE WORKSPACE
+KEYAD     DS        F         ADDRESS OF KEYFIELD
+KEYLE     DS        F         LENGTH OF KEYFIELD
+*
+***********************************************************************
+*
+* NOTE -- MEANING OF THE BIT-POSITIONS IN FLAGS
+*
+*         BIT 0     1 = SYSPRINT ALLREADY OPENED
+*                   0 = SYSPRINT OPENED IN DIAGNOS
+*         BIT 1     1 = KEY OF FILE TO BE PRINTED
+*                   0 = NO KEY OR KEY ALLREADY PRINTED
+*         BIT 2     1 = PRINTING OF KEY IN PROGRESS
+*                   0 = PRINTING OF KEY FINISHED
+*         BIT 3     1 = CONSECUTIVE
+*
+*         BIT 4     1 = INDEXED
+*
+*         BIT 5     1 = REGIONAL(1)
+*
+*         BIT 6     1 = REGIONAL(2)
+*
+*         BIT 7     1 = REGIONAL(3)
+*
+*
+***********************************************************************
+*
+          END

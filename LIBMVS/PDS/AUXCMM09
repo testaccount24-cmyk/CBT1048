@@ -1,0 +1,382 @@
+//AUXCMM09 JOB (1586,5),'** FOR J. NOLS **',CLASS=N
+//STEP01   EXEC   GENASMOD
+***********************************************************************
+*                    A U X C M M 0 9                                  *
+*                                                                     *
+*          THIS MODULE IS INVOKED BY THE AUXILIARY COMMAND ROUTER     *
+*        AUXCOMM TO PROCESS A 'RELOAD' COMMAND.                       *
+*          INPUT TO THE COMMAND IS THE NAME OF A MODULE TO BE RELOADED*
+*        INTO CORE FROM ANY LIBRARY ON THE LINKLIST. THE ROUTINE      *
+*        FIRST SCANS THE APPROPRIATE CONTROL BLOCK CHAINS TO FIND A   *
+*        CDE OR LPDE FOR THE MODULE AND THEN INVOKES PROGRAM FETCH TO *
+*        HAVE A FRESH COPY BROUGHT INTO CORE. IF THE COMMAND IS       *
+*        EXECUTING IN THE MASTER SCHEDULER ADDRESS SPACE, IT ASSUMES  *
+*        THAT THE LINK PACK AREA IS TO BE PROCESSED AND LOAD THE NEW  *
+*        COPY INTO CORE OBTAINED FROM THE CSA. IF, ON THE OTHER HAND, *
+*        THE COMMAND IS EXECUTING IN A USER ADDRESS SPACE, ONLY THE   *
+*        JOB PACK QUEUE IS AFFECTED AND THE MODULE IS LOADED INTO     *
+*        SUBPOOL 251.
+*          TO CHANGE THESE SUBPOOLS, SEE THE EQUATES SECTION.         *
+*                                                                     *
+*          THE COMMAND IS DESIGNED TO HELP IN THE TESTING OF LPA      *
+*        MODULES AND ALLOWS CHANGES TO BE TESTED WITHOUT A RE-IPL.    *
+*                                                                     *
+*        REGISTER USAGE                                               *
+*        REG0  PARAMETER REGISTER, WORK REGISTER                      *
+*        REG1  PARAMETER REGISTER, WORK REGISTER                      *
+*        REG2  ADDRESS OF EXTENDED SAVE AREA OF SVRB                  *
+*        REG3  ADDRESS INTERNAL WORK AREA                             *
+*        REG4  ADDRESS OF ASVT ENTRY LIST                             *
+*        REG5  NUMBER REMAINING POSSIBLE ADDRESS SPACES TO LOOK AT    *
+*        REG6  ADDRESS CURRENT ASCB                                   *
+*        REG7  ADDRESS CURRENT OUCB                                   *
+*        REG8  ADDRESS OF INPUT PARAMETER LIST                        *
+*        REG9  ADDRESS OF CURRENT OUTPUT ELEMENT
+*        REG10 WORK REGISTER. ADDRESS OF FETCH WORK AREA              *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        DSECTS USED IN THIS MODULE                                   *
+***********************************************************************
+         SPACE 2
+WKAREAX   DSECT ,                   INTERNAL WORK AREA
+GETMNLEN DS    F                   SAVED DETAILS FOR FREEMAIN
+SAVEEP   DS    F                   ENTRY POINT OF RELOADED MODULE
+CHAINHDR DS    F                   START OF OUTPUT CHAIN
+LOADR11  DS    F                   SAVE AREA FOR LINK REGISTER
+CHAIN    DS    A                   ADDRESS OF SCAN DESCRIPTOR BLOCKS
+WKSAVE   DS    16F                 REGISTER SAVE AREA
+DUMMYCDE DS    CL40                DUMMY CDE FOR FETCH
+DBLWORD  DS    D                   WORK AREA FOR UNPACK
+PROGNAME DS    CL8                 SAVE AREA FOR PROGRAM NAME
+MSGAREA  DS    0CL50               OUTPUT AREA FOR MESSAGES
+CLRLINE  DS    0CL50               REFERENCE FOR BUFFER CLEARING
+ENDLINE  DS    0CL30               TEXT AREA FOR LAST LINE
+ERRORMSG DS    0CL50               OUTPUT AREA FOR ERROR MESSAGES
+CDEMSG   DS    0CL50               OUTPUT AREA FOR CDE RELATED MESSAGES
+LPDEMSG  DS    0CL50               OUTPUT FOR LPDE RELATED MESSAGES
+PRTMODNM DS    CL8                 OUTPUT FOR MODULE NAME
+         DS    CL2                 PADDING
+OUTTEXT  DS    CL40                OUTPUT AREA FOR INFORMATION MESSAGES
+FLAGG    DS    X                   FLAG FOR INTERNAL LOGIC
+WKARELEN EQU   *-WKAREAX
+         SPACE 2
+XSA      DSECT ,                   FORMAT OF EXTENDED SAVE AREA
+XSAP     DS    F                   PTR TO XCTL NAME
+XSAD     DS    F                   DCB POINTER
+XSAX     DS    D                   XCTL NAME
+XSAE     DS    0C                  ERROR CODE FOR IEE0503D
+XSAR     DS    F                   ADDRESS OF PARM LIST
+XSAN     DS    0C                  VERB INDEX
+XSAL     DS    F                   PTR TO LIST POSITION
+XSAVERB  DS    D                   VERB ENTERED BY OPERATOR
+XSAS     DS    D                   TEMPORARY SAVE AREA
+XSAU     DS    C                   UCM ENTRYINDICATOR
+         DS    C                   RESERVED
+XSAJ     DS    H                   TJID ENTRY INDICATOR
+         SPACE 2
+         PRINT NOGEN
+         IHALPDE
+         CVT
+         IHAPSA
+         IHAASCB
+         IHAASXB
+         IKJTCB
+         IHAFETWK
+         IHACDE
+         PRINT GEN
+         EJECT
+***********************************************************************
+*        EQUATES USED IN THE MODULE                                   *
+***********************************************************************
+         SPACE 2
+CSASPID  EQU   241                 SUBPOOL ID FOR LINK PACK AREA MODS
+USERSPID EQU   251                 SUBPOOL ID FOR USER PROGRAMS
+LPALOAD  EQU   X'80'               RELATES TO FLAGG WE ARE PROCESSING
+*                                  A MODULE FROM THE LPA
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING                                   *
+***********************************************************************
+         SPACE 2
+AUXCMM09 ZCSECT GETMAIN=1
+         EJECT
+***********************************************************************
+*        GETMAIN CORE FOR WORK AREA & INITIALISE ACCUMULATORS         *
+***********************************************************************
+         SPACE 2
+         USING WKAREAX,REG3
+         LA    REG0,WKARELEN       LOAD LENGTH FOR GETMAIN
+         O     REG0,SUBPOOL        LOAD SUBPOOL ID
+         GETMAIN R,LV=(0)          GETMAIN THE CORE
+         LR    REG3,REG1           LOAD BASE ADDRESS
+         ST    REG0,GETMNLEN       SAVE DETAILS FOR FREEMAIN
+         EJECT
+***********************************************************************
+*        LOCATE  INPUT PARAMETERS & DETERMINE LENGTH                  *
+***********************************************************************
+         SPACE 2
+         USING XSA,REG2            ADDRESSABILITY FOR EXTENDED S/A
+         L     REG8,XSAL           LOAD ADDRESS INPUT PARMS
+         SCAN  DATA=(REG8),END=' ',DELIM=(',','='),CHAIN=CHAIN,SP=0
+         L     REG4,CHAIN          LOAD ADDRESS OPERAND DESCR. BLKS
+         B     PARMS               GO ANALYSE THE PARMS CODED
+         EJECT
+***********************************************************************
+*        ANALYSE INPUT PARMS & TEST VALIDITY                          *
+***********************************************************************
+         SPACE 2
+PARMS    DS    0H
+         LTR   REG4,REG4           TEST FOR PRESCENCE OF OPERANDS
+         BZ    ERROR               NO OPERANDS. ERROR CONDITIONG
+         L     REG5,4(REG4)        LOAD ITS ADDRESS
+         CLI   4(REG4),X'01'       IS OPERAND 1 BYTE LONG ?
+         BNE   NOTQUERY            NO. MOST PROBABLY A MODULE NAME
+         CLI   0(REG5),C'?'        REQUEST FOR INFORMATION ?
+         BE    AUXCMMZZ            YES. GO PROFFER SOME HELP
+NOTQUERY CLI   4(REG4),X'08'       IS NAME TOO LONG ?
+         BH    ERROR               YES. ISSUE ERROR MESSAGE
+         IC    REG7,4(REG4)        LOAD LENGTH OF OPERAND
+         MVC   PROGNAME,=CL8' '    MOVE BLANKS TO MOD NAME SAVE AREA
+         BCT   REG7,*+10           SUBTRACT 1 FOR EXECUTE
+         MVC   PROGNAME(0),0(REG5) MOVE PROGRAM NAME TO SAVE AREA
+         EX    REG7,*-6            EXECUTE THE MOVE
+         EJECT
+***********************************************************************
+*        PREPARE & INITIALISE THE HEADING LINE FOR OUTPUT             *
+***********************************************************************
+         SPACE 2
+HEADER   DS    0H
+         LOADMSG DATA=TITLE,LENGTH=TITLLEN,TYPE=C
+         ST    REG1,CHAINHDR       INITIALISE START OF OUTPUT CHAIN
+         LR    REG9,REG1           LOAD NEXT ELEMENT ADDRESS
+         B     MAIN                BRANCH TO NEXT ROUTINE
+         SPACE 2
+TITLE    DC    C'DYNAMIC PROGRAM RELOAD'
+TITLLEN  EQU   L'TITLE
+         EJECT
+***********************************************************************
+*        FIRST SCAN THE ACTIVE LPA CDE Q TO FIND THE MODULE           *
+***********************************************************************
+         SPACE 2
+         USING CDENTRY,REG5        ADDRESSABILITY FOR EACH CDE
+MAIN     DS    0H
+         USING PSA,0               SHOW PSA AT LOCATION 0
+         L     REG1,PSAAOLD        LOAD ADDRESS OF CURRENT ASCB
+         USING ASCB,REG1           TEMPORARY ADDRESSABILITY FOR ASCB
+         CLC   ASCBASID,=X'0001'   MASTER SCHEDULER ?
+         BE    LOADLPAQ            YES. TREAT WITH LINK PACK AREA
+         L     REG1,ASCBASXB       LOAD ADDRESS OF ASXB
+         USING ASXB,REG1           TEMPORARY ADDRESSABILITY FOR ASXB
+         L     REG1,ASXBLTCB       LOAD ADDRESS LAST TCB
+         USING TCB,REG1            TEMPORARY ADDRESSABILITY FOR TCB
+         L     REG1,TCBJSTCB       LOAD ADDRESS OF JOB STEP TCB
+         L     REG5,TCBJPQ         LOAD ADDRESS JOB PACK QUEUE
+         B     CDELOOP             GO PROCESS THE QUEUE
+LOADLPAQ L     REG1,16             LOAD ADDRESS OF THE CVT
+         USING CVTMAP,REG1         ADDRESSABILITY FOR CVT
+         MVI   FLAGG,LPALOAD       SIGNAL LPA PROCESSING
+         L     REG5,CVTQLPAQ       LOAD ADDRESS OF FIRST CDE
+CDELOOP  LTR   REG5,REG5           TESY FOR FIRST/NEXT CDE
+         BZ    CDEEXIT             NOT FOUND GO TELL OPERATOR
+         CLC   CDNAME,PROGNAME     IS THIS THE CORRECT CDE
+         BE    FOUNDIT1            YES. GO PROCESS THE MODULE
+         L     REG5,CDCHAIN        NO. LOAD ADDRESS OF NEXT CDE
+         B     CDELOOP             LOOP FOR ALL CDES ON CHAIN
+CDEEXIT  MVC   CDEMSG,CDEDATA      MOVE MESSAGE TO OUTPUT AREA
+         BAL   REG11,LOADIT        GO TELL OPERATOR OF NOT FOUND
+         B     LPDESCAN            GO EXAMINE INACTIVE LPA
+         SPACE 2
+CDEDATA  DC    CL(L'CDEMSG)'MODULE NOT FOUND ON ACTIVE LPA/JPA QUEUE'
+         EJECT
+***********************************************************************
+*        SCAN THE LINK PACK AREA DIRECTORY FOR THE MODULE             *
+***********************************************************************
+         SPACE 2
+         USING LPDE,REG5           ADDRESSABILITY FOR LPDES
+LPDESCAN DS    0H
+         TM    FLAGG,LPALOAD       ARE WE PROCESSING THE LPA
+         BZ    DOENDING            NO. NO NEED TO SEARCH LPDES
+         L     REG1,16             LOAD ADDRESS OF CVT
+         USING CVTMAP,REG1         ADDRESSABILITY FOR CVT
+         L     REG5,CVTLPDIA       LOAD ADDRESS OF LPA DIRECTORY
+LPDELOOP LA    REG5,0(REG5)        CLEAR TOP BYTE OF POINTER
+         LTR   REG5,REG5           TEST FOR FIRST/NEXT LPDE
+         BZ    LPDEEXIT            ERROR. MODULE NOT FOUND
+         CLC   LPDENAME,PROGNAME   IS THIS THE CORRECT LPDE ?
+         BE    FOUNDIT2            YES. GO PROCESS THE MODULE
+         L     REG5,LPDECHN        LOAD ADDRESS OF THE NEXT LPDE
+         B     LPDELOOP            LOOP FOR ALL LPDES ON CHAIN
+LPDEEXIT MVC   LPDEMSG,LPDEDATA    MOVE OUTPUT TEXT TO BUFFER
+         BAL   REG11,LOADIT        INFORM OPERATOR OF ERROR
+         B     DOENDING            OUTPUT TERMINATIOM MSG AND EXIT
+         SPACE 2
+LPDEDATA DC    CL(L'LPDEMSG)'MODULE NOT FOUND IN LINK PACK AREA DIRECTOR
+               RY'
+         EJECT
+***********************************************************************
+*        THE MODULE HAS BEEN FOUND. INFORM THE OPERATOR               *
+***********************************************************************
+         SPACE 2
+FOUNDIT1 DS    0H
+         MVC   OUTTEXT,CDEFOUND    TELL OPERATOR WHERE IT IS
+         B     FOUNDXX             GO TO NEXT PART ROUTINE
+FOUNDIT2 DS    0H
+         MVC   OUTTEXT,LPDEFOUN    TELL OPERATOR WHERE IT IS
+FOUNDXX  DS    0H
+         MVC   PRTMODNM,PROGNAME   MOVE PROGRAM NAME TO OUTPUT
+         BAL   REG11,LOADIT        GO LOAD UP THE MESSAGE
+         MVC   PRTMODNM,PROGNAME   MOVE MODULE NAME TO OUTPUT
+         BAL   REG11,LOADPROG      GO LOAD UP THE PROGRAM
+         MVC   OUTTEXT,DONITMSG    TELL OPERATOR OF OPERATION
+         BAL   REG11,LOADIT        GO LOAD UP THE MESSAGE
+         B     DOENDING            GO PREPARE FINAL LINE
+         SPACE 2
+CDEFOUND DC    CL(L'OUTTEXT)'FOUND ON ACTIVE LPA/JPA QUEUE'
+LPDEFOUN DC    CL(L'OUTTEXT)'FOUND ON LINK PACK DIRECTORY'
+DONITMSG DC    CL(L'OUTTEXT)'RELOADED INTO LPA/JPA'
+         EJECT
+***********************************************************************
+*        THIS ROUTINE LOADS THE MODULE INTO THE CSA OR JPA            *
+***********************************************************************
+         SPACE 2
+LOADPROG DS    0H
+         LA    REG0,WKSIZE         LOAD LENGTH FETCH WORK AREA
+         GETMAIN R,LV=(0)          GETMAIN STORAGE FOR WORK AREA
+         LR    REG10,REG1          LOAD UP PARAMETER REGISTER
+         USING WKAREA,REG10        ADDRESSABILITY FOR FETCH WORK AREA
+         MVC   WKPREFX(4),=X'00010048' ONE ENTRY 72 BYTES LONG
+         MVC   WKNAME(8),PROGNAME     MOVE NAME TO BLDL
+         L     REG1,16             LOAD ADDRESS OF CVT
+         USING CVTMAP,REG1         ADDRESSABILITY FOR CVT
+         L     REG7,CVTLINK        LOAD ADDRESS OF LINKLIB DCB
+         BLDL  (7),WKBLDE          BUILD LIST FOR PROGRAM
+         LTR   REG15,REG15         TEST RETURN FROM BLDL
+         BNZ   ERROR2              MODULE NOT FOUND IN LINKLIB
+         STM   REG0,REG14,WKSAVE   SAVE REGISTERS BEFORE FETCH
+         LR    REG13,REG10         LOAD ADDRESS WORK AREA IN REG 13
+         TM    FLAGG,LPALOAD       ARE WE PROCESSING THE LPA
+         BO    SETCSAID            YES. SET SUBPOOL ID FOR CSA
+         LA    REG10,USERSPID      LOAD USER PROG SUBPOOL ID
+         B     FETCH001            STEP OVER THE OTHER LOAD
+SETCSAID LA    REG10,CSASPID       LOAD SUBPOOL ID FOR CSA
+FETCH001 XC    DUMMYCDE,DUMMYCDE   CLEAR THE DUMMY CDE
+         MVC   DUMMYCDE(32),0(REG5) MOVE IN COPY OF REAL CDE
+         LA    REG9,DUMMYCDE       LOAD ADDRESS OF DUMMY CDE
+         LCR   REG9,REG9           FETCH EXPECTS ADDRESS COMPLEMENTED
+         LR    REG5,REG2           LOAD ADDRESS OF SVRB
+         L     REG1,16             LOAD ADDRESS OF CVT
+         L     REG15,CVTFETCH      LOAD ADDRESS PROGRAM FETCH
+         BALR  REG14,REG15         BRANCH TO THAT ROUTINE
+         ST    REG12,SAVEEP        SAVE ADDRESS OF ENTRY POINT
+         LM    REG0,REG14,WKSAVE   RESTORE MY REGISTERS
+         LTR   REG15,REG15         TEST RETURN CODE
+         BNZ   ERROR3              ERROR IN PROGRAM FETCH
+         B     SETUPCDE            BRANCH TO NEXT ROUTINE
+         EJECT
+***********************************************************************
+*        THIS ROUTINE ADJUSTS THE POINTERS IN THE CDE/LPDE            *
+***********************************************************************
+         SPACE 2
+         USING CDENTRY,REG5        ADDRESSABILITY FOR CDE
+*              THE OFFSET TO THIS FIELD IS THE SAME IN THE LPDE.
+SETUPCDE DS    0H
+         MVC   CDENTPT,SAVEEP      ALTER ENTRY POINT IN CDE
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        THIS IS THE COMMON I/O LOAD ROUTINE                          *
+***********************************************************************
+         SPACE 2
+LOADIT   DS    0H
+         ST    REG11,LOADR11       SAVE LINK REGISTER
+         LOADMSG DATA=MSGAREA,LENGTH=50,TYPE=D
+         ST    REG1,0(REG9)        CHAIN THIS ELEMENT ONTO OUTPUT CHAIN
+         LR    REG9,REG1           MAKE THIS THE LAST ENTRY
+         XC    CLRLINE,CLRLINE     CLEAR THE OUTPUT BUFFER
+LOADEXIT L     REG11,LOADR11       RELOAD THE LINK REGISTER
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        ALL USAGES REPORTED. PREPARE FINAL SUMMARY LINE              *
+***********************************************************************
+         SPACE 2
+DOENDING DS    0H
+         XC    CLRLINE,CLRLINE     CLEAR THE OUTPUT LINE
+         MVC   ENDLINE,ENDTEXT     IDENTIFY LAST LINE OF OUTPUT
+         LOADMSG DATA=MSGAREA,LENGTH=50,TYPE=E
+         ST    REG1,0(REG9)        CHAIN THIS BLOCK ONTO OTHERS
+         B     MSGOUT              GO HAVE OUTPUT DONE
+         SPACE 2
+ENDTEXT  DC    CL(L'ENDLINE)'END OF PROCESSING'
+         EJECT
+***********************************************************************
+*        MESSAGES ARE PREPARED. INVOKE OUTPUT PROCESSOR               *
+***********************************************************************
+         SPACE 2
+MSGOUT   DS    0H
+         OUTPUT CHAINHDR           HAVE ALL READY MESSAGES OUTPUT
+         B     EXITPGM             RETURN TO CALLER
+         SPACE 2
+         EJECT
+***********************************************************************
+*        COMMON PROGRAM EXIT ROUTINES                                 *
+***********************************************************************
+         SPACE 2
+EXITPGM  DS    0H
+         XR    REG15,REG15         SIGNAL GOOD RETURN CODE
+ZRETURN  LR    REG11,REG15         SAVE RETURN CODE
+         L     REG0,GETMNLEN       LOAD FREEMAIN DETAILS
+         LR    REG1,REG3           LOAD ADDRESS OF WORK AREA
+         FREEMAIN R,LV=(0),A=(1)   FREE UP THE WORK AREA
+         LR    REG15,REG11         RESTORE RETURN CODE
+         ZRETURN RC=(15)
+         EJECT
+***********************************************************************
+*        IN CASE OF ERROR, A MESSAGE MUST BE ISSUED                   *
+***********************************************************************
+         SPACE 2
+ERROR2   DS    0H
+         MVC   ERRORMSG,ERROR2LN   MODULE NO FOUND IN LINKLIB
+         B     ERRLOAD             LOAD UP AND OUTPUT THE MESSAGE
+ERROR3   DS    0H
+         MVC   ERRORMSG,ERROR3LN   ERROR IN PROGRAM FETCH
+         ABEND 1,DUMP              DUMP TO INVOKE ESTAE
+ERROR    DS    0H
+         MVC   ERRORMSG,ERRORLNE   MOVE ERROR MESSAGE TO OUTPUT
+ERRLOAD  LA    REG9,CHAINHDR       CREATE FALSE START OF OUTPUT CHAIN
+         BAL   REG11,LOADIT        GO LOAD UP THE ERROR MESSAGE
+         B     MSGOUT              GO OUTPUT THE MESSAGE
+         SPACE 2
+ERRORLNE DC    CL(L'ERRORMSG)'INVALID OR MISSING OPERAND'
+ERROR2LN DC    CL(L'ERRORMSG)'MODULE NOT FOUND IN LINKLIB'
+ERROR3LN DC    CL(L'ERRORMSG)'ERROR IN PROGRAM FETCH ROUTINE'
+         EJECT
+***********************************************************************
+*        COMMAND QUERY RESPONSE ROUTINE                               *
+***********************************************************************
+         SPACE 2
+AUXCMMZZ DS    0H
+         LOADMSG DATA=LINE1,LENGTH=LINE1LEN,TYPE=E
+         ST    REG1,CHAINHDR       IDENTIFY START CHAIN
+         B     MSGOUT              BRANCH TO OUTPUT ROUTINE
+         SPACE 2
+LINE1    DC    C'RELOAD-   ENTER THE NAME OF A MODULE IN THE LPA'
+LINE1LEN EQU   L'LINE1             LENGTH FOR GETMAIN
+         EJECT
+SUBPOOL  DS    0F                  USED TO LOAD SUBPOOL ID
+         DC    AL1(0)
+         DC    AL3(0)              PADDING
+         END
+//LKED.SYSIN   DD   *
+ SETCODE AC(1)
+ NAME AUXCMM09(R)
+ INCLUDE MLPALIB(AUXCOMM)
+ INCLUDE MLPALIB(AUXCMM09)
+ ENTRY AUXCOMM
+ ALIAS AUXCMM06
+ ALIAS AUXCMM10
+ SETCODE AC(1)
+ NAME AUXCOMM(R)
+/*

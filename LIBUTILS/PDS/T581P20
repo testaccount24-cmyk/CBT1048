@@ -1,0 +1,1905 @@
+T581P20  START 0
+         SPACE 1
+***********************************************************************
+*                                                                     *
+*         PROGRAM ID. :       T581P20                                 *
+*         DATE WRITTEN:       NOVEMBER 1975                           *
+*         LOCATION :          EUROPEAN COMPUTER CENTER                *
+*         AUTHOUR:            P.S.GRANT FROM  T581P05  BY J.NOLS      *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+***********************************************************************
+*                                                                     *
+*         PURPOSE:
+*              TO REPORT ON AND AUDIT ALL DATASETS HELD ON DISC PACKS *
+*              AT MONSANTO EUROPEAN COMPUTER CENTRE.                  *
+*                                                                     *
+*         INPUT:                                                      *
+*              T581F010 -  VTOC HISTORY DATASET WHICH IS UPDATED      *
+*                          AFTER THE SECURITY OF EACH DISC PACK.      *
+*              T581F100 -  CATALOG SECURITY TAKEN AT THE END OF       *
+*                          EACH SHIFT.                                *
+*              T581F030 -  DATASET SAVE FILE MAINTAINED BY THE        *
+*                          DUTY SCHEDULER. THIS PREVENTS DATASETS     *
+*                          BEING PURGED WHEN OTHEWISE THEY MIGHT BE.  *
+*                                                                     *
+*         OUTPUT:                                                     *
+*              SYSOUT   - PROGRAM EEROR MESSAGES DATA SET.            *
+*              T581R20A - DASD DATA SET REPORT. A SINGLE LINE REPORT  *
+*                         FOR EACH DATASET REFORMATED FROM THE VTOC   *
+*                         HISTORY DATASET.                            *
+*              T581R20B - DASD DATA SET EXCEPTION REPORT. A LIST OF   *
+*                         DATASETS NOT SATISFYING MONSANTO STANDARDS. *
+*              T581R20C - DASD DUPLICATE DATA SET REPORT. DATASETS    *
+*                         APPEARING ON MORE THAN ONE DISC.            *
+*              T581R20D - DASD DATASET PURGE REPORT. A LIST OF        *
+*                         DATASETS ON THE SCRATCH DATSET. THESE ARE   *
+*                         THOSE WHOSE EXPIRY DATE HAS PASSED OR WHO   *
+*                         SERIOUSLY CONTRAVENE STANDARDS.             *
+*              T581R20E - CATALOG EXCEPTIONS AND POINTERS. IS A LIST  *
+*                         OF ALL DASD POINTERS IN THE CATALOG WHICH   *
+*                         HAVE NO CURRENT DATASET ON DISK. SOME ARE   *
+*                         VALID SYSTEM POINTERS.                      *
+*              T581F201 - SCRATCH DATASET. IEHPROGM  SRATCH AND       *
+*                         UNCATALOG CARDS FOR DATASETS TO BE PURGED   *
+*                         AS LISTED ON REPORT T581R20D. BEFORE        *
+*                         SCRATCHING TAKES PLACE - IN A SEPARATE JOB -*
+*                         THIS DATASET MAY BE EDITED BY SELECT/DELETE *
+*                         ON DSNAME OR ON UNIQUE ID. IN COLS 73-80.   *
+         EJECT
+*         METHOD:                                                     *
+*              THE VTOC HISTORY (HVTOC) DATASET IS READ. FORMAT2 & 3  *
+*              DSCBS ARE STORED FOR LATER USE,FORMAT1 DSCBS ARE       *
+*              RE-FORMATTED FOR THE DATA SET REPORT AND ALL OTHER     *
+*              RECORDS ARE DISCARDED.                                 *
+*              THE CATALOG SECURITY IS MATCHED AGAINST THE HVTOC FILE *
+*              AND ANY DISK DATASETS NOT FOUND IN THE HVTOC FILE ARE  *
+*              PRINTED.                                               *
+*              TESTS,DETAILED WITHIN THE PROGRAM, ARE MADE TO DETER-  *
+*              MINE IF DATASETS SHOULD BE PURGED OR CONTRAVENE        *
+*              STANDARDS. THESE DATASETS ARE ROUTED TO THE EXCEPTION  *
+*              OR PURGE REPORTS AS APPROPRIATE.                       *
+*              ANY DATASETS WITH A MATCH IN THE SAVE FILE WILL BE     *
+*              ROUTED TO THE EXCEPTION REPORT AND NOT THE PURGE REPORT*
+*              AFTHER THESE TESTS, THE DATA SET REPORT LINE IS PRINTED*
+*              AND,IF THE PURGE FLAG IS SET, SCRATCH CARDS ARE WRITTEN*
+*              AT THE END OF INPUT ON ALL FILES, A SUMMARY REPORT     *
+*              SHOWING PURGED DATASET/TRACK COUNTS IS PRODUED.        *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+***********************************************************************
+*         REGISTER  EQUATES AND USAGE                                 *
+***********************************************************************
+         SPACE 1
+R0       EQU   0    SVC COMMUNICATIONS AND WORK REGISTER
+R1       EQU   1    SVC COMMUNICATIONS AND WORK REGISTER
+R2       EQU   2    WORK REGISTER
+R3       EQU   3    WORK REGISTER
+R4       EQU   4    WORK REGISTER
+R5       EQU   5    WORK REGISTER
+R6       EQU   6    WORK REGISTER
+R7       EQU   7    WORK REGISTER
+R8       EQU   8    WORK REGISTER
+R9       EQU   9    WORK REGISTER
+R10      EQU   10   WORK REGISTER
+R11      EQU   11   BASE REGISTER 1
+R12      EQU   12   BASE REGISTER 2
+R13      EQU   13   SAVE AREA POINTER
+R14      EQU   14   BALR RETURN ADDRESS
+R15      EQU   15   BALR ROUTINE ADDRESS
+         EJECT
+***********************************************************************
+*         HOUSEKEEPING                                                *
+***********************************************************************
+         SPACE 1
+         PGMIN EQUATES=NO,USING=(R13,R12,R11)
+         SPACE 3
+         PRINT NOGEN               SUPPRESS MACRO EXPANSION
+         SPACE 3
+         UT458 ,                   EXEC PGM=UT458
+         MVC   DATE,UTREPORT       MOVE DATE REPORT TO TITLE
+         PACK  PCURDATE,UTYYDDD    PACK CURRENT DATE
+         MVC   JULYY,UTYY          MOVE YEAR TO TITLE
+         MVC   JULDD,UTDDD         MOVE DAY TO TITLE
+         SPACE 3
+***********************************************************************
+*         OPEN THE FILES                                              *
+***********************************************************************
+         SPACE 1
+         OPEN  (T581F010,,T581F100,,T581R20A,(OUTPUT))
+         OPEN  (T581R20B,(OUTPUT),T581R20C,(OUTPUT))
+         OPEN  (T581R20D,(OUTPUT),T581R20E,(OUTPUT))
+         OPEN  (T581F201,(OUTPUT),SYSOUT,(OUTPUT))
+         OPEN  (T581F030)          OPEN SAVE FILE
+         SPACE 3
+         EJECT
+***********************************************************************
+*        READ                                                         *
+***********************************************************************
+         SPACE 1
+SRA      EQU   *
+         PUT   T581R20A,HEADSKIP   T581R20A FIRST SKIP
+         PUT   T581R20B,HEADSKIP   T581R20B FIRST SKIP
+         PUT   T581R20C,HEADSKIP   T581R20C FIRST SKIP
+         PUT   T581R20D,HEADSKIP   T581R20D FIRST SKIP
+         PUT   T581R20E,HEADSKIP   T581R20E FIRST SKIP
+         PUT   SYSOUT,HEADSKIP     SYSOUT FIRST SKIP
+         MVI   SWREPORT,C'A'       T581R20A
+         BAL   R4,HEADLINE         PERFORM HEADLINE
+         MVI   SWREPORT,C'B'       T581R20B
+         BAL   R4,HEADLINE         PERFORM HEADLINE
+         MVI   SWREPORT,C'D'        T581R20D
+         BAL   R4,HEADLINE         PERFORM HEADLINE
+         MVI   SWREPORT,C'C'        T581R20C
+         BAL   R4,HEADLINE         PERFORM HEADLINE
+         MVI   SWREPORT,C'E'       T581R20E
+         BAL   R4,HEADLINE         PERFORM HEADLINE
+         MVI   SWREPORT,C'M'        SYSOUT
+         BAL   R4,HEADLINE         PERFORM HEADLINE
+         MVI   WARE,X'11'
+         MVC   WARE+1(20),=C'DATA SET SAVE LIST:-'
+         BAL   R4,DETMLINE
+         SR    R5,R5               CLEAR
+         SR    R8,R8               CLEAR
+         LA    R9,50               ZERO AND ADD 50 TO R9
+         SR    R10,R10             CLEAR
+         OI    SW1,PURGE           FORCE DDLOOKUP TO BE ENTERED
+*                                  FIRST TIME SWITCH
+         SPACE 3
+READF010 GET   T581F010,FORMAT1
+         CLI   DS1FMTID,C'1'       TEST IF DSCB FORMAT 1
+         BE    PF1                 YES - BRANCH TO PF1
+         CLI   DS1FMTID,C'2'       TEST IF DSCB FORMAT 2
+         BE    PF2                 YES - BRANCH TO PF2
+         CLI   DS1FMTID,C'3'       TEST IF DSCB FORMAT 3
+         BE    PF3                 YES - BRANCH TO PF3
+         CLI   DS1FMTID,C'4'       TEST IF DSCB FORMAT 4
+         BE    PF4                 YES - BRANCH TO PF4
+         B     READF010            NO  - BRANCH TO NEXT READ
+         EJECT
+***********************************************************************
+*        LOAD TABLE DSCB'S FORMAT 2 / 150 ELEMENTS MAXIMUN            *
+*           FOR EACH ELEMENT, LENGTH = 16 BYTES                       *
+*             BYTES  1 TO  6       VOLUME NAME                        *
+*                    7 TO 11       ORIGINAL CCHHR                     *
+*                   12 TO 16       POINTER (CCHHR) FOR DSCB FORMAT 3  *
+***********************************************************************
+         SPACE 1
+PF2      CLC   DS2PTRDS(5),CCHHR0  TEST IF CCHHR FOR F.3 = ZERO
+         BE    READF010            YES - BRANCH TO NEXT READ
+         CH    R5,=H'150'          TEST IF VALUE OF R5 IS EQUAL TO 150
+         BE    ERTMF2              YES - BRANCH TO TOO MANY DSCB'S F2
+         CH    R5,=H'0'            TEST IF FIRST DSCB F2
+         BE    GMAIN               YES - BRANCH TO GETMAIN
+         B     PINTABF2            NO  - BRANCH TO PUT IN TABLE
+GMAIN    GETMAIN R,LV=2400         FETCH 2400 BYTES FOR TABLE DSCB'S F2
+         ST    R1,TABADF2          STORE ADDRESS TO TABLE OF ADDRESS F2
+         LR    R8,R1               SAVE R1
+PINTABF2 MVC   0(6,R8),VOLNAME     MOVE VOLUME ID. TO TABLE
+         MVC   6(5,R8),ORCCHHR     MOVE CCHHR OF ORIGINAL DSCB IN VTOC
+         MVC   11(5,R8),DS2PTRDS   MOVE POINTER TO DSCB FORMAT 3
+         LA    R8,16(R8)           ADDRESS FOR NEXT MOVE'S
+         LA    R5,1(R5)            ADD ONE TO R5
+         ST    R5,NODSCB2          STORE NUMBER OF DSCB'S F2
+         B     READF010            BRANCH TO NEXT READ
+         EJECT
+***********************************************************************
+*        CONVERSION IN NUMBER OF TRACKS OF 13 EXTENTS DSCB FORMAT 3   *
+*             ROUTINE LEXCONV IS USED ALSO FOR CONVERSION             *
+*             OF 3 EXTENTS FROM THE DSCB FORMAT 1                     *
+***********************************************************************
+         SPACE 1
+PF3      BAL   R3,RNTCTF4          PERFORM RESEARCH IN TABLE DSCB F4
+         LA    R5,DS3EXTNT+2       ADDRESS FIRST EXTENT DESCRIPTION
+         LA    R3,ENDCEX           ADDRESS ENDCEX
+         SR    R8,R8               CLEAR
+         SR    R9,R9               CLEAR
+         B     LEXCONV             BRANCH TO CONV. EXTENTS
+RNTCTF4  LM    R5,R7,TABADF4      **
+         LA    R8,50               *
+         LTR   R7,R7               *
+         BNZ   TR7                 *
+         LTR   R6,R6               *
+         BNZ   TR6                 *
+         B     TR5                 *
+TR7      CLC   VOLNAME,0(R7)        >  TEST IF CURRENT VOLNAME IS IN
+         BL    TR6                 *     TABLE DSCB F4 PART 1,2 OR 3
+         LR    R5,R7               *
+         B     TR5                 *
+TR6      CLC   VOLNAME,0(R6)       *
+         BL    TR5                 *
+         LR    R5,R6               *
+TR5      CLC   VOLNAME,0(R5)      **
+         BNE   CNAFT
+         MVC   NOTRKS,6(R5)        MOVE NO OF TRACKS PER LOG. CYLINDER
+         BR    R3
+CNAFT    LA    R5,8(R5)            ADDRESS FOR NEXT TEST
+         BCT   R8,TR5              50 TIMES
+         STH   R8,NOTRKS           CURRENT VOLNAME IS NOT IN TABLE -
+         BR    R3                  DSCB F4 MOVE ZERO TO NO OF TRACKS
+LEXCONV  LH    R6,0(R5)            LOAD CC OF LOWER LIMIT OF THIS EXT.
+         LH    R7,4(R5)            LOAD CC OF UPPER LIMIT OF THIS EXT.
+         MH    R6,NOTRKS           MULTIPLY CC L.L. BY NO OF TRKS P.CYL
+         MH    R7,NOTRKS           MULTIPLY CC U.L. BY NO OF TRKS P.CYL
+         AH    R6,2(R5)            ADD HH L.L. TO CC L.L. * NOTRKS
+         AH    R7,6(R5)            ADD HH U.L. TO CC L.L. * NOTRKS
+         SR    R7,R6               SUBTRACT LOWER L. TO UPPER L.
+         AH    R7,=H'1'            ADD 1 TO RESULT = NO OF TRACK
+         AR    R8,R7               ADD V.R7 TO V.R8  /   FOR THIS EXT.
+         AH    R9,=H'1'            ADD 1 TO R9 (NO OF EXT FOR THIS F3)
+         BR    R3
+ENDCEX   CLI   8(R5),X'00'         TEST IF NEXT EXT. IS ZERO
+         BE    ENDF3CV             YES - BRANCH TO END OF CONV. F3 EXTS
+         CH    R9,=H'4'            TEST IF EXT. NO 4 FOR THIS F3
+         BNE   TILE                NO - BRANCH TO NEXT TEST
+         LA    R5,1(R5)            YES - ADD 1 TO V.R5 (SKIP IDENT.)
+TILE     CH    R9,=H'13'           TEST IF LAST EXT. FOR THIS F3
+         BE    ENDF3CV             YES - BRANCH TO END OF CONV. F3 EXTS
+         LA    R5,10(R5)           ADDRESS FOR NEXT EXT. CONV.
+         B     LEXCONV             BRANCH TO NEXT CONV. EXT.
+         EJECT
+***********************************************************************
+*        LOAD TABLE DSCB'S FORMAT 3 / 500 ELEMENTS MAXIMUN            *
+*           FOR EACH ELEMENT, LENGTH = 16 BYTES                       *
+*             BYTES  1 TO  6       VOLUME NAME                        *
+*                    7 TO 11       ORIGINAL CCHHR                     *
+*                      12          FORMAT ID. 2 OR 3                  *
+*                   13 TO 16       TOTAL ALLOC IN TRACKS              *
+***********************************************************************
+         SPACE 1
+ENDF3CV  ST    R8,NTRKSF3          STORE NUMBER OF TRACKS
+         LM    R5,R9,SAVAF3        RESTORE R5 TO R9
+         CH    R5,=H'500'          TEST IF 500 DSCB'S F3 ALREADY LOADED
+         BE    ERTMF3              YES - BRANCH TO TOO MANY DSCB F3
+         CH    R5,=H'0'            TEST IF FIRST DSCB F3
+         BNE   TI5E6               YES - BRANCH TO NEXT TEST
+         LA    R6,50               ZERO AND ADD 50 TO R6
+         B     GTMAIN              BRANCH TO GTMAIN
+TI5E6    CR    R5,R6               TEST IF R5 = R6
+         BNE   PINTABF3            NO -
+         LA    R6,50(R6)           ADD 50 TO V.R6
+GTMAIN   GETMAIN R,LV=800          FETCH 800 BYTES FOR TABLE DSCB'S F3
+         ST    R1,0(R7,R9)         STORE ADDRESS TO TABLE OF ADDRESS F3
+         LA    R7,4(R7)            DEPLACEMENT FOR NEXT STORE ADDRESS
+         LR    R8,R1               SAVE R1
+PINTABF3 MVC   0(6,R8),VOLNAME     MOVE VOLUME ID.
+         MVC   6(5,R8),ORCCHHR     MOVE ORIGINAL CCHHR OF THIS DSCB
+         MVC   11(1,R8),=X'F3'     MOVE X'F3' IDENTIFIER
+         MVC   12(4,R8),NTRKSF3    MOVE NUMBER OF TRACKS ALLOC FOR F3
+         LA    R8,16(R8)           ADDRESS FOR NEXT MOVE'S
+         LA    R5,1(R5)            ADD 1 TO V.R5
+         ST    R5,NODSCB3          STORE NUMBER OF DSCB'S F3
+         STM   R5,R9,SAVAF3        SAVE R5 TO R9
+         B     READF010            BRANCH TO NEXT READ
+         EJECT
+***********************************************************************
+*        LOAD TABLE DSCB'S FORMAT 4 / 150 ELEMENTS MAXIMUN            *
+*           FOR EACH ELEMENT, LENGTH =  8 BYTES                       *
+*             BYTES  1 TO  6       VOLUME NAME                        *
+*                    7 TO 8        NUMBER OF TRACKS PER LOGICAL CYL.  *
+***********************************************************************
+         SPACE 1
+PF4      CH    R8,=H'150'          TEST IF VALUE OF R5 IS EQUAL TO 150
+         BE    ERTMF4              YES - BRANCH TO TOO MANY DSCB F4
+         CH    R8,=H'0'            TEST IF FIRST DSCB F4
+         BE    GETMA               YES - BRANCH TO GETMA
+         CR    R8,R9               TEST IF R8 = R9
+         BNE   PINTABF4            YES - BRANCH TO PUT IN TABLE F4
+         LA    R9,50(R9)           ADD 50 TO R9
+GETMA    GETMAIN R,LV=400          FETCH 400 BYTES FOR TABLE DSCB'S F4
+         ST    R1,TABADF4(R10)     STORE ADDRESS TO TABLE OF ADDRESS F4
+         LA    R10,4(R10)          DEPLACEMENT FOR NEXT STORE ADDRESS
+         LR    R2,R1               SAVE R1
+PINTABF4 MVC   0(6,R2),VOLNAME     MOVE VOLUME ID. TO TABLE
+         MVC   6(2,R2),DS4DEVSZ+2  MOVE NUMBER OF TRACKS PER CYLINDER
+         LA    R2,8(R2)            ADDRESS FOR NEXT MOVE'S
+         LA    R8,1(R8)            ADD ONE TO R8
+         ST    R8,NODSCB4          STORE NUMBER OF DSCB'S F4
+         B     READF010            BRANCH TO NEXT READ
+         EJECT
+***********************************************************************
+*        COMPARE EACH ELEMENT OF THE TABLE DSCB'S FORMAT 2            *
+*             (KEY=(VOLNAME,POINTERF3)) WITH THE TABLE DSCB'S         *
+*             FORMAT 3 (KEY=(VOLNAME,ORIGINALCCHHR)) .                *
+*             IF EQUAL, REPLACE ORIGINAL CCHHR OF DSCB FORMAT 3       *
+*             BY ORIGINAL CCHHR OF DSCB FORMAT2                       *
+***********************************************************************
+         SPACE 1
+FIRSTF1  L     R5,NODSCB2          LOAD NUMBER OF DSCB F2
+         LTR   R5,R5               TEST IF ZERO
+         BNZ   LATF2               NO  - BRANCH TO NEXT TEST
+         BR    R3
+LATF2    L     R6,TABADF2          LOAD ADDRESS TABLE F2
+LRESF3   MVC   WARF3(6),0(R6)      MOVE VOLNAME
+         MVC   WARF3+6(5),11(R6)   MOVE ORIGINAR CCHHR OF F3
+         BAL   R4,RESF3            PERFORM RESEARCH F3
+         LTR   R7,R7               TEST IF ZERO
+         BZ    NITF3               YES - BRANCH TO NEXT TEST
+         MVC   6(5,R7),6(R6)       MOVE ORIGINAL CCHHR OF F2 TO F3
+         MVI   11(R7),X'F2'
+NITF3    LA    R6,16(R6)           ADDRESS NEXT ELEMENT TABLE F2
+         BCT   R5,LRESF3
+FMAIN    L     R1,TABADF2          YES - LOAD ADDRESS TABLE F2
+         FREEMAIN R,LV=2400,A=(R1)
+         BR    R3
+RESF3    STM   R5,R6,SAVAF3
+         L     R5,TABADF3
+         L     R6,NODSCB3
+         SR    R9,R9
+         SR    R10,R10
+         LA    R2,50
+NARTF30  CLC   WARF3,0(R5)
+         BNE   NARTF31
+         LR    R7,R5
+         L     R8,12(R5)
+         LM    R5,R6,SAVAF3
+         BR    R4
+NARTF31  LA    R9,1(R9)
+         C     R9,NODSCB3
+         BNE   NARTF33
+NARTF32  SR    R7,R7
+         LM    R5,R6,SAVAF3
+         BR    R4
+NARTF33  CR    R9,R2
+         BNE   NARTF34
+         LA    R10,4(R10)
+         LA    R2,50(R2)
+         L     R5,TABADF3(R10)
+         B     NARTF30
+NARTF34  LA    R5,16(R5)
+         B     NARTF30
+         EJECT
+***********************************************************************
+*        DATA SET NAME, CREATION DATE AND PURGE DATE                  *
+*             TO PRINT DETAIL LINE                                    *
+***********************************************************************
+         SPACE 1
+PF1      NOP   NFT
+         BAL   R3,FIRSTF1
+         MVI   PF1+1,X'F0'
+NFT      MVC   DSNAME,DS1DSNAM     MOVE DATA SET NAME TO DETLINE
+         MVI   CYEAR+2,C'.'        EDIT CREATION DATE IN DETLINE
+         MVI   PYEAR+2,C'9'        EDIT EXPIRY DATE IN DETLINE
+         SR    R5,R5               CLEAR
+         IC    R5,DS1CREDT         LOAD YEAR FROM CREATION DATE TO REG5
+         CVD   R5,DECIMAL          CONVERT DECIMAL
+         ZAP   PCDATE,DECIMAL+5(3)
+         MP    PCDATE,=P'1000'
+         UNPK  DECIMAL(3),DECIMAL+6(2)  UNPACK
+         OI    DECIMAL+2,SIGN      FORCE SIGN
+         MVC   CYEAR,DECIMAL+1     MOVE TO DETLINE
+         LH    R5,DS1CREDT+1       LOAD DAY OF THE YEAR INTO REG.5
+         CVD   R5,DECIMAL          CONVERT DECIMAL
+         AP    PCDATE,DECIMAL+5(3)
+         UNPK  CDDD,DECIMAL+6(2)   UNPACK
+         OI    CDDD+2,SIGN         FORCE SIGN
+*              FORCE EXPIRY DATE FOR ONE YEAR RETENTION PERIOD
+         CLC   DS1EXPDT,=X'0B000'    TO EXIST FOR 1 YEAR
+         BNE   LPEXPDT
+         SR    R5,R5               CLEAR REG.
+         IC    R5,DS1CREDT         GET CREATION YEAR
+         LA    R5,1(0,R5)          BUMP YEAR BY ONE
+         STC   R5,DS1EXPDT         STORE IN EXPIRY DATE
+         MVC   DS1EXPDT+1(2),DS1CREDT  MOVE CREATION DAY TO EXPIRY.
+LPEXPDT  XR    R5,R5                    ZEROISE
+         IC    R5,DS1EXPDT         LOAD YEAR FROM EXPIRATION DATE TO R5
+         MVI   SWEXDTE,X'00'            SET OFF SWITCH
+         LTR   R5,R5                    TEST FOR ZERO
+         BNZ   *+8                      BRANCH IF NO
+         MVI   SWEXDTE,X'FF'            YES - SET ON SWITCH
+         CVD   R5,DECIMAL          CONVERT DECIMAL
+         ZAP   PEDATE,DECIMAL+5(3) SAVE EXPIRY YEAR
+         MP    PEDATE,=P'1000'     SHIFT LEFT
+         UNPK  DECIMAL(3),DECIMAL+6(2)  UNPACK
+         OI    DECIMAL+2,SIGN      FORCE SIGN
+         MVC   PYEAR,DECIMAL+1     MOVE TO DETLINE
+         MVC   DS1EXPDT(2),DS1EXPDT+1   ALIGNMENT
+         LH    R5,DS1EXPDT         LOAD DAY OF THE YEAR FROM EXP DATE
+         LTR   R5,R5                    TEST FOR ZERO
+         BNZ   *+8                      BRANCH IF NO
+         MVI   SWEXDTE,X'00'            YES - SET OFF SWITCH
+         CLI   SWEXDTE,X'FF'            TEST IF EXPDT SWITCH IS ON
+         BNE   NOAF                     BRANCH IF NO
+         AH    R5,DS1CREDT+1            YES - ADD DDD(CREDT) TO DDD(EX)
+         XR    R2,R2                    ZEROISE
+         XR    R3,R3                    ZEROISE
+         IC    R3,DS1CREDT              LOAD YEAR OF CREDT INTO R3
+         D     R2,=F'4'                 DIVIDE BY FOUR
+         LA    R3,365                   LOAD NUMBER OF DAYS FOR NORMAL
+         LTR   R2,R2                    TEST IF LEAD YEAR
+         BNZ   *+8                      BRANCH IF NO
+         LA    R3,366                   YES - LOAD NO OF DAYS FOR LEAP
+         CR    R5,R3                    COMPARE WITH NEW DDD OF EXPDT
+         BH    *+24                     BRANCH IF >
+         MVC   DS1EXPDT(1),DS1CREDT     MOVE YY(CREDT) TO YY(EXPDT)
+MNEXPDT  STH   R5,DECIMAL               ALIGMENT
+         MVC   DS1EXPDT+1(2),DECIMAL    MOVE NEW DDD OF EXPDT
+         B     LPEXPDT                  GO EDIT NEW EXPDT
+         SR    R5,R3
+         IC    R2,DS1CREDT              LOAD YY OF CREDT INTO R2
+         LA    R2,1(R2)                 ADD ONE AND STORE
+         STC   R2,DS1EXPDT               TO YY OF EXPDT
+         B     MNEXPDT                  GO MOVE DDD
+NOAF     EQU   *
+         CVD   R5,DECIMAL          CONVERT DECIMAL
+         AP    PEDATE,DECIMAL+6(2) SAVE EXPIRY DAY.
+         UNPK  PDDD,DECIMAL+6(2)   UNPACK
+         OI    PDDD+2,SIGN         FORCE SIGN
+         MVI   PYEAR+2,C'.'
+         CLC   DTPURGE,PYEAR       TEST IF PURGE DATE = ZERO
+         BNE   TESDSORG            NO  - BRANCH TO TEST DSORG
+         MVI   PYEAR,BLANK         YES - MOVE
+         MVC   PYEAR+1(5),PYEAR          BLANK
+         EJECT
+***********************************************************************
+*        TESTS DATA SET ORGANIZATION                                  *
+***********************************************************************
+         SPACE 1
+TESDSORG TM    DS1DSORG,IS         TEST IF PSORG = INDEX SEQ.
+         BZ    CPS                 NO - BRANCH TO NEXT TEST
+         MVC   FILETYPE,=C'I.S.'   YES - MOVE 'I.S.' TO DETLINE
+         B     ETDSORG             END OF TEST DSORG
+CPS      TM    DS1DSORG,PS         TEST IF DSORG = PHYSICAL SEQ.
+         BZ    CDA                 NO - BRANCH TO NEXT TEST
+         MVC   FILETYPE,=C'SEQ.'   YES - MOVE 'SEQ.' TO DETLINE
+         B     ETDSORG             END OF TEST DSORG
+CDA      TM    DS1DSORG,DA         TEST IF DSORG = DIRECT ORG.
+         BZ    CPO                 NO - BRANCH TO NEXT TEST
+         MVC   FILETYPE,=C'DIR.'   MOVE 'DIR.' TO DETLINE
+         B     ETDSORG             END OF TEST DSORG
+CPO      TM    DS1DSORG,PO         TEST IF DSORG = PARTITIONED ORG.
+         BZ    CU                  NO - BRANCH TO NEXT TEST
+         MVC   FILETYPE,=C'PART'   YES - MOVE 'PART' TO DETLINE
+         B     ETDSORG             END OF TEST DSORG
+CU       TM    DS1DSORG,UM         TEST IF DSORG = UNMOVABLE
+         BZ    CNOT                NO - BRANCH TO MOVE 'NOT '
+         MVC   FILETYPE,=C'UNMV'   YES - MOVE 'UNMV' TO DETLINE
+         B     ETDSORG             END OF TEST DSORG
+CNOT     MVC   FILETYPE,=C'NOT '   INDICATE UNKNOWN
+ETDSORG  EQU   *                 END OF TEST DSORG
+         EJECT
+***********************************************************************
+*        TESTS RECORD FORMAT                                          *
+***********************************************************************
+         SPACE 1
+TESRECFM LA    R5,RECFORM          ADDRESS OF RECORD FORMAT
+         MVI   RECFORM,BLANK       CLEAR
+         MVC   RECFORM+1(4),RECFORM   RECFORM
+         TM    DS1RECFM,U          TEST IF RECFM = UNDEFINED LENGTH R.
+         BZ    CT                  BRANCH TO NEXT TEST
+         BM    CF                  BRANCH TO NEXT TEST
+         MVI   0(R5),C'U'          MOVE 'U' TO DETLINE
+         LA    R5,1(R5)            ADD 1 TO R5
+         B     CT                  BRANCH TO NEXT TEST
+CF       TM    DS1RECFM,F          TEST IF RECFM = FIXED LENGTH R.
+         BZ    CV                  NO - VARIABLE LENGTH R.
+         MVI   0(R5),C'F'          YES - MOVE 'F' TO DETLINE
+         B     A1
+CV       MVI   0(R5),C'V'          MOVE 'V' TO DETLINE
+A1       LA    R5,1(R5)            ADD 1 TO R5
+CT       TM    DS1RECFM,T          TEST TRACK OVERFLOW
+         BZ    CB                  NO - BRANCH TO NEXT TEST
+         MVI   0(R5),C'T'          YES- MOVE 'T' TO DETLINE
+         LA    R5,1(R5)            ADD 1 TO R5
+CB       TM    DS1RECFM,B          TEST IF BLOCKED
+         BZ    CS                  NO - BRANCH TO NEXT TEST
+         MVI   0(R5),C'B'          YES - MOVE 'B' TO DETLINE
+         LA    R5,1(R5)            ADD 1 TO R5
+CS       TM    DS1RECFM,S          TEST IF SPANNED
+         BZ    CA                  NO - BRANCH TO NEXT TEST
+         MVI   0(R5),C'S'          YES - MOVE 'S' TO DETLINE
+         LA    R5,1(R5)            ADD 1 TO R5
+CA       TM    DS1RECFM,A          TEST IF CONTROL CHARACTER = ANSI
+         BZ    CM                  NO - BRANCH TO NEXT TEST
+         MVI   0(R5),C'A'          YES - MOVE 'A' TO DETLINE
+         LA    R5,1(R5)            ADD 1 TO R5
+CM       TM    DS1RECFM,M          TEST IF CONTROL CHARACTER = MACHINE
+         BZ    ETRECFM             NO - BRANCH END OF TEST RECFM
+         MVI   0(R5),C'M'          YES - MOVE 'M' TO DETLINE
+ETRECFM  EQU   *                   END OF TEST RECFM
+         EJECT
+***********************************************************************
+*        RECORD LENGTH, BLOCK SIZE, VOLUME ID., NUMBER OF EXTENTS,    *
+*             KEY LENGTH, RELATIVE KEY POSITION AND VOLUME SEQUENCE   *
+*             TO PRINT DETAIL LINE                                    *
+***********************************************************************
+         SPACE 1
+         LH    R5,DS1LRECL         LOAD RECORD LENGTH
+         CVD   R5,DECIMAL          CONVERT DECIMAL
+         UNPK  DECIMAL(5),DECIMAL+5(3)  UNPACK
+         BAL   R3,SUZEBE           PERFORM SUPPRESS ZERO BEFORE
+         MVC   RECLEN,DECIMAL      MOVE RECORD LENGTH TO DETLINE
+         OI    RECLEN+4,SIGN       FORCE SIGN
+         LH    R5,DS1BLKL          LOAD BLOCK SIZE
+         CVD   R5,DECIMAL          CONVERT DECIMAL
+         UNPK  DECIMAL(5),DECIMAL+5(3)  UNPACK
+         BAL   R3,SUZEBE           PERFORM SUPPRESS ZERO BEFORE
+         MVC   BLKS,DECIMAL        MOVE BLOCK SIZE TO DETLINE
+         OI    BLKS+4,SIGN         FORCE SIGN
+         MVC   VOLID,VOLNAME       MOVE VOLUME ID TO DETLINE
+         SR    R5,R5               CLEAR
+         IC    R5,DS1NOEPV         LOAD NUMBER OF EXTENTS
+         CVD   R5,DECIMAL          CONVERT DECIMAL
+         UNPK  DECIMAL(3),DECIMAL+6(2)  UNPACK
+         BAL   R3,SUZEBE           PERFORM SUPPRESS ZERO BEFORE
+         MVC   NOEXT,DECIMAL+1     MOVE NUMBER OF EXTENTS TO DETLINE
+         OI    NOEXT+1,SIGN        FORCE SIGN
+         MVI   DETLINE+114,BLANK
+         MVC   DETLINE+115(13),DETLINE+114
+         MVC   TOTUSED,=C'    '         CLEAR WA
+         ZAP   PTRKUSD,=P'0'       SET-UP IN CASE ZERO TRACKS USED.
+         LH    R5,DS1LSTAR         GET FULL TRACKS
+         CLI   DS1LSTAR+2,X'00'    PARTIAL TRACK USED?
+         BE    *+8                 NO. SKIP NEXY INSTN.
+         LA    R5,1(0,R5)          ADD 1 FOR PARTIAL TRACK USED.
+         LTR   R5,R5               IS RESULT ZERO?
+         BZ    NOBLKUS             YZS. BRANCH
+         CVD   R5,DECIMAL
+         ZAP   PTRKUSD,DECIMAL+5(3) SAVE NUMBER OF TRACKS USED
+         UNPK  DECIMAL(5),DECIMAL+5(3)
+         OI    DECIMAL+4,SIGN      FORCE SIGN TO 'F'
+         BAL   R3,SUZEBE           PERFORM SUPPRESS ZERO BEFORE
+         MVC   TOTUSED,DECIMAL+1
+NOBLKUS  EQU   *
+         CLC   FILETYPE,=C'PART'   TEST IF PDS
+         BNE   NOPDSX              BRANCH IF NO
+         XR    R5,R5               ZEROISE R5
+         IC    R5,NODIBLK          LOAD NUMBER OF DIRECT  BLOCKS
+         CVD   R5,DECIMAL          CONVERT DECIMAL
+         UNPK  DECIMAL(3),DECIMAL+6(2)  UNPACK
+         OI    DECIMAL+2,SIGN      FORCE SIGN TO 'F'
+         BAL   R3,SUZEBE           PERFORM SUPPRESS ZERO BEFORE
+         MVC   KEYLEN+1(3),DECIMAL MOVE NO DIR  BLK TO DETLINE
+         IC    R5,NODIBLKU         LOAD NUMBER OF DIRECT BLOCKS USED
+         CVD   R5,DECIMAL          CONVERT DECIMAL
+         UNPK  DECIMAL(3),DECIMAL+6(2) UNPACK
+         OI    DECIMAL+2,SIGN      FORCE SIGN TO 'F'
+         BAL   R3,SUZEBE           PERFORM SUPPRESS ZERO BEFORE
+         MVC   RELKEPOS+1(3),DECIMAL MV TOT. BLKS USED TO DETLINE
+         B     VOSC
+NOPDSX   EQU   *
+         SR    R5,R5               CLEAR
+         IC    R5,DS1KEYL          LOAD KEY LENGTH
+         CVD   R5,DECIMAL          CONVERT DECIMAL
+         UNPK  DECIMAL(3),DECIMAL+6(2)  UNPACK
+         OI    DECIMAL+2,SIGN      FORCE SIGN
+         BAL   R3,SUZEBE           PERFORM SUPPRESS ZERO BEFORE
+         MVC   KEYLEN+1(3),DECIMAL MOVE KEY LENGTH TO DETLINE
+         MVC   RELKEPOS(10),=CL10' '
+         CLC   KEYLEN,=C'    ' TEST IF KEY LENGTH IS BLANK
+         BE    VOSC                YES - BRANCH TO VOL. SEQ. CONV.
+         MVC   DECIMAL,DS1RKP      ALIGNMENT
+         LH    R5,DECIMAL          LOAD RELATIVE KEY POSITION
+         CVD   R5,DECIMAL          CONVERT DECIMAL
+         UNPK  DECIMAL(5),DECIMAL+5(3) UNPACK
+         BAL   R3,SUZEBE           PERFORM SUPPRESS ZERO BEFORE
+         MVC   RELKEPOS,DECIMAL+1  MOVE RELATIVE KEY POSITION TO DETLNE
+         OI    RELKEPOS+3,SIGN     FORCE SIGN
+VOSC     MVC   DECIMAL,DS1VOLSQ    ALIGNMENT
+         LH    R5,DECIMAL          LOAD VOLUME SEQUENCE
+         CVD   R5,DECIMAL          CONVERT DECIMAL
+         UNPK  DECIMAL(3),DECIMAL+6(2)  UNPACK
+         BAL   R3,SUZEBE           PERFORM SUPPRESS ZERO BEFORE
+         OI    DECIMAL+2,SIGN      FORCE SIGN
+         MVC   VOLSEQ,DECIMAL+1    MOVE VOLUME SEQUENCE TO DETLINE
+         EJECT
+***********************************************************************
+*        TOTAL ALLOCATION IN NUMBER OF TRACKS                         *
+***********************************************************************
+         SPACE 1
+         BAL   R3,RNTCTF4          PERFORM RESEARCH IN TABLE DSCB F4
+         SR    R8,R8               CLEAR
+         CLC   DS1PTRDS,CCHHR0     TEST IF POINTER F2/F3 IS = ZERO
+         BE    PISZ                YES - BRANCH TO NEXT TEST
+         MVC   WARF3(6),VOLNAME    MOVE VOLNAME
+         MVC   WARF3+6(5),DS1PTRDS MOVE POINTER TO F2/F3
+         BAL   R4,RESF3            PERFORM RESEARCH F2/F3
+PISZ     CLI   DS1EXT1,X'00'       TEST IF EXTENT 1 IS EQUAL TO ZERO
+         BE    ENDCVEF1            YES  - BRANCH TO END OF CONV. EXT.F1
+         LA    R5,DS1EXT1+2        ADDRESS FIRST EXTENT
+         BAL   R3,LEXCONV          PERFORM ROUTINE CONVERSION EXTENT
+         CLI   DS1EXT2,X'00'       TEST IF EXTENT 2 IS EQUAL TO ZERO
+         BE    ENDCVEF1            YES  - BRANCH TO END OF CONV. EXT.F1
+         LA    R5,DS1EXT2+2        ADDRESS SECOND EXTENT
+         BAL   R3,LEXCONV          PERFORM ROUTINE CONVERSION EXTENT
+         CLI   DS1EXT3,X'00'       TEST IF EXTENT 3 IS EQUAL TO ZERO
+         BE    ENDCVEF1            YES  - BRANCH TO END OF CONV. EXT.F1
+         LA    R5,DS1EXT3+2        ADDRESS THIRD  EXTENT
+         BAL   R3,LEXCONV          PERFORM ROUTINE CONVERSION EXTENT
+ENDCVEF1 CVD   R8,DECIMAL          CONVERT DECIMAL
+         ZAP   PTRKALC,DECIMAL+5(3) SAVE NUMBER OF ALLOCATED TRACKS
+         UNPK  DECIMAL(5),DECIMAL+5(3)  UNPACK
+         BAL   R3,SUZEBE           PERFORM SUPPRESS ZERO BEFORE
+         MVC   TOTALLOC,DECIMAL+1  MOVE TOTAL ALLOC TO DETLINE
+         OI    TOTALLOC+3,SIGN     FORCE SIGN
+         MVC   PGFLAG,=C'  '       CLEAR PURGE INDICATOR
+         EJECT
+***********************************************************************
+*        PRODUCE CATALOG EXCEPTIONS FOR NON-EXISTENT DISK DATASETS    *
+***********************************************************************
+         SPACE 1
+CATEXCEP EQU   *
+         CLI   DSNCATLG,X'00'      HAS CATALOG BEEN READ?
+         BE    CATREAD             NO. GO AND READ IT
+         CLC   DSNCATLG(44),DSNAME COMPARE AGAINST CURRENT DSNAME
+         BL    CATERR              IF LOW DSNAME POINTS TO NOTHING
+         BH    NOTCAT              HIGH. HVTOC D/S NOT CATALOGED
+         CLC   DSNCATVL,VOLNAME    IS VOL IN CATLG SAME AS THIS DSCB
+         BNE   NOTCAT              NO. D/S NOT CATALOGED
+         MVI   P62,C'Y'            MOVE CATLGED IND TO DSCB
+         MVI   CATFLAG,C' '        BLANK OUT LINE FLAG.
+         MVI   DSNCATLG,X'00'      FORCE READ OF CATLG D/S
+         B     CATEXIT             EXIT FROM ROUTINE
+         SPACE
+NOTCAT   EQU   *
+         CLI   DSNCATLG,X'FF'      CATALOG D/S EXHAUSTED OR  DUMMY?
+         BE    CATEXIT             YES. IGNORE NOT CATALOGED D/S.
+*              THIS WILL MEAN THAT ANY D/S APPEARING AFTER
+*              CATALOG EOF WILL NEVER BE FLAGGED AS 'NOT CATALOGED',
+*              BUT DOES ALLOW LISTS WITHOUT USE OF CATALOG D/S.
+         MVI   P62,C'N'            MOVE NOTCAT IND TO DSCB
+         MVI   CATFLAG,C'N'        AND TO PRINT LINE
+         B     CATEXIT             EXIT.
+         SPACE
+CATREAD  EQU   *
+         GET   T581F100            READ CATALOG FILE
+         TM    50(R1),B'11000000'  DATASET RECORD?
+         BO    CATREAD             NO - GO READ NEXT.
+         TM    50(R1),B'01100000'  DATASET RECORD?
+         BO    CATREAD             NO - GO READ NEXT.
+         TM    50(R1),X'40'        DATASET RECORD?
+         BNO   CATREAD             NO. READ NEXT.
+         CLI   53(R1),X'20'        DASD DATASET
+         BNE   CATREAD             NO. IGNORE
+         MVC   DSNCATLG(44),6(R1)  MOVE DSN TO HOLDING AREA
+         MVC   DSNCATVL,55(R1)     AND VOLUME SERIAL
+         B     CATEXCEP            BRANCH TO FURTHER TESTS
+         SPACE
+ENDF100  EQU   *
+         MVI   DSNCATLG,X'FF'      SET TO
+         MVC   DSNCATLG+1(43),DSNCATLG HIGH-VALUES
+         CLI   DSNAME,X'FF'        HVTOC D/S EXHAUSTED?
+         BE    CLOSE               YES. GO TO END OF PROG
+         B     CATEXIT             EXIT
+         SPACE
+CATERR   EQU   *
+         MVI   WARE,C' '
+         MVC   WARE+1(132),WARE    CLEAR PRINT AREA
+         MVC   WARE+1(44),DSNCATLG MOVE DSNAME TO PRINT LINE
+         MVC   WARE+50(6),DSNCATVL MOVE VOLSER TO PRINT LINE
+         BAL   R4,DETELINE         PRINT REPORT-E
+         MVI   WARE,C' '           CLEAR
+         MVC   WARE+1(32),WARE     PRINT AREA
+         B     CATREAD
+         SPACE
+CATEXIT  EQU   *
+         CLI   DSNAME,X'FF'        HVTOC D/S EXHAUSTED?
+         BE    CATEXCEP            YES. JUST PROCESS CATALOG
+         EJECT
+***********************************************************************
+*        MAKE TESTS ON DATASETS AND PRODUCE PURGE DATASET             *
+*              AND DISK D/S EXCEPTION REPORT                          *
+***********************************************************************
+         SPACE 1
+*        INITIALISATION
+         MVC   BDSN(44),DSNAME     INIT. REPORT LINE
+         MVC   BVOLSER(6),VOLID
+         MVC   BTRKS(4),TOTALLOC
+         NI    SW1,X'00'           CLEAR SWBYTE
+         SPACE 2
+***********************************************************************
+*        BYPASS ALL TESTS ON SYSTEM AND SYSGEN DATASETS AS THESE      *
+*        HAVE VALID REASONS FOR CONTRAVENING NORMAL STANDARDS.        *
+***********************************************************************
+         SPACE
+TSTDSCB  EQU   *                   SAVE CATALOGED PATTERN DSCB
+         CLC   DSNAME(4),=C'DSCB'  DSCB OR DSCB0?
+         BE    TSTSEND             YES. BYPASS EXCEPTION REPORTING.
+         CLC   DSNAME(8),=C'MODLDSCB'
+         BE    TSTSEND
+         CLC   DSNAME(6),=C'BXLDCB'
+         BE    TSTSEND
+         CLC   DSNAME(3),=C'PDS'   PATTERN DSCB FOR PDS'S?
+         BE    TSTSEND             YES. BYPASS EXCEPTION REPORTING
+*
+TSTTSG   EQU   *
+         CLC   DSNAME(4),=C'AMP.'  AMP D/S ?
+         BE    TSTSEND             YES. BYPASS EXCEPTION REPORTING.
+         CLC   DSNAME(4),=C'DAM.'  DAM D/S ?
+         BE    TSTSEND             YES. BYPASS EXCEPTION REPORTING.
+         CLC   DSNAME(4),=C'DHC.'  DHC D/S ?
+         BE    TSTSEND             YES. BYPASS EXCEPTION REPORTING.
+         CLC   DSNAME(4),=C'JEA.'  JEA D/S ?
+         BE    TSTSEND             YES. BYPASS EXCEPTION REPORTING.
+         CLC   DSNAME(4),=C'JJH.'  JJH D/S ?
+         BE    TSTSEND             YES. BYPASS EXCEPTION REPORTING.
+         CLC   DSNAME(4),=C'JOE.'  JOE D/S ?
+         BE    TSTSEND             YES. BYPASS EXCEPTION REPORTING.
+         CLC   DSNAME(4),=C'JPR.'  JPR D/S ?
+         BE    TSTSEND             YES. BYPASS EXCEPTION REPORTING.
+         CLC   DSNAME(4),=C'PSG.'  PSG D/S ?
+         BE    TSTSEND             YES. BYPASS EXCEPTION REPORTING.
+         CLC   DSNAME(4),=C'OPS.'  OPS D/S ?
+         BE    TSTSEND             YES. BYPASS EXCEPTION REPORTING.
+*
+TSTPROD  EQU   *
+         CLC   DSNAME(7),=CL7'M20LIB'  M20LIB PROGRAM LIBRARY ?
+         BE    TSTSEND             YES. BYPASS EXCEPTION REPORTING.
+         CLC   DSNAME(7),=CL7'SAMSET'  SAMSET POINTER ?
+         BE    TSTSEND             YES. BYPASS EXCEPTION REPORTING.
+*
+TSTSYS   EQU   *
+         CLC   DSNAME(5),=C'SYS1.'  SYSTEM D/S?
+         BE    TSTSEND             YES. SKIP TESTS
+         CLC   DSNAME(5),=C'SYS2.'  SYSTEM D/S?
+         BE    TSTSEND             YES. SKIP TESTS.
+         CLC   DSNAME(5),=C'SYS3.'  SYSTEM D/S?
+         BE    TSTSEND             YES. SKIP TESTS.
+         CLC   DSNAME(7),=C'SYSCTLG' SYSTEM DATSET?
+         BE    TSTSEND             YES. SKIP TESTS
+         CLC   DSNAME(4),=C'HASP'  HASP D/S
+         BE    TSTSEND             YES. BYPASS TESTS
+         CLC   DSNAME(4),=C'JES2'  JES2 D/S
+         BE    TSTSEND             YES. BYPASS TESTS
+         CLC   DSNAME(3),=C'IPO'   IPO D/S
+         BE    TSTSEND             YES. BYPASS TESTS
+         CLC   DSNAME(2),=C'R1'    SYSGEN D/S
+         BE    TSTSEND             YES. BYPASS TESTS
+         CLC   DSNAME(2),=C'R2'    SYSGEN D/S
+         BE    TSTSEND             YES. BYPASS TESTS
+         CLC   DSNAME(6),=CL6'FDLIB' FDLIB?
+         BE    TSTSEND             YES. BYPASS TESTS
+         CLC   DSNAME(8),=CL8'LIBRARYN' LIBRARYN DATA SET ?
+         BE    TSTSEND             YES. BYPASS TESTS
+         CLC   DSNAME(5),=CL5'MOPP.' MOPP DATA SET ?
+         BE    TSTSEND             YES. BYPASS TESTS
+         CLC   DSNAME(5),=CL5'COST.' COST DATA SET ?
+         BE    TSTSEND             YES. BYPASS TESTS
+         CLC   DSNAME(5),=CL5'PEST.' PEST DATA SET ?
+         BE    TSTSEND             YES. BYPASS TESTS
+         CLC   DSNAME(6),=CL5'ROBIN.' ROBIN DATA SET ?
+         BE    TSTSEND             YES. BYPASS TESTS
+         CLC   DSNAME(6),=CL5'COMET.' COMET DATA SET ?
+         BE    TSTSEND             YES. BYPASS TESTS
+         CLC   DSNAME(8),=C'VSAMDSET'  VSAM DATA SET ?
+         BE    TSTSEND             YES, BYPASS TESTS
+         CLC   DSNAME(8),=C'STLOUIS.'  STLOUIS JOB ?
+         BE    TSTSEND             YES, BYPASS TESTS
+         CLC   DSNAME(8),=C'PASSWORD'  PASSWORD D/S ?
+         BE    TSTSEND             YES, BYPASS TESTS
+         EJECT
+***********************************************************************
+*        CHECK FOR DATASETS PROTECTED BY EXPIRY DATE                  *
+***********************************************************************
+         SPACE
+TSTDATE  EQU   *
+         CLC   PYEAR,=C'11'        PERM D/S,NO.PROTECTION?
+         BE    DATEFLAG            YES. BRANCH
+         CLC   PYEAR,=C'10'        CYCLIC D/S?
+         BE    DATEFLAG            YES. BRANCH
+         CP    PEDATE,PCURDATE     DATASET EXPIRED?
+         BL    TDATEEND            NO. BRANCH
+DATEFLAG EQU   *
+         OI    SW1,DATEPROT        YES. SET SWITCH
+TDATEEND EQU   *
+         SPACE 3
+***********************************************************************
+*        SUPRESS PURGE FOR THE FOLLOWING DATASETS:-                   *
+*              1. THOSE ON A VOLUME WITHOUT A CURRENT SECURITY.
+*              2. DATE PROTECTION TEST MOVED 18/11/75.                *
+*              3. CYCLIC DATASET TEST MOVED 18/11/75.                 *
+*              4. CREATED DURING 3330 CONVERSION.                     *
+*              5. WITH A MATCH IN THE SAVE LIST.                      *
+*              6. MOVED (SQUISHED) , ACCIDENTLY WITHOUT AN            *
+*              EXPIRY DATE.                                           *
+*        THIS IS ACHIEVED BY SETTING A 'NOPURGE' FLAG.                *
+***********************************************************************
+         SPACE
+         BAL   R4,DDLOOKUP         FIND OR CREATE VOLUME IN TABLE
+         CLC   VTOCDATE(5),UTYYDDD DATE ON VTOC RECORD CURRENT?
+         BE    TSTCONV             YES. CONTINUE
+         USING DDMASK,R3
+         OI    DDPNTR,NOTTODAY     FLAG . SHOWING TESTS BYPASSED.
+         OI    SW1,NOPURGE         SUPPRESS POSSIBLE PURGE
+*
+TSTCONV  EQU   *
+         CP    PCDATE,=P'75202'    WAS DATASET CREATED BY THE
+*                                  CONVERSION PROCESS.
+         BH    SAVE
+         OI    SW1,DSCONV          YES. SET FLAG.
+         SPACE 2
+***********************************************************************
+*        CHECK FOR DATASETS TO BE SAVED                               *
+*              A FILE OF PARTIAL OR COMPLETE DSNAMES IS               *
+*              PASSED TO THE PROGRAM SORTED IN DSNAME ORDER.          *
+*              MATCHED RECORDS FROM THIS FILE AND THE HVTOC FILE      *
+*              PREVENT THAT DATASET FROM BEING PURGED.                *
+***********************************************************************
+         SPACE
+SAVE     EQU   *
+         CLI   DSNSAVE,X'00'       FIRST TIME?
+         BE    SAVEREAD            YES. READ NEXT SAVE RECORD
+         LH    R2,SAVELEN          GET LENGTH FOR COMPARE
+         EX    R2,SAVECMPR         COMPARE SAVE-NAME AND DSNAME
+         BH    SAVEEXIT            HVTOC NOT THERE YET. EXIT.
+         BL    SAVEREAD            THIS SAVE-NAME USELESS. READ NEXT
+         OI    SW1,NOPURGE+SAVED   MATCH. SET NOPURGE AND SAVED FLAGS
+         B     SAVEEXIT            EXIT FROM ROUTINR
+         SPACE
+SAVECMPR CLC   DSNSAVE(0),DSNAME   EXECUTED COMPARE INSTRUCTION
+         SPACE
+SAVEREAD EQU   *
+         GET   T581F030            GET NEXT RECORD
+         CLI   0(R1),C' '          BLANK CARD?
+         BE    SAVEREAD            YES. READ NEXT
+         MVC   DSNSAVE(44),0(R1)   MOVE TO COMPARE AREA
+         MVC   WARE+20(80),0(R1)   MOVE TO PRINT LINE
+         CLC   UTYYDDD,49(R1)      HAS CARD EXPIRED?
+         BNH   SAVEOK              NO. BRANCH
+         MVC   WARE+105(9),=C'*EXPIRED*'  YES. FLAG IT
+         BAL   R4,DETMLINE         PRINT SAVE CARD
+         B     SAVEREAD            READ NEXT.
+         SPACE
+SAVEOK   EQU   *
+         BAL   R4,DETMLINE         PRINT IT
+         LA    R1,DSNSAVE          GET START OF AREA
+         SR    R2,R2               CLEAR REGISTER 2
+SAVESCAN CLI   0(R1),C' '          END OF SAVE-NAME?
+         BE    SAVFOUND            YES. BRANCH
+         LA    R1,1(0,R1)          BUMP ADDRESS
+         LA    R2,1(0,R2)          BUMP LENGTH
+         B     SAVESCAN            TEST NEXT POSITION
+         SPACE
+SAVFOUND EQU   *
+         BCTR  R2,0                REDUVE LENGTH FOR COMPARE
+         STH   R2,SAVELEN          SAVE COMPARE LENGTH
+         B     SAVE                BRANCH BACK TO COMPARE
+         SPACE
+ENDF030  EQU   *
+         MVI   DSNSAVE,X'FF'       SET TO
+         MVC   DSNSAVE+1(43),DSNSAVE  HIGH VALUES
+         SPACE
+SAVEEXIT EQU   *
+         SPACE
+*
+TSTSQSH  EQU   *
+         LA    R1,2                EXCEPTION NO.2
+         TM    SW1,DATEPROT        DATE PROTECTED?
+         BO    TSTNOCAT            YES. BYPASS SQUISH AND NOEXP TESTS.
+         CP    PCDATE,=P'75216'    IS THIS A QUISHED D/S?
+         BH    TSTNOEXP            DATE TO HIGH. BRANCH
+         CP    PCDATE,=P'75214'    AGAIN?
+         BL    TSTNOEXP            TOO  LOW. BRANCH
+         CLC   PYEAR,=CL2' '       ANY PURGE DATE?
+         BNE   TSTNOCAT            YES. BYPASS NOEXP TEST
+         OI    SW1,SQUISHED        INDICATE SQUISHED DATASET
+*       'NOPURGE' FLAG NOT SET HERE, BUT'NOEXP'TEST IS SKIPPED.
+         B     TSTNOCAT SKIP EXPIRY DATE TEST
+         EJECT
+         SPACE 2
+***********************************************************************
+*        PURGE DATASETS FOR THE FOLLOWING REASONS:-                   *
+*              1. NOT CATALOGUED.                                     *
+*              2. NAME UNQUALIFIED.                                   *
+*              3. NO EXPIRY DATE.                                     *
+*              4. RETENTION DATE EXPIRED.                             *
+*              5. NO SPACE ALLOCATED. (E.G. ILLEGAL PATTERN DSCBS)    *
+***********************************************************************
+         SPACE
+TSTNOEXP EQU   *
+         LA    R1,6
+         CLC   PYEAR,=C'  '        ANY EXPIRY DATE?
+         BNE   TSTNOCAT            YES. CHECK    IF CATALOGUED
+         OI    SW1,PURGE           NO. PURGE D/S
+         BAL   R4,EXCLINE          PRINT MESSAGE
+*
+TSTNOCAT EQU   *
+         LA    R1,5
+         CLI   P62,C'N'            D/S NOT CATALOGED?
+         BNE   TSTNOIDX            NO. ASSUME CATALOGED.
+         OI    SW1,PURGE+NOTCATLG  SET PURGE AND NOTCATLGED SWITCHES.
+         BAL   R4,EXCLINE          PRINT ERR.
+*
+TSTNOIDX EQU   *
+         LA    R1,14               EXCEPTION 14
+         LA    R2,DSNAME           ADDRESS OF DSNAME
+         LA    R3,8                MAXIMUN OFFSET FOR FULL STOP
+NOIDXSCN EQU   *
+         LA    R4,0(R3,R2)         GET COMPOSITE ADDRESS
+         CLI   0(R4),C'.'          FULL STOP INDICATING INDEX LEVEL?
+         BE    TSTEXDAT            YES. GO TO NEXT TEST
+         BCT   R3,NOIDXSCN         REDUCE OFFSET AND BRANCH
+         OI    SW1,PURGE           SET PURGE SWITCH
+         BAL   R4,EXCLINE          NO FULL STOP FOUND. EXCEPTION.
+*
+TSTEXDAT EQU   *
+*
+         TM    SW1,DATEPROT        IS D/S PROTECTED BY DATE
+         BO    TSTNOALC            YES. TEST FOR NIL ALLOCATION
+         LA    R1,3
+         TM    SW1,NOPURGE+PURGE+DSCONV+SQUISHED  ANY FLAGS SET?
+         BNZ   TSTNOALC
+         OI    SW1,PURGE           SET PURGE SW
+         BAL   R4,EXCLINE
+*
+TSTNOALC EQU   *
+         LA    R1,15               EXCEPTION 15
+         CLI   DS1NOEPV,X'00'      NO. EXTENTS?
+         BNE   SKPNOALC            NO. BRANCH
+         OI    SW1,PURGE           SET. PURGE SWITCH
+         BAL   R4,EXCLINE          PRINT NO SPACE ALLOCATED EXCEPTION
+SKPNOALC EQU   *
+         EJECT
+***********************************************************************
+*        PRINT EXCEPTION LINES FOR DATASETS FLAGGED BEFORE PURGE.     *
+***********************************************************************
+         SPACE
+FLAGTSTS EQU   *
+         LA    R1,2                EXCEPTION 2
+         TM    SW1,SQUISHED        SQUISH FLAG ON?
+         BNO   *+8                 NO. SKIP NSI
+         BAL   R4,EXCLINE          YES. PRINT EXCEPTION LINE
+*
+         LA    R1,1                EXCEPTION 1.
+         TM    SW1,DSCONV          3330 CONVERSION?
+         BNO   *+8                 NO. SKIP NSI
+         BAL   R4,EXCLINE          YES. PRINT EXCEPTION LINE
+*
+*        PUT FOLLOWING TEST IN FRONT OF PREVIOUS ONE WHEN COVERTED
+*        DATASETS NOT LIABLE TO BE PURGED ARE OF NO INTEREST ANYMORE.
+         TM    SW1,NOPURGE+PURGE   PURGE AND NOPURGE SWITCHES ON?
+         BNO   FLAGEND             NO. BRANCH
+*
+         LA    R1,16               EXCEPTION 16
+         TM    SW1,SAVED           D/S ON SAVE LIST?
+         BNO   *+8                 NO. SKIP NSI
+         BAL   R4,EXCLINE          YES. PRINT EXCEPTION
+*
+         LA    R1,17               EXCEPTION 17
+         L     R3,DDCURRNT         GET ADDRESSABILITY
+         USING DDMASK,R3
+         TM    DDPNTR,NOTTODAY     HVTOC RECORDS CURRENT DAY?
+         BNO   *+8                 YES. SKIP NSI.
+         BAL   R4,EXCLINE          PRINT EXCEPTION.
+*
+FLAGEND  EQU   *
+         EJECT
+***********************************************************************
+*        TEST IF DUPLICATE DATA SET                                   *
+***********************************************************************
+         SPACE 1
+TIDUP    EQU   *
+         CLC   WAP+1(44),DSNAME    TEST IF THIS DSNAME = LAST ONE DSN
+         BNE   NODUP1              NO - BRANCH TO NEXT TEST
+         CLC   WAP+131(2),VOLSEQ   CONFIRME IF DUPLICATE DATA SET
+         BNE   NODUP1              NO - BRANCH TO NEXT TEST
+         CLI   WAP,X'FF'
+         BE    ETCATLG
+ETCATLG  MVI   WAP,SPACE2          MOVE CONTROL CHAR. (SP.2 AFTER W.)
+         BAL   R4,DETCLINE         PERFORM PRINT DETAIL LINE (T581R20C)
+         MVC   WAP,DETLINE         SAVE THIS DETAIL LINE
+         MVI   WAP,X'FF'
+         B     ENDDUP
+NODUP1   CLI   WAP,X'FF'
+         BNE   NODUP2
+         MVI   WAP,SPACE2          MOVE CONTROL CHAR. (SP.2 AFTER W.)
+         BAL   R4,DETCLINE         PERFORM PRINT DETAIL LINE (T581R20C)
+NODUP2   MVC   WAP,DETLINE         SAVE THIS DETAIL LINE
+ENDDUP   EQU   *
+         SPACE 2
+***********************************************************************
+*        ADDITIONAL TESTS FOR THE EXCEPTION REPORT.                   *
+*              1. DATASET NO SPACE USED. (NOT OPENED).                *
+*              2. DATASET OVER 2 MEGABYTES. (SEQUENTIAL ONLY)         *
+*              3. DATASET WITH MORE THAN 1 UNUSED TRACK UP TO 57 TRACK*
+*                    AND MORE THAN 18 UNUSED TRACKS FOR OVER 57 TRACKS*
+*              4. VARIOUS TYPES OF PRINT D/S WITH RETENTION GTR. THAN *
+*                 3 DAYS.                                             *
+***********************************************************************
+         SPACE
+TSTNOSPC EQU   *
+         CLI   FILETYPE,C'D'       DIRECT ACCESS D/S?
+         BE    SKPNOSPC            YES. SPACE USED NOT AVAILABLE
+         CLI   FILETYPE,C'I'       INDEXED D/S?
+         BE    SKPNOSPC            YES. BRANCH SAME AS ABOVE
+         CP    PTRKALC,=P'1'       1 TRACK ONLY ALLOCATED?
+         BNH   SKPNOSPC            YES. SKIP EXCEPTION.
+         LA    R1,4                EXCEPTION  4
+         CP    PTRKUSD,=P'0'       ANY SPACE USED?
+         BH    *+8                 YES.SKIP NSI
+         BAL   R4,EXCLINE          NO. PRINT EXCEPTION
+SKPNOSPC EQU   *
+*
+         CLI   FILETYPE,C'S'       SEQUENTIAL DATASET
+         BNE   NOTSEQ1             NO. BYPASS TESTS
+         CLC   DS1BLKL,=H'1693'    RIGAM DATASET?
+         BE    TSTRACKS            YES. BRANCH
+         LA    R1,12               EXCEPTION 12.
+         ZAP   DECIMAL,=P'12288'   12K BYTES PER TRACK
+         MP    DECIMAL,PTRKALC     X TRACKS ALLOC = SIZE OF DS IN BYTES
+         CP    DECIMAL,=P'2000000' GTR THAN 2 MEGA BYTES?
+         BNH   *+8                 NO. BRANCH
+         BAL   R4,EXCLINE          YES. PRINT EXCEPTION LINE
+*
+TSTRACKS EQU   *
+         LA    R1,13               EXCEPTION 13
+         ZAP   PTRKSPR,=P'18'      DEFAULT SPARE TRACKS ALLOWED
+         CP    PTRKALC,=P'57'      TOTAL ALLOCATION  GTR THAN 57 TRACKS
+         BH    *+10                YES. SKIP NSI
+         ZAP   PTRKSPR,=P'1'       SPARE TRACKS ALLOWED FOR SMALL D/S
+         ZAP   DECIMAL,PTRKALC     SET-UP WORK AREA TRACKS ALLOC.
+         SP    DECIMAL,PTRKUSD     MINUS TRACKS USED
+         CP    DECIMAL,PTRKSPR     RESULT GTR THAN ALLOWED?
+         BNH   *+8                 NO. SKIP NSI
+         BAL   R4,EXCLINE          YES. PRINT EXCEPTION
+*
+TSTPRTDS EQU   *
+         L     R2,DS1EXPDT         EXPIRY DATE A1 BYTE
+         SRL   R2,8                SHIFT OUT SPARE BYTE
+         C     R2,=F'4'            GTR THAN 3-DAY RETENTION?
+         BNH   TSPRTEND            NO. SKIP PRINT TESTS.
+         LA    R1,7                EXCEPTION 7.
+         CLC   RECLEN+2(3),=C'121' PRINT D/S
+         BL    TSPRTEND            NO. SKIP PRINT TESTS
+         CLC   RECLEN+2(3),=C'137' PRINT D/S MAX LENGTH
+         BH    TSTPRT2             TOO LONG. BRANCH
+PRTDS1   EQU   *
+         TM    DS1RECFM,A+M        M/C OR ASA CONTROL CHAR?
+         BZ    TSTPRT2             NO. NOT PRINT D/S. BRANCH
+         SPACE
+PRTDS2   EQU   *                   D/S  RECOGNISED AS PRINT
+         BAL   R4,EXCLINE
+         B     TSPRTEND            BYPASS OTHER PRINT TESTS.
+TSTPRT2  EQU   *
+         LA    R1,8                EXCEPTION 8
+         CLC   RECLEN+2(3),=CL3'150'  UTL503 TYPE D/S?
+         BNE   *+8                 N/. SKIP NSI
+         BAL   R4,EXCLINE          YES. EXCEPTION
+         LA    R1,9                EXCEPTION 9.
+         CLC   RECLEN+2(3),=CL3'136'  UT363TYPE?
+         BNE   *+8                 NO. SKIP NSI
+         BAL   R4,EXCLINE          YES. EXCEPTION
+         LA    R1,10               EXCEPTION 10
+         CLC   RECLEN+2(3),=CL3'140' UT451 TYPE?
+         BNE   *+8                 NO. SKIP NSI.
+         BAL   R4,EXCLINE          YES. EXCEPTION
+         LA    R1,11               EXCEPTION 11
+         CLC   RECLEN+2(3),=CL3'133' UT461 PRINT LINE?
+         BNE   *+8                 NO. SKIP NSI
+         BAL   R4,EXCLINE          YES. EXCEPTION
+TSPRTEND EQU   *
+NOTSEQ1  EQU   *
+*
+TSBLK    EQU   *
+         SR    R1,R1               CLEAR R1
+         IC    R1,DS1KEYL          GET KEY LENGTH
+         LTR   R1,R1               ZERO KEY LENGTH?
+         BZ    BLNOKEY             YES. BRANCH
+         AH    R1,=H'58'           ADD KEY CONSTANT
+BLNOKEY  EQU   *
+         AH    R1,=H'135'          ADD BLOCK CONSTANT
+         AH    R1,DS1BLKL          ADD BLOCK LENGTH
+         LH    R3,=H'13165'        GET TRACK LENGTH
+         CR    R1,R3               BLKL > TRACKL
+         BH    BLKONE              YES. DEFAULT TO ONE BLOCK
+         SR    R2,R2               CLEAR R2
+         DR    R2,R1               DIVIDE TRACKL BY BLOCKL
+         B     BLKSTRK             SKIP NSI
+BLKONE   LA    R3,1                DEFAULT VALUE
+BLKSTRK  EQU   *                   NO OF BLOCKS/TRACK IN REG 3
+         MH    R3,DS1BLKL          GET DATA LENGTH/TRACK
+         CP    PTRKALC,=P'9'       MORE THAN 9 TRACKS ALLOCATED?
+         BNH   TBLKEND             NO. BRANCH
+         LA    R1,18               EXCEPTION 18
+         CH    R3,=H'10000'        DATA DENSITY BELOW 10 KB/TRK?
+         BNL   *+8                 NO. SKIP NSI
+         BAL   R4,EXCLINE          PRINT EXCEPTION
+TBLKEND  EQU   *
+*
+TSTPDS   EQU   *                   TEST FOR PDS OVER HALF EMPTY
+         CLI   FILETYPE,C'P'       PDS?
+         BNE   TPDSEND             NO. SKIP TEST
+         LA    R1,19               EXCEPTION 19
+         ZAP   DECIMAL,=P'2'       CONSTANT
+         MP    DECIMAL,PTRKUSD     2 X TACKS USED
+         CP    DECIMAL,PTRKALC     COMPARE RESULT AGAINST ALLOCATED.
+         BNL   *+8                 NOT LESS. SKIP NSI
+         BAL   R4,EXCLINE          LESS. PRINT EXCEPTION
+TPDSEND  EQU   *
+*
+         SPACE 5
+TSTSEND  EQU   *
+         EJECT
+         SPACE
+***********************************************************************
+*        PRINT DATASET REPORT AND WRITE PURGE D/S RECORDS             *
+***********************************************************************
+         SPACE 1
+         TM    SW1,NOPURGE         HAS PURGE BEEN SUPPRESSED?
+         BO    PRNTAREP            YES. BRANCH
+         TM    SW1,PURGE           D/S TO BE PURGED?
+         BNO   PRNTAREP            NO. BRANCH
+         MVC   PRGDSN1,DSNAME      MOVE DSNAME TO UNCAT CARD
+         MVC   PRGDSN2,DSNAME      MOVE TO SCR CARD
+         MVI   PRGDSN2+44,C' '      CLEAR POTENTIAL COMMA
+         LA    R1,PRGDSN2          GET DSN START ADDRESS
+PRGSCAN  EQU   *
+         CLI   0(R1),C' '          BLANK FOUND?
+         BE    PRGFOUND            YES. BRANCH
+         LA    R1,1(0,R1)          MOVE ALONG ONE
+         C     R1,=A(PRGDSN2+44)   END OF DSN?
+         BL    PRGSCAN             NO. BRANCH BACK
+PRGFOUND EQU   *
+         MVI   0(R1),C','          MOVE IN COMMA FOR CONTINUATION
+         MVC   PRGVOL1,VOLID       MOVE VOL NO. TO SCR CARD
+         PUT   T581F201,PRGSCR1    PURGE
+         PUT   T581F201,PRGSCR2    CARDS
+         TM    SW1,NOTCATLG        DATASET CATALOGUED?
+         BO    PRNTAREP            NO. BRANCH
+         PUT   T581F201,PRGUNCAT   YES. WRITE UNCAT RECORD
+PRNTAREP EQU   *
+         BAL   R4,DETALINE         PRINT DASD REPORT
+         MVI   DETLINE,BLANK       CLEAR
+         MVC   DETLINE+1(132),DETLINE   DETLINE
+         B     READF010
+         EJECT
+***********************************************************************
+*              SUBROUTINE TO PRINT  LINES ON THE EXCEPTION REPORT     *
+***********************************************************************
+         SPACE
+EXCLINE  SUBIN SAVE=(R4)
+         LR    R3,R1               MOVE EXCEPTION NUMBER
+         MH    R3,=H'44'           X BY MSG LENGTH
+         LA    R2,EXMSGS           GET START OF TABLE
+         LA    R2,0(R3,R2)         POINT TO CORRECT MSG
+         SR    R3,R3               CLEAR REGISTER
+         IC    R3,0(0,R2)          INSERT NO FROM MESSAGE
+         CR    R1,R3               ARE WE POINTING AT CORRECT MSG
+         BE    *+6                 YES. SKIP
+         DC    H'0'                NO. FORCE 0C1 ABEND
+         CVD   R3,DECIMAL          CONVERT EXCEPTION NO. TO DECIMAL
+         UNPK  DECIMAL(3),DECIMAL+6(2)  DISPLAY FORMAT
+         OI    DECIMAL+2,SIGN      FORCE NUMERIC SIGN
+         MVC   BEXCNO(3),DECIMAL   MOVE TO PRINT LINE
+         MVC   BEXREASN(43),1(R2)   MOVE MSG TO PRINT LINE
+         TM    SW1,PURGE           D/S TO BE PURGED?
+         BNO   EXCLWT              NO. BRANCH
+         MVC   BEXCNO(3),=CL3' '   CLEAR EXC. NO. FOR PURGE REPORT
+         TM    SW1,FRSTPURG        FIRST PURGE TIME?
+         BO    PRGWRT              NO. BRANCH TO WRITE PURGE LINE
+         L     R3,DDCURRNT         GET POINTER TO CURRENT DISK.
+         USING DDMASK,R3
+         OI    SW1,FRSTPURG        SET SWITCH TO ALTER FLOW
+         MVC   BDSN(44),DSNAME     RE-INIT  PRINT LINE
+         MVC   BVOLSER(6),VOLID    IN CASE ALREADY ON
+         MVC   BTRKS(4),TOTALLOC   EXCEPTION REPORT.
+         TM    SW1,NOPURGE         PURGE SUPPRESSED?
+         BNO   NOPFLAG             NO CONTINUE
+         MVC   BFLAG(3),=CL3'N/P'  MOVE FLAG TO PRINT LINE
+         B     PRGWRT
+NOPFLAG  EQU   *
+         AP    DDCOUNTR,=P'1'      INCREMENT COUNTER
+         AP    DDTRKTOT,PTRKALC    ADD TRACKS ALLOCATED TO TOTAL
+         UNPK  PRGCOUNT-1(5),DDCOUNTR SET UP NUMBER
+         OI    PRGCOUNT+3,SIGN      FORCE TO PRINT NUMERIC
+         MVC   PRGVOL2,DDDSKNO     SET UP
+         MVC   PRGVOL3,DDDSKNO+3   PURGE ID.
+         MVC   PRGUNCAT+72(8),PRGVOL2  MOVE SAME ID TO
+         MVC   PRGSCR1+72(8),PRGVOL2   OTHER PURGE CARDS
+         MVC   BEXPRGNO(8),PRGVOL2 MOVE IN PURGE IDENTIFIER
+PRGWRT   EQU   *
+         BAL   R4,DETDLINE         PRINT D REPORT
+         MVC   PGFLAG(2),=CL2'**'  SET PURGE FLAG IN DETLINE
+         B     EXCLCLR             BRANCH TO CLEAR
+EXCLWT   EQU   *
+         BAL   R4,DETBLINE         PRINT B REPORT
+         MVI   PGFLAG,C'*'         SET EXCEPTION FLAG IN DETLINE
+EXCLCLR  EQU   *
+         MVI   BLINE,C' '          CLEAR
+         MVC   BLINE+1(132),BLINE  BLINE
+         SUBOUT RESTORE=(R4)       RESTORE REGS AND RETURN
+         EJECT
+***********************************************************************
+*        SUBROUTINE TO LOOK-UP AND EXTEND DISK VOLUME TABLE           *
+***********************************************************************
+         SPACE 1
+DDLOOKUP SUBIN SAVE=(R4)
+         LA    R3,DDBASE           POINT AT DD TABLE
+         USING DDMASK,R3
+DDLOOP1  EQU   *
+         L     R3,0(0,R3)          ADVANCE ALONG CHAIN
+         LA    R3,0(0,R3)          CLEAR 1-ST BYTE
+         LTR   R3,R3               TEST FOR END
+         BZ    DDGETCOR            GET NEW ELEMENT IF SO
+         CLC   DDDSKNO,VOLID       CORRECT VOLUME?
+         BE    DDEXIT              YES. EXIT
+         B     DDLOOP1             NO. CARRY ON SEARCHING
+         SPACE
+DDGETCOR EQU   *                   START A NEW DISK ENTRY
+         GETMAIN R,LV=DDLNGTH      GET SOME STORAGE
+         LR    R3,R1               ADDRESSABILITY
+         MVC   DDDSKNO,VOLID       GET VOL NO.
+         ZAP   DDCOUNTR,=P'0'      ZERO COUNTER
+         ZAP   DDTRKTOT,=P'0'      ZERO TRACKS PURGED TOTAL
+*        ADD NEW ENTRY TO START OF CHAIN
+         MVC   DDPNTR,DDBASE       MOVE POINTER TO CURRENT FIRST ENTRY
+*                                  TO NEW ENTRY
+         ST    R3,DDBASE           BASE NOW POINTS AT NEW ENTRY
+         DROP  R3
+         SPACE
+DDEXIT   EQU   *
+         ST    R3,DDCURRNT
+         SUBOUT RESTORE=(R4)       RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        PRINT HEAD LINES                                             *
+***********************************************************************
+         SPACE 1
+HEADLINE EQU   *
+         CLI   SWREPORT,C'M'       MESSAGE DATASET?
+         BE    RMSG                YES. BRANCH
+         CLI   SWREPORT,C'A'       TEST REPORT SWITCH
+         BE    R05A                T581R20A
+         CLI   SWREPORT,C'B'       TEST REPORT SWITCH
+         BE    R05B                T581R20B
+         CLI   SWREPORT,C'C'       TEST SWITCH REPORT
+         BE    R05C                T581R20C
+         CLI   SWREPORT,C'D'       TEST SWITCH REPORT
+         BE    R05D                T581R20C
+         CLI   SWREPORT,C'E'       TEST SWITCH REPORT
+         BE    R05E                T581R20E
+RMSG     EQU   *
+         AP    PAGEM,ONE           ADD TO PAGE COUNT
+         UNPK  DECIMAL(3),PAGEM    UNPACK PAGE COUNT
+         OI    DECIMAL+2,SIGN      FORCE SIGN
+         LA    R3,WRITEHM          HEAD LINE ADDR
+         B     SUZEBE              CLEAR LEAD ZEROS
+R05A     AP    PAGEA,ONE           ADD ONE TO PAGECOUNT
+         UNPK  DECIMAL(3),PAGEA     UNPACK PAGE COUNT
+         OI    DECIMAL+2,SIGN      FORCE SIGN
+         LA    R3,WRITEHA          ADDRESS WRITE HEAD LINES
+         B     SUZEBE              BRANCH TO SUPPRESS ZERO BEFORE
+R05B     AP    PAGEB,ONE           ADD ONE TO PAGE COUNT
+         UNPK  DECIMAL(3),PAGEB    UNPACK PAGEB
+         OI    DECIMAL+2,SIGN      FORCE SIGN
+         LA    R3,WRITEHB          ADDRESS WRITE HEAD LINES
+         B     SUZEBE              BRANCH TO SUPPRESS ZERO BEFORE
+R05C     AP    PAGEC,ONE           ADD ONE TO PAGE COUNT
+         UNPK  DECIMAL(3),PAGEC    UNPACK PAGEC
+         OI    DECIMAL+2,SIGN      FORCE SIGN
+         LA    R3,WRITEHC          ADDRESS WRITE HEAD LINES
+         B     SUZEBE              BRANCH TO SUPPRESS ZERO BEFORE
+R05D     AP    PAGED,ONE           ADD ONE TO PAGE COUNT
+         UNPK  DECIMAL(3),PAGED    UNPACK PAGED
+         OI    DECIMAL+2,SIGN      FORCE SIGN
+         LA    R3,WRITEHD          ADDRESS WRITE HEAD LINES
+         B     SUZEBE              BRANCH TO SUPPRESS ZERO BEFORE
+R05E     AP    PAGEE,ONE           ADD ONE TO PAGE COUNT
+         UNPK  DECIMAL(3),PAGEE    UNPACK PAGEE
+         OI    DECIMAL+2,SIGN      FORCE SIGN
+         LA    R3,WRITEHE          ADDRESS WRITE HEAD LINES
+SUZEBE   CLI   DECIMAL,ZERO        TEST IF FIRST POS OF DECIMAL = ZERO
+         BE    D2P                 YES - TEST SECOND POS.
+         BR    R3                  NO
+D2P      MVI   DECIMAL,BLANK       MOVE BLANK TO FIRST POS.
+         CLI   DECIMAL+1,ZERO      TEST IF SECOND POS OF DECIMAL = ZERO
+         BE    D3P                 YES - TEST THIRD POS.
+         BR    R3                  NO
+D3P      MVI   DECIMAL+1,BLANK     MOVE BLANK TO SECOND POS.
+         CLI   DECIMAL+2,ZERO      TEST IF THIRD POS OF DECIMAL = ZERO
+         BE    D4P                 YES - TEST POS. FOUR
+         BR    R3                  NO
+D4P      MVI   DECIMAL+2,BLANK     MOVE BLANK TO THIRD  POS.
+         CLI   DECIMAL+3,ZERO      TEST IF POS FOUR OF DECIMAL = ZERO
+         BE    D5P                 YES - END OF TEST
+         BR    R3                  NO
+D5P      MVI   DECIMAL+3,BLANK     MOVE BLANK TO POS. FOUR
+         BR    R3
+         SPACE
+WRITEHA  MVC   PAGE,DECIMAL        MOVE PAGE COUNT TO FIRST HEAD LINE
+         MVC   TITLE,NLREPORT      TITLE
+         PUT   T581R20A,HEADLNE1   WRITE FIRST HEAD LINE
+         PUT   T581R20A,HEADLNE2   WRITE SECOND HEAD LINE
+         PUT   T581R20A,HEADLNE3   WRITE THIRD HEAD LINE
+         ZAP   LINEA,FIVE          ZERO AND ADD FIVE TO LINE COUNT
+         BR    R4
+         SPACE 3
+WRITEHB  MVC   PAGE,DECIMAL        MOVE PAGE COUNT TO FIRST HEAD LINE
+         MVC   TITLE,EXREPORT      TITLE
+         PUT   T581R20B,HEADLNE1   WRITE FIRST HEAD LINE
+         PUT   T581R20B,HEADLNE4   WRITE SECOND HEAD LINE
+         ZAP   LINEB,FIVE          ZERO AND ADD FIVE TO LINE COUNT
+         BR    R4
+         SPACE 3
+WRITEHC  MVC   PAGE,DECIMAL        MOVE PAGE COUNT TO FIRST HEAD LINE
+         MVC   TITLE,DPREPORT      TITLE
+         PUT   T581R20C,HEADLNE1   WRITE FIRST HEAD LINE
+         PUT   T581R20C,HEADLNE2   WRITE SECOND HEAD LINE
+         PUT   T581R20C,HEADLNE3   WRITE THIRD HEAD LINE
+         ZAP   LINEC,FIVE          ZERO AND ADD FIVE TO LINE COUNT
+         BR    R4
+         SPACE 3
+WRITEHD  MVC   PAGE,DECIMAL        MOVE PAGE COUNT TO FIRST HEAD LINE
+         MVC   TITLE,PUREPORT      MOV PURGED D/S TITLE
+         PUT   T581R20D,HEADLNE1   WRITE FIRST HEAD LINE
+         PUT   T581R20D,HEADLNE4   WRITE SECOND HEAD LINE
+         ZAP   LINED,FIVE          ZERO AND ADD FIVE TO LINE COUNT
+         BR    R4
+         SPACE 3
+WRITEHE  MVC   PAGE,DECIMAL        MOVE PAGE COUNT TO FIRST HEAD LINE
+         MVC   TITLE,CEREPORT
+         PUT   T581R20E,HEADLNE1   WRITE FIRST HEAD LINE
+         PUT   T581R20E,HEADLNE5
+         ZAP   LINEE,FIVE          ZERO AND ADD FIVE TO LINE COUNT
+         BR    R4
+         SPACE 2
+WRITEHM  MVC   PAGE,DECIMAL
+         MVC   TITLE,MSGREPT       GET TITLE
+         PUT   SYSOUT,HEADLNE1
+         ZAP   LINEM,FIVE
+         BR    R4
+         EJECT
+***********************************************************************
+*        PRINT DETAIL LINE                                            *
+***********************************************************************
+         SPACE 1
+DETALINE LR    R5,R4             SAVE R4
+         CP    LINEA,L55         TEST IF LINE COUNT IS GREATER THAN 55
+         BNH   WRITEDA           NO -BRANCH TO WRITE DETAIL LINE
+         MVI   DETLINE,SPACE2
+         PUT   T581R20A,DETLINE  WRITE DETAIL LINE
+         MVI   DETLINE,BLANK       ESTABLISH SPACE 1 AFTER WRITE
+         MVC   DETLINE+1(132),DETLINE CLEAR DETLINE
+         MVI   DETLINE,PRTSPC1     SINGLE SPACE
+         MVC   DETLINE+52(29),=CL29'*  = D/S ON EXCEPTION REPORT.'
+         PUT   T581R20A,DETLINE    PRINT IT
+         MVI   DETLINE,SKIP        SKIP PAGE AFTER PRINT
+         MVC   DETLINE+52(29),=CL29'** = D/S ON PURGE REPORT.'
+         PUT   T581R20A,DETLINE    PRINT IT
+         MVI   DETLINE,BLANK       CLEAR
+         MVC   DETLINE+1(132),DETLINE DETLINE
+         MVI   SWREPORT,C'A'       T581R20A
+         BAL   R4,HEADLINE       PERFORM WRITE HEAD LINES
+         LR    R4,R5             RESTORE R4
+         BR    R4
+WRITEDA  MVI   DETLINE,PRTSPC1     SPACE 1 AFTER WRITE
+         PUT   T581R20A,DETLINE    WRITE DETAIL LINE
+         AP    LINEA,ONE           ADD ONE TO LINE COUNT
+         BR    R4
+         SPACE 3
+DETBLINE LR    R5,R4             SAVE R4
+         CP    LINEB,L55         TEST IF LINE COUNT IS GREATER THAN 55
+         BNH   WRITEDB           NO -BRANCH TO WRITE DETAIL LINE
+         MVI   BLINE,SKIP          SKIP PAGE AFTER WRITE
+         PUT   T581R20B,BLINE      WRITE EXCEPTION REPORT LINE
+         MVI   DETLINE,PRTSPC1     SPACE 1 AFTER WRITE
+         MVI   SWREPORT,C'B'       T581R20B
+         BAL   R4,HEADLINE       PERFORM WRITE HEAD LINES
+         LR    R4,R5             RESTORE R4
+         BR    R4
+WRITEDB  MVI   BLINE,PRTSPC1       SINGLE SPACING
+         PUT   T581R20B,BLINE      WRITE EXECEPTION
+         AP    LINEB,ONE           ADD ONE TO LINE COUNT
+         BR    R4
+         SPACE 3
+DETCLINE LR    R5,R4             SAVE R4
+         CP    LINEC,L55         TEST IF LINE COUNT IS GREATER THAN 55
+         BNH   WRITEDC           NO -BRANCH TO WRITE DETAIL LINE
+         MVI   WAP,SKIP          MOVE CONTROL CHAR. ( SKIP AFTER WRITE)
+         PUT   T581R20C,WAP        WRITE DETAIL LINE
+         MVI   WAP,SPACE2        MOVE CONTROL CHAR. ( SP.2 AFTER WRITE)
+         MVI   SWREPORT,C'C'       T581R20C
+         BAL   R4,HEADLINE       PERFORM WRITE HEAD LINES
+         LR    R4,R5             RESTORE R4
+         BR    R4
+WRITEDC  PUT   T581R20C,WAP        WRITE DETAIL LINE
+         AP    LINEC,TWO         ADD TWO TO LINE COUNT
+         BR    R4
+         SPACE 3
+DETDLINE LR    R5,R4             SAVE R4
+         CP    LINED,L55         TEST IF LINE COUNT IS GREATER THAN 55
+         BNH   WRITEDD           NO -BRANCH TO WRITE DETAIL LINE
+         MVI   BLINE,SPACE2        DOUBLE SPACE AFTER PRINT
+         PUT   T581R20D,BLINE      PRINT CURRENT LINE
+         MVI   BLINE,BLANK
+         MVC   BLINE+1(132),BLINE  CLEAR LINE
+         MVC   BFLAG(23),=CL23'N/P = PURGE SUPPRESSED.'
+         MVI   BLINE,SKIP          MOVE SKIP AFTER WRITE
+         PUT   T581R20D,BLINE      WRITE DETAIL LINE
+         MVI   BLINE,BLANK         MOVE IN SINGLE SPACEING
+         MVI   SWREPORT,C'D'       T581R20D
+         TM    SW2,EOJ             END OF JOB SWITCH ON?
+         BOR   R4                  YES. DONT DO HEADINGS
+         BAL   R4,HEADLINE       PERFORM WRITE HEAD LINES
+         LR    R4,R5             RESTORE R4
+         BR    R4
+WRITEDD  MVI   BLINE,PRTSPC1       SPACE 1 AFTER WRITE
+         PUT   T581R20D,BLINE      WRITE DETAIL LINE
+         AP    LINED,ONE           ADD ONE TO LINE COUNT
+         BR    R4
+         SPACE 3
+DETELINE LR    R5,R4             SAVE R4
+         CP    LINEE,L55         TEST IF LINE COUNT IS GREATER THAN 55
+         BNH   WRITEDE           NO -BRANCH TO WRITE DETAIL LINE
+         PUT   T581R20E,WARE     WRITE DETAIL LINE
+         PUT   T581R20E,HEADSKIP FORCE SKIP TO 1
+         MVI   WARE,PRTSPC1        SPACE 1 AFTER WRITE
+         MVI   SWREPORT,C'E'       T581R20E
+         BAL   R4,HEADLINE       PERFORM WRITE HEAD LINES
+         LR    R4,R5             RESTORE R4
+         BR    R4
+WRITEDE  PUT   T581R20E,WARE     WRITE DETAIL LINE
+         AP    LINEE,ONE         ADD ONE TO LINE COUNT
+         BR    R4
+         SPACE 3
+DETMLINE LR    R5,R4               SAVE ADDRESS
+         MVI   WARE,PRTSPC1        SINGLE SPACE.
+         CP    LINEM,L55
+         BNH   WRITEDM
+         MVI   WARE,SKIP
+         PUT   SYSOUT,WARE
+         MVI   WARE,PRTSPC1        SPACE 1 AFTER WRITE
+         MVI   SWREPORT,C'M'
+         BAL   R4,HEADLINE
+         LR    R4,R5               RESTORE REGISTER
+         B     CLEARM              BRANCH TO LINE CLEAR
+         SPACE
+WRITEDM  PUT   SYSOUT,WARE
+         AP    LINEM,ONE
+CLEARM   EQU   *
+         MVI   WARE+1,C' '         CLEAR
+         MVC   WARE+2(131),WARE+1  WARE
+         BR    R4
+         EJECT
+***********************************************************************
+*        SYNAD AND ABEND ROUTINE                                      *
+***********************************************************************
+         SPACE 1
+ERF100   MVC   MIOER+47(3),=C'100' I/O ERROR ON T581F100
+         B     ERF010
+ERFJCL   MVC   MIOER+47(3),=C'JCL' I/O ERROR ON T581FJCL
+ERF010   SYNADAF ACSMETH=QSAM
+         LR    R2,R1             SAVE R1
+         MVC   WAP(68),MIOER     MOVE MGS ERROR
+         PUT   T581R20A,WAP      WRITE I/O ERROR MGS
+         MVC   WAP+1(68),50(R2)
+         PUT   T581R20A,WAP      WRITE I/O ERROR MGS
+         SYNADRLS
+         ABEND 581,,STEP           ABEND WITHOUT DUMP
+         SPACE 1
+ERTMF2   MVC   WAP+1(L'MGTMF2),MGTMF2   MOVE ERROR MSG
+         B     ABEND                    BRANCH TO ABEND
+ERTMF3   MVC   WAP+1(L'MGTMF3),MGTMF3   MOVE ERROR MSG
+         B     ABEND                    BRANCH TO ABEND
+ERTMF4   MVC   WAP+1(L'MGTMF4),MGTMF4   MOVE ERROR MSG
+         B     ABEND                    BRANCH TO ABEND
+ABEND    PUT   T581R20A,WAP             WRITE ERROR MSG
+         ABEND 581,DUMP            ABEND WITH DUMP
+         EJECT
+***********************************************************************
+*        CLOSE THE FILES AND END OF PROGRAM                           *
+***********************************************************************
+         SPACE 1
+ENDF010  EQU   *
+         MVI   DSNAME,X'FF'        SET DSNAME
+         MVC   DSNAME+1(43),DSNAME TO HIGH VALUES
+         CLI   DSNCATLG,X'FF'      IS CATLG D/S FINISHED?
+         BNE   CATEXCEP            NO. PROCESS EXCEPTIONS
+         SPACE
+CLOSE    EQU   *
+*
+*        BEFORE CLOSING DOWN PRINT PURGE TOTALS FOR EACH DISK
+*
+         MVI   WARE,X'1B'          TRIPLE-SPACE
+         BAL   R4,DETMLINE         PRINT
+         MVI   WARE,X'11'
+         MVC   WARE+1(33),=C'DATA SET PURGE SUMMARY BY VOLUME:-'
+         BAL   R4,DETMLINE
+         LA    R2,DDBASE           POINT AT DD TABLE
+         USING DDMASK,R2
+CLOOP1   EQU   *
+         MVI   WARE+1,C' '
+         MVC   WARE+2(131),WARE+1  CLEAR LINE
+         L     R2,0(0,R2)          ADVANCE ALONG CHAIN
+         LA    R2,0(0,R2)          CLEAR FIRST BYTE
+         LTR   R2,R2               END?
+         BZ    CLOSEDS             YES. BRANCH
+         MVC   DISKLINE(6),DDDSKNO MOVE DISK NO.
+         UNPK  DECIMAL(4),DDCOUNTR GET COUNT OF DATASETS
+         OI    DECIMAL+3,SIGN
+         BAL   R3,SUZEBE           ZERO SUPPRESS
+         MVC   PRGTOTD,DECIMAL     MOVE TO PRINTLINE
+         UNPK  DECIMAL(5),DDTRKTOT CONVERT TRACK TOTAL
+         OI    DECIMAL+4,SIGN      FORCE SIGN
+         BAL   R3,SUZEBE           CLEAR ZEROS
+         MVC   PRGTOTT,DECIMAL     MOVE TO PRINTLINE
+         MVC   WARE+1(DLLEN),DISKLINE MOVE PURGE TOTALS MESSAGE
+         TM    DDPNTR,NOTTODAY     IS FLAGG ON
+         BNO   *+10                NO. BRANCH
+         MVC   WARE+58(39),DATELINE YES. ADD MESSAGE TO PRINTLINE
+         BAL   R4,DETMLINE         PRINT REPORT
+         B     CLOOP1              GO ROUND AGAIN
+         SPACE
+CLOSEDS  EQU   *
+         ZAP   L55,=P'0'           LOWER LINE-COUNT LIMIT
+         OI    SW2,EOJ             SET-ON EOJ SWITCH
+         BAL   R4,DETDLINE         PRINT PAGE TRAILER MESSAGES.
+         CLOSE (T581F010,,T581R20A,,T581F100)
+         CLOSE (T581R20B,,T581R20C,,T581R20D,,T581R20E)
+         CLOSE (T581F201,,SYSOUT)
+         CLOSE (T581F030)          CLOSE SAVE-FILE
+         PGMOUT ,                  END OF PROGRAM
+         EJECT
+***********************************************************************
+*        DATA CONTROL BLOCKS                                          *
+***********************************************************************
+         SPACE 1
+T581F201 DCB   DDNAME=T581F201,                                        C
+               DSORG=PS,                                               C
+               MACRF=PM,                                               C
+               RECFM=FB,                                               C
+               LRECL=80,                                               C
+               BLKSIZE=960
+         SPACE 3
+SYSOUT   DCB   DDNAME=SYSOUT,                                          C
+               DSORG=PS,                                               C
+               MACRF=PM,                                               C
+               RECFM=FM,                                               C
+               LRECL=133,                                              C
+               BLKSIZE=133
+         SPACE 3
+T581F010 DCB   DDNAME=T581F010,                                        C
+               DSORG=PS,                                               C
+               EODAD=ENDF010,                                          C
+               MACRF=GM,                                               C
+               SYNAD=ERF010,                                           C
+               RECFM=FB,                                               C
+               LRECL=160,                                              C
+               BLKSIZE=1600
+         SPACE 3
+T581F030 DCB   DDNAME=T581F030,                                        C
+               DSORG=PS,                                               C
+               MACRF=GL,                                               C
+               EODAD=ENDF030,                                          C
+               RECFM=FB,                                               C
+               LRECL=80
+         SPACE 3
+T581F100 DCB   DDNAME=T581F100,                                        C
+               DSORG=PS,                                               C
+               EODAD=ENDF100,                                          C
+               MACRF=GL,                                               C
+               SYNAD=ERF100,                                           C
+               RECFM=FB,                                               C
+               LRECL=100,                                              C
+               BLKSIZE=1600
+         SPACE 3
+T581R20A DCB   DDNAME=T581R20A,                                        C
+               DSORG=PS,                                               C
+               MACRF=PM,                                               C
+               RECFM=FM,                                               C
+               LRECL=133,                                              C
+               BLKSIZE=133
+         SPACE 3
+T581R20B DCB   DDNAME=T581R20B,                                        C
+               DSORG=PS,                                               C
+               MACRF=PM,                                               C
+               RECFM=FM,                                               C
+               LRECL=133,                                              C
+               BLKSIZE=133
+         SPACE 3
+T581R20C DCB   DDNAME=T581R20C,                                        C
+               DSORG=PS,                                               C
+               MACRF=PM,                                               C
+               RECFM=FM,                                               C
+               LRECL=133,                                              C
+               BLKSIZE=133
+         SPACE 3
+T581R20D DCB   DDNAME=T581R20D,                                        C
+               DSORG=PS,                                               C
+               MACRF=PM,                                               C
+               RECFM=FM,                                               C
+               LRECL=133,                                              C
+               BLKSIZE=133
+         SPACE 3
+T581R20E DCB   DDNAME=T581R20E,                                        C
+               DSORG=PS,                                               C
+               MACRF=PM,                                               C
+               RECFM=FM,                                               C
+               LRECL=133,                                              C
+               BLKSIZE=133
+         EJECT
+***********************************************************************
+*        DEFINITION FOR DSCB FORMAT 1                                 *
+***********************************************************************
+         SPACE 1
+         DS    0D
+FORMAT1  DS    0CL160
+DS1DSNAM DS    CL44                DATA SET NAME
+DS1FMTID DS    C                   FORMAT IDENTIFIER
+DS1DSSN  DS    CL6                 DATA SET SERIAL NUMBER
+DS1VOLSQ DS    CL2                 VOLUME SEQUENCE NO.
+DS1CREDT DS    CL3                 CREATION DATE
+DS1EXPDT DS    CL3                 EXPIRATION DATE
+DS1NOEPV DS    C                   NO. OF EXTENTS
+DS1NOBDB DS    C
+P62      DS    C                   'Y' IF DS CATLG, 'N' IF NOT CATLG
+DS1SYSCD DS    CL13                PROGRAMMING SYSTEM CODE ID
+NODIBLK  DS    C                   FOR PDS, NUMBER OF DIRECTORY BLOCKS
+NODIBLKU DS    C                   FOR PDS, NO OF DIRECT. BLOCKS USED
+         DS    CL5                 RESERVED
+DS1DSORG DS    C                   DATA SET ORGANIZATION
+         DS    C                   RESERVED
+DS1RECFM DS    C                   RECORD FORMAT
+DS1OPTCD DS    C                   OPTION CODES
+DS1BLKL  DS    CL2                 BLOCK LENGTH
+DS1LRECL DS    CL2                 LOGICAL LENGTH
+DS1KEYL  DS    CL1                 KEY LENGTH
+DS1RKP   DS    CL2                 RELATIVE KEY POSITION
+DS1DSIND DS    C                   DATA SET INDICATORS
+DS1SCALO DS    CL4                 ALLOCATION PARAMETERS
+DS1LSTAR DS    CL3                 POINTER TO LAST WRITTEN BLOCK
+DS1TRBAL DS    CL2                 LL PART OF DISK ADDRESS
+         DS    CL2                 RESERVED
+DS1EXT1  DS    CL10                FIRST EXTENT DESCRIPTION
+DS1EXT2  DS    CL10                SECOND EXTENT DESCRIPTION
+DS1EXT3  DS    CL10                THIRD EXTENT DESCRIPTION
+DS1PTRDS DS    CL5                 DIRECT-ACCESS ADDRESS OF NEXT DSCB
+VTOCDATE DS    CL9                 YYDDDHHMM WHEN RECORD CREATED
+ORCCHHR  DS    CL5                 CCHHR OF ORIGINAL DSCB IN VTOC
+VOLNAME  DS    CL6                 VOLUME ID
+         EJECT
+***********************************************************************
+*        DEFINITION FOR DSCB FORMAT 2 , 3 AND 4                       *
+***********************************************************************
+         SPACE 1
+FORMAT2  EQU   FORMAT1
+DS2PTRDS EQU   FORMAT2+135    POINTER TO FORMAT 3 DSCB  (CCHHR)
+         SPACE 3
+FORMAT3  EQU   FORMAT2
+DS3EXTNT EQU   FORMAT3+4      (L'40)    4 EXTENTS DESCRIPTION
+DS3ADEXT EQU   FORMAT3+45     (L'90)    9 EXTENTS DESCRIPTION
+         SPACE 3
+FORMAT4  EQU   FORMAT3
+DS4DEVSZ EQU   FORMAT4+62     NO OF LOG. CYL OR NO OF TRACKS
+         EJECT
+***********************************************************************
+*        DEFINITION FOR T581R20A,B,C                                  *
+***********************************************************************
+         SPACE 1
+HEADSKIP DC    X'8B',CL132' '      FIRST HEAD SKIP 1 BEFORE
+HEADLNE1 DS    0CL133              HEAD LINE 1
+         DC    X'11'               SPACE 2 AFTER WRITE
+         DC    CL29'T581P20/'
+SWREPORT EQU   HEADLNE1+9
+TITLE    DC    CL61' '
+DATE     DC    CL9' '
+         DC    CL3' '
+JULYY    DC    CL2' '
+         DC    CL1'.'
+JULDD    DC    CL3' '
+         DC    CL15' '
+         DC    CL6'PAGE'
+PAGE     DS    CL3
+HEADLNE2 DS    0CL133              HEAD LINE 2
+         DC    X'09'               SPACE 1 AFTER WRITE
+         DC    CL44'*-----------  DATA SET NAME  --------------*'
+         DC    CL44'   DATE    DATE  FILE  RECORD  RECORD  BLOCK'
+         DC    CL44'   FILE  NO OF  TOTAL TOTAL *KEYLEN/RKP* VOL'
+HEADLNE3 DS    0CL133              HEAD LINE 3
+         DC    X'11'               SPACE 2 AFTER WRITE
+         DC    CL44' '
+         DC    CL44' CREATED  PURGE  TYPE  FORMAT  LENGTH   SIZE'
+         DC    CL44'  SERIAL  EXT.  ALLOC  USED *DIR-A/USED* SEQ'
+HEADLNE4 DS    0CL133              ONLY FOR R05E
+         DC    X'11'               SPACE 2 AFTER WRITE
+         DC    CL44'*----------- DATA SET NAME ----------------*'
+         DC    CL44'   VOLUME ID.   TOTAL ALLOC.   EXCPTN. NO. '
+         DC    CL44'*------------ EXCEPTION REASON ------------*'
+HEADLNE5 DS    0CL133
+         DC    X'11'               BOUBLE SPACE
+         DC    CL44'*----------- DATA SET NAME ----------------*'
+         DC    CL44'   VOLUME ID.'
+         DC    CL44' '
+         SPACE 1
+DETLINE  DS    0CL133
+         DC    X'40'
+DSNAME   DS    CL44      DATA SET NAME
+         DC    C' '
+CYEAR    DS    CL2       YEAR CREATED
+         DC    C'.'
+CDDD     DS    CL3       DAY OF THE YEAR CREATED
+PGFLAG   DC    CL2' '
+PYEAR    DS    CL2       YEAR PURGE
+         DC    C'.'
+PDDD     DS    CL3       DAY OF THE YEAR PURGE
+         DC    CL2' '
+FILETYPE DS    CL4       FILE TYPE  ( SEQ. - PART - I.S. - D.A. - NOT )
+         DC    CL4' '
+RECFORM  DS    CL4       RECORD FORMAT
+         DC    CL2' '
+RECLEN   DS    CL5       RECORD LENGTH
+         DC    CL3' '
+BLKS     DS    CL5       BLOCK SIZE
+         DC    CL2' '
+VOLID    DS    CL6       VOLUME NAME
+         DC    CL2' '
+NOEXT    DS    CL2       NUMBER OF EXTENTS
+         DC    CL2' '
+CATFLAG  DC    C' '
+         DC    C' '
+TOTALLOC DS    CL4       TOTAL ALLOCATIONS IN TRACKS
+         DC    CL2' '
+TOTUSED  DS    CL4       TOTAL USED IN TRACKS
+         DC    CL3' '
+KEYLEN   DS    CL4       KEY LENGTH (IS) OR TOTAL DIRECTORY BLOCKS (PO)
+         DC    CL1' '
+RELKEPOS DS    CL4       RELATIVE KEY POS (IS) OR TOTAL DIR  BLK. USED
+         DC    CL4' '
+VOLSEQ   DS    CL2       VOLUME SEQUENCE
+WAP      DC    CL133' '  WORK AREA FOR T581R20A,B,C
+WARE     DC    CL133' '  WORK AREA FOR T581R20E
+BLINE    DC    CL133' ' WORK AREA T581R05B
+BDSN     EQU   BLINE+1
+BFLAG    EQU   BLINE+45
+BVOLSER  EQU   BLINE+50
+BTRKS    EQU   BLINE+64
+BEXPRGNO EQU   BLINE+77
+BEXCNO   EQU   BLINE+80
+BEXREASN EQU   BLINE+89
+BPURGE   EQU   BLINE+122
+         EJECT
+***********************************************************************
+*        WORK AREAS                                                   *
+***********************************************************************
+         SPACE 1
+DECIMAL  DS    D                   WORK AREA FOR DECIMAL OPERATION
+TABADF2  DC    F'0'
+TABADF3  DC    10F'0'
+TABADF4  DC    3F'0'
+NODSCB2  DC    F'0'
+NODSCB3  DC    F'0'
+NODSCB4  DC    F'0'
+SAVAF3   DC    4F'0'               SAVE AREA
+         DC    A(TABADF3)               FOR DSCB F3
+NTRKSF3  DC    F'0'                SA
+NOTRKS   DS    H                   NO OF TRACKS PER LOG. CYLINDER
+SAVELEN  DC    H'0'
+WARF3    DS    CL11                WORK AREA FOR RESEARCH IN TABLE F3
+JCLS     DS    C
+LINEA    DC    PL2'0'              LINE COUNT
+LINEB    DC    PL2'0'              LINE COUNT
+LINEC    DC    PL2'0'              LINE COUNT
+LINED    DC    PL2'0'              LINE COUNT
+LINEE    DC    PL2'0'              LINE COUNT
+LINEM    DC    PL2'0'
+PAGEA    DC    PL2'0'              PAGE COUNT
+PAGEB    DC    PL2'0'              PAGE COUNT
+PAGEC    DC    PL2'0'              PAGE COUNT
+PAGED    DC    PL2'0'              PAGE COUNT
+PAGEE    DC    PL2'0'              PAGE COUNT
+PAGEM    DC    PL2'0'
+DSNSAVE  DC    44X'00'
+DSNCATLG DC    44X'00'
+DSNCATVL DC    CL6' '
+SWEXDTE  DS    C
+         EJECT
+***********************************************************************
+*        CONSTANTS , EQUATES AND LITERAL POOL                         *
+***********************************************************************
+         SPACE 1
+MIOER    DC    X'09'             SPACE 1 AFTER WRITE
+         DC    CL50'* T581P20 - I/O ERROR FOR DS WITH DDNAME T581F010 '
+         DC    CL17'MORE DATA FOLLOWS'
+MGTMF2   DC    C'NUMBER OF DSCB''S FORMAT 2 IS GREATER THAN 150'
+MGTMF3   DC    C'NUMBER OF DSCB''S FORMAT 3 IS GREATER THAN 250'
+MGTMF4   DC    C'NUMBER OF DSCB''S FORMAT 4 IS GREATER THAN 150'
+ONE      DC    P'1'
+TWO      DC    P'2'
+FIVE     DC    P'5'
+L55      DC    PL2'55'
+EXREPORT DC    CL61'DASD DATA SET EXCEPTION REPORT'
+DPREPORT DC    CL61'DASD DUPLICATE DATA SET REPORT'
+NLREPORT DC    CL61'DASD DATA SET REPORT'
+PUREPORT DC    CL61'***  DASD DATASET PURGE REPORT  ***'
+CEREPORT DC    CL61'DASD CATALOG EXCEPTIONS AND POINTERS'
+MSGREPT  DC    CL61'  PROGRAM MESSAGES'
+DISKLINE DC    CL28'XXXXXX. NO. DATASETS PURGED '
+PRGTOTD  DC    CL4' '
+         DC    CL16'. TRACKS PURGED '
+PRGTOTT  DC    CL5' '
+         DC    CL3'.  '
+DLLEN    EQU   *-DISKLINE
+DATELINE DC    CL39'*** DISK SECURITY NOT CURRENT DATE ***.'
+DTPURGE  DC    C'00.000'
+CCHHR0   DC    XL5'0'
+DDBASE   DC    F'0'
+DDCURRNT DC    F'0'
+EXMSGS   EQU   *
+         DC    AL1(0),CL43' '
+         DC    AL1(1),CL43'DATASET CREATED BY 3330 CONVERSION PROCESS.'
+         DC    AL1(2),CL43'DATASET SQUISHED WITH NO EXPIRY DATE.'
+         DC    AL1(3),CL43'RETENTION PERIOD EXPIRED.'
+         DC    AL1(4),CL43'NO SPACE USED. ALLOCATION > 1 TRACK.'
+         DC    AL1(5),CL43'DATASET NOT CATALOGED.'
+         DC    AL1(6),CL43'NO EXPIRY DATE.'
+         DC    AL1(7),CL43'PRINT D/S. RETPD > 3 DAYS.'
+         DC    AL1(8),CL43'UTL503 D/S? RETPD > 3 DAYS.'
+         DC    AL1(9),CL43'UT363  D/S? RETPD > 3 DAYS.'
+         DC    AL1(10),CL43'UT451 D/S? RETPD > 3 DAYS.'
+         DC    AL1(11),CL43'UT461 D/S? RETPD > 3 DAYS.'
+         DC    AL1(12),CL43'SEQ D/S EXCEEDING 2 MEGABYTES.'
+         DC    AL1(13),CL43'SEQ D/S EXCESSIVE UNUSED SPACE.'
+         DC    AL1(14),CL43'UNQUALIFIED DATA SET NAME.'
+         DC    AL1(15),CL43'ZERO SPACE ALLOCATION.'
+         DC    AL1(16),CL43'DATASET ON SAVE LIST.'
+         DC    AL1(17),CL43'HVTOC RECORDS NOT CURRENT DATE.'
+         DC    AL1(18),CL43'DATA DENSITY LESS THAN 10 KB/TRK.'
+         DC    AL1(19),CL43'PDS UNDER HALF FULL.'
+PRGUNCAT DS    0CL80
+         DC    CL22'     UNCATLG   DSNAME='
+PRGDSN1  DC    CL44' '
+         DC    CL14' '
+         SPACE
+PRGSCR1  DS    0CL80
+         DC    CL22'     SCRATCH   DSNAME='
+PRGDSN2  DC    CL44' '
+         DC    CL14'     C'
+PRGSCR2  DS    0CL80
+         DC    CL15' '
+         DC    CL15'PURGE,VOL=3330='
+PRGVOL1  DC    CL6' '
+         DC    CL36' '
+PRGVOL2  DC    CL1' '
+PRGVOL3  DC    CL3' '
+PRGCOUNT DC    CL4' '
+PCURDATE DC    PL3'0'
+PCDATE   DC    PL5'0'
+PEDATE   DC    PL5'0'
+PTRKALC  DC    PL3'0'
+PTRKUSD  DC    PL3'0'
+PTRKSPR  DC    PL2'0'
+SW1      DC    X'00'
+NOPURGE  EQU   X'80'               DATASET IS NOT TO BE PURGED.
+PURGE    EQU   X'40'               TO BE PURGED UNLESS NOPURGE IS ON.
+FRSTPURG EQU   X'20'
+NOTTODAY EQU   X'80'
+DATEPROT EQU   X'10'               DATASET PROTECTED BY DATE
+SAVED    EQU   X'08'               DATASET MATCHES SAVE LIST
+NOTCATLG EQU   X'04'
+DSCONV   EQU   X'02'
+SQUISHED EQU   X'01'
+SW2      DC    X'00'               PROGRAM FLOW SWITCHES
+EOJ      EQU   X'80'               INDICATES END OF JOB PROCESSING
+         SPACE 3
+IS       EQU   B'10000000'        **
+PS       EQU   B'01000000'         *
+DA       EQU   B'00100000'          > FOR DSORG TESTS
+PO       EQU   B'00000010'         *
+UM       EQU   B'00000001'        **
+         SPACE 1
+F        EQU   B'10000000'        **
+V        EQU   B'01000000'         *
+U        EQU   B'11000000'         *
+T        EQU   B'00100000'          > FOR RECFM TESTS
+B        EQU   B'00010000'         *
+S        EQU   B'00001000'         *
+A        EQU   B'00000100'         *
+M        EQU   B'00000010'        **
+         SPACE 1
+BLANK    EQU   X'40'
+ZERO     EQU   X'F0'
+SIGN     EQU   X'F0'
+SKIP     EQU   X'89'
+SPACE2   EQU   X'11'
+PRTSPC1  EQU   X'09'               PRINT AND SINGLE SPACE
+         LTORG
+DDMASK   DSECT
+DDENTRY  DS    0CL16
+DDPNTR   DS    F
+DDDSKNO  DS    CL6
+DDCOUNTR DS    PL3
+DDTRKTOT DS    PL3
+DDLNGTH  EQU   *-DDMASK
+         END

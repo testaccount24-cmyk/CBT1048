@@ -1,0 +1,285 @@
+//AUXCMM11 JOB (1586,5),'** FOR J. NOLS **',CLASS=N
+//STEP01       EXEC GENASMOD
+***********************************************************************
+*                    A U X C M M 1 1                                  *
+*                                                                     *
+*        THIS ROUTINE HANDLES THE OPERATOR COMMAND DD MOUNT           *
+*        IT IS INVOKED DIRECTLY BY THE COMMAND PROCESSOR AUXCMM01     *
+*        TO WHICH IT RETURNS CONTROL WITH A CODE IN REG15 TO          *
+*        INDICATE WHETHER PROCESSING PROCEEDED NORMALLY OR NOT.       *
+*                                                                     *
+*        ATTRIBUTES. REENTRANT, REUSABLE, SUPERVISOR MODE.            *
+*                                                                     *
+*        REGISTER USAGE                                               *
+*        REG0  PARAMETER REGISTER, WORK REGISTER                      *
+*        REG1  PARAMETER REGISTER, WORK REGISTER                      *
+*        REG2  WORK REGISTER                                          *
+*        REG3  ADDRESS OF GETMAINED WORK AREA                         *
+*        REG9  ADDRESS OF LAST OUTPUT ELEMENT ON CHAIN                *
+*        REG10 WORK REGISTER                                          *
+*        REG11 INTERNAL LINK REGISTER                                 *
+*        REG12 BASE ADDRESS OF THE PROGRAM                            *
+*        REG13 ADDRESSS OF DYNAMICALLY OBTAINED SAVE AREA             *
+*        REG14 PROGRAM LINK REGISTER AND WORK REGISTER                *
+*        REG15 PROGRAM LINK REGISTER AND WORK REGISTER                *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        DSECTS USED IN THIS MODULE                                   *
+***********************************************************************
+         SPACE 2
+WKAREA   DSECT ,                   INTERNAL WORK AREA
+GETMNLEN DS    F                   SAVED DETAILS FOR FREEMAIN
+CHAINHDR DS    F                   START OF OUTPUT CHAIN
+DBLWORD  DS    D                   WORK AREA FOR UNPACK
+FLAG     DS    X                   LOGIC FLAG
+MSGAREA  DS    0CL60               OUTPUT AREA FOR MESSAGES
+CLRLINE DS     0CL60               REFERENCE FOR BUFFER CLEARING
+UNITTEXT DS    CL6                 UNIT NAME LITERAL
+UNIT     DS    CL3                 UNIT NAME
+         DS    CL2                 PADDING
+VOLTEXT  DS    CL18                VOLUME SERIAL LITERAL
+VOLUME   DS    CL6                 VOLUME SERIAL NUMBER
+         DS    CL27                PADDING
+WKARELEN EQU   *-WKAREA            LENGTH FOR GETMAIN
+         PRINT NOGEN
+         IHAASCB
+         SPACE 2
+         CVT
+         SPACE 2
+         IEFUCBOB
+         SPACE 2
+         IHAWQE
+         SPACE 2
+         IEECUCM
+         PRINT GEN
+         EJECT
+***********************************************************************
+*        EQUATES USED IN THE MODULE                                   *
+***********************************************************************
+         SPACE 2
+MSGLEN   EQU   L'MSGAREA           LENGTH FOR LOADMSG MACROS
+OFFSET   EQU   8                   OFFSET TO VOL SET IN WTO TEXT
+*
+*        THE FOLLOWING EQUATES RELATE TO 'FLAG'
+*
+MOUNTFND EQU   X'80'               AN OUTSTANDING MOUNT HAS BEEN FOUND
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING                                   *
+***********************************************************************
+         SPACE 2
+AUXCMM11 ZCSECT GETMAIN=1
+         LR    REG4,REG1           LOAD ADDRESS SCAN DESCR BLK CHAIN
+         EJECT
+***********************************************************************
+*        GETMAIN CORE FOR WORK AREA                                   *
+***********************************************************************
+         SPACE 2
+         USING WKAREA,REG3
+         LA    REG0,WKARELEN       LOAD LENGTH FOR GETMAIN
+         O     REG0,SUBPOOL        LOAD SUBPOOL ID
+         GETMAIN R,LV=(0)          GETMAIN THE CORE
+         LR    REG3,REG1           LOAD BASE ADDRESS
+         ST    REG0,GETMNLEN       SAVE DETAILS FOR FREEMAIN
+         XC    FLAG,FLAG           CLEAR THE LOGIC FLAG
+         EJECT
+***********************************************************************
+*        ANALYSE INPUT PARMS & TEST VALIDITY                          *
+***********************************************************************
+         SPACE 2
+         LTR   REG4,REG4           TEST FOR PRESCENCE OF OPERANDS
+         BZ    HEADER              NO OPERANDS. START PROCESSING
+         CLI   4(REG4),X'01'       IS OPERAND 1 BYTE LONG ?
+         BNE   ERROR               NO. CANNOT BE VALID
+         L     REG4,4(REG4)        LOAD ITS ADDRESS
+         CLI   0(REG4),C'?'        REQUEST FOR INFORMATION ?
+         BNE   ERROR               NO. OPERAND NOT KNOWN
+         B     AUXCMMZZ            BRANCH TO QUERY ROUTINE
+         EJECT
+***********************************************************************
+*        PREPARE & INITIALISE THE HEADING LINE FOR OUTPUT             *
+***********************************************************************
+         SPACE 2
+HEADER   DS    0H
+         LOADMSG DATA=TITLE,LENGTH=TITLLEN,TYPE=C
+         ST    REG1,CHAINHDR       INITIALISE START OF OUTPUT CHAIN
+         LR    REG9,REG1           LOAD NEXT ELEMENT ADDRESS
+         B     UCBSRCH             BRANCH TO NEXT ROUTINE
+         SPACE 2
+TITLE    DC    C'ANALYSIS OF PENDING MOUNTS'
+TITLLEN  EQU   L'TITLE
+         EJECT
+***********************************************************************
+*        SEARCH FOR A UCB WITH OUTSTANDING MOUNTS                     *
+***********************************************************************
+         SPACE 2
+UCBSRCH  DS    0H
+         L     REG10,16            LOAD ADDRESS OF CVT
+         USING CVTMAP,REG10        ADDRESSABILITY FOR CVT
+         L     REG10,CVTILK2       LOAD ADDRESS UCB LOOKUP TABLE
+UCBLOOP  LH    REG5,0(REG10)       LOAD ADDRESS NEXT UCB
+         LA    REG10,2(REG10)      STEP TO NEXT TABLE ENTRY
+         CH    REG5,HIGHVALU       IS THIS THE END OF THE UCB TABLE
+         BE    UCBEXIT             YES. EXIT FROM UCB LOOP
+         CH    REG5,ZEROS          IS THIS ENTRY ACTIVE ?
+         BE    UCBLOOP             NO. GET NEXT UCB ADDRESS
+         BAL   REG11,CHECKUCB      GO TEST FOR MOUNT PENDING
+         B     UCBLOOP             LOOP FOR ALL UCBS
+UCBEXIT  TM    FLAG,MOUNTFND       ANY OUTSTANDING MOUNTS FOUND
+         BO    MSGOUT              YES. GO ADD FINAL LINE
+         B     NOMOUNTS            GO ADD NONE FOUND MESSAGE
+         SPACE 2
+HIGHVALU DC    H'-1'               HIGH VALUES FOR END OF TABLE TEST
+ZEROS    DC    H'0'                LOW VALUES FOR INACTIVE ENTRY TEST
+         EJECT
+***********************************************************************
+*        CHECK THE UCB FOR A MOUNT PENDING CONDITION                  *
+***********************************************************************
+         SPACE 2
+CHECKUCB DS    0H
+         USING UCBCMSEG,REG5       ADDRESSABILITY FOR COMMON SECTION
+         TM    UCBSTAB,UCBBNUL     TEST FOR TAPE MOUNT MESSAGES
+         BO    OPENTAPE            OPEN MAY HAVE BEEN ISSUED FOR TAPE
+         TM    UCBDMCT,UCBMOUNT    ANY OUTSTANDING MOUNTS ?
+         BZ    CHCKEXIT            NONE. GO FETCH NEXT UCB
+         TM    UCBDVCLS,UCB3TAPE   TAPE DEVICE ?
+         BO    TAPEVOL             YES. GO FIND REQUIRED VOL ETC.
+         TM    UCBDVCLS,UCB3DACC   DIRECT ACCESS DEVICE ?
+         BO    DISKVOL             YES. GO FIND REQUIRED VOL ETC
+CHCKEXIT BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        A DISK VOLUME IS NEEDED. FORMAT DETAILS                      *
+***********************************************************************
+         SPACE 2
+DISKVOL  DS    0H
+TAPEVOL  DS    0H
+         XC    MSGAREA,MSGAREA     CLEAR THE OUTPUT AREA
+         MVC   UNITTEXT,UNITLIT    MOVE UNITNAME LITERAL
+         MVC   UNIT,UCBNAME        IDENTIFY THE DEVICE
+         MVC   VOLTEXT,VOLLIT      MOVE VOLUME LITERAL
+         MVC   VOLUME,UCBVOLI      IDENTIFY THE VOLUME SERIAL
+         B     LOADIT              GO LOAD UP THE DATA
+         SPACE 2
+UNITLIT  DC    CL(L'UNITTEXT)'UNIT'
+VOLLIT   DC    CL(L'VOLTEXT)'REQUIRES VOLUME'
+         EJECT
+***********************************************************************
+*        SPECIAL CODE IS NEEDED IF UNMOUNTED TAPE IS 'OPENED'         *
+***********************************************************************
+         SPACE 2
+OPENTAPE DS    0H
+         L     REG14,UCBFSER       LOAD MESSAGE FOR MOUNT MESSAGE
+         SRL   REG14,8             SHIFT MESSAGE ID TO LOW ORDER
+         L     REG15,16            LOAD ADDRESS OF CVT
+         DROP  REG10               RELEASE PREVIOUS ADDRESSABILITY
+         USING CVTMAP,REG15        SET NEW ADDRESSABILITY FOR CVT
+         L     REG15,CVTCUCB       LOAD ADDRESS OF UCM BASE
+         USING UCMXECB,REG15       ADDRESSABILITY FOR UCM BASE
+         L     REG15,UCMWTOQ       LOAD ADDRESS OF FIRST WTO ON CHAIN
+         USING WQE,REG15           ADDRESSABILITY FOR WQE'S
+WQELOOP  L     REG2,WQERTCT        LOAD MESSAGE ID NUMBER
+         LA    REG2,0(REG2)        CLEAR TOP BYTE
+         CR    REG2,REG14          TEST FOR CORRECT MESSAGE
+         BE    OPENVOL             GO LOCATE AND OUTPUT APPROPRIATE VOL
+         L     REG15,WQELKP        LOAD ADDRESS OF NEXT WQE
+         LA    REG15,0(REG15)      CLEAR TOP BYTE
+         LTR   REG15,REG15         TEST FOR END OF CHAIN
+         BNZ   WQELOOP             LOOP FOR ALL OUTSTANDING MESSAGES
+         BR    REG11               RETURN TO CALLER. NO VOL FOUND
+         EJECT
+***********************************************************************
+*        A SPECIAL MOUNT MESSAGE IS FOUND. PROCESS IT                 *
+***********************************************************************
+         SPACE 2
+OPENVOL  DS    0H
+         XC    CLRLINE,CLRLINE     CLEAR THE OUTPUT AREA
+         MVC   UNITTEXT,UNITLIT    MOVE UNITNAME LITERAL
+         MVC   UNIT,UCBNAME        MOVE UNIT NAME
+         MVC   VOLTEXT,VOLLIT      MOVE VOLUME SERIAL LITERAL
+         MVC   VOLUME(30),WQETXT+OFFSET MOVE VOLUME SERIAL
+         MVI   VOLTEXT,C'*'
+         B     LOADIT              GO LOAD UP THE OUTPUT
+         EJECT
+***********************************************************************
+*        THIS IS THE COMMON I/O LOAD ROUTINE                          *
+***********************************************************************
+         SPACE 2
+LOADIT   DS    0H
+         OI    FLAG,MOUNTFND       SIGNAL THAT A PENDING MOUNT FOUND
+         LOADMSG DATA=MSGAREA,LENGTH=MSGLEN,TYPE=D
+         ST    REG1,0(REG9)        CHAIN THIS ELEMENT ONTO OUTPUT CHAIN
+         LR    REG9,REG1           MAKE THIS THE LAST ENTRY
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        NO OUTSTANDING MOUNTS WERE FOUND. TELL OPERATOR              *
+***********************************************************************
+         SPACE 2
+NOMOUNTS DS    0H
+         LOADMSG DATA=NONLINE,LENGTH=L'NONLINE,TYPE=D
+         ST    REG1,0(REG9)        CHAIN THIS ELEMENT TO LAST ONE
+         LR    REG9,REG1           SAVE ADDRESS OF LAST ELEMENT
+         B     MSGOUT              BRANCH TO EXIT ROUTINE
+         SPACE 2
+NONLINE  DC    C'NO OUTSTANDING TAPE OR DISK MOUNTS DETECTED'
+         EJECT
+***********************************************************************
+*        MESSAGES ARE PREPARED. INVOKE OUTPUT PROCESSOR               *
+***********************************************************************
+         SPACE 2
+MSGOUT   DS    0H
+         LOADMSG DATA=LASTLINE,LENGTH=L'LASTLINE,TYPE=E
+         ST    REG1,0(REG9)        CHAIN THIS ONTO OTHER ENTRIES
+         OUTPUT CHAINHDR           HAVE ALL READY MESSAGES OUTPUT
+         B     EXITPGM             RETURN TO CALLER
+         SPACE 2
+LASTLINE DC    C'END OF ANALYSIS'
+         EJECT
+***********************************************************************
+*        COMMON PROGRAM EXIT ROUTINES                                 *
+***********************************************************************
+         SPACE 2
+ERROR    DS    0H
+         LA    REG15,4             SIGNAL INVALID OPERAND
+         B     ZRETURN
+         SPACE 2
+EXITPGM  DS    0H
+         LA    REG15,0             SIGNAL GOOD RETURN
+         SPACE 2
+ZRETURN  LR    REG11,REG15         SAVE RETURN CODE
+         L     REG0,GETMNLEN       LOAD FREEMAIN DETAILS
+         LR    REG1,REG3           LOAD ADDRESS OF WORK AREA
+         FREEMAIN R,LV=(0),A=(1)   FREE UP THE WORK AREA
+         LR    REG15,REG11         RESTORE RETURN CODE
+         ZRETURN RC=(15)
+         EJECT
+***********************************************************************
+*        COMMAND QUERY RESPONSE ROUTINE                               *
+***********************************************************************
+         SPACE 2
+AUXCMMZZ DS    0H
+         LOADMSG DATA=LINE1,LENGTH=LINE1LEN,TYPE=E
+         ST    REG1,CHAINHDR       IDENTIFY START CHAIN
+         B     MSGOUT              BRANCH TO OUTPUT ROUTINE
+         SPACE 2
+LINE1    DC    C'DD MOUNT - NO FURTHER OPERANDS ARE REQUIRED'
+LINE1LEN EQU   L'LINE1             LENGTH FOR GETMAIN
+         EJECT
+SUBPOOL  DS    0F                  USED TO LOAD SUBPOOL ID
+         DC    AL1(0)
+         DC    AL3(0)              PADDING
+         END
+//LKED.SYSIN   DD   *
+ SETCODE AC(1)
+ NAME AUXCMM11(R)
+ INCLUDE MLPALIB(AUXCOMM)
+ INCLUDE MLPALIB(AUXCMM11)
+ ENTRY AUXCOMM
+ ALIAS AUXCMM06
+ ALIAS AUXCMM10
+ SETCODE AC(1)
+ NAME AUXCOMM(R)

@@ -1,0 +1,537 @@
+         TITLE 'PARROTB1 - CONTROL CARD PROCESSING - PART 1'            B1000100
+         MACRO                                                          B1000200
+         $CB   &PRINT=OFF          MACRO TO GENERATE DSECTS             B1000300
+         PUSH  PRINT               PRESERVE PRINT OPTIONS               B1000400
+         PRINT &PRINT              SET PRINT OPTIONS FOR DSECTS         B1000500
+               EJECT                                                    B1000600
+         CBPREFIX ,                CONTROL BLOCK PREFIX                 B1000700
+               EJECT                                                    B1000800
+         CCB   ,                   CENTRAL CONTROL BLOCK                B1000900
+               EJECT                                                    B1001000
+         CSECTID ,                 CSECT IDENTIFICATION PREFIX          B1001100
+               EJECT                                                    B1001200
+         EQUATES ,                 GENERATE STANDARD EQUATES            B1001300
+               EJECT                                                    B1001400
+         FDB   ,                   FIELD DEFINITION BLOCK               B1001500
+               EJECT                                                    B1001600
+         FSA   ,                   FIELD STORAGE AREA                   B1001700
+               EJECT                                                    B1001800
+         GR03  ,                   GR03 CONTROL CARD                    B1001900
+               EJECT                                                    B1002000
+         KBD   ,                   KEY BREAK DEFINITION                 B1002100
+               EJECT                                                    B1002200
+         LIB   ,                   LABEL IDENTIFICATION BLOCK           B1002300
+               EJECT                                                    B1002400
+         PARROTT DSECT=YES         CONVERSION TABLES                    B1002500
+               EJECT                                                    B1002600
+         SCBUCKET ,                SELECTION CRITERION ' BUCKET '       B1002700
+               EJECT                                                    B1002800
+         SPD   ,                   STORAGE POOL DEFINITION              B1002900
+         POP   PRINT               RESTORE ORIGINAL PRINT OPTIONS       B1003000
+         MEND                                                           B1003100
+         EJECT                                                          B1003200
+PARROTB1  CSECT                                                         B1003300
+         $CB   ,                   GENERATE DSECTS AND EQUATES          B1003400
+         EJECT                                                          B1003500
+     SCSECT B1                                                          B1003600
+         USING PARROTB1,R12         ESTABLISH PARROTB1 ADDRESSABILITY   B1003700
+         USING CCBNTRY,R13         ESTABLISH CCB ADDRESSABILITY         B1003800
+         SPACE 1                                                        B1003900
+         ENTRY CCGR03              PROCESS GR03 CONTROL CARDS           B1004000
+         ENTRY PARENDB1            END IF CSECT                         B1004100
+         EJECT                                                          B1004200
+*********************************************************************** B1004300
+*        PROCESS GR03 CONTROL CARDS                                   * B1004400
+*********************************************************************** B1004500
+         SPACE 1                                                        B1004600
+*        UP TO 8 KEYS MAY BE DFINED, AND EACH GR03 CAD MAY DEFINE       B1004700
+*         UP TO 4 KEYS.  THE KEYS ARE ENTERED MAJOR TO MINOR.           B1004800
+         SPACE 1                                                        B1004900
+         USING GR03CARD,R6         ESTABLISH C/C ADDRESSABILITY         B1005000
+         USING KBDNTRY,R8          ESTABLISH C/B ADDRESSABILITY         B1005100
+CCGR03   SUBIN SAVE=R4             PRESERVE RETURN ADRESS               B1005200
+         LR    R10,R6              POINT R10 AT FIRST BUCKET OF DATA    B1005300
+         LA    R9,4                ESTABLISH LOOP FOR 4 BUCKETS         B1005400
+         CBAL  R4,BLDKBD           BUILD KEY BREAK DESCRIPTOR FROM BUCK B1005500
+         LA    R10,GR03KEY2-GR03KEY1(,R10) INCREMENT TO NEXT BUCKET     B1005600
+         BCT   R9,*-8              LOOP BACK IF ANY LEFT                B1005700
+        SUBOUT RESTORE=R4          RESTORE AND RETURN                   B1005800
+         DROP  R6,R8               DROP ADDESSABILITY                   B1005900
+         TITLE 'PARROTB1 - CONSTRUCT KBD FROM BUCKET OF DATA'           B1006000
+*********************************************************************** B1006100
+*        BUILD KEY BREAK DESCRIPTOR FROM BUCKET OF DATA               * B1006200
+*********************************************************************** B1006300
+         SPACE 1                                                        B1006400
+*        THE FOLLOWING ROUTINES CONSTRUCT A KEY BREAK DESCRIPTOR FROM   B1006500
+*         A BUCKET OF DATA IN A GR03 CONTROL CARD.                      B1006600
+         SPACE 1                                                        B1006700
+*        THE DATA IS APPARENTLY RETRIEVED FROM THE FIRST BUCKET IN      B1006800
+*         EVERY CASE, BUT, IN FACT, FOR SUCCESSIVE ITERATIONS OF THE    B1006900
+*         ROUTINE, THE BASE REGISTER FOR THE CONTROL CARD ( R10 ) IS    B1007000
+*         INCREMENTED TO SUCCESSIVE BUCKETS.                            B1007100
+         SPACE 1                                                        B1007200
+*        UPON RETURN, THE CONDITION CODE IS SET SUCH THAT THE CALLER    B1007300
+*         CAN MAKE THE FOLLOWING CONDITIONAL TESTS :-                   B1007400
+*              BL  - BUCKET EMPTY: NO KBD CREATED                       B1007500
+*              BE  - KBD CREATED                                        B1007600
+*              BH - BUCKET CONTAINS ERRORS: KBD NOT CREATED             B1007700
+         EJECT                                                          B1007800
+*********************************************************************** B1007900
+*        BUILD KBD - MAIN-LINE                                        * B1008000
+*********************************************************************** B1008100
+         SPACE 1                                                        B1008200
+         USING GR03CARD,R10        ESTABLISH GR03 ADDRESSABILITY        B1008300
+         USING KBDNTRY,R8          ESTABLISH KBD ADDRESSABILITY         B1008400
+BLDKBD   SUBIN SAVE=(R4,R9,R10)    SAVE RETURN ADDR & LOOP CONTROL      B1008500
+         XC    BLDSTRT(BLDEND-BLDSTRT),BLDSTRT ZEROISE WORK FIELDS      B1008600
+         CLC   GR03KEY1,$SPACES    IS THE BUCKET EMPTY                  B1008700
+         BE    BLDKBDW             GO TO EXIT IF EMPTY                  B1008800
+         CLI   GR03KEY1,C'*'       IS THIS A COMMENT                    B1008900
+         BE    BLDKBDW             GO TO EXIT IF COMMENT                B1009000
+         CBAL  R4,BLDKBDM          ASSUME ERRORS & CONSTRUCT ERROR MESS B1009100
+         CLC   GR03POS,=C'FLD'     IS THIS A DEFERRED FIELD DEFINITION  B1009200
+         BE    BLDKBD1             BR IF YES TO BYPASS PPPLL CONVERSION B1009300
+         LA    R2,GR03POS          POINT AT EBCDIC PPPLL OF KEY         B1009400
+         LA    R3,BLDPPPLL         POINT AT TEMP DESTINATION FIELD      B1009500
+         CBAL  R4,PPPLL            CONVERT PPPLL TO BINARY              B1009600
+         BH    BLDKBDY             EXIT IF PPPLL NOT NUMERIC            B1009700
+         BE    BLDKBD1             BR IF PPPLL VALID                    B1009800
+         LINE  LINE04              TELL OF STRANGELY BLANK PPPLL        B1009900
+         OI    KBDSW2,MKBDNKEY     FLAG THAT KBD DOES NOT DEFINE KEY    B1010000
+         XC    BLDPPPLL(3),BLDPPPLL DEFAULT TO PPPLL OF '00101'         B1010100
+BLDKBD1  LA    R1,BLDTYPE          POINT AT TEMP DEST FIELD             B1010200
+         LA    R15,GR03TYP         POINT AT FIELD TYPE IN GR03 CARD     B1010300
+         CBAL  R4,BLDFTYP          DETERMINE TYPE OF KEY FIELD          B1010400
+         BNE   BLDKBDY             EXIT IF FIELD TYPE UNKNOWN           B1010500
+         CBAL  R4,BLDKBFLD         TEST IF FIELD TYPE VALID FOR KEY     B1010600
+         BNE   BLDKBDY             EXIT IF FIELD TYPE NOT VALID         B1010700
+         EJECT                                                          B1010800
+*********************************************************************** B1010900
+*        BUILD KBD - MAIN-LINE ( CONT'D )                             * B1011000
+*********************************************************************** B1011100
+         SPACE 1                                                        B1011200
+*                                  KEY DESCRIPTION VALID SO BUILD KBD   B1011300
+         LH    R1,$NUMKEYS         GET NUMBER OF KEYS DEFINED           B1011400
+         LA    R1,1(,R1)           UPDATE COUNT TO INCLUDE THIS ONE     B1011500
+         STH   R1,$NUMKEYS         PRESERVE UPDATES COUNT               B1011600
+         LA    R2,KBDLGTH          SET R2 TO LENGTH OF KBD              B1011700
+         GETCB KBD,BACK,$KBDKBD    ACQUIRE KBD AND CHAIN ALL WAYS       B1011800
+         MVC   KBDLABL,GR03KLBL    MOVE OPTIONAL LABEL TO C/B           B1011900
+         MVC   BLDKFLDP(3),BLDPPPLL ADD KEY'S PPPLL TO C/B              B1012000
+         MVC   BLDKFLDT,BLDTYPE    MOVE FIELD TYPE TO C/B               B1012100
+         MVC   KBDKNUM,$NUMKEYS    SET THIS KEY NUMBER IN KBD           B1012200
+         CLC   KBDLABL,$SPACES     WAS OPTIONAL KEY NAME SUPPLIED       B1012300
+         BNE   *+14                BR IF NAME SUPPLIED                  B1012400
+         MVC   KBDLABL,KBDKNUM     SET KEY NUMBER IN LABEL              B1012500
+         MVI   KBDLABL,KEY          .. AND SET INTERNAL REP'N OF KEY    B1012600
+         ZAP   KBDRCNT,$ZERO       ZEROISE RECORD COUNT                 B1012700
+         EJECT                                                          B1012800
+*********************************************************************** B1012900
+*        BUILD KBD - MAIN-LINE ( CONT'D )                             * B1013000
+*********************************************************************** B1013100
+         SPACE 1                                                        B1013200
+         CLC   GR03POS,=C'FLD'     IS THIS A DEFERRED FIELD DEFINITION  B1013300
+         BNE   *+14                BR IF NOT                            B1013400
+         OI    KBDSW,MKBDDEF       FLAG THAT FIELD DEFINITION DEFERRED  B1013500
+         MVC   KBDDLABL,GR03LEN    PRESERVE LABEL FOR DEFERRED DEFIN'N  B1013600
+         MVC   KBDKEYNO,KBDKNUM+1  SET BINARY KEY NO IN EBCDIC FLD      B1013700
+         OI    KBDKEYNO,X'F0'      CONVERT BINARY NO. TO EBCDIC         B1013800
+         CBAL  R4,BLDKBTOT         PROCESS TOTAL BREAK INDICATOR        B1013900
+         CBAL  R4,BLDKBPSK         PROCESS PAGE SKIP SPECIFICATION      B1014000
+         CBAL  R4,BLDKBT80         PROCESS TWENTY80 SPECIFICATION       B1014100
+         CBAL  R4,BLDKBPLM         PROCESS PAGE LIMIT SPECIFICATION     B1014200
+         CBAL  R4,BLDKBNME         PROCESS KEY NAME SPECIFICATION       B1014300
+         CBAL  R4,BLDKLIB          CONSTRUCT LIB, FBD AND FSA FOR KEY   B1014400
+         CBAL  R4,BLDNLIB          CONSTRUCT LIB, FDB AND FSA FOR NAME  B1014500
+         B     BLDKBDX             GO TO EXIT SHOWING C/B'S CONSTRUCTED B1014600
+BLDKBDW  CLI   *,W                 SET COND CODE TO SHOW BUCKET EMPTY   B1014700
+         B     BLDKBDXT            GO TO EXIT                           B1014800
+BLDKBDY  OI    SWERROR,MERRCCER    FLAG THAT 'E' LEVEL EROR DETECTED    B1014900
+         LINE  LINE08              TELL THAT BUCKET IGNORED             B1015000
+         CLI   *,Y                 SET COND CODE TO SHOW ERRO DETECTED  B1015100
+         B     BLDKBDXT            GO TO EXIT                           B1015200
+BLDKBDX  CLI   *,X                 SET COND CODE TO SHOW KBD CREATED    B1015300
+BLDKBDXT SUBOUT RESTORE=(R4,R9,R10) RESRTORE REGISTERS AND  RETURN      B1015400
+         DROP  R10                 DROP GR03 ADDRESSABILITY             B1015500
+         DROP  R8                  DROP KBD ADDRESSABILITY              B1015600
+         EJECT                                                          B1015700
+*********************************************************************** B1015800
+*        BUILD KBD - DETERMINE IF FIELD TYPE VALID FOR GR03 CARD      * B1015900
+*********************************************************************** B1016000
+         SPACE 1                                                        B1016100
+*        ROUTINE BLDFTYP HAS ALREADY DETERMINED THAT THE FIELD TYPE     B1016200
+*         IS A KNOWN TYPE ( OR WE WOULD NOT GET THIS FAR ), BUT         B1016300
+*         'BLDFTYP' IS A GENERAL PURPOSE ROUTINE THAT MERELY REJECTS    B1016400
+*         FIELD TYPES THAT ARE NOT KNOWN TO PARROT: IT DOES NOT TEST    B1016500
+*         IF THE FIELD TYPE IS VALID IN A GR03 CARD.  THAT IS THE       B1016600
+*         THAT IS THE PURPOSE OF THIS ROUTINE.                          B1016700
+         SPACE 1                                                        B1016800
+BLDKBFLD SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              B1016900
+         SR    R1,R1               ZEROISE WORK REGISTER                B1017000
+         IC    R1,BLDTYPE          GET INTERNAL REPRESENTATION OF FLD   B1017100
+         BTYPE PREFIX=BLDKBF,DNUM=X,DCHAR=X,UNUSED=Y,MASK=Y,STR=Y,IND=Y B1017200
+BLDKBFY  LINE  LINE07,ELEVEL=YES   TELL OF UNACCEPTABLE FIELD TYPE      B1017300
+         CLI   *,Y                 SET COND CODE SHOWING ERROR          B1017400
+         B     *+8                 BYPASS RESETTING COND CODE           B1017500
+BLDKBFX  CLI   *,X                 SET COND CODE SHOWING FIELD TYPE VAL B1017600
+        SUBOUT RESTORE=R4          RESTORE AND RETURN TO CALLER         B1017700
+         EJECT                                                          B1017800
+*********************************************************************** B1017900
+*        BUILD KBD - PROCESS TOTAL BREAK INDICATOR                    * B1018000
+*********************************************************************** B1018100
+         SPACE 1                                                        B1018200
+         USING GR03CARD,R10        ESTABLISH GR03 ADDRESSABILITY        B1018300
+         USING KBDNTRY,R8          ESTABLISH KBD ADDRESSABILITY         B1018400
+BLDKBTOT SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              B1018500
+         CLI   GR03TOT,C' '        IS TOTAL BREAK INDICATOR SUPPLIED    B1018600
+         BE    XITKBTOT            EXIT IF NO INDICATOR SUPPLIED        B1018700
+         CLI   GR03TOT,C'N'        IS IT REQUEST FOR NO TOTAL BREAK     B1018800
+         BE    XITKBTOT            EXIT IF NO TOTAL BREAK REQUIRED      B1018900
+         OI    KBDSW,MKBDTOTL      ASSUME TOTAL BREAK REQUIRED & SET FL B1019000
+         CLI   GR03TOT,C'Y'        IS IT REQUEST FOR TOTAL BREAK        B1019100
+         BE    XITKBTOT            EXIT IF TOTAL BREAK REQUIRED         B1019200
+         CLI   GR03TOT,C'T'        IS IT REQUEST FOR TOTAL BREAK        B1019300
+         BE    XITKBTOT            EXIT IF TOTAL BREAK REQUIRED         B1019400
+         NI    KBDSW,FF-MKBDTOTL   SET OFF TOTAL BREAK FLAG             B1019500
+         LINE  LINE09              TELL OF INVALI TOTAL BREAK SPECIFICA B1019600
+XITKBTOT SUBOUT RESTORE=R4         RESTORE AND RETURN                   B1019700
+         DROP  R10                 DROP GR03 ADDRESSABILITY             B1019800
+         DROP  R8                  DROP KBD ADDRESSABILITY              B1019900
+         EJECT                                                          B1020000
+*********************************************************************** B1020100
+*        BUILD KBD - PROCESS PAGE SKIP SPECIFICATION                  * B1020200
+*********************************************************************** B1020300
+         SPACE 1                                                        B1020400
+         USING GR03CARD,R10        ESTABLISH GR03 ADDRESSABILITY        B1020500
+         USING KBDNTRY,R8          ESTABLISH KBD ADDRESSABILITY         B1020600
+BLDKBPSK SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              B1020700
+         CLI   GR03PSKP,C' '       TEST IF SPECIFICATION IS BLANK       B1020800
+         BE    XITKBPSK            EXIT IF NO SPECIFICATION             B1020900
+         CLI   GR03PSKP,C'N'       IS SPECIFICATION SET TO 'NO'         B1021000
+         BE    XITKBPSK            EXIT IF SPECIFICATION IS NO          B1021100
+         OI    KBDSW,MKBDPSKP      ASSUME SPECIFICATION IS YES          B1021200
+         CLI   GR03PSKP,C'Y'       TEST IF SPECIFICATION IS 'Y'         B1021300
+         BE    XITKBPSK            EXIT FROM ROUTINE IF YES             B1021400
+         OI    KBDPSW,MKBDRPC      ASSUME PAGE COUNTER TO BE RESET      B1021500
+         CLI   GR03PSKP,C'R'       TEST IF SPECIFICATION IS 'R'         B1021600
+         BE    XITKBPSK            EXIT FROM ROUTINE IF YES             B1021700
+         NI    KBDPSW,FF-MKBDRPC   SET OFF RESET-PAGE-COUNTER FLAG      B1021800
+         NI    KBDSW,FF-MKBDPSKP   SET OFF FLAG                         B1021900
+         LINE  LINE10              TELL OF UNKNOWN SPECIFICATION        B1022000
+XITKBPSK SUBOUT RESTORE=R4         RESTORE AND RETURN                   B1022100
+         DROP  R10                 DROP GR03 ADDRESSABILITY             B1022200
+         DROP  R8                  DROP KBD ADDRESSABILITY              B1022300
+         EJECT                                                          B1022400
+*********************************************************************** B1022500
+*        BUILD KBD - PROCESS TWENTY80 SPECIFICATION                  *  B1022600
+*********************************************************************** B1022700
+         SPACE 1                                                        B1022800
+         USING GR03CARD,R10        ESTABLISH GR03 ADDRESSABILITY        B1022900
+         USING KBDNTRY,R8          ESTABLISH KBD ADDRESSABILITY         B1023000
+BLDKBT80 SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              B1023100
+         CLI   GR032080,C' '       TEST IF SPECIFICATION IS BLANK       B1023200
+         BE    XITKBT80            EXIT IF NO SPECIFICATION             B1023300
+         C     R8,$PTRKBD          IS THIS THE FIRST ( MAJOR ) KBD      B1023400
+         BE    BLD01T80            BR IF THIS IS THE MAJOR KEY          B1023500
+         LINE  LINE12              TELL THAT ONLY MAJOR KEY MAY SPECIFY B1023600
+         B     XITKBT80            EXIT FROM ROUTINE                    B1023700
+BLD01T80 CLI   GR032080,C'N'       IS SPECIFICATION SET TO 'NO'         B1023800
+         BE    XITKBT80            EXIT IF SPECIFICATION IS NO          B1023900
+         OI    KBDSW,MKBD2080      ASSUME SPECIFICATION IS YES          B1024000
+         CLI   GR032080,C'Y'       TEST IF SPECIFICATION IS 'Y'         B1024100
+         BE    XITKBT80            EXIT FROM ROUTINE IF YES             B1024200
+         NI    KBDSW,FF-MKBD2080   SET OFF FLAG                         B1024300
+         LINE  LINE11              TELL OF UNKNOWN SPECIFICATION        B1024400
+XITKBT80 SUBOUT RESTORE=R4         RESTORE AND RETURN                   B1024500
+         DROP  R10                 DROP GR03 ADDRESSABILITY             B1024600
+         DROP  R8                  DROP KBD ADDRESSABILITY              B1024700
+         EJECT                                                          B1024800
+*********************************************************************** B1024900
+*        BUILD KBD - PROCESS PAGE LIMIT SPECIFICATION                 * B1025000
+*********************************************************************** B1025100
+         SPACE 1                                                        B1025200
+         USING GR03CARD,R10        ESTABLISH GR03 ADDRESSABILITY        B1025300
+         USING KBDNTRY,R8          ESTABLISH KBD ADDRESSABILITY         B1025400
+BLDKBPLM SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              B1025500
+         CLC   GR03PLIM,$SPACES    TEST IF PAGE LIMIT SPECIFIED         B1025600
+         BE    XITKBPLM            EXIT IF NO SPECIFICATION             B1025700
+         C     R8,$PTRKBD          IS THIS THE FIRST ( MAJOR ) KBD      B1025800
+         BE    BLD01PLM            BR IF THIS IS THE MAJOR KEY          B1025900
+         LINE  LINE14              TELL THAT ONLY MAJOR KEY MAY SPECIFY B1026000
+         B     XITKBPLM            EXIT FROM ROUTINE                    B1026100
+BLD01PLM NUMERIC GR03PLIM          ENSURE THAT PAGE LIMIT IS NUMERIC    B1026200
+         BE    BLD02PLM            BR IF LIMIT IS NUMERIC               B1026300
+         LINE  LINE13              TELL OF ILLEGAL SPECIFICATION        B1026400
+         B     XITKBPLM            EXIT FROM ROUTINE                    B1026500
+BLD02PLM CP    $PVALUE,=P'10'      VERIFY THET THE VALUE IS ACCEPTABLE  B1026600
+         BNH   BLD03PLM            BR IF THE VALUE IF <= 10             B1026700
+         ZAP   $PGELMIT,$PVALUE    SET PAGE LIMIT IN CCB                B1026800
+         B     XITKBPLM            GO TO EXIT                           B1026900
+BLD03PLM LINE  LINE03              TELL OF UNACCEPTABLE VALUE           B1027000
+XITKBPLM SUBOUT RESTORE=R4         RESTORE AND RETURN                   B1027100
+         DROP  R10                 DROP GR03 ADDRESSABILITY             B1027200
+         DROP  R8                  DROP KBD ADDRESSABILITY              B1027300
+         EJECT                                                          B1027400
+*********************************************************************** B1027500
+*        BUILD KBD - PROCESS KEY NAME FIELD DEFINITION                * B1027600
+*********************************************************************** B1027700
+         SPACE 1                                                        B1027800
+         USING GR03CARD,R10        ESTABLISH GR03 ADDRESSABILITY        B1027900
+         USING KBDNTRY,R8          ESTABLISH KBD ADDRESSABILITY         B1028000
+BLDKBNME SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              B1028100
+         CLC   GR03NPOS,$SPACES    TEST IF NAME FIELD IS DEFINED        B1028200
+         BE    XITKBNME            EXIT IF NO SPECIFICATION             B1028300
+         MVI   BLDNFLDT,CHAR       FORCE FIELD TYPE TO CHARACTER        B1028400
+         OI    KBDSW,MKBDNAME      FLAG THAT NAME FIELD DEFN SUPPLIED   B1028500
+         LA    R2,GR03NPOS         POINT AT KAY NAME PPPLL              B1028600
+         LA    R3,BLDNFLDP         POINT AT DESTINATION PPPLL IN C/B    B1028700
+         CBAL  R4,PPPLL            CONVERT PPPLL TO BINARY              B1028800
+         BE    XITKBNME            EXIT IF PPPLL IS VALID               B1028900
+         NI    KBDSW,FF-MKBDNAME   SET OFF FLAG THAT NAME IS SUPPLIED   B1029000
+         LINE  LINE15              TELL THAT ILLEGAL NAME SPEC IS IGNOR B1029100
+XITKBNME SUBOUT RESTORE=R4         RESTORE AND RETURN                   B1029200
+         DROP  R10                 DROP GR03 ADDRESSABILITY             B1029300
+         DROP  R8                  DROP KBD ADDRESSABILITY              B1029400
+         EJECT                                                          B1029500
+*********************************************************************** B1029600
+*        CONSTRUCT AND CHAIN LIB, FDB AND FSA FOR KEY FIELD           * B1029700
+*********************************************************************** B1029800
+         SPACE 1                                                        B1029900
+         USING KBDNTRY,R10         ESTABLISH TEMPORARY KBD ADDRESSABILI B1030000
+BLDKLIB  SUBIN SAVE=(R4,R8)        PRESERVE REGISTERS                   B1030100
+         LR    R10,R8              POINT R10 AT THE KBD                 B1030200
+         TM    KBDSW,MKBDDEF       IS THE FIELD DEFINITION DEFERRED     B1030300
+         BO    BLDKLIBX            GO TO EXIT IF YES                    B1030400
+         LA    R15,KBDLABL         POINT AT LABEL ASSOC WITH KEY        B1030500
+         CBAL  R4,FINDLIB          DETERMINE IF A LIB FOR THIS LABEL EX B1030600
+         BNE   BLDKLIB1            BR IF NO LIB: THERE SHOULDN'T BE ONE B1030700
+         LINE  LINE01,ELEVEL=YES   TELL OF ILLEGAL REDEFINITION OF KEY  B1030800
+         B     BLDKLIBX            GO TO ROUTINE EXIT                   B1030900
+BLDKLIB1 LA    R2,LIBLGTH          SET LENGTH OF LIB IN R2              B1031000
+         USING LIBNTRY,R8          ESTABLISH LIB ADDRESSABILITY         B1031100
+         GETCB LIB                 ACQUIRE AND CHAIN LIB                B1031200
+         ST    R8,KBDKLIB          PRESERVE LIB ADDRESS IN KBD          B1031300
+         EJECT                                                          B1031400
+*********************************************************************** B1031500
+*        CONSTRUCT AND CHAIN LIB, FDB AND FSA FOR KEY FIELD ( CONT'D )* B1031600
+*********************************************************************** B1031700
+         SPACE 1                                                        B1031800
+         MVC   LIBLABL,KBDLABL     SET KEY FIELD NAME IN LIB            B1031900
+         MVC   LIBFLDT,BLDKFLDT    SET FIELD TYPE IN LIB                B1032000
+         OI    LIBTYPE,LIBTKEY     FLAG THAT LIB DEFINES A KEY FIELD    B1032100
+         MVC   LIBFLDL,BLDKFLDL    SET LENGTH OF FIELD IN LIB           B1032200
+         CHNCB LIB,FDB             SET POINTERS TO FACILITATE CHAINING  B1032300
+         DROP  R8                  DROP LIB ADDRESSABILITY              B1032400
+         USING FDBNTRY,R8          ESTABLISH FDB ADDRESSABILITY         B1032500
+         LA    R2,FDBLGTH          SET LENGTH OF FDB IN R2              B1032600
+         GETCB FDB                 ACQUIRE AND CHAIN FDB                B1032700
+         MVC   FDBLABL,KBDLABL     SET KEY FIELD NAME IN FDB            B1032800
+         MVC   FDBFLDP,BLDKFLDP    SET POSN OF FIELD IN FDB             B1032900
+         MVC   FDBFLDL,BLDKFLDL    SET LGTH OF FIELD IN FDB             B1033000
+         MVC   FDBFLDT,BLDKFLDT    SET FIELD TYPE IN FDB                B1033100
+BLDKLIBX SUBOUT RESTORE=(R4,R8)    RESTORE REGISTERS AND RETURN         B1033200
+         DROP  R8                  DROP FDB ADDRESSABILITY              B1033300
+         DROP  R10                 DROP KBD ADDRESSABILITY              B1033400
+         EJECT                                                          B1033500
+*********************************************************************** B1033600
+*        CONSTRUCT AND CHAIN LIB, FDB AND FSA FOR NAME FIELD          * B1033700
+*********************************************************************** B1033800
+         SPACE 1                                                        B1033900
+         USING KBDNTRY,R10         ESTABLISH TEMPORARY KBD ADDRESSABILI B1034000
+BLDNLIB  SUBIN SAVE=(R4,R8)        PRESERVE REGISTERS                   B1034100
+         LR    R10,R8              POINT R10 AT THE KBD                 B1034200
+         TM    KBDSW,MKBDNAME      IS THERE A NAME FIELD DEFINITION     B1034300
+         BZ    BLDNLIBX            GO TO EXIT IF NO NAME FIELD          B1034400
+         MVC   LABELLIB,KBDKNUM    SET KEY NUMBER IN TEMP LABEL FIELD   B1034500
+         MVI   LABELLIB,NAME       SET INTERNAL REP'N OF 'NAME'         B1034600
+         LA    R15,LABELLIB        POINT AT TEMP LABEL FIELD            B1034700
+         CBAL  R4,FINDLIB          DETERMINE IF A LIB FOR THIS LABEL EX B1034800
+         BNE   BLDNLIB1            BR IF NO LIB: THERE SHOULDN'T BE ONE B1034900
+         LINE  LINE02,ELEVEL=YES   TELL OF ILLEGAL REDEFINITION OF LABE B1035000
+         B     BLDNLIBX            GO TO ROUTINE EXIT                   B1035100
+BLDNLIB1 LA    R2,LIBLGTH          SET LENGTH OF LIB IN R2              B1035200
+         USING LIBNTRY,R8          ESTABLISH LIB ADDRESSABILITY         B1035300
+         GETCB LIB                 ACQUIRE AND CHAIN LIB                B1035400
+         ST    R8,KBDNLIB          PRESERVE LIB ADDRESS IN KBD          B1035500
+         EJECT                                                          B1035600
+*********************************************************************** B1035700
+*        CONSTRUCT AND CHAIN LIB, FDB AND FSA FOR NAME FIELD (CONT'D) * B1035800
+*********************************************************************** B1035900
+         SPACE 1                                                        B1036000
+         MVC   LIBFLDL,BLDNFLDL    SET FIELD LENGTH IN LIB              B1036100
+         MVC   LIBLABL,KBDKNUM     MOVE NAME NUMBER TO FIELD LABEL      B1036200
+         MVI   LIBLABL,NAME         ... AND SET INTERNAL REP OF NAME    B1036300
+         MVC   LIBFLDT,BLDNFLDT    SET FIELD TYPE IN LIB                B1036400
+         OI    LIBTYPE,LIBTNAME    FLAG THAT LIB DEFINES A NAME FIELD   B1036500
+         CHNCB LIB,FDB             SET POINTERS TO FACILITATE CHAINING  B1036600
+         DROP  R8                  DROP LIB ADDRESSABILITY              B1036700
+         USING FDBNTRY,R8          ESTABLISH FDB ADDRESSABILITY         B1036800
+         LA    R2,FDBLGTH          SET LENGTH OF FDB IN R2              B1036900
+         GETCB FDB                 ACQUIRE AND CHAIN FDB                B1037000
+         EJECT                                                          B1037100
+*********************************************************************** B1037200
+*        CONSTRUCT AND CHAIN LIB, FDB AND FSA FOR NAME FIELD (CONT'D) * B1037300
+*********************************************************************** B1037400
+         SPACE 1                                                        B1037500
+         MVC   FDBLABL,KBDKNUM     MOVE NAME NUMBER TO FIELD LABEL      B1037600
+         MVI   FDBLABL,NAME         ANS SET INTERNAL REP OF NAME        B1037700
+         MVC   FDBFLDP,BLDNFLDP    SET POSN OF FIELD IN FDB             B1037800
+         MVC   FDBFLDL,BLDNFLDL    SET LGTH OF FIELD IN FDB             B1037900
+         MVC   FDBFLDT,BLDNFLDT    SET FIELD TYPE IN FDB                B1038000
+BLDNLIBX SUBOUT RESTORE=(R4,R8)    RESTORE REGISTERS AND RETURN         B1038100
+         DROP  R10                 DROP KBD ADDRESSABILITY              B1038200
+         DROP  R8                  DROP FDB ADDRESSABILITY              B1038300
+         EJECT                                                          B1038400
+*********************************************************************** B1038500
+*        BUILD KBD - CONSTRUCT ERROR MESSAGES                         * B1038600
+*********************************************************************** B1038700
+         SPACE 1                                                        B1038800
+         USING GR03CARD,R10        ESTABLISH GR03 ADDRESSABILITY        B1038900
+BLDKBDM  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              B1039000
+         LA    R2,GR03KEY1         POINT R2 AT START OF BUCKET          B1039100
+         SR    R2,R6               DETERMINE DISPLACEMENT OF BUCKET     B1039200
+         LA    R2,1(,R2)           ALTER DISPLACEMENT TO POSITION       B1039300
+         LR    R1,R2               SET R1 TO START OF BUCKET            B1039400
+         CBAL  R4,CONVPOS          CONVERT POSITION TO EBCDIC           B1039500
+         MVC   LINE01M(2),$WRKSNGL+2 MOVE START POSN TO ERROR MESSAGE   B1039600
+         MVC   LINE02M(2),$WRKSNGL+2 MOVE START POSN TO ERROR MESSAGE   B1039700
+         MVC   LINE08M(2),$WRKSNGL+2 MOVE START POSN TO ERROR MESSAGE   B1039800
+         LA    R1,GR03KEY2-GR03KEY1-1(,R2) SET R1 TO END OF BUCKET      B1039900
+         CBAL  R4,CONVPOS          CONVERT POSITION TO EBCDIC           B1040000
+         MVC   LINE01M+3(2),$WRKSNGL+2 MOVE END POSN TO ERROR MESSAGE   B1040100
+         MVC   LINE02M+3(2),$WRKSNGL+2 MOVE END POSN TO ERROR MESSAGE   B1040200
+         MVC   LINE08M+3(2),$WRKSNGL+2 MOVE END POSN TO ERROR MESSAGE   B1040300
+         LA    R1,GR03POS-GR03KEY1(,R2) GET DISPLACEMENT OF KEY         B1040400
+         CBAL  R4,CONVPOS          CONVERT POSN TO EBCDIC               B1040500
+         MVC   LINE04M(2),$WRKSNGL+2 ADD POSN TO ERROR MESSAGE          B1040600
+         LA    R1,GR03POS-GR03KEY1+4(,R2) GET POSN OF END OF KEY PPPLL  B1040700
+         CBAL  R4,CONVPOS          CONVERT POSN TO EBCDIC               B1040800
+         MVC   LINE04M+3(2),$WRKSNGL+2 ADD END OF PPPLL TO ERROR MESSAG B1040900
+         LA    R1,GR03TOT-GR03KEY1(,R2) POINT AT TOTAL BRAEK SPEC       B1041000
+         CBAL  R4,CONVPOS          CONVERT POSB TO EBCDIC               B1041100
+         MVC   LINE09M(2),$WRKSNGL+2 ADD POSN TO ERROR MESSAGE          B1041200
+         LA    R1,GR03PSKP-GR03KEY1(,R2) GET POSN OF PAGE SKIP SPEC     B1041300
+         CBAL  R4,CONVPOS          CONVERT POSN TO EBCDIC               B1041400
+         MVC   LINE10M(2),$WRKSNGL+2 ADD POSN TO ERROR MESSAGE          B1041500
+         LA    R1,GR032080-GR03KEY1(,R2) GET POSN OF TWENTY80 SPEC      B1041600
+         CBAL  R4,CONVPOS          CONVERT POSN TO EBCDIC               B1041700
+         MVC   LINE11M(2),$WRKSNGL+2 ADD POSN TO ERROR MESSAGE          B1041800
+         MVC   LINE12M(2),$WRKSNGL+2 ADD POSN TO ERROR MESSAGE          B1041900
+         EJECT                                                          B1042000
+*********************************************************************** B1042100
+*        BUILD KBD - CONSTRUCT ERROR MESSAGES ( CONT'D )              * B1042200
+*********************************************************************** B1042300
+         SPACE 1                                                        B1042400
+         LA    R1,GR03TYP-GR03KEY1(,R2) POINT AT FIELD TYPE             B1042500
+         CBAL  R4,CONVPOS          CONVERT POSN TO EBCDIC               B1042600
+         MVC   LINE07M(2),$WRKSNGL+2 MOVE POSN TO ERRO MESSGAE          B1042700
+         LA    R1,GR03PLIM-GR03KEY1(,R2) GET POSN OF PAGE LIMIT SPEC    B1042800
+         CBAL  R4,CONVPOS          CONVERT POSN TO EBCDIC               B1042900
+         MVC   LINE13M(2),$WRKSNGL+2 ADD START POSN TO ERROR MESSAGE    B1043000
+         MVC   LINE14M(2),$WRKSNGL+2 ADD START POSN TO ERROR MESSAGE    B1043100
+         LA    R1,GR03PLIM-GR03KEY1+1(,R2) POINT AT END OF PAGE LIMIT S B1043200
+         CBAL  R4,CONVPOS          CONVERT POSN TO EBCDIC               B1043300
+         MVC   LINE13M+3(2),$WRKSNGL+2 ADD END POSN TO ERROR MESSAGE    B1043400
+         MVC   LINE14M+3(2),$WRKSNGL+2 ADD END POSN TO ERROR MESSAGE    B1043500
+         LA    R1,GR03NPOS-GR03KEY1(,R2) GET POSN OF NAME PPPLL         B1043600
+         CBAL  R4,CONVPOS          CONVERT POSN TO BINARY               B1043700
+         MVC   LINE15M(2),$WRKSNGL+2 ADD START POSN TO ERROR MESSAGE    B1043800
+         LA    R1,GR03NPOS-GR03KEY1+5(,R2) GET POSN OF END OF PPPLL     B1043900
+         CBAL  R4,CONVPOS          CONVERT POSN TO EBCDIC               B1044000
+         MVC   LINE15M+3(2),$WRKSNGL+2 ADD END POSN TO ERROR MESSAGE    B1044100
+        SUBOUT RESTORE=R4          RESTORE AND RETURN                   B1044200
+         DROP  R10                 DROP GR03 ADDRESSABILITY             B1044300
+         EJECT                                                          B1044400
+*********************************************************************** B1044500
+*        CONVERT POSITION TO EBCDIC FOR ERROR MESSAGE                 * B1044600
+*********************************************************************** B1044700
+         SPACE 1                                                        B1044800
+*        ON ENTRY, R1 CONTAINS THE POSITION TO BE CONVERTED             B1044900
+         SPACE 1                                                        B1045000
+CONVPOS  SUBIN ,                   ENTER ROUTINE                        B1045100
+         MVC   $WRKSNGL,BLDMASK    MOVE EDIT MASK TO WORK AREA          B1045200
+         CVD   R1,$WRKDUBL         CONVERT VALUETO DECIMAL              B1045300
+         ED    $WRKSNGL,$WRKDUBL+6 RETURN TO CALLER                     B1045400
+        SUBOUT ,                   RETIRN TO CALLER                     B1045500
+         TITLE 'PARROTB1 - MISCELLANEOUS CONSTANTS AND FIELDS'          B1045600
+LINE01   DS    0CL117                                                   B1045700
+         DC    C'PTB1-001-E  THE LABEL ASSOCIATED WITH THE KEY DEFINED IB1045800
+               IN COLUMNS '                                             B1045900
+LINE01M  DC    C'MM-MM'                                                 B1046000
+         DC    C' HAS ALREADY BEEN DEFINED: REDEFINITION ILLEGAL'       B1046100
+LINE02   DS    0CL118                                                   B1046200
+         DC    C'PTB1-002-E  THE LABEL ASSOCIATED WITH THE NAME DEFINED*B1046300
+                IN COLUMNS '                                            B1046400
+LINE02M  DC    C'MM-MM'                                                 B1046500
+         DC    C' HAS ALREADY BEEN DEFINED: REDEFINITION ILLEGAL'       B1046600
+LINE03   DC    C'PTB1-003-W  LINES/PAGE SPECIFICATION <= 10 AND IS CONS*B1046700
+               IDERED INVALID: IGNORED'                                 B1046800
+LINE04   DS    0CL104                                                   B1046900
+         DC    C'PTB1-004-W  SYNTAX ERROR - PPPLL DEFINED IN COLUMNS '  B1047000
+LINE04M  DC    C'NN-NN'                                                 B1047100
+         DC    C' IS BLANK: USE OF KEY WILL GIVE ERRATIC RESULTS'       B1047200
+LINE07   DS    0CL84                                                    B1047300
+         DC    C'PTB1-''7-E  THE FIEDL TYPE DEFINED IN COLUMN '         B1047400
+LINE07M  DC    C'MM'                                                    B1047500
+         DC    C' IS NOT VALID FOR A KEY SPECIFICATION'                 B1047600
+LINE08   DS    0CL98                                                    B1047700
+         DC    C'PTB1-008-E  THE KEY DEFINED IN COLUMNS '               B1047800
+LINE08M  DC    C'NN-NN'                                                 B1047900
+         DC    C' HAS BEEN IGNORED'                                     B1048000
+         DC    C' BECAUSE OF THE ERROR DESCRIBED ABOVE'                 B1048100
+LINE09   DS    0CL68                                                    B1048200
+         DC    C'PTB1-009-W  UNKNOWN TOTAL BREAK SPECIFICATION IN COLUM*B1048300
+               N '                                                      B1048400
+LINE09M  DC    C'MM'                                                    B1048500
+         DC    C' - IGNORED'                                            B1048600
+LINE10   DS    0CL66                                                    B1048700
+         DC    C'PTB1-010-W  UNKNOWN PAGE SKIP SPECIFICATION IN COLUMN *B1048800
+               '                                                        B1048900
+LINE10M  DC    C'MM'                                                    B1049000
+         DC    C' - IGNORED'                                            B1049100
+LINE11   DS    0CL65                                                    B1049200
+         DC    C'PTB1-011-W  UNKNOWN TWENTY80 SPECIFCIATION IN COLUMN ' B1049300
+LINE11M  DC    C'MM'                                                    B1049400
+         DC    C' - IGNORED'                                            B1049500
+LINE12   DS    0CL109                                                   B1049600
+         DC    C'PTB1-012-W  ILLEGAL TWENTY80 SPECIFICATION IN COLUMN ' B1049700
+LINE12M  DC    C'MM'                                                    B1049800
+         DC    C' ( MAY ONLY BE SPECIFIED FOR THE MAJOR KEY ) - IGNORED'B1049900
+               '                                                        B1050000
+LINE13   DS    0CL75                                                    B1050100
+         DC    C'PTB1-013-W  NON-NUMERIC PAGE LIMIT SPECIFICATION IN COLB1050200
+               LUMNS '                                                  B1050300
+LINE13M  DC    C'MM-MM'                                                 B1050400
+         DC    C' - IGNORED'                                            B1050500
+LINE14   DS    0CL115                                                   B1050600
+         DC    C'PTB1-014-W  ILLEGAL PAGE LIMIT SPECIFICATION IN COLUMNSB1050700
+               S '                                                      B1050800
+LINE14M  DC    C'MM-MM'                                                 B1050900
+         DC    C' ( MAY ONLY BE SPECIFIED FOR THE MAJOR KEY ) - IGNORED'B1051000
+               '                                                        B1051100
+LINE15   DS    0CL112                                                   B1051200
+         DC    C'PTB1-015-W  THE NAME FIELD PPPLL IN COLUMNS '          B1051300
+LINE15M  DC    C'MM-MM'                                                 B1051400
+         DC    C' IS NON-NUMERIC - NAME FIELD PROCESSING SUPPRESSED FOR*B1051500
+                THIS KEY'                                               B1051600
+         EJECT                                                          B1051700
+         DS    0H                  ENSURE ALIGNMENT                     B1051800
+BLDSTRT  EQU   *                   START OF WORK FIELDS                 B1051900
+BLDPPPLL DS    CL3                 WORK AREA FOR BINARY PPL             B1052000
+BLDTYPE  DS    CL1                 WORK AREA FOR FIELD YTYPE            B1052100
+BLDTTYPE DS    CL1                 WORK AREA FOR TEST TYPE              B1052200
+BLDLIT   DS    CL9                 LITERAL VALUE                        B1052300
+BLDLLGTH DS    CL1                 LITERAL LENGTH                       B1052400
+LABELLIB DC    CL2' '              TEMPORARY LABEL AREA                 B1052500
+BLDKFLDP DS    H                   KEY FIEDL DISPLACEMENT               B1052600
+BLDKFLDL DS    C                   KEY FIELD EXECUTABLE LENGTH          B1052700
+BLDKFLDT DS    C                   KEY FIELD TYPE                       B1052800
+BLDNFLDP DS    H                   NAME FIELD DISPLACEMENT              B1052900
+BLDNFLDL DS    C                   NAME FIELD EXECUTABLE LENGTH         B1053000
+BLDNFLDT DS    C                   NAME FIELD TYPE ( FORCED TO CHAR )   B1053100
+BLDEND   EQU   *                   END OF WORK FIELDS                   B1053200
+         SPACE 1                                                        B1053300
+BLDMASK  DC    X'40212020'         MASK TO CONVERT POSN TO EBCDIC       B1053400
+         SPACE 5                                                        B1053500
+        SCSEND B1                  TERMINATE CSET PARROTB1              B1053600
+         END                                                            B1053700

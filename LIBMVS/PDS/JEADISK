@@ -1,0 +1,157 @@
+//JEAMAPXX JOB (1580,5),'0000 J ABBEY',CLASS=A
+// EXEC ASMFCL,L=H,LOPT=REUS
+//SYSLIB DD
+// DD DSN=JEA.MACLIB,DISP=SHR
+***********************************************************************
+*        DSECTS USED IN THIS MODULE                                   *
+***********************************************************************
+         SPACE 2
+WKAREA   DSECT
+GETMNLEN DS    F                   SAVE D DETAILS FOR FREEMAIN
+WKARELEN EQU   *-WKAREA            LENGTH OF WORK AREA
+         IECSDSL1 ,                FORMATS 1,2,3,4,5 DSCB
+         IEFUCBOB ,                UNIT CONTROL BLOCK
+         EJECT
+***********************************************************************
+*        INITIAL PROGRAM ENTRY HOUSEKEEPING                           *
+***********************************************************************
+         SPACE 2
+MAPDISK  ZCSECT                                                     FCM
+         EJECT
+***********************************************************************
+*        OPEN THE OUTPRINT FILE AND INITIALISE THE WORK AREAS         *
+***********************************************************************
+         SPACE 2
+         USING IHADCB,REG1         ADDRESSABILITY FOR DCB DSECT
+         OPEN  (PRINT,(OUTPUT))                                     DLO
+         L     REG1,0(REG1)        RELOAD DCB ADDRESS
+         TM    DCBOFLGS,DCBOFOPEN  OUTPUT DCB OPENED O.K ?
+         BZ    ERROR20             NO. RETURN IMMEDIATELY WITH ERROR
+         SPACE 2
+         USING REG3,WKAREA         ADDRESSABILITY FOR WORK AREA
+         LA    REG0,WKARELEN       LOAD LENGTH WORK AREA AND TABLES
+         GETMAIN R,LV=(0)          OBTAIN CORE FOR TABLES ETC
+         ST    REG0,GETMNLEN       SAVE LENGTH FOR FREEMAIN LATER
+         EJECT                                                      FCM
+***********************************************************************
+*        LOCATE THE TIOT AND LOOP FOR ALL NON-SYSTEM DDNAMES.         *
+***********************************************************************
+         SPACE 2
+DDLOOP   DDNAME LAST=STOPRUN       LOCATE ALL DDNAMES. AT END GO STOP
+         CLC   STEPLIB,0(REG1)     TEST FOR STEPLIB DD CARD
+         BE    DDLOOP              YES. IGNORE IT
+         CLC   STEPCAT,0(REG1)     TEST FOR STEPCAT DD CARD
+         BE    DDLOOP              YES. IGNORE IT
+         CLC   SYS,0(REG1)         TEST FOR SYSTEM DDNAME
+         BE    DDLOOP              YES. IGNORE IT
+         LR    REG2,REG1           LOAD ADDRESS OF THE DDNAME
+         B     STRTMAPS            GO PROCESS THIS DD CARD
+         SPACE 2
+STEPLIB  DC    CL8'STEPLIB'
+STEPCAT  DC    CL8'STEPCAT'
+SYS      DC    CL3'SYS'
+         EJECT
+***********************************************************************
+*        OPEN THE VTOC FOR THE REQUIRED VOLUME                        *
+***********************************************************************
+         SPACE 2
+         LA    REG1,VTOC           LOAD ADDRESS OF VTOC DCB
+         MVC   DCBDDNAM,0(REG2)    MOVE DDNAME TO THE DCB
+         RDJFCB (VTOC)             READ THE JOB FILE CONTROL BLOCK
+         MVI   JFCB,X'04'          PREPARE VTOC DSNAME CHARACTER
+         MVC   JFCB+1(43),JFCB     PROPAGATE TO GIVE VTOC DSNAME
+         OI    JFCB+JFCBQMFL,DNTWBACK  DO NOT WRITE BACK TO JOB Q
+         OPEN  (VTOC,INPUT),TYPE=J OPEN THE VTOC DATA SET
+         EJECT
+***********************************************************************
+*        READ THE VTOC AND PROCESS INCOMING DSCBS INTO WORK AREA      *
+***********************************************************************
+         SPACE 2
+VTOCLOOP GET   VTOC                READ NEXT DSCB
+         LR    REG4,REG1           LOAD ADDRESS OF THE DSCB
+         USING IECSDSL1,REG4       ADDRESSABILITY FOR DSCB
+         XR    REG15,REG15         CLEAR INDEX REGISTER
+         IC    REG15,DS1FMTID      LOAD UP ID FOR DSCB
+         N     REG15,=F'7'         REMOVE ZONE FIELD ETC
+         SLL   REG15,2             MULTIPLY BY FOUR
+         B     *+4(REG15)          BRANCH TO PROCESSING ROUTINE
+         B     FORMAT0             BRANCH TO PROCESSING FOR FORMAT 0
+         B     FORMAT1             BRANCH TO PROCESSING FOR FORMAT 1
+         B     FORMAT2             BRANCH TO PROCESSING FOR FORMAT 2
+         B     FORMAT3             BRANCH TO PROCESSING FOR FORMAT 3
+         B     FORMAT4             BRANCH TO PROCESSING FOR FORMAT 4
+         B     FORMAT5             BRANCH TO PROCESSING FOR FORMAT 5
+         EJECT
+***********************************************************************
+*        PROCESSING FOR FORMAT ZERO DSCB'S                            *
+***********************************************************************
+         SPACE 2
+FORMAT0  DS    0H
+         B     VTOCLOOP            IGNORE THIS DSCB
+         EJECT
+***********************************************************************
+*        PROCESSING FOR FORMAT ONE DSCBS                              *
+***********************************************************************
+         SPACE 2
+FORMAT1  DS    0H
+         LA    REG0,DSCBXLEN       LOAD LENGTH FOR IN-CORE CHAIN
+         BAL   REG14,GETCORE       GO OBTAIN THE CORE FOR IT
+         USING DSCB1X,REG1         ADDRESSABILITY FOR IN CORE ELEMENT
+         MVC   SAVEDSCB1,DS1DSNAM  SAVE WHOLE OF DSCB
+         BAL   REG11,SLOTDSCB      GO PUT THIS DSCB ON CHAIN
+         LA    REG15,DS1DSNAM      LOAD ADDRESS OF DSNAME
+         LA    REG1,DS1EXT1        LOAD ADDRESS OF FIRST EXTENT
+         BAL   REG11,SLOTXTNT      GO PUT THIS EXTENT ON CHAIN
+         LA    REG1,DS1EXT2        LOAD ADDRESS SECOND EXTENT
+         BAL   REG11,SLOTXTNT      GO PUT THIS EXTENT ON CHAIN
+         LA    REG1,DS1EXT3        LOAD ADDRESS THIRD EXTENT
+         BAL   REG11,SLOTXTNT      GO PUT THIS EXTENT ON CHAIN
+         B     VTOCLOOP            GO GET NEXT DSCB FROM VTOC
+         EJECT
+***********************************************************************
+*        PROCESSING FOR FORMAT TWO DSCB'S                             *
+***********************************************************************
+         SPACE 2
+FORMAT2  DS    0H
+         LA    REG0,DSCBXLEN       LOAD LENGTH OF IN CORE ENTRY
+         BAL   REG14,GETCORE       GO OBTAIN CORE FOR IT
+         MVC   SAVEDSCB2,DS1DSNAM  MOVE WHOLE DSCB TO WORK AREA
+         BAL   REG11,SLOTDSCB      GO PUT THIS DSCB ON CHAIN
+         B     VTOCLOOP            GO GET NEXT DSCB FROM VTOC
+         EJECT
+***********************************************************************
+*        PROCESSING FOR FORMAT THREE DSCB'S                           *
+***********************************************************************
+         SPACE 2
+FORMAT3  DS    0H
+         LA    REG0,DSCBXLEN       LOAD LENGTH FOR IN-CORE CHAIN
+         BAL   REG14,GETCORE       GO OBTAIN THE CORE FOR IT
+         MVC   SAVEDSCB3,DS1DSNAM  SAVE WHOLE OF DSCB
+         BAL   REG11,SLOTDSCB      GO PUT THIS DSCB ON CHAIN
+         XR    REG15,REG15         SIGNAL NO DSNAME AVAILABLE
+         LA    REG1,DS3EXTNT       LOAD ADDRESS OF FIRST EXTENT
+         LA    REG10,4             PREPARE FOR FIRST FOUR EXTENTS
+F3LOOP1  BAL   REG11,SLOTXTNT      GO PUT THIS EXTENT ON CHAIN
+         LA    REG1,10(REG1)       STEP TO NEXT EXTENT
+         BCT   REG10,F3LOOP1       LOOP FOR FIRST FOUR EXTENTS
+         LA    REG1,DS3ADEXT       LOAD ADDRESS ADDITIONAL EXTENTS
+         LA    REG10,9             PREPARE FOR NEXT NINE EXTENTS
+         BAL   REG11,SLOTXTNT      GO PUT THIS EXTENT ON CHAIN
+         BCT   REG10,F3LOOP2       LOOP FOR REMAINING EXTENTS
+         B     VTOCLOOP            GO GET NEXT DSCB FROM VTOC
+***********************************************************************
+*        PREPARE THE HEADING LINE FOR THE REPORT                      *
+***********************************************************************
+         SPACE 2
+REPTHEAD DS    0H
+         AP    PAGECNT,=P'1'       INCREMENT THE PAGE COUNT         DLO
+         ZAP   LINECNT,=P'1'       INITIALISE THE LINE COUNTER
+         USING REPHEADL,REG1       ADDRESSABILITY FOR HEADING LINE
+         XC    CLRLINE1,CLRLINE1   CLEAR THE PRINT LINE
+         MVC   PRTPAGEN,PAGEPATT   MOVE EDIT PATTERN TO PRINT LINE
+         ED    PRTPAGEN,PAGECNT    EDIT PAGE NUMBER TO HEADING
+         MVC   HEADTEXT,HEADLIT    IDENTIFY THE REPORT
+         MVC   PRTVOL,JFCB+JFCBVOL IDENTIFY THE VOLUME SERIAL
+         MVI   PRTASA,C'1'         INITIALISE A NEW PAGE FOR OUTPUT
+         BR    REG11               RETURN TO CALLER
+         SPACE 2

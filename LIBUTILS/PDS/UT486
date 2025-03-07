@@ -1,0 +1,213 @@
+BIGWORDS CSECT
+         PRINT ON,NOGEN
+         PGMIN
+         ST    R1,PARMSAVE         SAVE POINTER TO PARMS
+         OPEN  (SYSPRINT,OUTPUT)
+         MVI   BKCTLCR,PAGESKIP
+         BAL   R4,PRINT
+         EJECT
+***********************************************************************
+*                  PROCESS PARM INFORMATION                           *
+*                                                                     *
+*         REGISTER USAGE IS AS FOLLOWS:-                              *
+*         R2   ADDRESS OF PARM FIELD                                  *
+*         R3   ADDRESS OF BYTE TO BE EXAMINED.                        *
+*         R4   BRANCH AND LINK REGISTER                               *
+*         R5   START OF PARM DETAIL. END OF FIELD FOUND +1            *
+*         R6   NO OF BYTES FOUND IN FIELD                             *
+*         R7   NO OF PARM CHARACTERS LEFT.                            *
+*         R8   GENERAL WORK.                                          *
+***********************************************************************
+         SPACE 3
+         L     R1,PARMSAVE         RETREIVE REG1 CONTENTS
+         L     R2,0(0,R1)          ADDRESS OF PARM FIELD
+         LH    R7,0(0,R2)          PARM FIELD LENGTH
+         LA    R5,2(0,R2)          ADDRESS OF FIRST CHAR.
+         LA    R9,CHNBASE          GET START OF FIELD CHAIN
+PARMPROC EQU   *
+         LR    R3,R5
+         BAL   R4,NXTFLD           FIND NEXT PARM FIELD
+         LTR   R6,R6               IS PARMFLD LENGTH ZERO.
+         BZ    BLOCPROC            END OF PARMS. GO TO NEXT SECTION
+         LA    R8,9                9 IN REG8
+         CR    R6,R8               FIELD TOO LONG?
+         BH    PARMERR             YES. ERROR
+         BCTR  R6,0                REDUCE LENGTH OF PARM BY 1.
+         EX    R6,VALIDTST         CHECK FIELD FOR VALIDITY
+         BZ    PARMGOOD            OK. CONTINUE
+         LR    R3,R1               GET ADDRESS OF OFFENDING DIGIT.
+         LR    R10,R1              SAVE TRANSLATE ERR ADDRESS
+         B     PARMERR             GO TO ERROR ROUTINE
+         SPACE
+PARMGOOD EQU   *
+         GETMAIN R,LV=16           GET SOME STORAGE
+         ST    R1,0(0,R9)          CHAIN IN NEW STORAGE
+         LR    R9,R1               POINT TO NEW CORE
+         XC    0(4,R9),0(R9)       ZEROISE FIRST 4 BYTES
+         MVI   4(R9),BLANK         * BLANK OUT
+         MVC   5(11,R9),4(R9)      * REST (12 BYTES)
+         LTR   R6,R6               SINGLE BYTE FIELD?
+         BNZ   MOVEFLD             NO. BRANCH
+         CLI   0(R3),C'D'          DATE REQD?
+         BNE   MOVEFLD             NO. BRANCH
+         UT458 ,                   CALL UNIVERSAL DATE ROUTINE
+         MVC   4(9,R9),UTREPORT    MOVE DATE TO FIELD CHAIN
+         B     PARMPROC            RETRIEVE NEXT FIELD
+         SPACE
+MOVEFLD  EQU   *
+         EX    R6,PARMOVE          MOVE PARM FIELD TO CHAIN
+         B     PARMPROC            NEXT.
+         SPACE 2
+PARMERR  EQU   *
+         L     R1,PARMSAVE         GET START ADDRESS
+         L     R1,0(R1)            OF PARM
+         LA    R1,1(R1)            IN REG1
+         SR    R3,R1               CALCULATE POSITION OF ERROR
+         CVD   R3,DWORK            CONVERT TO DECIMAL
+         MVC   BKWORDOT(33),=C'BIGWORDS - PARM ERROR AT POSITION'
+         MVC   BKWORDOT+33(4),=X'40212020' MOVE EDIT PATTERN
+         ED    BKWORDOT+33(4),DWORK+6   COMPLETE ERR MSG
+         MVI   BKCTLCR,PRTSPC1     MOVE SINGLE SPACING
+         BAL   R4,PRINT
+BADEND   EQU   *
+         ABEND 1140,,STEP          ABEND WITHOUT DUMP
+         SPACE 2
+VALIDTST TRT   0(0,R3),TRTABLE     EXECUTED TRANSLATE AND TEST
+PARMOVE  MVC   4(0,R9),0(R3)       EXECUTED MOVE
+         EJECT
+*
+*        MAINLOOP - PASS PARM FIELDS FOR EXPANSION AND THEN PRINT THEM
+*
+BLOCPROC EQU   *
+         LA    R9,CHNBASE          GET START OF FIELDS
+BLOCYCLE EQU   *
+         L     R9,0(0,R9)          GET NEXT ELEMENT
+         LTR   R9,R9               NONE LEFT?
+         BZ    EOJ                 NO. GIVE UP
+         LA    R1,4(0,R9)          ADDRESS OF DATA IN R1
+         BAL   R4,BLOCKBLD         BUILD UP PRINTED OUTPUT
+         CP    LNECTR,=P'60'       PAGE COMPLETE?
+         BNL   BSKIP               YES. SKIP TO NEXT PAGE
+         MVI   BKCTLCR,SPC2        SPACE 2-LINES
+         BAL   R4,PRINT            EXECUTE
+         BAL   R4,PRINT            AND AGAIN
+         AP    LNECTR,=P'4'        INCREMENT LINE COUNTER
+         B     BLOCYCLE            PROCESS NEXT FIELD
+         SPACE
+BSKIP    EQU   *
+         MVI   BKCTLCR,PAGESKIP    * SKIP TO NEW PAGE
+         BAL   R4,PRINT            *
+         ZAP   LNECTR,=P'0'        RE-INIT LINE COUNTR
+         B     BLOCYCLE            PROCESS NEXT FIELD
+         SPACE 3
+*
+*        END OF JOB PROCESSING
+*
+EOJ      EQU   *
+         CLOSE (SYSPRINT)
+         PGMOUT
+         EJECT
+***********************************************************************
+*        EXTRACT      FIELDS FROM EXEC PARM PASSED TO PROGRAM.        *
+*        FIELDS ARE RETURNED TO CALLER ONE AT A TIME.                 *
+*              DELIMITERS ARE AS FOLLOWS:-                            *
+*               1.  COMMA   ,                                         *
+***********************************************************************
+               SPACE 3
+NXTFLD   EQU   *
+         SR    R6,R6               ZEROISE FIELD COUNT
+         LTR   R7,R7               END OF PARMS?
+         BNZ   NXTSPOS             NO. GO CHECK FOR DELIMITERS
+         LR    R5,R3               MAKE END SAME AS BEGINNING
+         B     NXTEND              BRANCH TO END OF SUBROUTINE
+         SPACE
+NXTSPOS  EQU   *                   BYPASS ANY DELIMITERS IN FIRST POSN
+         CLI   0(R3),C','
+         BE    BYPDLM
+         B     NOTDLM
+         SPACE
+BYPDLM   LA    R3,1(0,R3)          BUMP ADDRESS BY ONE.
+         BCT   R7,NXTSPOS          BRANCH UNLESS END OF PARM
+         B     NXTEND
+         SPACE
+NOTDLM   EQU   *
+         LR    R5,R3
+NXTPPOS  EQU   *
+         CLI   0(R5),C','
+         BE    NXTEND
+         LA    R6,1(0,R6)          INCREASE CHARACTER COUNT.
+         BCT   R7,NXTINCR
+NXTEND   BR    R4                  RETURN TO CALLER
+         SPACE
+NXTINCR  EQU   *                   INCREMENT TO NEXT PARM CHARACTER
+         LA    R5,1(0,R5)
+         B     NXTPPOS             GO CHECK FOR END OF FIELD
+         EJECT
+BLOCKBLD SUBIN SAVE=(R2,R3,R4)
+         MVC   BKWORDIN,0(R1)      MOVE FIELD TO BE BLOCKED
+         XC    BKLINE,BKLINE       CLEAR LINE COUNTER
+         LA    R2,12               GET COUNTER OF 12
+BLOCLOOP EQU   *
+         L     R3,BKLINE           GET LINE COUNTER
+         LA    R3,1(0,R3)          INCREMENT IT
+         ST    R3,BKLINE           PUT IT BACK FROM WHENCE IT CAME
+         MVI   BKCTLCR,PRTSPC0     NO SPACING FOR OVERPRINT
+         CALL  IEFSD095,(BKWORDIN,BKLINE,BKWORDOT,BKLEN),VL
+         BAL   R4,PRINT            WRITE CONSTRUCTED LINE
+         MVI   BKCTLCR,PRTSPC1     SINGLE SPACING
+         CALL  IEFSD095,(BKWORDIN,BKLINE,BKWORDOT,BKLEN),VL
+         BAL   R4,PRINT            WRITE CONSTRUCTED LINE
+         AP    LNECTR,=P'1'        ADD ONE TO LINE COUNTER
+         BCT   R2,BLOCLOOP         LOOP 12 TIMES
+         SUBOUT RESTORE=(R2,R3,R4)
+         EJECT
+*
+*        PRINT SUBROUTINE
+*
+PRINT    SUBIN SAVE=(R4)
+         MVC   SAVECTL,BKCTLCR     SAVE CONTROL CHAR.
+         PUT   SYSPRINT,BKCTLCR    WRITE CURRENT PRINT LINE
+         MVI   BKCTLCR,BLANK       BLANK OUT
+         MVC   BKWORDOT,BKCTLCR    PRINT LINE
+         MVC   BKCTLCR,SAVECTL     RESTORE COTROL CHAR.
+         SUBOUT RESTORE=(R4)
+         SPACE
+SAVECTL  DC    X'09'
+LNECTR   DC    PL2'0'
+BLANK    EQU   X'40'
+PRTSPC0  EQU   X'01'
+PRTSPC1  EQU   X'09'
+PRTSPC2  EQU   X'11'
+PRTSPC3  EQU   X'19'
+SPC1     EQU   X'0B'
+SPC2     EQU   X'13'
+SPC3     EQU   X'1B'
+PRTSKIP  EQU   X'89'
+PAGESKIP EQU   X'8B'
+         DS    0H
+         EJECT
+*
+*        WORK AREAS ETC
+BKWORDIN DC    CL9' '
+BKCTLCR  DC    C' '
+BKWORDOT DC    CL132' '
+DWORK    DC    D'0'
+BKLINE   DC    F'0'
+BKLEN    DC    F'9'
+CHNBASE  DC    F'0'
+PARMSAVE DC    F'0'
+TRTABLE  DC    64X'FF'
+         DC    X'00'               BLANK
+         DC    128X'FF'
+         DC    9X'00'              A-I
+         DC    7X'FF'
+         DC    9X'00'              J-R
+         DC    8X'FF'
+         DC    8X'00'              S-Z
+         DC    6X'FF'
+         DC    10X'00'             1-9
+         DC    6X'FF'
+SYSPRINT DCB   DDNAME=SYSPRINT,MACRF=(PM),DSORG=PS,                    C
+               RECFM=FBM,LRECL=133,BLKSIZE=133
+         LTORG
+         END   BIGWORDS

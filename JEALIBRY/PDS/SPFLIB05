@@ -1,0 +1,218 @@
+//JEASPF05 JOB (1330,5),'J ABBEY',CLASS=N,NOTIFY=JEA
+//SPFLIB05 EXEC LIBRARYN,FILE=TESTLIB,BLKSIZE=800
+-OPT NOLIST,EXEC
+-DLM SPFLIB05,SPF5
+-ADD SPFLIB05,SPF5
+-PGMR JEABBEY
+-DESC SPF/LIBRARYN INTERFACE - LIST A MODULE
+***********************************************************************
+*
+*                           S P F L I B 0 5
+*
+*            THIS ROUTINE IS INVOKED BY THE HIGH LEVEL DRIVER WHEN THE
+*        CALLER WISHES TO LIST A MODULE IN LIBRARYN. ON ENTRY,
+*        REGISTER 1 WILL CONTAIN THE ADDRESS OF THE COMMON WORK AREA.
+*            THE ROUTINE OPERATES BY PERFORMING THE FOLLOWING STEPS:
+*
+*        1)    ISSUE A MENU TO THE CALLER AND RETRIEVE ALL THE
+*              NECESSARY DATA TO PROCESS THE REQUEST.
+*        2)    VALIDATE THE RETURNED DATA AND CHECK FOR ERRORS AND
+*              OMISSIONS.
+*        3)    CALL 'SPFLIB06' TO ALLOCATE THE LIBRARYN MASTER.
+*        4)    CALL 'MASTOPN' (FAIR ROUTINE) TO OPEN LIBRARYN FILE
+*        5)    CALL 'MASTMOD' TO EXTRACT DATA FOR THE MODULE
+*        6)    FORMAT THE DATA AND OUTPUT IT VIA THE MENU.
+*
+***********************************************************************
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING
+***********************************************************************
+         SPACE 2
+SPFLIB05 ZCSECT
+         LR    REG10,REG1          LOAD ADDRESS OF COMMON WORK AREA
+         USING DATAAREA,REG10      AND GET ADDRESSABILITY FOR IT
+         L     REG8,LTDADDR        LOAD ADDRESS OF SPF' TLD
+         EJECT
+***********************************************************************
+*        INITIALISE THE OUTPUT FIELDS
+***********************************************************************
+         SPACE 2
+         MVC   MASTDATA,SPACES     CLEAR LIBRARYN DATA
+         MVC   CNTLREC(CTLRECL),SPACES AND CLEAR THE CONTROL FILE RECOR
+         EJECT
+***********************************************************************
+*        ASK HIM TO ENTER ALL RELEVANT DETAILS
+***********************************************************************
+         SPACE 2
+INDXASK1 DS    0H
+         L     REG15,X'7C'(REG8)   ADDRESS OF THE PTC
+         L     REG15,X'104'(REG15) ADDRESS OF THE MHA ROUTINE
+         CALL  (15),((8),SCREEN5,ZERO,LIBFNAME,PGMNAME,LMPASSWD,       X
+               LMDTEADD,LMDTEUPD,LMPGMRNM,LMDESC,CTLTSOID,CTLDATE),VL, X
+               MF=(E,CALLLIST)
+INDXASK2 EQU   *
+         TM    X'C6'(REG8),X'80'   END KEY PRESSED ?
+         BO    INDXEXIT            YES. RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        CHECK WE HAVE ENOUGH DATA TO AVOID WASTING TIME
+***********************************************************************
+         SPACE 2
+         CLI   LIBFNAME,C'?'       LIBRARYN NAME BLANK ?
+         BE    DATALOST            YES. GO AND MOAN AT HIM
+         CLI   PGMNAME,C'?'        LIBRARYN MEMBER NAME ?
+         BE    NOPGMNAM            NONE. GO ASK FOR IT
+         EJECT
+***********************************************************************
+*        ALLOCATE THE LIBRARYN FILE
+***********************************************************************
+         SPACE 2
+         LR    REG1,REG10          LOAD ADDRESS OF COMMON AREA
+         CALL  SPFLIB06            INVOKE THE UTILITY FUNCTION
+         LTR   REG15,REG15         WAS ALLOCATION SUCCESSFUL ?
+         BNZ   NOLIBRYN            NO. LIBRARYN MASTER UNAVAILABLE
+ALLCGOOD EQU   *
+         OI    WRKFLAG1,MASTALLC   SIGNAL MASTER IS ALLOCATED
+         LA    REG2,MSTOPNRC       LOAD ADDRESS OF RETURN CODE AREA
+         CALL  MASTOPN,(0,(2)),VL  CALL 'FAIR' TO OPEN IT
+         CLI   MSTOPNRC,C'0'       TEST FOR GOOD OPEN OF THE FILE
+         BNE   NOLIBRYN            NO. CANNOT OPEN IT
+         OI    WRKFLAG1,MASTOPEN   SIGNAL MASTER IS OPEN
+         EJECT
+***********************************************************************
+*        EXTRACT THE DETAILS OF THE REQUESTED MODULE
+***********************************************************************
+         SPACE 2
+         CALL  MASTMOD,(PGMNAME,MSTMODRC,MASTDATA),VL,MF=(E,CALLLIST)
+         CLI   MSTMODRC,C'1'       WAS MODULE PRESENT ON FILE
+         BE    BADPNAME            NO. GO TELL HIM AND ASK AGAIN
+         CLI   MSTMODRC,C'0'       OTHERWISE WAS IT GOOD ?
+         BNE   LIBERROR            NO. SOME KIND OF OPEN ERROR
+         CALL  MASTCLS             CLOSE THE LIBRARYN FILE
+         NI    WRKFLAG1,255-MASTOPEN AND TURN OFF ITS FLAG
+         EJECT
+***********************************************************************
+*        SEARCH FOR THE MATCHING RETRIEVAL RECORD IN CONTROL FILE
+***********************************************************************
+         SPACE 2
+         LA    REG2,CNTLFILE       ADDRESS OF THE DCB
+         OPEN  ((2),INPUT)         OPEN THE CONTROL FILE
+         OI    WRKFLAG4,CNTLOPEN   SIGNAL THAT CONTROL FILE IS OPEN
+         LA    REG1,NOMATCH        ADDRESS OF EOD ROUTINE
+         ST    REG1,DCBEOF         AND SET UP FOR NOT FOUND CONDITION
+CNTLLOOP EQU   *
+         GET   CNTLFILE            READ FIRST/NEXT CONTROL RECORD
+         TM    CTLFLAGS-CNTLREC(REG1),CTLFFREE FREE RECORD ?
+         BO    CNTLLOOP            YES. IGNORE IT
+         CLC   LIBFNAME,CTLLIBNM-CNTLREC(REG1) TEST FOR MATCH
+         BNE   CNTLLOOP            NO. GO FETCH NEXT RECORD
+         CLC   PGMNAME,CTLPGMNM-CNTLREC(REG1) TEST FOR MATCH
+         BNE   CNTLLOOP            NO. GO FETCH NEXT RECORD
+         LR    REG5,REG1           SAVE ADDRESS OF THE RECORD
+         MVC   CNTLREC(CTLRECL),0(REG5) COPY REC. TO WORK AREA
+         B     CLOSECTL            GO CLOSE THE FILE
+NOMATCH  EQU   *
+         MVC   CNTLREC(CTLRECL),SPACES CLEAR THE CONTROL RECORD
+CLOSECTL EQU   *
+         LA    REG2,CNTLFILE       ADDRESS OF THE DCB
+         CLOSE ((2))               CLOSE THE CONTROL FILE
+         NI    WRKFLAG4,255-CNTLOPEN SIGNAL CONTROL FILE CLOSED
+         B     INDXASK1            GO SHOW RESULTS
+         EJECT
+***********************************************************************
+*        RETURN TO CALLER OF SPFLIB05 ROUTINE
+***********************************************************************
+         SPACE 2
+INDXEXIT DS    0H
+         BAL   REG11,CLEARUP1      CLEARUP ANY ALLOCATIONS
+         ZRETURN
+         EJECT
+***********************************************************************
+*        ERROR ROUTINES
+***********************************************************************
+         SPACE 2
+DATALOST DS    0H
+         LA    REG15,1             CURSOR POSITION
+         BAL   REG1,ERREXIT        LOAD ADDRESS ERROR DETAILS
+         DC    CL4'Z001'           NO LIBRARYN FILE NAME
+NOLIBRYN DS    0H
+         LA    REG15,1             CURSOR POSITION
+         BAL   REG1,ERREXIT       AND GO REISSUE THE SCREEN
+         DC    CL4'Z002'           ALLOCATION FAILED FOR MASTER
+NOPGMNAM DS    0H
+         LA    REG15,2             CURSOR POSITION
+         BAL   REG1,ERREXIT       AND GO RE-ISSUE SCREEN
+         DC    CL4'Z003'           NO MODULE NAME SUPPLIED
+BADPNAME DS    0H
+         LA    REG15,2             CURSOR POSITION
+         BAL   REG1,ERREXIT       AND GO RE-ISSUE SCREEN
+         DC    CL4'Z004'           MODULE DOES NOT EXIST
+LIBERROR DS    0H
+         LA    REG15,1             CURSOR POSITION
+         BAL   REG1,ERREXIT       AND GO RE-ISSUE SCREEN
+         DC    CL4'Z005'           LIBRARYN LOGIC ERROR
+         SPACE 2
+ERREXIT  EQU   *
+         ST    REG15,ERRCURS       STORE OUT CURSOR POSITION
+         LR    REG2,REG1           ADDRESS OF MESSAGE ID
+         L     REG15,X'7C'(REG8)   ADDRESS OF THE PTC
+         L     REG15,X'104'(REG15) ADDRESS OF MHA ROUTINE
+         CALL  (15),((8),SCREEN5,TWO,LIBFNAME,PGMNAME,LMPASSWD,        X
+               LMDTEADD,LMDTEUPD,LMPGMRNM,LMDESC,CTLTSOID,CTLDATE),VL, X
+               MF=(E,CALLLIST)
+         L     REG15,X'7C'(REG8)   ADDRESS OF THE PTC
+         L     REG15,X'100'(REG15) ADDRESS OF ERROR ROUTINE
+         CALL  (15),((8),(2),ERRCURS),VL,MF=(E,CALLLIST)
+         BAL   REG11,CLEARUP1      GO CLEARUP FROM ATTEMPT
+         B     INDXASK2            GO ASK HIM FOR MORE
+         EJECT
+***********************************************************************
+*        GENERAL CLEARUP. CLOSE AND FREE MASTER IF NECCESSARY
+***********************************************************************
+         SPACE 2
+CLEARUP1 DS    0H
+         TM    WRKFLAG1,MASTOPEN   IS MASTER FILE OPEN ?
+         BZ    CLEARUP2            NO. NO NEED TO CLOSE IT
+         CALL  MASTCLS             CLOSE THE LIBRARYN FILE
+         NI    WRKFLAG1,255-MASTOPEN TURN OFF THE FLAG
+CLEARUP2 EQU   *
+         TM    WRKFLAG1,MASTALLC   MASTER IS ALLOCATED ?
+         BZ    CLEARUP3            NO. NO NEED TO DE-ALLOCATE
+         LINK  EP=UT501,PARAM=(MASTJCL,DFUNCT,RETCODE,X1,X2),VL=1,     X
+               MF=(E,CALLLIST)     FREE THE FILE
+         NI    WRKFLAG1,255-MASTALLC TURN OFF THE FLAG
+CLEARUP3 EQU   *
+         TM    WRKFLAG4,CNTLOPEN   CONTROL FILE STILL OPEN
+         BZ    CLEARUP4            NO. NO NEED TO CLOSE IT
+         LA    REG2,CNTLFILE       ADDRESS OF THE DCB
+         CLOSE ((2))               CLOSE THE CONTROL FILE
+         NI    WRKFLAG4,255-CNTLOPEN SIGNAL CONTROL FILE CLOSED
+CLEARUP4 EQU   *
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        WORK AREAS AND DSECTS USED BY THIS PROGRAM
+***********************************************************************
+         SPACE 2
+SPACES   DC    CL80' '             COMPARE CONSTANT
+ZERO     DC    F'0'                MHA CALL PARAMETER
+TWO      DC    F'2'                MHA CALL PARAMETER
+SCREEN5  DC    CL8'ZLIB05'         MAIN MENU FOR THIS ROUTINE
+ERRCURS  DS    F                   ERROR CURSOR POSITION
+         LTORG
+         DATAAREA
+         END
+-EMOD
+-END
+//SPFLIB05 EXEC ASMFCL,L=H,LOPT=RENT
+//SYSLIB DD DSN=JEA.MACLIB,DISP=SHR
+// DD DSN=SYS1.MACLIB,DISP=SHR
+// DD DSN=SYS2.MACLIB,DISP=SHR
+// DD DSN=SYS1.AMODGEN,DISP=SHR
+//SYSIN DD DSN=&&OSJOB,DISP=(OLD,DELETE)
+//LKED.SYSLMOD DD DSN=JEA.LOADLIB,DISP=SHR
+ INCLUDE SYSLMOD(SPFLIB01)
+ ENTRY SPFLIB01
+ NAME SPFLIB01(R)
+/*

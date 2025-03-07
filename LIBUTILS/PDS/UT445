@@ -1,0 +1,327 @@
+         TITLE   ' A SELECTIVE PRINT OF A PDS'
+***********************************************************************
+*                  HOUSEKEEPING                                       *
+***********************************************************************
+PRNTPROC CSECT
+         PGMIN SAVEFLD=SAVEAREA,USING=R12
+         PRINT ON,NOGEN,NODATA
+         ST    R1,PARMSAVE
+         EJECT
+***********************************************************************
+*                  INITIALISATION.                                    *
+*                  1.  SETUP CONSTANTS.                               *
+*                  2.  OPEN DATASETS.                                 *
+*                  3.  CREATE SELECTION TABLE.                        *
+*                  4.  PRINT SYSIN DATASET.                           *
+***********************************************************************
+         SPACE
+INITIAL  EQU   *
+         L    15,DATERTN
+         BALR  14,15
+         L     2,DATE
+         MVC   TITLE+40(9),0(2)
+         RDJFCB  (SYSUT1)
+         OI    JFCB+52,X'08'       INHIBIT REWRITE OF JFCB
+         MVC   TITLE+25(15),JFCB
+         LA    3,TABLE
+         OPEN  (SYSIN,,SYSPRINT,OUTPUT)
+         PUT   SYSPRINT,PRTCTL
+         MVI   PRTCTL,X'19'
+         PUT   SYSPRINT,PRTCTL
+         MVI   PRTCTL,X'09'
+         BAL   4,CARDRD
+          OPEN  (SYSUT3,OUTPUT)
+         OPEN  (SYSUT1),TYPE=J
+         MVC   DATAOUT,PRINT
+         BAL   4,WRITE
+         CLI   SW2,C'1'
+         BNL   GETBLK              BRANCH IF SW2 GREATER THAN ZERO.
+         MVC   DATAOUT,TITLE
+         BAL   4,WRITE
+         CLI   SW3,C'1'
+         BNE   GETBLK
+         MVC   DATAOUT,TITLE2
+         BAL   4,WRITE
+         EJECT
+***********************************************************************
+*                  SELECT MEMBERS FOR FURTHER PROCESSING.             *
+*                  CREATE SYSIN DATASETS FOR LINKED PROGRAMS.         *
+***********************************************************************
+         SPACE
+GETBLK   EQU   *
+         GET   SYSUT1              READ PDS BLOCK. ADDR IN REG1
+         LR    9,1                 STORE BLOCK START IN REG9
+         LR    10,1                AND IN REG10
+         AH    10,0(0,9)           ADD NO. OF BYTES USED IN BLOCK
+         CLI   2(9),X'FF'          DELETED PDS BLOCK
+         BE    ENDIP               YES. END OF DIRECTORY ENTRIES
+         CLI   2(9),X'00'          UNUSED DIRECTORY BLOCK?
+         BE    ENDIP               YES. END DIRECTORY ENTRIES
+         LA    9,1(0,9)            INCREMENT BY ONE
+READREC  EQU   *
+         LA    9,1(0,9)            INCREMENT TO NEXT ENTRY
+         CR    9,10                END OF ENTRIES THIS BLOCK?
+         BNL   GETBLK              YES. GET  NEXT BLOCK
+         CLI   0(9),X'FF'          LAST USED ENTRY IN DIRECTORY?
+         BE    ENDIP               YES. END DIRECTORY ENTRIES
+         MVC   NAMESTOR,0(9)       MOVE MEMBERNAME TO CURRENT STOR
+         LA    9,11(0,9)           INCREMENT TO USER DATA LENGTH FLD
+         NI    0(9),X'1F'          TURN OFF IRRELEVANT BITS 0 1 & 3
+         SR    8,8                 CLEAR REGISTER 8
+         IC    8,0(0,9)            INSERT NO OF HALFWORDS OF USER DATA
+         LA    9,0(8,9)            INCREMENT BY NO. OF BYTES
+         LA    9,0(8,9)            AND AGAIN FOR HALFWORDS
+         BAL   4,LOOKUP            CKECK IF MEMBER REQD
+         CLI   FOUND,C'1'          MATCH FOUND.
+         BNE   READREC             NO. GO TO NEXT ENTRY
+         MVC   NAME,NAMESTOR       MOVE REQUIRED MEMBER NAME
+         MVC   DATAOUT,MEMBER
+         BAL   4,WRITE
+         CLI   SW2,C'1'
+         BE    READREC
+         MVC   DATAOUT,RECORD
+         BAL   4,WRITE
+         B     READREC
+         EJECT
+***********************************************************************
+*                  PROCESS MEMBERS SELECTED.                          *
+***********************************************************************
+         SPACE
+ENDIP    EQU   *
+         CLOSE  (SYSUT3,,SYSUT1)
+         MVI   PRTCTL,X'1B'
+         PUT   SYSPRINT,PRTCTL
+         CLI   SW1,C'1'
+         BE    SOME
+         MVC   CARD,NONE
+         MVI   PRTCTL,X'09'
+         PUT SYSPRINT,PRTCTL
+         CLOSE SYSPRINT
+         L     13,SAVEAREA+4
+         RETURN (14,12),RC=8
+         SPACE 2
+SOME     EQU   *
+         CLOSE SYSPRINT
+         LINK  EP=IEBPTPCH,PARAM=(PARMLIST,DDLIST),VL=1
+         L     13,SAVEAREA+4
+         RETURN (14,12),RC=0
+         SPACE 5
+ERROR    EQU   *
+         CLOSE  (SYSUT3,,SYSUT1)
+         L     13,SAVEAREA+4
+         RETURN (14,12),RC=16
+         EJECT
+***********************************************************************
+*                  WRITE SYSUT3 DATASET SUBROUTINE.                   *
+***********************************************************************
+         SPACE
+WRITE    EQU   *
+         PUT   SYSUT3,DATAOUT
+         BR    4
+         SPACE 5
+***********************************************************************
+*                  MEMBER SELECTION SUBROUTINE.                       *
+***********************************************************************
+         SPACE
+LOOKUP   EQU   *
+         CLI   SW4,C'1'
+         BE    LOOKEND
+         LA    5,NAMESTOR          GET ADDRESS OF NAME STORE
+         LA    2,TABLE
+         LA    3,10                LOAD INCREMENT IN REG 3.
+         MVI   FOUND,C'0'
+LOOKLOOP EQU   *
+         CLC   0(4,2),TABEND
+         BE    0(0,4)
+         CLC   0(3,2),=C'ALL'
+         BE    LOOKEND
+         SR    7,7
+         SR    6,6
+         IC    7,9(0,2)            PUT LENGTH IN REG 7.
+         IC    6,8(0,2)            PUT RKP IN REG6.
+         AR    6,5
+         EX    7,EXCOMP
+         BE    LOOKEND
+         AR    2,3
+         B     LOOKLOOP
+LOOKEND  EQU   *
+         MVI   FOUND,C'1'
+         MVI   SW1,C'1'
+         BR    4
+         SPACE 1
+EXCOMP   CLC   0(0,2),0(6)
+         EJECT
+***********************************************************************
+*                  ANALYSE SYSIN AND UPDATE SELECTION TABLE SUBRTN.   *
+***********************************************************************
+         SPACE
+CARDRD   EQU   *
+         CLI   0(3),C'*'
+         BE    *+8
+         LA    3,10(0,3)           INCREMENT REG BY ELEMENT LENGTH
+         GET   SYSIN,CARD
+         PUT SYSPRINT,PRTCTL
+         MVI   SW5,C' '            TURN OFF SW5
+         LA    2,CARD
+CARDSRCH EQU   *
+         CLI   0(2),C' '
+         BNE   TYPFOUND
+         LA    2,1(0,2)
+         B     CARDSRCH
+         SPACE 2
+TYPFOUND EQU   *
+         CLC   0(6,2),=C'PRINT '
+         BNE   TIT
+         MVC   PRINT,CARD
+TIT      CLC   0(6,2),=C'TITLE '
+         BNE   REC
+         MVC   TITLE2,CARD
+         MVI   SW3,C'1'
+REC      EQU   *
+         CLC   0(7,2),=C'RECORD '
+         BNE   PUN
+         MVC   RECORD,CARD
+         MVI   SW2,C'2'            USER HAS SUPLIED RECORD CARD FOR PNC
+PUN      EQU   *
+         CLC   0(6,2),=C'PUNCH '
+         BNE   ALL
+         MVI   SW2,C'1'
+         MVC   PRINT,CARD
+ALL      EQU   *
+         CLC   0(4,2),=C'ALL '
+         BNE   MEM
+         MVI   SW4,C'1'
+MEM      EQU   *
+         CLC   0(7,2),=C'MEMBER '
+         BNE   SYS
+         LA    2,6(0,2)
+         MVI   SW5,C'1'            INDICATE MEMBER SELECTION REQESTED
+         B     SYSSRCH
+SYS      CLC   0(6,2),=C'GROUP '
+         BNE   CARDRD
+         LA    2,5(0,2)
+         SPACE 2
+SYSSRCH  EQU   *
+         CLI   0(2),C' '
+         BNE   SYSFOUND
+         LA    2,1(0,2)
+         B     SYSSRCH
+         SPACE 2
+SYSFOUND EQU   *
+         CLC   0(5,2),=C'NAME='
+         BE    MOVENAME
+         CLC   0(4,2),=C'RKP='
+         BNE   CARDRD
+         CLI   SW5,C'1'            MEMBER ONLY BEEN REQUESTED?
+         BE    CARDRD              YES. BYPASS ANY RKP.
+         CLI   4(R2),X'F0'
+         BL    CARDRD
+         CLI   4(R2),X'F7'
+         BH    CARDRD
+         MVC   8(1,3),4(2)         MOVE KEY POSITION TO STORE
+         NI    8(3),X'0F'          REMOVE ZONE
+         LA    2,6(0,2)
+         B     SYSFOUND
+         SPACE 2
+MOVENAME EQU   *
+         LA    2,5(0,2)
+         SR    5,5
+         LR    6,2
+NAMESRCH EQU   *
+         CLI   0(2),C','
+         BE    ENDFOUND
+         CLI   0(2),C' '
+         BE    ENDFOUND
+         LA    2,1(0,2)
+         LA    5,1(0,5)
+         B     NAMESRCH
+ENDFOUND EQU   *
+         BCTR  5,0                 REDUCE COUNT BY ONE FOR MOVE
+         CLI   SW5,C'1'            MEMBER PROCESSING REQESTED?
+         BE    MOVEMEMB
+         EX    5,NAMEMOVE
+         STC   5,9(0,3)            STORE LENGTH OF NAME
+         NI    9(3),X'0F'          REMOVE ZONE
+         LA    2,1(0,2)
+         B     SYSFOUND
+         SPACE 1
+MOVEMEMB EQU   *
+         MVI   0(3),C' '
+         MVC   1(7,3),0(3)         CLEAR WHOLE NAME AREA TO BLANKS
+         EX    5,NAMEMOVE          MOVE MEMBER NAME
+         MVI   9(3),X'07'          STORE COMPARE LENGTH
+         LA    2,1(0,2)            MOVE ALONG CARD
+         B     SYSFOUND
+         SPACE
+NAMEMOVE MVC   0(0,3),0(6)
+         SPACE 2
+ENDCARDS EQU   *
+         CLOSE (SYSIN)
+         BR    4
+         EJECT
+***********************************************************************
+*                  DCBS CONSTANTS TABLES WORKAREAS ETC.               *
+***********************************************************************
+         SPACE
+FOUND    DC    C' '
+SW1      DC    C' '            PUT TO 1 IF ANY MEMBERS SELECTED
+SW2      DC    C' '          INDICATES PUNCHOUT REQUIRED IF SET TO 1
+SW3      DC    C' '                1 INDICATES USER SUPPLIED TITLE
+SW4      DC    C' '                1 INDICATES WHOLE DATASET REQD.
+SW5      DC    C' '                1 INDICATES MEMBER ONLY REDUESTED
+         SPACE 1
+NAMESTOR DS    D                   CURRENT MEMBER NAME STORE
+TABLE    EQU   *
+         DC    40CL10'********TABEND   DC    CL4'****'
+         SPACE 1
+DATAOUT  DS    CL80
+         SPACE
+PRTCTL   DC    X'8B'
+CARD     DC    CL80'   LISTPDS UTILITY. CONTROL CARD LIST.'
+         DC    CL40' '
+         SPACE 2
+SYSIN    DCB   DDNAME=SYSIN,EODAD=ENDCARDS,                            C
+               MACRF=GM,DSORG=PS,RECFM=F,BLKSIZE=80
+         SPACE 1
+SYSUT3   DCB   DDNAME=SYSUT3,MACRF=PM,DSORG=PS,                        C
+               RECFM=FB,LRECL=80,BLKSIZE=400
+         SPACE 1
+SYSUT1   DCB   DDNAME=SYSUT1,DSORG=PS,MACRF=GL,EXLST=EXLIST,           C
+               RECFM=F,LRECL=256,BLKSIZE=256,BUFNO=18,EODAD=ENDIP
+         SPACE 1
+SYSPRINT DCB   DDNAME=SYSPRINT,DSORG=PS,                               C
+               MACRF=PM,RECFM=FM,LRECL=121,BLKSIZE=121
+         SPACE 1
+JFCB     DS    44F
+EXLIST   DC    X'87',AL3(JFCB)
+         SPACE 5
+PRINT    DS    0CL80
+         DC    CL40' PRINT TYPORG=PO,MAXNAME=400,MAXFLDS=400'
+         DC    CL40' '
+TITLE    DS    0CL80
+         DC    C' TITLE ITEM=(''LISTPDS OF TEST.PROCLIB   DD MMM YY'''
+         DC    C',42)'
+         DC    CL27' '
+TITLE2   DC    CL80' '
+RECORD   DS    0CL80
+         DC    CL23' RECORD FIELD=(80,,,20)'
+         DC    CL57' '
+MEMBER   DS    0CL80
+         DC    CL23' MEMBER           NAME='
+NAME     DC    CL8' '
+         DC    CL49' '
+NONE     DS    0CL80
+         DC    CL36'NO GROUP(S) SELECTED HAVE BEEN FOUND'
+         DC    CL44' '
+         SPACE 2
+PARMSAVE DS    F
+DATERTN  DC    V(DTERTN)
+DATE     DC    V(JPDATE)
+         CNOP   2,4
+PARMLIST DC    X'0000'
+         CNOP  2,4
+DDLIST   DC    X'0028'
+         DC    XL32'00'
+         DC    CL8'SYSUT3'         REPLACEMENT FOR SYSIN
+         LTORG
+         END   PRNTPROC

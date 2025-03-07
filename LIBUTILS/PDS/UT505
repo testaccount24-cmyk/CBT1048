@@ -1,0 +1,118 @@
+         TITLE 'PDS DIRECTORY PROCESSING ROUTINE'
+***********************************************************************
+*                      U T 5 0 5                                      *
+*                                                                     *
+*       PROCESS PROGRAM LIBRARY DIRECTORY AND MARK ALL MODULES        *
+*       - REUSABLE.                                                   *
+*                                                                     *
+***********************************************************************
+REG0     EQU   00
+REG1     EQU   01
+REG2     EQU   02
+REG3     EQU   03
+REG4     EQU   04
+REG5     EQU   05
+REG6     EQU   06
+REG7     EQU   07
+REG8     EQU   08
+REG9     EQU   09
+REG10    EQU   10
+REG11    EQU   11
+REG12    EQU   12
+REG13    EQU   13
+REG14    EQU   14
+REG15    EQU   15
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING                                   *
+***********************************************************************
+         SPACE 2
+UT505    CSECT
+         PGMIN  USING=(R13)
+         EJECT
+***********************************************************************
+*        OPEN THE INPUT PDS FILE AND INITIALISE WORK AREAS            *
+***********************************************************************
+         SPACE 2
+OPENFILE DS    0H
+         OPEN  (PDS,UPDAT,SYSPRINT,OUTPUT) OPEN FILES
+         EJECT
+***********************************************************************
+*        READ EACH BLOCK INTHE DIRECTORY                              *
+***********************************************************************
+         SPACE 2
+READBLK  DS    0H
+         GET   PDS                 READ A BLOCK FROM THE PDS
+         LR    REG3,REG1           LOAD BASE ADDRESS OF BLOCK
+         LH    REG4,0(REG3)        LOAD LZNGTH OF USED DATA
+         LA    REG5,0(REG4,REG3)   LOAD ADDRESS OF END OF DATA
+         LA    REG3,2(REG3)        LOAD ADDRESS OF FIRST ENTRY
+SENDBLK  BAL   REG11,DOENTRY       GO PROCESS THIS ENTRY OF PDS
+         IC    REG6,11(REG3)       LOAD LENGTH OF ENTRY IN HALFWDS
+         N     REG6,=F'31'         STRIP OF ALIAS BIT ETC
+         AR    REG6,REG6           CONVERT TO BYTES
+         LA    REG3,12(REG6,REG3)  LOAD ADDRESS OF NEXT ENTRY
+         CLC   0(8,REG3),HEXFF     TEST FOR END OF PDS
+         BE    EODADX              BRANCH TO EXIT ROUTINE
+         CR    REG3,REG5           TEST FOR END OF THIS BLOCK
+         BL    SENDBLK             MORE ENTRIES. PROCESS
+         PUTX  PDS                 WRITE LAST BLOCK BACK OUT
+         B     READBLK             GO READ NEXT BLOCK
+         EJECT
+***********************************************************************
+*        PROCESS THE PDS ENTRY                                        *
+***********************************************************************
+         SPACE 2
+DOENTRY  DS    0H
+         PUT   SYSPRINT            OBTAIN OUTPUT BUFFER
+         XC    0(133,REG1),0(REG1) CLEAR PRINT LINE
+         MVI   0(REG1),C'0'        DOUBLE SPACE OUTPUT
+         MVC   1(8,REG1),0(REG3)   MOVE MEMBER NAME TO OUTPUT
+         CLI   20(REG3),0          IS THIS AN INVALID ENTRY
+         BE    BYPASS              YES. DONT ALTER IT
+         UNPK  10(3,REG1),11(2,REG3) PRINT OLD CONTENTS
+         TR    10(2,REG1),TABLE-C'0' CONVERT TO PRINTABLE FORMAT
+         MVI   12(REG1),C'/'       BLANK OUT SIGN BYTE
+         UNPK  13(3,REG1),20(2,REG3) PRINT OLD CONTENTS
+         TR    13(2,REG1),TABLE-C'0' CONVERT TO PRINTABLE FORMAT
+         MVI   15(REG1),C' '       BLANK OUT SIGN BYTE
+*
+         OI    20(REG3),X'40'      TURN ON REUSABLE BIT
+         NI    11(REG3),X'FF'-X'80' TURN OFF ALIAS BIT
+*
+         UNPK  20(3,REG1),11(2,REG3) PRINT NEW CONTENTS
+         TR    20(2,REG1),TABLE-C'0' MAKE OUTPUT PRINTABLE
+         MVI   22(REG1),C'/'       BLANK OUT SIGN BYTE
+         UNPK  23(3,REG1),20(2,REG3) PRINT NEW CONTENTS
+         TR    23(2,REG1),TABLE-C'0' MAKE OUTPUT PRINTABLE
+         MVI   25(REG1),C' '       BLANK OUT SIGN BYTE
+         BR    REG11               RETURN TO CALLER
+BYPASS   MVC   20(L'MESSAGE,REG1),MESSAGE
+         BR    REG11               RETURN TO CALLER
+         SPACE 2
+MESSAGE  DC    C'THIS MEMBER NOT ALTERED. ENTRY INVALID'
+         EJECT
+***********************************************************************
+*        TERMINATION ROUTINES                                         *
+***********************************************************************
+         SPACE 2
+EODADX   DS    0H
+         PUTX  PDS                 REWRITE LAST BLOCK
+TERMINTE DS    0H
+         CLOSE (PDS,,SYSPRINT)     CLOSE INPUT FILE
+         EJECT
+***********************************************************************
+*        PROGRAM EXIT ROUTINE                                         *
+***********************************************************************
+         SPACE 2
+EXITPGM  DS    0H
+         PGMOUT
+         EJECT
+SYSPRINT DCB   DDNAME=SYSPRINT,DSORG=PS,MACRF=PL,LRECL=133,            X
+               BLKSIZE=133,RECFM=FA
+PDS      DCB   DDNAME=SYSUT1,DSORG=PS,MACRF=(GL,PL),RECFM=F,           X
+               LRECL=256,BLKSIZE=256,EODAD=TERMINTE
+HEXFF    DC    8X'FF'
+TABLE    DC    C'0123456789ABCDEF'
+         LTORG
+         END

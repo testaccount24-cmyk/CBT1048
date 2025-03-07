@@ -1,0 +1,222 @@
+         TITLE 'BUDGIE3W - INTERNAL MACROS'                             W 000010
+         MACRO                                                          W 000020
+         $CB   &PRINT=OFF                                               W 000030
+         PUSH PRINT                PRESERVE CURRENT PRINT STATUS        W 000040
+         PRINT &PRINT              ESTABLISH NEW PRINT STATUS           W 000050
+               TITLE 'CCB  - CENTRAL CONTROL BLOCK'                     W 000060
+         CCB   ,                   GENERATE DSECT                       W 000070
+               TITLE 'DCB  - DATA CONTROL BLOCK'                        W 000080
+         DCBD  DSORG=(PS,IS)       GENERATE DSECTS                      W 000090
+               TITLE '     - GENERAL EQUATES'                           W 000100
+       EQUATES ,                   GENERATE EQUATES                     W 000110
+               TITLE '     - STORAGE POOL DEFINITION'                   W 000120
+      POOLDEFN ,                   GENERATE DSECT                       W 000130
+         POP   PRINT               RESTORE ORIGINAL PRINT STATUS        W 000140
+         MEND                                                           W 000150
+         SPACE 5                                                        W 000160
+BUDGIE3W CSECT                                                          W 000170
+         $CB   ,                   GENERATE DSECTS AND EQUATES          W 000180
+         TITLE 'BUDGIE3W - WORK FILE PROCESSING'                        W 000190
+        SCSECT W                   DEFINE START OF CSECT BUDGIE3W       W 000200
+         ENTRY WORKCAP             DETERMINE CAPACITY OF STORAGE POOLS  W 000210
+         ENTRY WORKEOD             EOF RTN FOR WORK D/S                 W 000220
+         ENTRY WORKGET             READ FROM WORKPOOL(S) / WORKFILE     W 000230
+         ENTRY WORKPUT             WRITE TO WORKPOOL(S) / WORKFILE      W 000240
+         ENTRY WORKOPC             CLOSE FILE/POOL(S) & ZEROISE POINTRS W 000250
+         ENTRY WORKOPI             OPEN WORKPOOL(S) / WORKFILE FOR INPU W 000260
+         ENTRY WORKOPO             OPEN WORKFILE FOR OUTPUT             W 000270
+         TITLE 'BUDGIE3W - WRITE TO WORKPOOL(S) / WORKFILE'             W 000280
+*********************************************************************** W 000290
+*        WRITE TO WORKPOOL(S) OR WORKFILE                             * W 000300
+*********************************************************************** W 000310
+         SPACE 1                                                        W 000320
+*        ON INPUT, R6 POINTS AT THE RECORD TO BE WRITTEN TO WORK        W 000330
+         USING POOLDEFN,R9         ESTABLISH SUB-BLOCK ADDRESS'Y        W 000340
+WORKPUT  SUBIN SAVE=R4             WRITE TO WORKPOOL OR WORKFILE        W 000350
+         TM    YPSWITCH,YPSWSFIN   WAS SF=IN SPECIFIED                  W 000360
+         BZ    WORKPUT0            BR IF NOT                            W 000370
+         L     R3,$PTRPRM2         GET ADDRESS OF INTERNAL W/A FOR RECS W 000380
+         LH    R2,$RECLUT2         GET LENGTH OF OUTPUT RECORD          W 000390
+         LR    R1,R6               POINY R1 AT OUTPUT RECORD            W 000400
+         CBAL  R4,VARMOVE          MOVE OUTPUT REC TO WORK AREA         W 000410
+         L     R3,$PTRPRM2         GET ADDRESS OF NTERMED WORK AREA     W 000420
+         AH    R3,$RECLUT2         POINT PAST OUTPUT RECORD JUST MOVED  W 000430
+         LH    R2,$RECLUT1         SET LENGTH OF INPUT RECORD           W 000440
+         L     R1,$PTRPARM          POINT R1 AT INPUT RECORD IMAGE      W 000450
+         CBAL  R4,VARMOVE          MOVE INPUT REC AFTER OUTPUT REC      W 000460
+         L     R6,$PTRPARM          POINT AT INPUT RECORD IMAGE AGAIN   W 000470
+         MVI   0(R6),X'00'         FLAG RECORD AS WRITTEN LEST SF=IN    W 000480
+         L     R6,$PTRPRM2         POINT R6 AT CONCATENATED RECORDS     W 000490
+WORKPUT0 L     R9,$ADRVCON         POINT AT 1ST STORAGE POOL DEFINITION W 000500
+         L     R1,$POOLCNT         GET CURRENT RECORD COUNT             W 000510
+         LA    R1,1(,R1)           INCREMENT RECORD COUNT               W 000520
+         ST    R1,$POOLCNT         STORE NEW RECORD COUNT               W 000530
+         ST    R1,$POOLEOD         PRESERVE RECORD COUNT LEST LAST RECO W 000540
+         LH    R2,$POOLRCL         GET RECORD LENGTH                    W 000550
+         LH    R3,$POOLNO          ESTABLISH LOOP                       W 000560
+         B     *+8                 BYPASS INCREMENTING TO NEXT BLOCK    W 000570
+WORKPUT1 LA    R9,POOLLGTH(,R9)    INCREMENT TO NEXT SUB-BLOCK          W 000580
+         C     R1,POOLCAP          COUNT > CAPACITY OF POOL ?           W 000590
+         BH    WORKPUT2            BRANCH IF GREATER TO LOOP BACK       W 000600
+         L     R1,POOLPTR          GET ADDRESS OF NEXT AVAILABLE SLIT   W 000610
+         LR    R3,R1               PRESERVE ADDRESS ON NEW SLOT         W 000620
+         AR    R1,R2               POINT TO NEXT AVAILABLE SLOT         W 000630
+         ST    R1,POOLPTR          PRESERVE ADDRESS OF SLOT             W 000640
+         ST    R1,WORK+IOPSRECA    PRESERVEA ADDRESS OF NEXT SLOT       W 000650
+         LR    R1,R6               POINT R1 AT SOUTCE RECORD            W 000660
+         CBAL  R4,VARMOVE          MOVE RECORD TO ASSIGNED SLOT         W 000670
+         OI    POOLSW,POOLWORK     FLAG BEING USED AS WORKFILE          W 000680
+         B     WORKPUT3            GO LEAVE SUBROUTINE                  W 000690
+         EJECT                                                          W 000700
+*********************************************************************** W 000710
+*        WRITE TO WORKPOOL(S) OR WORKFILE ( CONT'D )                  * W 000720
+*********************************************************************** W 000730
+         SPACE 1                                                        W 000740
+WORKPUT2 BCT   R3,WORKPUT1         LOOP BACK I F POOLS LEFT             W 000750
+         TM    WORK+IOPSSW,IOSWOPEN TEST IF WORKFIEE OPEN               W 000760
+         BO    WORKPUT4            BRANCH IF OPEN                       W 000770
+         TM    WORK+IOPSSW,IOSWPRES DOES WORK DD STATEMENR EXIST        W 000780
+         BO    WORKPUT5            BR IF YES TO CONTINUE                W 000790
+         ABEND 52                  NO DD STATEMENT SO ABEND             W 000800
+WORKPUT5 EQU   *                   CONNTINUE PROCESSING                 W 000810
+         IOM   OPEN,WORK           OPEN WORKFILE FOR OUTPUT             W 000820
+WORKPUT4 IOM   PUTM,WORK,(R6)      WRITE RECORD TO WORK FILE            W 000830
+WORKPUT3 SUBOUT RESTORE=R4         RETURN TO CALLER                     W 000840
+         TITLE 'BUDGIE3W - OPEN ROUTINES'                               W 000850
+*********************************************************************** W 000860
+*        ESTABLISH WORKPOOL(S) AND WORKFILE FOR INPUT                 * W 000870
+*********************************************************************** W 000880
+         SPACE 1                                                        W 000890
+WORKOPI  SUBIN SAVE=R4             SET UP FOR INPUT                     W 000900
+         OI    WORK+IOPSSW,IOSWINPT SET ON INPUT FLAG                   W 000910
+         CBAL  R4,WORKOPC          CLOSE FILE & ZEROISE POINTERS        W 000920
+        SUBOUT RESTORE=R4          RETURN TO CALLER                     W 000930
+         SPACE 5                                                        W 000940
+*********************************************************************** W 000950
+*        ESTABLISH WORKPOOL(S) AND WORKFILE FOR OUTPUT                * W 000960
+*********************************************************************** W 000970
+         SPACE 1                                                        W 000980
+WORKOPO  SUBIN SAVE=R4             SET UP FOR OUTPUT                    W 000990
+         NI    WORK+IOPSSW,IOSWOUTP SET OFF 'INPUT' FLAG                W 001000
+         CBAL  R4,WORKOPC          CLOSE FILE & ZEROISE POINTERS        W 001010
+        SUBOUT RESTORE=R4          RETURN TO CALLER                     W 001020
+         SPACE 5                                                        W 001030
+******* REMEMBER ****************************************************** W 001040
+*        WHEN SF=IN CODING IS ADDED, **-** OUT INPUT RECORD AFTER       W 001050
+*         FIRST WRITE, LEST WR OPTION IS USED.  ON RETURNING FROM       W 001060
+*         WORK FILE, DISCARD **-** RECORDS                              W 001070
+         TITLE 'BUDGIE3W - CLOSE ROUTINE'                               W 001080
+*********************************************************************** W 001090
+*        CLOSE FILE AND ZEROISE PTRS                                  * W 001100
+*********************************************************************** W 001110
+         SPACE 1                                                        W 001120
+         USING POOLDEFN,R9         ESTABLISH ADDRESS'Y FOR SUB-BLOCK    W 001130
+WORKOPC  SUBIN SAVE=R4             CLOSE FILE AND ZEROISE PTRS          W 001140
+         IOM   CLOSE,WORK          CLOSE WORKFILE IF OPEM               W 001150
+         XC    $POOLCNT,$POOLCNT   ZEROISE RECORD COUNT                 W 001160
+         XC    $POOLEOD,$POOLEOD   ZEROISE RECORD COUNT                 W 001170
+         L     R9,$ADRVCON         POINT AT 1ST DESCRIPTIVE SUB-BLOCK   W 001180
+         LH    R3,$POOLNO          ESTABLISH LOOP                       W 001190
+         MVC   POOLPTR,POOLADR     SET POINTER TO START OF POOL         W 001200
+         LA    R9,POOLLGTH(,R9)    INCREMENT TO NEXT SUB-BLOCK          W 001210
+         TM    WORK+IOPSSW,IOSWINPT ARE WE PREPARING FOR NPUT           W 001220
+         BO    *+8                 BR IF YES                            W 001230
+         NI    POOLSW,FF-POOLWORK  SHOW NOT BEING USED BY WORKFILE      W 001240
+         BCT   R3,*-22             LOOP BACK IF SUB-BLOCKS LEFT         W 001250
+         LH    R3,$POOLNO          ESTABLISH LOOP                       W 001260
+         L     R9,$ADRVCON         POINT AT 1ST POOL DEFINITION         W 001270
+         TM    POOLSW,POOLUSE      TEST IF POOL AVAILABLE FOR USE       W 001280
+         BZ    *+14                BR TO GET NEXT DEFN IF NOT IN USE    W 001290
+         OC    POOLCAP,POOLCAP     CAN POOL HOLD ANY RECORDS ?          W 001300
+         BNZ   *+12                BR IF IT CAN AS THIS IS 1ST POOL     W 001310
+         LA    R9,POOLLGTH(,R9)    POINT AT NEXT POOL                   W 001320
+         BCT   R3,*-22             LOOP BACK TO PROCESS NEXT POOL       W 001330
+         MVC   $AWORKBC,POOLADR    SAVE ADDRESS OF 1ST WORKFILE REC (B/ W 001340
+        SUBOUT RESTORE=R4          RESTORE & RETURN TO CALLER           W 001350
+         DROP  R9                  DROP SUB-BLOCK ADDRESSABILITY        W 001360
+         TITLE 'BUDGIE3W - READ FROM WORKPOOL(S) / WORKFILE'            W 001370
+*********************************************************************** W 001380
+*        READ FROM WORKPOOL(S) OR WORKFILE                            * W 001390
+*********************************************************************** W 001400
+         SPACE 1                                                        W 001410
+*        THIS SUB-ROUTINE RETRIEVES THE NEXT RECORD FROM THE STORAGE    W 001420
+*         POOL(S) OR, IF THE POOL(S) ARE EXHAUSTED, FROM THE WORK DATA  W 001430
+*         SET.  IF A RECORD IS AVAILABLE, THA ADDRESS OF THE RECORD IS  W 001440
+*         PLACED IN R6.  THE CONDITION CODE IS SET SUCH THAT THE CALLER W 001450
+*         CAN MAKE THE FOLLOWING TESTS -                                W 001460
+*              BE  - RECORD RETURNED                                    W 001470
+*              BNE - WORKPOOL(S) AND WORKFIEL EXHAUSTED                 W 001480
+         SPACE 1                                                        W 001490
+         USING POOLDEFN,R9         ESTABLISH SUB-BLOCK ADDRESS'Y        W 001500
+WORKGET  SUBIN SAVE=R4             READ FROM WORKPPOOL OR WORKFILE      W 001510
+         MVI   WORKTSTX,C'Y'       ASSUME RECORDS EXHAUSRED             W 001520
+         L     R1,$POOLCNT         GET CURRENT RECORD COUNT             W 001530
+         LA    R1,1(,R1)            ADD 1 TO RECORD COUNT               W 001540
+         C     R1,$POOLEOD         TEST IF > TOTAL RECORDS WRITTEN      W 001550
+         BH    WORKEOD             BR IF > TO SIMULATE EOD              W 001560
+         ST    R1,$POOLCNT         PRESERVE NEW RECORD COUNT            W 001570
+         L     R9,$ADRVCON         POINT AT 1ST POOL DEFINITION         W 001580
+         LH    R2,$POOLRCL         GET RECORD LENGTH                    W 001590
+         LH    R3,$POOLNO          ESTABLISH LOOP                       W 001600
+         B     *+8                 BYPASS INCREMENTING TO NEXT BLOCK    W 001610
+WORKGET1 LA    R9,POOLLGTH(,R9)    INCRENENT TO NEXT SUB-BLOCK          W 001620
+         C     R1,POOLCAP          ? COUNT > CAPACITY OT THIS POOL      W 001630
+         BH    WORKGET2            BRANCH IF GREATER TO LOOP            W 001640
+         L     R6,POOLPTR          POINT R6 AT CURRENT SLOT             W 001650
+         ST    R6,WORK+IOPSRECA    PREERVE RECORD POINTER               W 001660
+         AR    R6,R2               INCREMENT TO NEXT SLOT               W 001670
+         ST    R6,POOLPTR          PRESERVE PTR TO NEXT SLOT            W 001680
+         L     R6,WORK+IOPSRECA    RETRIVE ADDRESS OF CURRENT RECORD    W 001690
+         B     WORKGET3            GO RETURN TO USER                    W 001700
+         EJECT                                                          W 001710
+*********************************************************************** W 001720
+*        READ FROM WORKPOOL(S) OR WORKFILE ( CONT'D )                 * W 001730
+*********************************************************************** W 001740
+         SPACE 1                                                        W 001750
+WORKGET2 BCT   R3,WORKGET1         LOOP BACK IF PPOOLS LEFT             W 001760
+         IOM   GET,WORK,(R6),AUTOPEN=YES GET NEXT REC ( OPEN IS AUTOMAT W 001770
+WORKGET3 MVI   WORKTSTX,C'X'       SET TO SHOW RECORD FOUND             W 001780
+WORKEOD  CLI   WORKTSTX,C'X'       SET COND CODE FOR CALLER             W 001790
+        SUBOUT RESTORE=R4          RETURN TO CALLER                     W 001800
+         SPACE 1                                                        W 001810
+WORKTSTX DC    C' '                COMPARAND TO SET CODD CODE           W 001820
+         DROP  R9                  DROP SUB-BLOCK ADDRESS'Y             W 001830
+         TITLE 'BUDGIE3W - DETERMINE CAPACITY OF POOLS'                 W 001840
+*********************************************************************** W 001850
+*        INITIALISE CAPACITY OF STORAGE POOLS                         * W 001860
+*********************************************************************** W 001870
+         SPACE 1                                                        W 001880
+         USING POOLDEFN,R9         ASTABLISH SBB-BLOCK ADDRESS'Y        W 001890
+WORKCAP  SUBIN ,                   ESTABLISHH POOL'S CAPACITY           W 001900
+         LH    R2,$POOLRCL         GET RECORD LENGTH                    W 001910
+         L     R1,WORK+IOPSDCB     GET ADDRESS OF WORK DCB              W 001920
+         USING IHADCB,R1           ESTABLISH DCB ADDRESSABILITY         W 001930
+         STH   R2,DCBLRECL         PUT LRECL IN WORK DCB                W 001940
+         SR    R14,R14             ZEROIZE R14                          W 001950
+         L     R15,$WRKMBLK        PLACE MAX BLKSIZE IN R15             W 001960
+         DR    R14,R2              DIVIDE LRECL INTO MAX BLKSIZE        W 001970
+         MR    R14,R2              MULTIPLY QUOTIENT BY LRECL           W 001980
+         STH   R15,DCBBLKSI        MOVE QUARTER TRACK BLOCK TO SCB      W 001990
+         DROP  R1                  DROP DCB ADDRESSABILITY              W 002000
+         L     R9,$ADRVCON         GET ADDRESS OF 1ST POOL DEFINITION   W 002010
+         LH    R3,$POOLNO          ESTABLISH LOOP                       W 002020
+         SR    R1,R1               ZEROISE WORK REG FOR CUMULATIVE COUN W 002030
+         B     *+8                 BYPASS INCREMENTING TO NEXT BLOCK    W 002040
+WORKCAP1 LA    R9,POOLLGTH(,R9)    INCREMENT TO NEXT SUB-BLOCK          W 002050
+         ST    R1,POOLCAP          ASSUME NOT AVAIL & ZEROISE CAPACITY  W 002060
+         TM    POOLSW,POOLUSE      TEST IF POOL AVAILABLE FOR USE       W 002070
+         BZ    WORKCAP2            BR IF ANAVAILABLE TO LOOP            W 002080
+         SR    R14,R14             ZEROISE 1ST REG OF DIVIDEND          W 002090
+         L     R15,POOLSIZ         SET 2ND REG OF DIVIDEND TO SIZE      W 002100
+         DR    R14,R2              DIVIDE LRECL INTO POOL SIZE          W 002110
+         AR    R1,R15              ADD POOL CAPACITY TO CUMULATIVE TOTA W 002120
+         ST    R1,POOLCAP          ESTABLISH POOL'S UPPER LIMIT         W 002130
+WORKCAP2 BCT   R3,WORKCAP1         POOP BACK IF SUB-BLOCKS LEFT         W 002140
+         ST    R1,$POOLMAX         PRESERVE TOTAL POO CAPACITY          W 002150
+        SUBOUT ,                   RETURN TO CALLER                     W 002160
+        SCSEND W                   TERMINATE CSECT BUDGIE3W             W 002170
+         END                                                            W 002180
+         SPACE 1                                                        W 002190
+         REPRO                                                          W 002200
+ IDENTIFY BUDGIE3W('WORKPOOL/WORKFILE PROCESSING')                      W 002210
+         END                                                            W 002220

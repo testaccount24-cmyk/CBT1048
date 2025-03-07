@@ -1,0 +1,347 @@
+   TITLE ' FORMAT DUMP CONTROL BLOCKS PART 1'
+IGC0V05A   CSECT
+R0       EQU       0
+R1       EQU       1
+R2       EQU       2
+R3       EQU       3
+R4       EQU       4
+R5       EQU       5
+R6       EQU       6
+R7       EQU       7
+R8       EQU       8
+R9       EQU       9
+RB       EQU       11
+RA       EQU       10
+RC       EQU       12
+RD       EQU       13
+RE       EQU       14
+RF       EQU       15
+PARREG   EQU       14
+PFABEND  EQU       X'80'
+PFSUPDAT EQU       X'20'
+CVT      EQU       16
+TCBFLGS  EQU       28
+STEALBIT EQU       2
+TCBOLTEP EQU       20
+OLTEPFLG EQU       2
+TCBTIOT   EQU      12
+TCBDEB   EQU       8
+DEBDCB   EQU       24
+DEBDEB   EQU       4
+DCBDEB   EQU       44
+DCBTIOT  EQU      40
+PCIOB    EQU       28
+IOBAD   EQU       68
+PCI      EQU       32
+OPTCD    EQU       52
+DCBAD    EQU       28
+DSORG    EQU       26
+MACRF    EQU       42
+         BALR  RC,0
+         USING *,RC               R12 = BASE
+         USING ABDAREA,RD
+         USING PARDSECT,PARREG    R 14=PTR TO PARMLIST
+         L     RE,ABDPARA         LOAD POINTER TO PARMLIST
+         TM    PFLAGS,PFSUPDAT    CHK IF SUPVR DATA REQUIRED
+         BC    8,EXIT             BRANCH IF NOT REQUIRED
+         TM        TCBFLGS+1(R2),STEALBIT WAS CORE OVERLAID FOR DUMP
+         BO        EXIT   BYPASS THESE ROUTINES IF IT WAS
+         TM        TCBOLTEP(R2),OLTEPFLG  IS THERE AN OLTEP DCB OPEN
+         BNZ       EXIT   EXIT IF SO ADDRESSES ARE BAD
+         TM    PFLAGS,PFABEND     IS THIS A SNAP REQUEST
+         BO    EXIT               YES,EXIT FROM THIS MODULE.
+         MVC   ABDCC(L'DSLBL),DSLBL SET UP HEADING, DOUBLE SPACE
+         BAL   R5,ABDOUT          PRINT HEADER LINE
+         L     R9,CVT             GET CVT ADDRESS
+         L     R9,164(R9)         GET HIGH MACHINE ADDRESS
+         LA    R9,000(R9)         CLEAR HI BYTE.
+         ST    R9,LIMIT           SAVE HI ADDRESS
+*
+* INITIALIZE DEB AND SET UP ROUTINE
+*
+         L     R9,TCBDEB(R2)      GET DEB POINTER
+TESTEND  LA    R9,0(R9)           CLEAR HI BYTE
+         LTR   R9,R9              TEST FOR ADDR OF DEB
+    BZ             NXTLOAD
+         C     R9,LIMIT           IS THE ADDR GOOD
+         BNL   BADADDR            ADDRESS IS TOO HIGH
+         TM    DEBDCB+3(R9),X'03' IS IT VALID ADDRESS
+         BC    7,BADADDR          ERROR MSG IF SO
+         L     RA,DEBDCB(R9)      GET POINTER TO DCB
+         LA    RA,0(RA)           CLEAR HIGH BYTE
+         C     RA,LIMIT           IS IT WITHIN THE BOX
+         BNL   BADADDR            ADDRESS IS TOO HIGH
+         TM    DCBDEB+3(RA),X'03' IS IT VALID ADDRESS
+         BC    7,BADCORE          ERROR MSG IF SO
+         L     RB,DCBDEB(RA)      GET DEB ADDR FROM DCB
+         LA    RB,0(RB)           CLEAR HIGH BYTE
+         CR    R9,RB              COMPARE DEB ADDRESS
+         BNE   BADCORE            BRANCH IF NOT TO PRINT CORE MSG
+         TM    DCBTIOT+1(RA),X'03' IS IT VALID ADDRESS
+         BC    7,BADCORE          ERROR MSG IF SO
+         L     RB,DCBTIOT(RA)     TIOT DISPLACEMENT
+         L     R6,TCBTIOT(R2)     GET TIOT ADDR
+         SRL   RB,16              ADJ OFFSET
+         LA    RB,0(R6,RB)        POINTER TO TIOT ENTRY
+         C     RB,LIMIT           IS ENTRY VALID ADDRESS
+         BH    BADADDR            BRANCH IF BAD ADDRESS
+         ST    RB,ABDWORK2        SAVE TIOT ENTRY POINTER
+         SR    RA,RA              CLEAR REG 10
+         IC    RA,0(RB)           LENGTH OF DD ENTRY IN TIOT
+         SH    RA,SIXTEEN         LENGTH OF ENTRY -16 AND DIVIDED
+         SRL   RA,2               BY 4 = NUMBER OF UCB'S
+         CLC   SYSAB(8),4(RB)     IS IT SYSABEND DD CARD
+         BE    NEXTDEB            IF YES, BR TO GET NEXT DEB ADDR
+         CLC   SYSU(8),4(RB)      IS IT SYSUDUMP DD CARD
+         BE    NEXTDEB            IF YES, BR TO GET NEXT DEB ADDR
+*
+* R6=TIOT,R9=DEB,RA=#OFUCB'S,RB=TIOTENTRY,RC=BASE,RD=ABDAREA,R2=TCB
+*
+         MVI   ABDCC,C'-'         DOUBLE SPACE CC
+         OC    ABDLINE(8),BLANKS
+         NC    ABDLINE(8),4(RB)
+         CLC   ABDLINE(8),BLANKS  Q/WAS DDNAME EBCDIC ALPHANUM
+         MVC   ABDLINE(8),4(RB)   ASSUME YES-MOVE DDNAME FROM TIOT
+         BE    DEBPRT             DEFINITELY YES
+         MVC   ABDLINE(11),UNK    IT WASNT SO MARK IT UNKNOWN.
+DEBPRT   EQU   *
+*
+* DEB PRINT ROUTINE
+*
+         MVC   ABDLINE+13(3),DEB  PUT DEB HDR INTO BUFFER
+         LR    R4,R9
+         LA    RB,4
+         SR    R4,RB              BACKUP TO DEB - 4
+         IC    RB,0(R4)           GET DEB LENGTH IN DBL WORDS
+         SRL   RB,2               CALC NO. OF 32 BYTE CHUNKS (LINES)
+         LTR   R6,RB              Q/SIZE AT LEAST 32 BYTES
+         BNZ   SIZEOK             YES
+         LA    R6,1               SET TO ONE LINE
+SIZEOK   EQU   *
+         LR    R4,R9              SET DEB TO +0
+         BAL   R3,FORMIT          LINK TO CONVRT RTN AND PRNT RTN.
+*
+* DCB PRINT ROUTINE.
+* LENGTH OF DCB MUST BE FOUND IN ORDER TO PRINT THE DCB FOR ALL
+* ACCESS METHODS.
+*
+         BAL   R5,ABDOUT          SPACE
+         MVC   ABDLINE+13(3),DCB  SET UP DCB HEADER
+         L     RB,DEBDCB(R9)      GET DCB ADDRESS FOR PRINT
+         LA    R4,0(RB)           DCB ADDR TO DATA REG
+         TM    DSORG(RB),X'80'    IS IT AN ISAM DCB
+         BZ    *+12               NO TEST NEXT BIT
+         LA    R6,8(R0)           SET LINE COUNT TO 8 FOR ISAM
+         B     DCBOUT             GO TO PRINT DC
+         TM    DSORG(RB),X'20'    IS IT A BDAM DCB
+         BZ    *+12               NO TEST NEXT BIT
+         LA    R6,4(R0)           SET LINE COUNT TO 4 FOR BDAM
+         B     DCBOUT             GO TO PRINT DCB
+         TM    DSORG(RB),X'08'    IS IT A GAM DCB
+         BZ    *+12               NO TEST NEXT BIT
+         LA    R6,2(R0)           SET LINE COUNT TO 2 FOR GAM
+         B     DCBOUT             GO TO PRINT DC
+         LA    R6,3(R0)           OTHER ACCESS METHODS = 3
+DCBOUT   BAL   R3,FORMIT          LINK TO CONVRT AND PRNT RTN
+*
+* IOB PRINT ROUTINE
+* IOB'S WILL BE PRINTED ONLY IF THEY ARE BSAM, BPAM, OR QSAM
+* RB=DCB ADDRESS, R7=IOB ADDRESS, R8=WORK REGISTER
+*
+IOBPRINT LA    RB,0(RB)           CLEAR HI BYTE FOR COMPARE
+         TM    DSORG(RB),X'42'    TEST DSORG FOR SAM OR PAM
+         BZ    NEXTCB             BRANCH IF NOT SAM OR PAM
+         TM    MACRF(RB),X'80'    TEST MACRF FOR EXCP
+         BO    NEXTCB             BRANCH IF EXCP BEING USED
+         TM    OPTCD(RB),PCI      TEST FOR PCI
+         BZ    NOTPCI             BRANCH IF NOT CHAIN SCHEDULING
+         TM    PCIOB+3(RB),X'03'  TEST FOR AN IOB
+         BC    7,NOIOB            BRANCH IF NO IOB
+         L     R7,PCIOB(RB)       GET IOB FOR CHAIN SCHEDULING
+         LA    R4,0(R7)           SAVE ADDRESS FOR PRINT RTN.
+         LA    R7,8(R7)           ADJUST PREFIX TO MINUS 8
+         SR    R8,R8              INDICATE THAT ICBS TO BE PROCESSED
+         B     IOBCHK             GO TO VALIDITY CHK IOB ADDRESS
+NOTPCI   TM    IOBAD+3(RB),X'03'  TEST FOR AN IOB
+         BC    7,NOIOB            BRANCH IF NO IOB
+FIRSTICB L     R7,IOBAD(RB)       GET IOB FOR SIMPLE SCHEDULING OR IOB
+         LA    R7,0(R7)           CLEAR HI BYTE
+         LTR       R7,R7  IS IT ZERO
+         BZ        NOIOB   BRANCH IF IT IS
+         LR    R8,R7              SAVE FIRST IOB TO BE PRINTED.
+NEXTIOB  LR    R4,R7              SAVE ADDRESS FOR PRINT RTN.
+         TM    OPTCD(RB),PCI      TEST FOR PCI.
+         BZ    IOBCHK             BRANCH IF NOT CHAIN SCHEDULING
+         BAL   R5,ABDOUT          SPACE A LINE
+         MVC   ABDLINE+13(3),ICB  SET UP ICB HEADER
+         B     IOBOUT             SKIP CHKING AND PRINT THE ICB
+IOBCHK   C     R7,LIMIT           IS IOB ADDRESS VALID
+         BNL   NOIOB              NO, PRINT IOB ERROR MSG
+         L     RE,DCBAD(R7)       GET DCB ADDR FROM IOB
+         LA    RE,0(RE)           CLEAR HI BYTE
+         CR    RE,RB              IS IOB FOR THIS DCB
+         BNE   NOIOB              BRANCH NO TO ERROR MSG
+         BAL   R5,ABDOUT          SPACE A LINE
+         MVC   ABDLINE+13(3),IOB  SET UP IOB HEADER
+IOBOUT   LA    R6,3(R0)           SET LINE COUNT TO 3
+         BAL   R3,FORMIT          LINK TO THE CONVRT AND PRNT RTN.
+         TM    3(R7),X'03'        IS NEXT IOB ADDRESS VALID
+         BC    7,NOIOB            BRANCH IF NOT
+         L     R7,0(R7)           GET NEXT IOB ADDRESS
+         LA    R7,0(R7)           CLEAR HI BYTE
+         CR    R7,R8              IS THIS IOB SAME AS FIRST
+         BE    NEXTCB             IF YES GO TO UCB PRINT
+         LTR   R8,R8              CHK IF CHAIN SCHED. IOB JUST PRINTED
+         BNZ   NEXTIOB            NO, GO BACK TO PRINT NEXT IOB
+         B     FIRSTICB           YES, SET UP TO PRINT ICBS
+*
+* UCB PRINT ROUTINE
+*
+NEXTCB   L     RB,ABDWORK2        RESTORE TIOT ENTRY ADDRESS
+         LA    RB,16(RB)          SHIFT RB TO UCB ENTRY
+AGAIN    BAL   R5,ABDOUT          SPACE
+         MVC   ABDLINE+13(3),UCB  SET UP HEADER LINE
+         L     R4,0(RB)           POINT TO UCB FOR PRINT RTN
+         LA    R4,0(R4)           CLEAR HIGH BYTE
+         C     R4,LIMIT           IS IT WITHIN THE BOX
+         BH    UCBBAD             PRINT ERROR MSG IF NOT
+         TM    2(R4),X'FF'        IS THIS A UCB
+         BO    UCBOK              BRANCH IF OK
+         CLC   18(2,R4),DEV2321   IS IT A 2321
+         BNE   UCBBAD             BRANCH TO PRINT ERROR MSG
+UCBOK    LA        R6,3      SET LINE COUNT AT O
+         BAL   R3,FORMIT          LINK TO CONVRT AND PRNT RTN
+         LA    RB,4(RB)           POINT TO THE NEXT ENTRY IN TIOT
+         BCT   RA,AGAIN           BRANCH BACK ON = OF UCB'S
+NEXTDEB  TM    DEBDEB+3(R9),X'03' IS IT VALID ADDRESS
+         BC    7,BADADDR          ERROR MSG IF SO
+         L     R9,DEBDEB(R9)      GET NEXT DEB ADDRESS
+         B     TESTEND            SEE IF WE'RE THROUGH
+NOIOB    MVC   ABDLINE+26(L'IOBERR),IOBERR MOVE IOB ERR MSG
+         MVI   ABDCC,C'0'         SET UP CARR CONTROL
+         BAL   R5,ABDOUT          PRINT IOB ERROR MSG
+         B     NEXTCB             RETURN TO PROSSES NEXT
+UCBBAD   MVC   ABDLINE+26(L'IOBERR),IOBERR SET UP IOB ERR MSG
+         MVC   ABDLINE+34(L'UCB),UCB CHANGE IT TO UCB
+         B     SETCC              GO TO SET CARR CONTROL
+BADCORE  MVC   ABDLINE+26(L'BADMESG),BADMESG MOVE DCB MSG TO PRINT LINE
+         MVC   ABDLINE(11),UNK
+SETCC    MVI   ABDCC,C'0'         SET CARR CONTROL
+         BAL   R5,ABDOUT          PRINT IT
+         B     NEXTDEB            TRY TO PROCCESS NEXT DEB
+BADADDR  MVC   ABDCC(L'BADMESS),BADMESS SET UP TO PRINT TERM MSG
+         BAL   R5,ABDOUT          PRINT ERROR MSG
+EXIT     LA    RA,LOAD5           LOAD LOAD5 PARAMETER
+         LA    RF,ABDWORK3
+         XCTL  EPLOC=(10),SF=(E,(15))
+*
+* FORMIT ROUTINE ******************************************************
+*        THE FORMIT ROUTINE TRANSLATES THE ADDRESS PASSED IN REG 4
+*        INTO CHARACTERS AND PLACES IT INTO LINE POSITION 18 JUST
+*        AFTER THE CONTROL BLOCK NAME.  THIS ROUTINE THEN INTERFACES
+*        WITH THE FORMAT ROUTINE VIA A BAL R5.  THIS LINKAGE IS INVOKED
+*        AS MANY TIMES AS THERE ARE LINES TO BE PRINTED. THE NUMBER OF
+*        LINES MUST BE PASSED TO THE FORMIT ROUTINE IN R6. LINKAGE
+*        TO FORMIT 'S VIA A BAL R3.
+*
+FORMIT   ST    R4,ABDWORK1        PUT ADDR INTO WORK AREA
+         MVC   ABDWORK(4),ABDWORK1 MOVE IT TO UNPACK AREA
+         UNPK  ABDWORK(9),ABDWORK(5) PACK AND
+         TR    ABDWORK(8),TBL-240 TRANSLATE IT
+         MVC   ABDLINE+18(6),ABDWORK+2 MOVE ONLY 6 DIGITS TO PRINT
+NXTLINE  BAL   R5,FORMAT          FORMAT AND PRINT THE CNTRL BLK
+         BCT   R6,NXTLINE         BRANCH ON NUMBER OF LINES IN R6
+         BR    R3                 RETURN TO CALLING ROUTINE
+*
+* FORMAT ROUTINE ******************************************************
+*        THE FORMAT ROUTINE TRANSLATES GIVEN AREAS OF STORAGE INTO
+*        CHARACTERS, INCREMENTALLY PLACES THEM INTO THE OUTPUT
+*        LINE FOR PRINTING, AND BRANCHES TO THE OUTPUT ROUTINE.
+*        ENTRY IS BY A BAL R5, AND RETURN IS BY A BRANCH R5 IN THE
+*        OUTPUT ROUTINE.  THE STANDARD LINE LAYOUT OF STORAGE PRINT
+*        ROUTINE IS USED.  THE ONLY INPUT NEEDED IS A POINTER IN R4
+*        TO THE DATA IN CORE TO BE PRINTED AND A RETURN POINTER IN R5.
+*
+FORMAT   LA    RE,LAYOUT          ADDRESS OF LAYOUT OF LINE.
+FORMATA  LA    R1,ABDLINE         GET ADDR OF OUTPUT BUFFER
+         CLI   0(RE),X'FF'        IS THIS A DELIMITER
+         BC    8,ABDOUT           YES, PRINT THE LINE
+         SR    R0,R0
+         IC    R0,0(RE)           GET LENGTH OF INCREMENT.
+         AR    R1,R0              BUMP BUFFER ADDR BY LINE OFFST
+         MVC   ABDWORK(4),0(R4)   MOVE FIELD TO WORKAREA
+         UNPK  ABDWORK(9),ABDWORK(5)
+         TR    ABDWORK(8),TBL-240
+         MVC   0(8,R1),ABDWORK    MOVE UNPACKED FIELD TO BUFFER
+         LA    RE,1(RE)           POINT TO NEXT CONTROL BYTE.
+         LA    R4,4(R4)           POINT TO NEXT RAW DATA.
+         B     FORMATA            SEE IF FINISHED YET.
+*
+         DS    0F
+LOAD5    DC    CL8'IGC0305A'
+SYSU     DC    CL8'SYSUDUMP'
+SYSAB    DC    CL8'SYSABEND'
+SIXTEEN  DC    H'16'
+DEV2321  DC    X'2005'            MASK FOR 2321
+BLANKS   DC    CL8' '
+UNK      DC    CL11'UNKNOWN DD*'
+DEB      DC    C'DEB'
+DCB      DC    C'DCB'
+ICB      DC    C'ICB'
+IOB      DC    C'IOB'
+UCB      DC    C'UCB'
+DSLBL    DC        C'-OPEN DATA SETS AT TIME OF ABEND'
+IOBERR   DC    C'INVALID IOB ADDRESS'
+BADMESS    DC      C'-FORMATING ERR'
+BADMESG  DC    C'DCB  WAS OVERLAID'
+TBL      DC    C'0123456789ABCDEF'
+LAYOUT   DC    X'1A232C35414A535CFF'
+ABDWORK2 DC        F'0'
+NXTLOAD  EQU  *
+         BAL       R5,ABDOUT
+         LA        R9,4
+LOOP1  EQU  *
+         MVI       ABDLINE,C'*'
+         MVC       ABDLINE+1(119),ABDLINE
+         BAL   R5,ABDOUT  PRINT ITITITIT
+         BCT       R9,LOOP1   PRINT AST 4 TIMES
+         MVI       LOAD5+4,C'T'        LOAD IGC0T05A
+         B         EXIT   GO LOAD IT
+ABDAREA  DSECT
+ABDSAVE  DS    18F                SAVE AREA
+ABDECB   DS    1F                 DECB-ECB
+ABOTYPE  DS    1H                 TYPE FIELD
+ABDLEN   DS    1H                 LENGTH FILD
+ABDDCB   DS    1F                 DCB
+ABDPTR   DS    1F                 AREA ADDRESS
+ABDSTAT  DS    1F                 POINTER TO STATUS INDICATORS
+ABDCTR1  DS    1H                 LINE CTR
+ABDCTR2  DS    1H                 PAGE CTR
+ABDOUT   DS        55F
+ABDPARA  DS    1F                 PTR TO PARAMETER LIST
+         DS    1F
+ABDWORKX DS    1C
+ABDWORK4 DS    11C
+ABDWORK  EQU      ABDWORK4
+ABDWORK1 DS    1D                 WO
+ABDWORK3 DS    1F
+ABDPTRS  DS    3F                 BUFFER POINTERS USED BY OUTPUT
+ABDPHY   DS    2F                 AREA FOR PRINT ROUTINE
+ABDCC    DS    1C                 CARRIAGE CONTROL CHARACTER
+ABDLINE  DS    CL32               120 CHAR PRINT LINE
+         DS    CL32
+         DS    CL32
+         DS    CL24
+         DS    1C                 FOR UNPACKING INTO LINE
+ABDINCPL DS      1H
+         DS      2C
+LIMIT    DS    1F                 HI ADDRESS SAVE AREA
+PARDSECT DSECT
+PID      DS    1C
+PWTG     DS    1C
+PFLAGS   DS    2C                 OPTION FLAGS
+PDCBPTR  DS    1F .               DCB ADDRESS
+PTCBPTR  DS    1F                 TCB ADDRESS
+PSNAPPTR DS    1F                 ADDRESS OF SNAPSHOT LIST
+         END
+     PRINT  ON,GEN,DATA

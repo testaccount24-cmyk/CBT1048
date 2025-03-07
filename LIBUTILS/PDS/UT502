@@ -1,0 +1,587 @@
+U502    TITLE 'CREATE CARD STREAM FROM PARM INFORMATION'
+***********************************************************************
+*                                                                     *
+*        ABSTRACT.                                                    *
+*        ---------                                                    *
+*                                                                     *
+*              UT502  BREAKS DOWN THE PARM PASSED TO IT INTO ONE      *
+*        OR MORE CARD IMAGES. OPTIONALLY ADDITIONAL CARDS MAY BE      *
+*        ADDED VIA A SYSIN DATASET.                                   *
+*                                                                     *
+*        WRITTEN BY:   P.S.GRANT - MONSANTO BXL.                      *
+*                                                                     *
+*        DATE:         MARCH 1977                                     *
+*                                                                     *
+***********************************************************************
+       SPACE 5
+***********************************************************************
+*                                                                     *
+*        INPUT.                                                       *
+*        ------                                                       *
+*              SYSUT1  - OPTIONAL. COMPOSED OF 80 BYTE CARD IMAGES    *
+*                        OR VARIABLE LENGTH STATEMENTS BROKEN DOWN    *
+*                        INTO ELEMENTS BY USE OF COLONS ':'.          *
+*                                                                     *
+*              PARM    - EXPECTED. COMPOSED OF STATEMENTS SEPARATED   *
+*                        BY COLONS ':'. IF NOT PRESENT THE OUTPUT     *
+*                        MAY BE A NULL DATASET.                       *
+*                                                                     *
+*              SYSIN   - OPTIONAL. IF PRESENT WILL BE USED IN THE     *
+*                        SAME WAY AS PARM INFO. AND MAY HAVE ANY      *
+*                        LOGICAL RECORD LENGTH AS LONG AS EACH        *
+*                        ELEMENT IS 80 CHARACTERS OR LESS.            *
+*                        MAY ALSO BE SIMPLE CARD IMAGES.              *
+*                                                                     *
+*        OUTPUT.                                                      *
+*        -------                                                      *
+*              SYSUT2  - MANDATORY. OUTPUT DATASET CONSISTING OF 80   *
+*                        BYTE CARD IMAGES.                            *
+*                                                                     *
+*              SYSPRINT- OPTIONAL. LISTS CARD IMAGES CREATED.         *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        INITIALISATION.                                              *
+*              SAVE PARM ADDRESS.                                     *
+*              OPEN ALL AVAILABLE DATASETS.                           *
+*              CONFIRM AVAILABILITY OF SYSUT2 DATASET.                *
+***********************************************************************
+         SPACE 1
+UT502    CSECT
+         PGMIN EQUATES=YES
+         PRINT ON,NOGEN
+INIT     EQU   *
+         ST    R1,PARMADDR         SAVE PARM ADDRESS.
+         BAL   R4,OPENDS           OPEN ALL AVAILABLE DATASETS
+         LA    R5,PRTLINE          ADDRESSABILITY FOR PRINT-LINE
+         BAL   R4,HEADINGS         PRINT FIRST PAGE HEADINGS.
+         TM    SYSUT2SW,DDPRES     TEST FOR SYSUT2 DATASET
+         BO    PROCUT1             ABEND IF NOT FOUND
+         SPACE 3
+ABEND502 ABEND 502,,STEP           NO SYSUT2 DATASET FOUND.
+         EJECT
+***********************************************************************
+*                                                                     *
+*        PROCESS SYSUT1 RECORDS.                                      *
+*              READ NEXT RECORD.                                      *
+*              SET UP FOR SCANREC.                                    *
+*              CALL SCANREC.                                          *
+*              LOOP TILL END OF DATASET.                              *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+PROCUT1  EQU   *
+         TM    SYSUT1SW,DDOPEN     SYSUT1 DATASET AVAILABLE
+         BNO   NOUT1               NO. SKIP THIS SECTION
+         MVC   OUTAREA+10(24),=CL24'*** DATA FROM SYSUT1 ***'
+         MVI   PRTCTL,SPCE2AFT     DOUBLE LINE SPACING
+         AP    LINECOUN,ONE        EXTRA LINE USED
+         BAL   R4,PRINT            PRINT MESSAGE
+NEXTUT1  EQU   *
+         BAL   R4,RUT1             READ NEXT SYSUT1 RECORD.
+         LA    R1,SYSUT1           POINT TO SYSUT1 DCB
+         BAL   R4,SCANSET          SET UP FOR SCANREC
+         BAL   R4,SCANREC          SPLIT UP RECORD AND WRITE O/P
+         B     NEXTUT1             GO ROUND LOOP UNITIL END OF DATA
+         SPACE 1
+EODUT1   EQU   *
+         MVI   PRTCTL,SPCE2AFT     SKIP TWO LINES
+         AP    LINECOUN,ONE        EXTRA LINE
+         BAL   R4,PRINT            LINK TO PRINT RTN
+NOUT1    EQU   *
+         EJECT
+***********************************************************************
+*                                                                     *
+*        PROCESS PARM INFORMATION.                                    *
+*              RESTORE PARM ADDRESS.                                  *
+*              TEST FOR NULL PARM.                                    *
+*              CALL SCANREC TO SPLIT UP PARM INFO. AND WRITE SYSUT2   *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+PROCPARM EQU   *
+         L     R1,PARMADDR         RESTORE PARM ADDRESS
+         L     R1,0(0,R1)          POINT TO PARM
+         LH    R3,0(R1)            GET LENGTH
+         LTR   R3,R3               TEST FOR NULL PARM
+         BZ    NOPARM              BRANCH IF SO.
+         LA    R2,2(0,R1)          R2 POINTS AT PARM DATA
+         MVC   OUTAREA+10(24),=CL24'*** DATA FROM  PARM  ***'
+         MVI   PRTCTL,SPCE2AFT     DOUBLE SPACING
+         AP    LINECOUN,ONE        EXTRA LINE USED
+         BAL   R4,PRINT
+         BAL   R4,SCANREC          SPLIT UP PARM AND WRITE RECS.
+         MVI   PRTCTL,SPCE2AFT     SKIP TWO LINES
+         AP    LINECOUN,ONE        NOTE EXTRA LINE
+         BAL   R4,PRINT            GIVE IT EFFECT
+         SPACE 1
+NOPARM   EQU   *
+         EJECT
+***********************************************************************
+*                                                                     *
+*        PROCESS EACH SYSIN RECORD.                                   *
+*              READ TEXT RECORD.                                      *
+*              SET-UP FOR SCANREC.                                    *
+*              CALL SCANREC.                                          *
+*              LOOP UNTIL END-OF-DATA                                 *
+*                                                                     *
+***********************************************************************
+PROCSYSN EQU   *
+         TM    SYSINSW,DDOPEN      SYSIN DATASET AVAILABLE?
+         BNO   EODIN               NO. SKIP THIS SECTION
+         MVC   OUTAREA+10(24),=CL24'*** DATA FROM  SYSIN ***'
+         MVI   PRTCTL,SPCE2AFT     DOUBLE SPACING
+         AP    LINECOUN,ONE        EXTRA LINE USED
+         BAL   R4,PRINT            PRINT MESSAGE
+NEXTSYSN EQU   *
+         BAL   R4,RIN              READ NEXT INPUT RECORD
+         LA    R1,SYSIN            ADDRESS SYSIN DCB
+         BAL   R4,SCANSET          SET UP FOR SCANREC
+         BAL   R4,SCANREC          SPLIT UP RECORD AND WRITE OUTPUT.
+         B     NEXTSYSN            GO ROUND LOOP TILL END-OF-DATA.
+         SPACE 1
+EODIN    EQU   *                   END OF SYSIN DATASET.
+         B     JOBEND               BRANCH TO EOJ ROUTINE.
+         EJECT
+*******************************************************************
+*        JOB TERMINATION ROUTINE.                                 *
+*         CLOSE ANY OPEN DATA SETS,                               *
+*         SET A COMPLETION CODE IN REGISTER 15, AND RETURN.       *
+*******************************************************************
+         SPACE 1
+JOBEND   EQU   *
+         MVI   PRTCTL,SPCE3AFT     SKIP THREE LINES
+         BAL   R4,PRINT
+         MVC   PRTAREA+14(17),=CL17'*** END UT502 ***'
+         BAL   R4,PRINT            PRINT EOJ MESSAGE
+         LA    R3,MAXDS            ESTABLISH LOOP
+         LA    R2,DCBTABLE         POINT AT START OF DCB TABLE
+         BAL   R4,CLOSE            CLOSE DATA SET IF OPEN
+         LA    R2,DCBNTRY(R2)      POINT AT NEXT TABLE ENTRY
+         BCT   R3,*-8              CLOSE NEXT DATA SET
+         PGMOUT RC=COMPCODE        SET COND CODE AND RETURN
+         EJECT
+***********************************************************************
+*                                                                     *
+*        SUBRTN SCANSET                                               *
+*        ---------------                                              *
+*              TEST TYPE OF RECORD FORMAT AND LENGTH.                 *
+*              SET RECORD START ADDRESS AND LENGTH FOR SCANREC.       *
+*                                                                     *
+*        REGISTER USAGE.                                              *
+*              R1 - DCB ADDRESS                                       *
+*              R2 - DATA ADDRESS                                      *
+*              R3 - DATA LENGTH                                       *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+SCANSET  SUBIN
+         USING IHADCB,R1           LOOK AT SYSIN DCB
+         TM    DCBRECFM,DCBRECV    DO WE HAVE VARIABLE LENGTH RECORDS
+         BNO   SCANSETF            NO BRANCH.
+         LH    R3,0(0,R6)          YES. GET RECORD LENGTH
+         LA    R2,4(0,R6)          AND  DATA START ADDRESS
+         B     SCANSETX
+         SPACE 1
+SCANSETF EQU   *                   SET-UP FOR FIXED LENGTH RECORDS
+         LR    R2,R6               GET DATA ADDRESS
+         LH    R3,DCBLRECL         AND LENGTH FROM DCB
+         DROP R1
+SCANSETX SUBOUT
+         EJECT
+***********************************************************************
+*                                                                     *
+*        SUBRTN - SCANREC.                                            *
+*              SCANS RECORD  PASSED TO IT SPLITTING IT INTO ELEMENTS  *
+*              WHICH ARE THEN PUT INTO CARD IMAGES.                   *
+*              EACH ELEMENT IS DELIMITED BY A COLON ':' OR END-OF-REC.*
+*              NORMALLY, EACH ELEMENT STARTS IN COLUMN TWO OF THE     *
+*              CARD IMAGE, I.E. IT IS SHIFTED RIGHT ONE PLACE.        *
+*              THE FOLLOWING ARE EXCEPTIONS:-                         *
+*                  1. THE FIRST BYTE IS A SPACE.                      *
+*                  2. THE ELEMENT IS 80 BYTES LONG OR LONGER.         *
+*                  3. IF THE RECORD IS 72 BYTES OR LONGER AND         *
+*                     BYTE 72 IS NON-BLANK.                           *
+*                  4. IF THE RECORD IS 71 BYTES LONG AND A RIGHT      *
+*                     SHIFT WOULD MAKE COL 72 NON-BLANK.              *
+*                  5. IF THE FIRST BYTE IS A HYPHEN '-',              *
+*                     I.E. LIBRARYN CONTROL CARDS.                    *
+*                     OR A PERIOD '.' I.E. IEBUPDTE CTL CARDS         *
+*                     OR A SLASH '/' INDICATING JCL.                  *
+*                  6. IF THE FIRST BYTE IS AN AT '@' SIGN,            *
+*                     AN EXPLICIT NOSHIFT IS INDICATED AND THE '@'    *
+*                     IS DROPPED.                                     *
+*              IN THESE CASES, NO SHIFT TAKES PLACE.                  *
+*                                                                     *
+*        REGISTER USAGE                                               *
+*              INPUT:-  R2 - POINTS  AT DATA-RECORD.                  *
+*                       R3 - IS THE DATA-RECORD LENGTH.               *
+*                                                                     *
+*           INTERNAL:-  R1 - LENGTH AND I/O COMMUNICATION.            *
+*                       R2 - DATA-ELEMENT ADDRESS.                    *
+*                       R3 - CHAIN POINTER                            *
+*                       R6 - OUTPUT RECORD ADDRESS.                   *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+SCANREC  SUBIN SAVE=R4
+         SCAN  DATA=(R2),LENGTH=(R3),DELIM=(':'),CHAIN=SCANCHN
+         L     R3,SCANCHN          POINT TO FIRST ELEMENT
+SCANLOOP EQU   *
+         L     R2,4(0,R3)          GET DATA ADDRESS
+         SR    R1,R1               CLEAR REG1.
+         IC    R1,4(0,R3)          GET DATA LENGTH
+         LA    R6,OUTAREA          POINT OUTPUT WORK AREA
+EXCPTN1  EQU   *
+         CLI   0(R2),BLANK         IS 1ST BYTE A SPACE?
+         BE    NOSHIFT             YES. SKIP SHIFT
+EXCPTN2  EQU   *
+         CH    R1,=H'80'           IS ELEMENT 80 BYTES OR LONGER?
+         BNL   NOSHIFT             YES. SKIP SHIFT.
+EXCPTN3  EQU   *
+         CH    R1,=H'72'           IS ELEMENT AT LEAST 72 BYTES
+         BL    EXCPTN4
+         CLI   71(R1),BLANK        IS COL 72 NON-BLANK?
+         BNE   NOSHIFT             YES. SKIP SHIFT
+EXCPTN4  EQU   *
+         CH    R1,=H'71'           WOULD RIGHT SHIFT CAUSE COL 72
+         BL    EXCPTN5             TO BE NON-BLANK?
+         CLI   70(R2),BLANK        IS COL 71 NON-BLANK
+         BNE   NOSHIFT             YES. SKIP SHIFT
+EXCPTN5  EQU   *                   TEST FOR '-'OR '.'
+         CLI   0(R2),C'-'          IS 1ST BYTE A HYPHEN?
+         BE    NOSHIFT             YES. BRANCH TO NOSHIFT.
+         CLI   0(R2),C'.'          IS FIRST BYTE A PERIOD?
+         BE    NOSHIFT             YES. BRANCH TO NOSHIFT.
+         CLI  0(R2),C'/'           FIRST BYTE INDICATE JCL?
+         BE    NOSHIFT             YES. BRANCH TO NOSHIFT
+EXCPTN6  EQU   *
+         CLI   0(R2),C'@'          EXPLICIT COMMAND TO NOSHIFT.
+         BNE   EXCPTN7             NO. BRANCH.
+         BCTR  R1,0                REDUCE LENGTH BY ONE
+         LA    R2,1(0,R2)          POINT AT NEXT BYTE IN DATA.
+         B     NOSHIFT
+         SPACE 1
+EXCPTN7  EQU   *
+*              INSERT FURTHER TESTS HERE
+SHIFT    EQU   *
+         LA    R6,1(0,R6)          POINT TO BYTE 2 IN O/P AREA
+NOSHIFT  EQU   *
+         CH    R1,=H'80'           IS ELEMENT LONGER THAN 80-BYTES
+         BNH   *+8                 NO. SKIP NSI.
+         LH    R1,=H'80'           YES. TRUNCATE TO 80
+         BCTR  R1,0                REDUCE LENGTH FOR MOVE
+         EX    R1,CLCELMNT         IS ELEMENT ALL SPACES?
+         BE    BLANKREC            YES. SKIP OUTPUT PROCESS
+         EX    R1,MOVELMNT         MOVE ELEMENT TO O/P RECORD.
+         LA    R6,OUTAREA          GET TRUE START OF O/P AREA
+         BAL   R4,WUT2             WRITE O/P RECORD
+         MVI   PRTCTL,SPCE1AFT     SINGLE LINE SPACING
+         BAL   R4,PRINT            PRINT RECORD
+         CP    LINECOUN,MAXLINE    PAGE OVERFLOW?
+         BL    *+8                 NO. SKIP NSI.
+         BAL   R4,HEADINGS         YES. PRINT HEADINGS FOR NEXT PAGE
+         MVI   OUTAREA,BLANK       CLEAR O/P AREA
+         MVC   OUTAREA+1(79),OUTAREA
+BLANKREC EQU   *
+         L     R3,0(0,R3)          POINT TO NEXT ELEMENT.
+         LTR   R3,R3               WAS THIS THE LAST ELEMENT?
+         BZ    SCANEXIT            YES. LEAVE ROUTINE
+         B     SCANLOOP            NO. GO PROCESS IT.
+         SPACE 1
+MOVELMNT MVC 0(0,R6),0(R2)         EXECUTED MOVE ELEMENT TO OUTAREA
+CLCELMNT CLC   0(0,R2),OUTAREA     TEST FOR BLANK ELEMENT
+         SPACE 3
+SCANEXIT EQU *
+*        IF RUNNING UNDER MFT BYPASS FREEMAIN. SUBPOOLS NOT SUPPORTED.
+         L     R3,16               GET CVT ADDRESS
+         TM    116(R3),X'20'       IS OPERATING SYSTEM MFT?
+         BO    NOFREE              YES. SKIP FREEMAIN BY SUBPOOL
+         FREEMAIN R,SP=1           FREE SCAN MACRO CHAIN ELEMENTS
+NOFREE   EQU *
+         SUBOUT RESTORE=R4
+         EJECT
+*******************************************************************
+*        OPENDS SUBRTN.                                           *
+*        --------------                                           *
+*        TEST WHICH ARE THE DD'S SUPPLIED, AND OPEN DATA SETS     *
+*         PRESENT.                                                *
+*******************************************************************
+         SPACE 1
+OPENDS   SUBIN SAVE=(R3,R4)
+         LA    R3,MAXDS            ESTABLISH LOOP
+         LA    R2,DCBTABLE         POINT R2 AT DCB TABLE
+         OI    0(R2),DDINT         INDICATE DD INTEREST
+         BAL   R4,TESTIOT          GO TEST IF DD STATEMENT PRESENT
+         BAL   R4,OPEN             GO OPEN DATA SET
+         LA    R2,DCBNTRY(R2)      POINT AT NEXT TABLE ENTRY
+         BCT   R3,*-16             PROCESS NEXT DATA SET
+         SPACE 1
+OPENDSEX SUBOUT RESTORE=(R3,R4)
+         SPACE 3
+***********************************************************************
+*        HEADINGS SUBRTN                                              *
+*        ----------------                                             *
+*              PRINT PAGE HEADINGS FOR OPTIONAL SYSPRINT DATASET.     *
+***********************************************************************
+         SPACE 1
+HEADINGS SUBIN SAVE=R4
+         MVI   PRTCTL,PAGESKIP     SKIP TO NEW PAGE
+         BAL   R4,PRINT            GO.
+         AP    PAGECOUN,ONE        ADD ONE TO PAGE COUNT
+         MVC   PAGEDIT,PATRN1      GET EDIT PATTERN
+         ED    PAGEDIT,PAGECOUN    MOVE PAGE COUNTER TO HEAD LINE
+         MVC   PRTAREA(L'HEAD1+4),HEAD1  MOVE HEAD LINE TO PRINT.
+         MVI   PRTCTL,SPCE3AFT     3-LINE SPACING
+         BAL   R4,PRINT            PRINT HEAD LINE
+         ZAP   LINECOUN,=PL2'4'    RESET LINE COUNTER
+         SUBOUT RESTORE=R4
+         TITLE 'I/O SUB-ROUTINES'
+*******************************************************************
+*        WRITE SUBROUTINE FOR SYSPRINT                            *
+*******************************************************************
+         SPACE 1
+PRINT    SUBIN ,
+         TM    PRINTSW,DDINT+DDPRES+DDOPEN   TEST IF NEED TO WRITE
+         BNO   PRINTOFF            BRANCH IF NO
+         PUT   SYSPRINT,(R5)       WRITE RECORD TO SYSPRINT D/S
+         AP    LINECOUN,ONE        INCREMENT LINE CONTER
+PRINTOFF EQU   *
+         MVI   1(R5),BLANK         MOVE BLANK TO START OF LINE
+         MVC   2(131,R5),1(R5)      AND PROPAGANTE THROUGH
+PRINTX   SUBOUT ,                  RETURN TO CALLER
+         SPACE 2
+*******************************************************************
+*        READ SUBROUTINE FOR SYSIN                                *
+*******************************************************************
+         SPACE 1
+RIN      SUBIN ,
+         TM    SYSINSW,DDOPEN      SYSIN DATASET AVAILABLE?
+         BNO   EODIN               NO. BRANCH IMMEDIATELY TO EOD RTN.
+         GET   SYSIN               READ RECORD FROM SYSIN D/S
+         LR    R6,R1               SAVE RECORD ADDRESS
+         AP    CNTSYSIN,ONE        INCREMENT RECORD COUNTER
+         SUBOUT ,                  RETURN TO CALLER
+         SPACE 2
+*******************************************************************
+*        READ SUBROUTINE FOR SYSUT1                               *
+*******************************************************************
+         SPACE 1
+RUT1     SUBIN ,
+         TM    SYSUT1SW,DDOPEN     SYSUT1 DATASET AVAILABLE?
+         BNO   EODUT1              NO. BRANCH IMMEDIATELY TO EOD RTN.
+         GET   SYSUT1              READ RECORD FROM SYSUT1 D/S
+         LR    R6,R1               SAVE RECORD ADDRESS
+         AP    CNTUT1,ONE          INCREMENT RECORD COUNTER
+         SUBOUT ,                  RETURN TO CALLER
+         SPACE 2
+*******************************************************************
+*        WRITE SUBROUTINE FOR SYSUT2                              *
+*******************************************************************
+         SPACE 1
+WUT2     SUBIN ,
+         TM    SYSUT2SW,DDINT+DDPRES+DDOPEN  TEST IF NEED TO WRITE
+         BNO   WUT2X               BRANCH IF NO
+         PUT   SYSUT2,0(R6)        WRITE RECORD TO SYSUT2 D/S
+         AP    CNTUT2,ONE          INCREMENT RECORD COUNTER
+WUT2X    SUBOUT ,                  RETURN TO CALLER
+         SPACE 5
+*******************************************************************
+*        SUPPLY DEFAULT RECORD LENGTH AND/OR BLOCK SIZE           *
+*         IF NOT CODED.                                           *
+*******************************************************************
+         SPACE 1
+BLKSZRTN SUBIN ,                   SUPPLY DEFAULT LRECL AND/OR BLKS
+         USING IHADCB,R1           ESTABLISH DCB ADDRESSABILITY
+         CLC   DCBLRECL,ZEROWORD   TEST IF LRECL SUPPLIED
+         BNE   *+8                 BYPASS DEFAULT IF YES
+         MVI   DCBLRECL+1,80       FORCE LRECL TO 80
+         CLC   DCBBLKSI,ZEROWORD   TEST IF BLKSIZE SUPPLIED
+         BNE   0(R14)              RETURN TO OPEN IF YES
+         MVC   DCBBLKSI,DCBLRECL   FORCE SINGLE BLOCKING
+         DROP  R1                  DROP DCB ADDRESSABILITY
+         SUBOUT RETURN=(R14)       RETURN TO OPEN ROUTINES
+         SPACE 2
+*******************************************************************
+*        I/O ERROR ROUTINE                                        *
+*******************************************************************
+         SPACE 1
+IOERROR  SUBIN ,                   ANALYSE I/O ERROR
+         MVC   COMPCODE,COND16     SET COMPLETION CODE
+         SYNADAF ACSMETH=QSAM      CALL ANALYSIS ROUTINE
+         MVC   WTOIOE+27(86),50(R1) ADD RESULT OF ANALYSIS TO LINE
+         SYNADRLS ,                RELEASE OS BUFFER
+         WTO   MF=(E,WTOIOE)       TELL OPERATOR OF ERROR
+         SUBOUT RETURN=JOBEND      TERMINATE JOB
+         EJECT
+*******************************************************************
+*        TEST IF A DD STATEMENT IS PRESENT BEFORE OPEN            *
+*******************************************************************
+         SPACE 1
+TESTIOT  SUBIN ,                   TEST TASK INPUT/OUTPUT TABLE
+         TESTIOT DDNAME=4(R2)      TEST IF DDNAME FOUND IN TIOT
+         B     *+4(R15)            TEST CONDITION CODE
+         OI    0(R2),DDPRES        TELL THAT DD STATEMENT SUPPLIED
+         SUBOUT ,                  RETURN TO CALLER
+         SPACE 3
+*******************************************************************
+*        OPEN ROUTINE                                             *
+*******************************************************************
+         SPACE 1
+OPEN     SUBIN SAVE=(R3)           OPEN DATA SET
+         TM    0(R2),DDINT+DDPRES  TEST IF DD INTERESTING AND
+         BNO   OPENX               BRANCH IF NO    / PRESENT.
+         L     R3,0(R2)            GET DCB ADDRESS
+         CLC   12(8,R2),=C'INPUT   ' TEST FOR INPUT D/S
+         BE    OPENZ               BRANCH IF INPUT D/S
+         OPEN  ((R3),(OUTPUT))     OPEN OUTPUT DATA SET
+         B     OPENY               GO SET SWITCH
+OPENZ    OPEN  ((R3),(INPUT))      OPEN INPUT DATA SET
+OPENY    OI    0(R2),DDOPEN        INDICATE DATA SET OPEN
+OPENX    SUBOUT RESTORE=(R3)       RETURN TO CALLER
+         SPACE 3
+*******************************************************************
+*        CLOSE ROUTINE                                            *
+*******************************************************************
+         SPACE 1
+CLOSE    SUBIN SAVE=(R3)           CLOSE DATA SET
+         TM    0(R2),DDOPEN        TEST IF DATA SET OPEN
+         BZ    CLOSEX              EXIT IF NOT
+         L     R3,0(R2)            GET DCB ADDRESS
+         CLOSE ((R3))              CLOSE DATA SET
+         NI    0(R2),FF-DDOPEN     SET OFF 'OPEN' SWITCH
+CLOSEX   SUBOUT RESTORE=(R3)       RETURN TO CALLER
+         TITLE 'DCB''S AND I/O CONTROL TABLES'
+*******************************************************************
+*        DCB'S TABLE                                              *
+*******************************************************************
+         SPACE 1
+DCBTABLE DS    0F
+PRINTSW  DC    X'00',AL3(SYSPRINT),CL8'SYSPRINT',CL8'OUTPUT'
+SYSINSW  DC    X'00',AL3(SYSIN),CL8'SYSIN',CL8'INPUT'
+SYSUT1SW DC    X'00',AL3(SYSUT1),CL8'SYSUT1',CL8'INPUT'
+SYSUT2SW DC    X'00',AL3(SYSUT2),CL8'SYSUT2',CL8'OUTPUT'
+UT2DDN   EQU SYSUT2SW+4
+         SPACE 1
+TABSIZE  EQU   *-DCBTABLE          DCB'S TABLE SIZE
+DCBNTRY  EQU   20                  LENGTH OF ONE TABLE ELEMENT
+MAXDS    EQU   TABSIZE/DCBNTRY     MAXIMUN NUMBER OF DCB'S
+         SPACE 1
+DDINT    EQU   16                  DD INTEREST
+DDPRES   EQU   8                   DD PRESENT
+DDOPEN   EQU   1                   DATA SET IS OPEN
+         SPACE 2
+EXITLIST DC    X'85',AL3(BLKSZRTN) ENTRY FOR DCB MODIFICATION
+         SPACE 2
+WTOIOE   DS    0F
+         DC    AL2(WTOEND-*),H'0',CL109'******** - I/O ERROR -'
+WTOEND   EQU   *
+         EJECT
+*******************************************************************
+*        DATA CONTROL BLOCKS                                      *
+*******************************************************************
+         SPACE 1
+SYSPRINT DCB   DDNAME=SYSPRINT,                                        C
+               DSORG=PS,                                               C
+               SYNAD=IOERROR,                                          C
+               EXLST=EXITLIST,                                         C
+               RECFM=FBM,                                              C
+               MACRF=PM,                                               C
+               LRECL=133
+         SPACE 3
+SYSIN    DCB   DDNAME=SYSIN,                                           C
+               DSORG=PS,                                               C
+               SYNAD=IOERROR,                                          C
+               EXLST=EXITLIST,                                         C
+               MACRF=GL,                                               C
+               EODAD=EODIN
+         SPACE 3
+SYSUT1   DCB   DDNAME=SYSUT1,                                          C
+               DSORG=PS,                                               C
+               SYNAD=IOERROR,                                          C
+               EXLST=EXITLIST,                                         C
+               MACRF=GL,                                               C
+               EODAD=EODUT1
+         SPACE 3
+SYSUT2   DCB   DDNAME=SYSUT2,                                          C
+               DSORG=PS,                                               C
+               SYNAD=IOERROR,                                          C
+               EXLST=EXITLIST,                                         C
+               RECFM=FB,                                               C
+               MACRF=PM
+         TITLE 'MISCELLANIOUS EQUATES, CONSTANTS AND WORK AREAS'
+*******************************************************************
+*        EQUATES                                                  *
+*******************************************************************
+         SPACE 1
+FF       EQU   255                 FOR 'NI' INSTRUCTION
+BLANK    EQU   X'40'               BLANK
+ON       EQU   X'FF'               ON
+OFF      EQU   X'00'               OFF
+HIGHVAL  EQU   X'FF'               HIGH VALUE
+LOWVAL   EQU   X'00'               LOW VALUE
+SIGN     EQU   X'F0'               FOR FORCE SIGN TO 'F'
+         SPACE 1
+SPCE1AFT EQU   X'09'               SPACE 1 AFTER PRINTING
+SPCE2AFT EQU   X'11'               SPACE 2 AFTER PRINTING
+SPCE3AFT EQU   X'19'               SPACE 3 AFTER PRINTING
+PAGESKIP EQU   X'8B'               SKIP TO NEW PAGE
+         EJECT
+*******************************************************************
+*        CONSTANTS                                                *
+*******************************************************************
+         SPACE 1
+ZEROWORD DC    F'0'                BINARY ZERO FULLWORD FOR TESTS
+         SPACE 1
+COND4    DC    H'4'                COMPLETION CODE OF 4
+COND8    DC    H'8'                COMPLETION CODE OF 8
+COND12   DC    H'12'               COMPLETION CODE OF 12
+COND16   DC    H'16'               COMPLETION CODE OF 16
+         SPACE 1
+ZERO     DC    PL1'0'              PACKED CONSTANT OF ZERO
+ONE      DC    PL2'1'              PACKED CONSTANT OF ONE
+PATRN1   DC    XL4'40202120'
+         SPACE 3
+*******************************************************************
+*        WORK AREAS                                               *
+*******************************************************************
+         SPACE 1
+DECIMAL  DS    D                   WA FOR DECIMAL OPERATIONS
+COMPCODE DC    H'0'                CONDITION CODE
+         SPACE 1
+SCANCHN  DC    F'0'                ANCHOR POINT FOR CHAIN FROM SCAN
+PARMADDR DS    F                   ADDRESS OF PARM INFO'S
+         SPACE 1
+PAGECOUN DC    PL2'0'              COUNT OF PAGES
+LINECOUN DC    PL2'0'              COUNT OF LINES
+MAXLINE  DC    PL2'60'             MAXIMUM NUMBER OF LINES PER PAGE
+         SPACE 1
+CNTSYSIN DC    PL4'0'
+CNTUT1   DC    PL4'0'
+CNTUT2   DC    PL4'0'
+CNTUT3   DC    PL4'0'
+         SPACE 1
+PRTLINE  DS    0CL133
+PRTCTL   DC    XL1'09'
+PRTAREA  DS    0CL132
+OUTAREA  DC    CL80' '
+PRTFILLR DC    CL52' '
+         SPACE 1
+HEAD1    DC    C'UT502 - OUTPUT CARD IMAGE LIST     PAGE'
+PAGEDIT  DC    CL4' '
+         EJECT
+*******************************************************************
+*        LITERAL POOL                                             *
+*******************************************************************
+         SPACE 1
+         LTORG
+         SPACE 5
+*******************************************************************
+*        DCB DSECT                                                *
+*******************************************************************
+         SPACE 1
+         PRINT NOGEN
+         DCBD  DSORG=PS            GENERATE DCB DSECT
+         PRINT NOGEN
+         END

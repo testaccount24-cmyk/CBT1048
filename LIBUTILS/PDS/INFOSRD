@@ -1,0 +1,418 @@
+SRD      TITLE 'INFOSRD - INFOLOCA, INFOOPEN, INFOCLOS'
+INFOSRD  START 0
+         ENTRY B0728D
+         ENTRY QFDDCB
+         ENTRY INFOOPEN
+         ENTRY INFOLOCA
+         ENTRY INFOCLOS
+B0728D   EQU   INFOSRD
+*
+         USING FILE,2
+         USING SEGDESCR,3
+         USING IHADCB,4
+         USING FBUCKET,5
+         USING *,15
+INFOOPEN B     SAVE
+         DROP  15
+         USING *,15
+INFOLOCA OI    LOCASW+1,C'0'
+         L     15,BASE
+         DROP  15
+         USING INFOSRD,15
+         B     SAVE
+         DROP  15
+         USING *,15
+INFOCLOS OI    CLOSW+1,C'0'
+         L     15,BASE
+         DROP  15
+         USING INFOSRD,12
+SAVE     STM   14,12,12(13)
+         LR    12,15
+         LA    5,SAVEAREA
+         ST    13,SAVEAREA+4
+         ST    5,8(13)
+         LR    13,5
+*
+         LM    2,8,0(1)
+         STM   2,8,PARMSAVE
+         MVC   KEY,0(2)           FILE NAME
+         MVC   SEGNAME,0(3)
+LOCASW   NOP   LOCARTN
+         ST    4,RC               STORE RETURN FLAG ADDRESS
+CLOSW    NOP   CLOSRTN
+         MVC   NODCBS,0(3)        NUMBER DCBS-OPEN,CLOSE/SEGN-LOCA
+OPENSW   BAL   8,FINDFILE         SEE IF FILE EXISTS
+         B     GETMORE            NOT-FOUND RETURNS HERE - BUILD FILE
+         B     OPEN
+GETMORE  BAL   8,SETL
+         BAL   8,GET
+         LR    2,1
+         LH    4,FNOSEGM+2
+         MH    4,H44
+         LA    4,SEGAREA-FILER(4)
+         MVI   GFMODE,X'20'
+         ST    4,GFPARM
+         LA    1,GFPARM
+         SVC   4
+*
+         LTR   15,15
+         BNZ   ERRG
+BLDAREA  L     5,COREALOC
+*
+         DROP  5
+         USING FBUCKET,7
+*
+         ST    5,QCHAIN
+*
+         DROP  7
+         USING FBUCKET,5
+*
+         LR    7,5
+LOOP1    LA    6,255
+         SH    4,H256
+         BM    LASTXC
+         EX    6,CLEAR
+         LA    7,256(7)
+H256     EQU   *-2
+         B     LOOP1
+         SPACE 2
+CLEAR    XC    0(1,7),0(7)
+         SPACE
+LASTXC   AR    4,6
+         EX    4,CLEAR
+         MVC   FILER,0(2)
+         LA    2,FILER
+         LA    3,SEGAREA
+         L     7,FSEGNO
+LOOP2    BAL   8,GET
+         MVC   SEGMENT,0(1)
+         LA    3,44(3)
+H44      EQU   *-2
+         BCT   7,LOOP2
+         ST    3,SEGEND
+         BAL   8,ESETL
+DELOPE   LA    4,QISDCB
+LOOP3    XI    BLDSW+1,C'0'
+         MVC   DCBDDNAM,FDDNAME
+         LA    6,1
+         SR    7,7
+         LA    1,TABDISP
+         LA    8,18
+LOOP4    IC    7,0(1)
+         ST    6,IHADCB(7)
+         AR    1,6
+         BCT   8,LOOP4
+         OI    DCBDSORG,X'80'
+         OI    DCBOFLGS,X'02'
+BLDSW    B     NBLD
+         MVC   DCBMACR,QISMACR
+         ST    4,OPENER
+         LA    4,BISDCB
+         B     LOOP3
+NBLD     ST    4,OPEN2
+         MVI   DCBMAC,X'0E'
+         MVC   DCBMACR,BISMACR
+         B     OPENING
+***********************************************************************
+OPEN     STM   0,1,OPENER         STORE DCBS IN OPEN/CLOSE  LIST
+OPENING  MVI   OPEN2,X'84'
+         CLI   NODCBS,C'3'        REQUEST TO OPEN NONE
+         BE    RETURN0            YES-NONE OPENED
+         CLI   NODCBS,C'1'        REQUEST TO OPEN QISAM ONLY
+         BE    OPENSEQU           YES-OPEN QISAM ONLY
+         CLI   NODCBS,X'F0'       REQUEST TO OPEN QISAM ONLY
+         BE    OPENSEQU           YES-OPEN QISAM ONLY
+         CLI   NODCBS,X'0F'       REQUEST TO OPEN BISAM ONLY
+         BE    OPENRAND           YES-OPEN BISAM ONLY
+OPENBOTH TM    DCBSTAT,X'FF'      IS IT ALREADY OPENED
+         BO    RETURN0
+         OI    DCBSTAT,X'FF'      TURN BOTH DCBS ON
+         B     OPENS
+OPENSEQU TM    DCBSTAT,X'F0'      IS IT ALREADY OPENED
+         BO    RETURN0
+         OI    DCBSTAT,X'F0'      TURN QISAM ON
+         MVI   OPENER,X'84'
+         B     OPENS
+OPENRAND TM    DCBSTAT,X'0F'      IS IT ALREADY OPENED
+         BO    RETURN0
+         OI    DCBSTAT,X'0F'      TURN BISAM ON
+         MVC   OPENER,OPEN2
+OPENS    LA    1,OPENER           POINT TO OPEN/CLOSE LIST
+         SVC   19                 OPEN THE FILE(S)
+***********************************************************************
+RETURN0  MVI   FLAG,C'0'
+RETURN   L     2,RC
+         MVC   0(1,2),FLAG
+         L     13,SAVEAREA+4
+         LM    14,12,12(13)
+         MVI   12(13),X'FF'
+         BR    14
+         TITLE 'INFOLOCA - LOCATE FILE BUCKET, PASS BACK LOCATIONS'
+LOCARTN  NI    LOCASW+1,X'0F'
+         MVI   FLAG,C'2'          NO-MATCH RETURN CODE
+         BAL   8,FINDFILE
+         B     RETURN
+         CLI   SEGNAME,X'00'
+         BE    PASS
+         MVI   FLAG,C'3'
+LOOP5    CLC   SFILE,KEY
+         BNE   RETURN
+         CLC   SNAME,SEGNAME
+         BE    PASS
+         LA    3,44(3)
+         CR    3,6
+         BL    LOOP5
+RETURN1  MVI   FLAG,C'1'
+         B     RETURN
+PASS     LM    7,10,PARMSAVE+8    FILEL - SEGL - QDCBL - BDCBL
+         ST    2,0(7)
+         ST    3,0(8)
+         ST    4,0(9)
+         ST    1,0(10)            STRORE BISAM DCB
+         B     RETURN0
+         TITLE 'INFOCLOS - LOCATE FILE AND CLOSE'
+CLOSRTN  NI    CLOSW+1,X'0F'
+         BAL   8,FINDFILE
+         B     RETURN1
+***********************************************************************
+CLOSE    STM   0,1,OPENER         STORE QISAM AND BISAM   DCBS
+         MVI   OPEN2,X'80'        BOTH DCB'S TO BE CLOSED
+         TM    DCBSTAT,X'FF'      ARE BOTH DCB'S OPENED
+         BO    CLOSES             YES-CLOSE BOTH DCB'S
+         MVI   OPENER,X'80'       ONLY ONE DCB IS OPENED
+         TM    DCBSTAT,X'F0'      IS IT THE QISAM DCB
+         BO    CLOSES             YES-IT IS QISAM
+         TM    DCBSTAT,X'0F'      IS IT THE BISAM DCB
+         BZ    CLOSED             NO--FILES ALREADY CLOSED
+         MVC   OPENER,OPEN2       YES-IT IS THE BISAM DCB
+CLOSES   LA    1,OPENER           POINT TO TOP OF LIST -
+         SVC   20                 CLOSE THE FILE(S)
+***********************************************************************
+CLOSED   L     8,QCHAIN
+*
+         DROP  5
+         USING FBUCKET,7
+*
+         ST    8,QCHAIN
+*
+         DROP  7
+         USING FBUCKET,5
+*
+         SR    6,5
+         ST    6,GFPARM
+         ST    5,COREALOC
+         MVI   GFMODE,X'00'
+         LA    1,GFPARM
+         SVC   5
+         B     RETURN0
+         TITLE 'INTERNAL SUBROUTINES - INFOOPEN, INFOLOCA, INFOCLOS'
+**
+***  LOCATE FILE BUCKET IN QUEUE - RETURN TO FOUND OR NOT-FOUND IN LINK
+**
+FINDFILE LA    5,QBEGIN
+FINDLOOP LR    7,5
+         L     5,QCHAIN
+         LTR   5,5
+         BCR   8,8
+         CLC   KEY,FILER+1
+         BNE   FINDLOOP
+         LR    2,5
+         LA    3,SEGAREA
+         LA    4,QISDCB
+         L     6,SEGEND
+         LA    0,QISDCB           ADDRESS OF CURRENT QISAM DCB -
+         LA    1,BISDCB           AND CURRENT BISAM DCB -
+         B     4(8)               RETURN TO FOUND
+         SPACE 2
+**
+***  GET FILE AND SEGMENT DESCRIPTION RECORDS
+**
+         SPACE
+*
+         DROP  4
+         USING IHADCB,1
+*
+GET      GET   QFDDCB
+         BR    8
+SETL     LA    1,QFDDCBAD
+         SVC   19                 OPEN  SRDFD FILE
+         SETL  QFDDCB,KD,KEY
+         BR    8
+ESETL    ESETL QFDDCB
+         LA    1,QFDDCBAD
+         SVC   20                 CLOSE SRDFD FILE
+         BR    8
+*
+         DROP  1
+         USING IHADCB,4
+*
+         TITLE 'E   R   R   O   R      R   E   C   O   V   E   R   Y'
+***********************************************************************
+SCANERR  LA    4,QFDDCB                TEST SRDFD ERRORS
+SCANERRS MVI   FLAG,C'8'                SYNAD ERROR
+         TM    DCBEXCD1,X'80'           KEY NOT FOUND-SETL ?
+         BO    ERR1
+         TM    DCBEXCD1,X'10'           INVALID REQUEST-SETL ?
+         BO    ERR2
+         TM    DCBEXCD1,X'08'           UNCORRECTABLE INPUT-GET ?
+         BO    ERR3
+         TM    DCBEXCD1,X'04'           UNCORRECTABLE OUTPUT-GET/CLOSE?
+         BO    ERR4
+         TM    DCBEXCD1,X'02'           UNREACHABLE BLOCK-GET ?
+         BO    ERR5
+         TM    DCBEXCD1,X'01'           UNREACHABLE BLOCK-GET/CLOSE ?
+         BO    ERR6
+         TM    DCBEXCD2,X'20'           CLOSED DCB ERROR ?
+         BO    ERR7
+         B     ERR8                     UNEXPLAINABLE ERROR
+         SPACE  4
+ERR1     MVI   FLAG,C'2'                SEGMENT NOT FOUND
+         BAL   8,ESETL
+         BAL   8,TYPEMSG
+         B     RETURN
+MSG1     DC    C'FD MISSING'
+ERR2     MVI   FLAG,C'8'
+ERR2X    BAL   8,TYPEMSG
+         B     ERR1
+MSG2     DC    C'INVLD RQST'
+ERR3     MVI   MSG3+9,C'8'
+ERR3X    BAL   8,TYPEMSG
+         B     RETURN
+MSG3     DC    C'I/O ERR-08'
+ERR4     MVI   MSG3+9,C'4'
+         B     ERR3X
+ERR5     MVI   MSG5+9,C'2'
+ERR5X    BAL   8,TYPEMSG
+         B     RETURN
+MSG5     DC    C'BLK ERR-02'
+ERR6     MVI   MSG5+9,C'1'
+         B     ERR5X
+ERR7     BAL   8,TYPEMSG
+         B     RETURN
+MSG7     DC    C'CLOSE ERR '
+ERR8     BAL   8,TYPEMSG
+         B     RETURN
+MSG8     DC    C'SYNAD ERR '
+ERRG     MVI   FLAG,C'6'
+         BAL   8,TYPEMSG
+         B     DUMPIT
+MSGG     DC    C'NO CORE   '
+DUMPIT   L     1,BADEND
+         SVC   13
+***********************************************************************
+         EJECT
+***********************************************************************
+TYPEMSG  MVC   MSGOUT,4(8)
+         CNOP  0,4
+         BAL   1,TYPEOUT
+         DC    AL2(MSGLEN-*)           LENGTH OF MESSAGE
+         DC    AL2(0)
+         DC    C'.'
+FILID    DS    0CL8
+KEY      DS    CL8
+         DC    C'  '
+         DC    C'-'
+FLAG     DS    CL1
+         DC    C'-'
+MSGOUT   DS    CL10
+         DC    C'.'
+MSGLEN   EQU   *
+TYPEOUT  DS    0H
+         SVC   35                      CONSOLE CALL
+         BR    8
+***********************************************************************
+         TITLE 'CONSTANTS AND WORK AREAS'
+         DS    0F
+QBEGIN   EQU   *-44
+QADR     DC    F'0'
+OPENER   DC    F'0'
+OPEN2    DC    F'0'
+BASE     DC    A(INFOSRD)
+SAVEAREA DC    18F'0'
+PARMSAVE DS    0F
+FILENAME DS    F
+SEGMNAME DS    F                  SEGMENT ADDRESS
+FILELOC  DS    F                  FILE DESC LOCATION
+SEGMLOC  DS    F                  SEGMENT LOCATION ADDRESS
+QISAM    DS    F                  SEQ DCB ADDRESS
+BISAM    DS    F                  RAND DCB ADDRESS
+RC       DS    F
+BADEND   DC    XL4'80000063'
+QFDDCBAD DC    AL1(128)
+         DC    AL3(QFDDCB)
+COREALOC DC    A(0)
+GFPARM   DC    F'0'
+         DC    A(COREALOC)
+GFMODE   DC    H'0'               HEX 20 = GET, HEX 00 = FREE
+TABDISP  DC    X'141C40484C54585C6064686CE4E8ECF0F4F8'
+QISMACR  DC    X'48C6'
+BISMACR  DC    X'2420'
+SEGNAME  DS    CL8
+NODCBS   DS    CL1
+         LTORG *
+         EJECT
+QFDDCB   DCB   DSORG=IS,DDNAME=SRDFD,MACRF=(GL,SK),NCP=1,BUFNO=1,      -
+               SYNAD=SCANERR,EODAD=ERR1
+         TITLE 'DUMMY SECTIONS TO DEFINE FILE AREA'
+FBUCKET  DSECT
+FILER    DS    0CL44
+         DS    CL20
+FSEGNO   DS    F
+         DS    CL20
+QCHAIN   DS    F
+SEGEND   DS    F
+FLAGS    DS    0F
+SEQMODE  DS    CL1
+SETMODE  DS    CL1
+GETMODE  DS    CL1
+LEVMODE  DS    CL1
+FUNCHOLD DS    F
+BISDECB  DS    0CL28
+         DS    F
+TYPE1    DS    CL1
+TYPE2    DS    CL1
+DECBRECL DS    H
+DCBAD    DS    F
+AREAD    DS    F
+RECPNT   DS    F
+KEYAD    DS    F
+STATUS   DS    H
+DCBSTAT  DS    CL1                F0=QISAM,0F=BISAM,FF=BOTH--OPENED
+MODEM    DS    CL1
+         ORG   *-16
+QISDCB   DS    CL252
+         ORG   *-16
+BISDCB   DS    CL252
+SEGAREA  DS    0CL44
+         SPACE 2
+FILE     DSECT
+FTYPE    DS    CL1
+FNAME    DS    CL8
+         DS    CL1
+FOPEN    DS    CL2
+FDDNAME  DS    CL8
+FNOSEGM  DS    F
+FMAXLEN  DS    F
+FKEYLEN  DS    F
+FRKP     DS    F
+FILEINDX DS    F
+FLRECL   DS    H
+FBLKSIZE DS    H
+         SPACE 2
+SEGDESCR DSECT
+SEGMENT  DS    0CL44
+STYPE    DS    CL1
+SFILE    DS    CL8
+SLEVA    DS    CL2
+         DS    CL1
+SNAME    DS    CL8
+SLEVB    DS    F
+SLEN     DS    F
+SRKP     DS    F                  0 REF, POS KEY IN DATA
+SFRKP    DS    F                  0 REF FM FRKP, SEG KEY POS IN FULLKEY
+SKEYLEN  DS    F
+SHOLD    DS    H
+SENSE    DS    CL2
+         TITLE 'DUMMY SECTION DEFINING INDEXED SEQUENTIAL DCB'
+         DCBD  DSORG=IS
+         END

@@ -1,0 +1,140 @@
+***********************************************************************
+*                         M O P E P U T
+*
+*            THIS ROUTINE WRITES TO THE TCAM OUTPUT Q DIRECTLY AND
+*        MATCHES OUTGOING MESSAGES WITH PARTICULAR USERS ALREADY
+*        LOGGED ON TO MOPE.
+*            THE MOPE-SUPPLIED INPUT DATA IS TAKEN FROM A STACK OF DATA
+*        AND 'JUGGLED' TO INCLUDE ADDITIONAL CONTROL CHARACTERS AND
+*        THE NAME OF THE TERMINAL TO WHICH IT SHOULD BE ROUTED.
+*            WHEN THE DATA HAS BEEN WRITTEN TO THE QUEUE, THE BLOCK
+*        WHICH WAS USED TO HOLD IT IS FREEMAINED AND THE DATA STACK
+*        IS UPDATED.
+*            WHEN THE ROUTINE DETECTS THAT THE CENTRAL ECB HAS BEEN
+*        POSTED, IT RETURNS CONTROL IMMEDIATELY TO THE CONTROL PROGRAM
+*
+*
+*
+***********************************************************************
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING
+***********************************************************************
+         SPACE 2
+MOPEPUT  ZCSECT 12,GETMAIN=1
+         LR    REG10,REG1          ADDRESS OF COMMON WORK AREA
+         USING TCAMWORK,REG10      ADDRESSABILITY FOR WORK AREA
+         EJECT
+***********************************************************************
+*        SCAN THE TERMINAL TABLE FOR PENDING OUTPUT.
+***********************************************************************
+         SPACE 2
+MAINSTRT DS    0H
+         LA    REG4,STAKADDR       ADDRESS OF ADDRESS OF TOP OF STACK
+         USING TERMENTY,REG4       ADDRESSABILITY FOR STACK ENTRIES
+USERLOOP EQU   *
+         L     REG4,TERMCHN        ADDRESS OF FIRST/NEXT ENTRY
+         NC    TERMNAME,TERMNAME   IS THIS AN EMPTY SLOT ALREADY ?
+         BZ    WAIT                YES. BETTER GO ISSUE A WAIT
+         TM    TERMOECB,X'40'      SOME OUTPUT AWAITING HERE ?
+         BZ    USERLOOP            NO. GO TRY NEXT ENTRY
+         NI    TERMOECB,255-X'40'  SWITCH OFF THAT COMPLETE BIT
+         EJECT
+***********************************************************************
+*        AN ENTRY IS FOUND WITH DATA CHAINED TO IT
+***********************************************************************
+         SPACE 2
+FOUNDHIM DS    0H
+         L     REG3,TERMOSTK       ADDRESS OF FIRST ENTRY ON STACK
+         USING OUTBLOCK,REG3       ADDRESSABILITY FOR IT
+         LTR   REG3,REG3           ANY MORE ON THERE ?
+         BZ    USERLOOP            NO. STACK IS EMPTY
+         L     REG5,0(REG3)        ADDRESS OF ONE AFTER THAT
+         CS    REG3,REG5,TERMOSTK  ATTEMPT TO GET THE THING OUT
+         BNE   *-8                 FAILED. TRY AGAIN
+         PUT   MOPEOUTQ,OUTBUFF    OUTPUT THIS DATA
+         L     REG2,OUTGETMN       GET LENGTH OF THIS CORE BLOCK
+         FREEMAIN R,LV=(2),A=(3)   AND FREEMAIN IT
+         B     FOUNDHIM            GO PROCESS FOR ANY MORE
+         EJECT
+***********************************************************************
+*        STACK IS PROCESSED. BUILD AN ECB WAIT LIST
+***********************************************************************
+         SPACE 2
+WAIT     DS    0H
+         TM    MAINWAIT,X'40'      IS TP TO BE STOPPED ?
+         BO    TERMINAT            YES. RETURN TO SYSTEM
+         LA    REG4,STAKADDR       ADDRESS OF ADDRESS OF TOP OF STACK
+         LA    REG6,ECBLIST        ADDRESS OF ECBLIST AREA
+ECBXLOOP EQU   *
+         L     REG4,TERMCHN        ADDRESS OF FIRST/NEXT ENTRY
+         NC    TERMNAME,TERMNAME   IS THIS AN EMPTY SLOT ALREADY ?
+         BZ    ISSUEIT             YES. GO ISSUE A WAIT MACRO
+         LA    REG1,TERMOECB       GET ADDRESS OF THE ECB
+         ST    REG1,0(REG6)        SAVE IN ECB LIST
+         LA    REG6,4(REG6)        INCREMENT TO NEXT SLOT
+         B     ECBXLOOP            AND CONTINUE
+ISSUEIT  DS    0H
+         LA    REG1,STIMRECB       DUMMY ECB IN CASE OF LOCKOUT
+         XC    0(4,REG1),0(REG1)   CLEAR THE DUMMY ECB
+         ST    REG1,0(REG6)        USE IN CASE NO USERS PRESENT
+         OI    0(REG6),X'80'       TURN ON END OF LIST INDICATOR
+         EJECT
+***********************************************************************
+*        ISSUE A STIMER TO PREVENT LOCKOUT AND WAIT FOR REQUESTS
+***********************************************************************
+         SPACE 2
+         L     REG7,EXITADDR       LOAD ADDRESS OF EXIT ROUTINE
+         STIMER REAL,(7),BINTVL=WAITTIME IN CASE NO-ONE DOES ANYTHING
+         WAIT  1,ECBLIST=ECBLIST   WAIT FOR SOMETHING TO HAPPEN
+         B     MAINSTRT            AND GO PROCESS THE QUEUES
+         EJECT
+***********************************************************************
+*        RETURN TO THE MAIN CONTROL TASK
+***********************************************************************
+         SPACE 2
+TERMINAT DS    0H
+         POST  TASKWAIT            TELL MASTER TASK I'M FINISHED
+         ZRETURN RC=0              AND RETURN TO THE SYSTEM
+         EJECT
+***********************************************************************
+*        FAILURE AND ERROR ROUTINES
+***********************************************************************
+         SPACE 2
+         EJECT
+***********************************************************************
+*        CONSTANTS NOT CHANGED BY THIS PROGRAM
+***********************************************************************
+         SPACE 2
+WAITTIME DC    F'100'              ONE SECOND BETWEEN LOCK CHECKS
+EXITADDR DC    A(STIMEXIT)         ADDRESS OF STIMER EXIT ROUTINE
+         LTORG
+         EJECT
+***********************************************************************
+*        STIMER INTERVAL ELAPSE ROUTINE
+***********************************************************************
+         SPACE 2
+STIMEXIT ZCSECT GETMAIN=1
+         EJECT
+***********************************************************************
+*        POST THE STIMER WAIT ECB
+***********************************************************************
+         SPACE 2
+         POST  STIMRECB            WAKE UP IF YOU'RE ASLEEP
+         EJECT
+***********************************************************************
+*        RETURN TO THE DISPATCHER
+***********************************************************************
+         SPACE 2
+         ZRETURN RC=0              RETURN TO SYSTEM
+         EJECT
+***********************************************************************
+*        WORK AREAS AND DSECTS USED IN THIS ROUTINE
+***********************************************************************
+         SPACE 2
+         TCAMWORK
+         SPACE 2
+         PRINT NOGEN
+         DCBD DSORG=QS
+         PRINT GEN
+         END

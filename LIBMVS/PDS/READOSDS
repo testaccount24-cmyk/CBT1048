@@ -1,0 +1,199 @@
+         TITLE 'READ IN AN OS DATA SET'
+***********************************************************************
+*                          R E A D O S D S
+*
+*            THIS ROUTINE WILL READ INTO THE EDIT DATA STACK ALL OR
+*        PART OF AN OS DATA SET.
+*
+*            ON ENTRY TO THIS ROUTINE, REG1 WILL ADDRESS A PARAMETER
+*        LIST OF TWO ENTRIES:
+*
+*        1)    ADDRESS OF A Q ELEMENT AFTER WHICH THE NEW DATA IS TO
+*              BE PLACED.
+*        2)    ADDRESS OF THE USER PARAMETER AREA
+*
+*            ON EXIT FROM THIS ROUTINE, THE DATA SET WILL HAVE BEEN
+*        LOADED INTO CORE ACCORDING TO THE SELECTION PARAMETERS
+*        SPECIFIED IN THE READPRMS FIELD OF THE EDIT WORK AREA.
+*
+***********************************************************************
+         EJECT
+***********************************************************************
+*        READ AN OS DATA SET
+***********************************************************************
+         SPACE 2
+READOSDS ZCSECT GETMAIN=1
+         L     REG3,0(REG1)        SAVE ADDRESS OF INSERT POINT
+         L     REG9,4(REG1)        LOAD ADDRESS OF USER PARM AREA
+         USING USERPARM,REG9       ADDRESSABILITY
+         L     REG10,UPEDITWK      LOAD ADDRESS OF EDIT WORK AREA
+         USING WDSECT,REG10        ADDRESSABILITY
+         EJECT
+***********************************************************************
+*        ALLOCATE THE FILE
+***********************************************************************
+         SPACE 2
+         LINK  PARAM=(JCLDATA,FUNCTION,RETCODE,A,B),VL=1,              X
+               SF=(E,UT501S),MF=(E,UT501D)      ALLOCATE THE DATA SET
+         CLI   RETCODE,0           ALLOCATION WAS SUCCESSFUL ?
+         BE    OPENFILE            YES. GO PROCESS IT
+         B     BADALLOC            NO. GO SIGNAL ALLOCATION FAILURE
+         EJECT
+***********************************************************************
+*        OPEN THE DATA SET TO BE EDITED                               *
+***********************************************************************
+         SPACE 2
+OPENFILE EQU   *
+         MVC   SYSUT1(96),DCBMASK  INITIALISE THE DCB
+         MVC   OPENLIST(4),LISTMASK INITIALISE THE OPEN PARM LIST
+         MVC   CLOSLIST(4),LISTMASK INITIALISE THE CLOSE LIST
+         LA    REG2,SYSUT1         LOAD ADDRESS OF THE DCB
+         OPEN  ((2),INPUT),MF=(E,OPENLIST) OPEN THE FILE
+         USING IHADCB,REG2         ADDRESSABILITY FOR IT
+         TM    DCBOFLGS,DCBOFOPN   IS THE DCB OPEN OK
+         BZ    EODAD               LIKE HELL. TREAT IT AS A NULL FILE
+         LH    REG5,DCBLRECL       LOAD THE LENGTH OF A RECORD
+         STH   REG5,LRECL          SAVE FOR LATER PROCESIING
+         DROP  REG2                RELEASE ADDRESSABILITY
+         EJECT
+***********************************************************************
+*        LOAD THE DATA INTO GOTTEN AREA                               *
+***********************************************************************
+         SPACE 2
+         CLC   HEX,=C'YES'         DOES HE WANT TO EDIT IN HEX ?
+         BNE   NOHEX1              NO. LEAVE EVERYTHING ALONE
+         LH    REG1,LRECL          LOAD THE RECORD LENGTH
+         SLL   REG1,1              DOUBLE IT
+         STH   REG1,LRECL          AND STORE AGAIN
+NOHEX1   EQU   *
+         LM    REG6,REG7,READPRMS  LOAD RECORD SELECTION CRITERIA
+READLOOP EQU   *
+         GET   SYSUT1              READ FIRST/NEXT RECORD
+         BCT   REG6,READLOOP       LOOP TO FIRST REQUIRED RECORD
+         LA    REG6,1              FUDGE NEXT EXECUTION OF THAT BCT
+         LR    REG4,REG1           SAVE ADDRESS OF RECORD
+         CALL  GETDATAQ,((3),(9)),VL,MF=(E,CALLLIST) ALLOCATE STACK
+         LR    REG3,REG1           SAVE ADDRESS OF THAT BLOCK
+         L     REG14,0(REG3)       LOAD START ADDRESS OF DATA AREA
+         LH    REG5,LRECL          REFRESH RECORD LENGTH
+         CLC   HEX,=C'YES'         IS EDIT IN HEX ?
+         BNE   LENGTHOK            NO. LENGTH OF RECORD IS VALID
+         SRL   REG5,1              YES. LENGTH HAS BEEN DOUBLED
+LENGTHOK EQU   *
+         LR    REG15,REG5          LOAD LENGTH OF THE DATA
+         MVCL  REG14,REG4          MOVE RECORD TO STACK AREA
+         CLC   HEX,=C'YES'         IS EDIT IN HEX ?
+         BNE   LOOPENDS            NO. LOAD DATA AS NORMAL
+         L     REG1,0(REG3)        LOAD ADDRESS OF DATA
+         LR    REG15,REG1          LOAD END ADDRESS REGISTER
+         AH    REG15,LRECL         AND OF BUFFER AREA
+         LH    REG14,LRECL         LOAD THE LENGTH OF A RECORD
+         SRL   REG14,1             HALF IT
+         AR    REG14,REG1          END OF ORIGINAL DATA
+UNPKLOOP EQU   *
+         BCTR  REG14,0             SUBTRACT 1
+         BCTR  REG15,0             SUBTRACT HALF OF TWO
+         BCTR  REG15,0             AND THEN TH OTHER HALF OF TWO
+         UNPK  DBLWORD(3),0(2,REG14) UNPACK A BYTE
+         TR    DBLWORD(2),HEXTABLE-C'0' CONVERT TO GOOD CHARS
+         MVC   0(2,REG15),DBLWORD  MOVE IT TO END OF BUFFER
+         CR    REG14,REG15         ARRIVED BACK AT START ?
+         BNE   UNPKLOOP            NO. PROCESS THE ENTIRE RECORD
+LOOPENDS EQU   *
+         BCT   REG7,READLOOP      READ REQUIRED NUMBER OF RECORDS
+EODAD    EQU   *                   END OF DATA ROUTINE
+         LA    REG2,SYSUT1         LOAD ADDRESS OF THE DCB
+         USING IHADCB,REG2         ADDRESSABILITY FOR DCB
+         TM    DCBOFLGS,DCBOFOPN   IS THE DCB OPEN IN FACT
+         BZ    NOCLOSE2            NO. DO NOT TRY TO CLOSE IT THEN
+         CLOSE ((2)),MF=(E,CLOSLIST)  CLOSE THE INPUT FILE
+         FREEPOOL SYSUT1            FREE UP THE BUFFER POOL
+         DROP  REG2                RELEASE ADDRESSABILITY
+NOCLOSE2 EQU   *
+         EJECT
+***********************************************************************
+*        DEALLOCATE THE DATA SET BEFORE PROCEEDING
+***********************************************************************
+         SPACE 2
+         LINK  PARAM=(,FUNCTIO2,,,),MF=(E,UT501D),SF=(E,UT501S)
+         EJECT
+***********************************************************************
+*        RETURN TO CALLER
+***********************************************************************
+         SPACE 2
+EXITPGM  ZRETURN
+         EJECT
+***********************************************************************
+*        ERROR ROUTINES
+***********************************************************************
+         SPACE 2
+BADALLOC DS    0H
+         ZRETURN RC=4              ALLOCATION FAILURE RETURN CODE
+         EJECT
+***********************************************************************
+*        DATA CONTROL BLOCK EXIT ROUTINES                             *
+***********************************************************************
+         SPACE 2
+EXLST    DS    0F
+         DC    X'11'               DCB ABEND EXIT
+         DC    AL3(DCBABEND)       ADDRESS OF THE ABEND EXIT
+         DC    X'85'
+         DC    AL3(*+3)
+         PUSH  USING
+         USING *,REG15
+         USING IHADCB,REG1         ADDRESSABILITY FOR DCB
+         NC    DCBLRECL,DCBLRECL   IS THERE AN LRECL CODED ?
+         BNZ   LRECLOK             YES. ACCEPT IT THEN
+         LA    REG2,80             OTHERWISE LOAD A SUITABLE DEFAULT
+         STH   REG2,DCBLRECL       AND STORE IT IT THE DCB
+LRECLOK  EQU   *
+         NC    DCBBLKSI,DCBBLKSI   ANY BLOCKSIZE AVAILABLE
+         BNZ   NOMOVELR            YES. ACCEPT IT THEN
+         MVC   DCBBLKSI,DCBLRECL   NO. THEN TAKE LRECL AS BLOCKSIZE
+NOMOVELR BR    REG14               AND RETURN TO CALLER
+         POP   USING               RESTORE ORIGINAL ADDRESSABILITY
+         EJECT
+***********************************************************************
+*        DCB ABEND EXIT ROUTINE
+***********************************************************************
+         SPACE 2
+         PUSH  USING               SAVE OLD ADDRESSABILITY
+         USING *,REG12             ADDRESSABILITY FOR THIS ROUTINE
+DCBABEND DS    0H
+         LR    REG12,REG15         LOAD BASE ADDRESS REGISTER
+         CLC   0(2,REG1),=X'0130'  OPEN TYPE EXIT
+         BNE   *+8                 NO. THEN TAKE ABEND
+         MVI   3(REG1),X'04'       TURN ON REQUEST TO IGNORE
+         BR    REG14               RETURN TO SYSTEM
+         POP   USING               RESTORE OLD ADDRESSABILITY
+         EJECT
+***********************************************************************
+*        CONSTANTS NOT CHANGED BY THE PROGRAM
+***********************************************************************
+         SPACE 2
+UT501S   LINK  EP=UT501,SF=L
+FUNCTION DC    C'A'                FUNCTIUON CODE FOR UT501
+FUNCTIO2 DC    C'D'                FUNCTION CODE FOR UT501
+DCBMASK  DCB   DDNAME=SYSUT1,DSORG=PS,MACRF=GL,EODAD=EODAD,            X
+               EXLST=EXLST
+LISTMASK OPEN  (0,INPUT),MF=L      GENERATE OPEN PARM LIST
+HEXTABLE DC    C'0123456789ABCDEF' CONVERT UNPACKED DATA TO GOOD HEX
+HEXTABL2 DC    256AL1(*-HEXTABL2)  AND HEX BACK TO GOOD DATA
+         ORG   HEXTABL2+C'A'
+         DC    X'FAFBFCFDFEFF'     MAKE HEX LETTERS LOOK GOOD
+         ORG
+JCLMASK  DC    H'80'
+         DC    C'//SYSUT1 DD DISP=SHR,DSN='
+JCLMLEN  EQU   *-JCLMASK           LENGTH OF JCL CARD INITIAL CONSTANT
+         EJECT
+***********************************************************************
+*        DSECTS
+***********************************************************************
+         SPACE 2
+         USERPARM
+         SPACE 2
+         EDITWK2
+         PRINT NOGEN
+         DCBD  DSORG=QS,DEVD=DA    DCB DSECT
+         PRINT GEN
+         END

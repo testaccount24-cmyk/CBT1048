@@ -1,0 +1,826 @@
+T581P10  START 0
+         SPACE 1
+***********************************************************************
+*                                                                     *
+*        PROGRAM ID. :             T581P10                            *
+*        DATE WRITTEN :            MAY , 1974                         *
+*              (MVS VERSION)       APRIL, 1977                        *
+*        LOCATION :                EUROPEAN COMPUTER CENTER           *
+*        AUTHOR :                  J. NOLS                            *
+*                                                                     *
+*              ===================================                    *
+*                                                                     *
+*        THIS PROGRAM PRODUCES TWO REPORTS                            *
+*                                                                     *
+*              A :  MERGE CATALOGS LIST                               *
+*                                                                     *
+*              B :  SYSCTLG EXCEPTION REPORT                          *
+*                                                                     *
+*                          THIS REPORT GIVES A LIST OF                *
+*                                  1 : UNUSED CVOL PTR                *
+*                                  2 : 'XXXXXX' BAD CVOL              *
+*                                  3 : INDEX ON SYSRES                *
+*                                  4 : INDEX NOT CONNECT              *
+*                                  5 : DUPLICATE INDEX                *
+*                                  6 : UNUSED INDEX                   *
+*                                  7 : UNUSED GDG INDEX               *
+*                                                                     *
+*              THIS PROGRAM ALSO CREATES THE CONTROL CARDS FOR        *
+*              IEHPROGM IF ONE OF D/S 'SYSCTLG' IS TO BE RE-CREATED   *
+*              FOR ANY REASON . THE VOL SER OF THIS D/S MUST BE       *
+*              DEFINED IN PARM OF EXEC CARD.                          *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        REGISTER  EQUATES AND USAGE                                  *
+***********************************************************************
+         SPACE 1
+R0       EQU   0    SVC COMMUNICATIONS AND WORK REGISTER
+R1       EQU   1    SVC COMMUNICATIONS AND WORK REGISTER
+R2       EQU   2    WORK REGISTER
+R3       EQU   3    WORK REGISTER
+R4       EQU   4    WORK REGISTER
+R5       EQU   5    WORK REGISTER
+R6       EQU   6    WORK REGISTER
+R7       EQU   7    WORK REGISTER
+R8       EQU   8    WORK REGISTER
+R9       EQU   9    WORK REGISTER
+R10      EQU   10   WORK REGISTER
+R11      EQU   11   WORK REGISTER
+R12      EQU   12   BASE REGISTER 2
+R13      EQU   13   SAVE AREA POINTER / BASE REGISTER 1
+R14      EQU   14   BALR RETURN ADDRESS
+R15      EQU   15   BALR ROUTINE ADDRESS / RETURN CODE OF LOCATE MACRO
+         SPACE 2
+***********************************************************************
+*        HOUSEKEEPING                                                 *
+***********************************************************************
+         SPACE 1
+         PGMIN EQUATES=NO,USING=(R13,R12) ESTABLISH ADDRESSABILITY
+         SPACE 1
+         PRINT NOGEN               SUPPRESS MACRO EXPANSION
+         SPACE 1
+         L     R2,0(R1)            SAVE ADDRESS OF PARM FROM EXEC CARD
+         SPACE 3
+         EJECT
+***********************************************************************
+*        OPEN THE FILES AND READ CONTROL CARD 'CVOL'                  *
+***********************************************************************
+         SPACE 1
+         OPEN  (SYSIN)             OPEN SYSIN FILE
+READSIN  GET   SYSIN,CARDSIN       READ CONTROL CARD
+         CLC   CARDSIN+1(4),=C'CVOL'  TEST IF CARD CODE = 'CVOL'
+         BNE   READSIN             NO - GO TO NEXT READ
+         MVI   TCARDSIN,ON         YES - SET ON INDICATOR CONTROL CARD
+ENDSYSIN CLOSE (SYSIN)             CLOSE SYSIN FILE
+         CLI   TCARDSIN,ON         TEST IF INDICATOR CONTROL CARD IS ON
+         BE    BEGIN               YES
+ABEND    ABEND 581,DUMP
+BEGIN    OPEN  (T581F100,,T581R10A,(OUTPUT),T581R10B,(OUTPUT))
+         OPEN  (SYSOUT,(OUTPUT))
+         SPACE 3
+***********************************************************************
+         SPACE 1
+         UT458 ,                   ASK FOR IPL DATE AND TIME
+         MVC   DATE458,UTREPORT    MOVE DATE TO HEAD LINE 1
+         MVC   THH458,UTHHMMSS     MOVE TIME (HOURS) TO HEAD LINE 1
+         MVC   TMM458,UTHHMMSS+2   MOVE TIME (MINUTES) TO HEAD LINE 1
+         BAL   R4,HEADLNEA         PERFORM PRINT HEAD LINES
+         BAL   R4,HEADLNEB         PERFORM PRINT HEAD LINES
+         BAL   R4,CLEAR            PERFORM CLEAR ROUTINE
+         LH    R7,0(R2)            LOAD LENGTH OF PARM
+         CH    R7,=H'0'            TEST IF PARM LENGTH = 0
+         BNE   TL6                 N/ - GO TO NEXT TEST
+         MVI   SWIEH+1,X'F0'       YES - CHANGE SWIEH
+         B     READ                GO TO READ
+TL6      CH    R7,=H'6'            TEST IF PARM LENGTH = 6
+         BNE   ABEND               NO - ABEND
+         MVC   VOP,2(R2)           YES - ONLY CREATE CONTROL CARDS FOR
+READ     EQU   *                            / IEHPROGM FOR THIS CVOL
+SWIEH    NOP   WIEH                IF 'F0' CREATION FOR ALL CVOL'S
+         CLC   IEHPROGM+74(6),VOP
+         BNE   FREAD
+WIEH     CLI   IEHPROGM+15,BLANK
+         BE    FREAD
+         PUT   SYSOUT,IEHPROGM
+         CLI   IEHPROGM+95,BLANK
+         BE    FREAD
+         PUT   SYSOUT,CONTIGCD
+FREAD    MVI   IEHPROGM,BLANK
+         MVC   IEHPROGM+1(159),IEHPROGM
+         GET   T581F100,RECIN
+         BAL   R4,WRITE            PERFORM WRITE ROUTINE
+         EJECT
+         TM    FLAG,FLAGVSAM       TEST IF ENTRY FOR VSAM CATALOG
+         BO    READ                YES - GO READ NEXT RECORD
+         CLI   FLAG,FLAGCVOL       TEST IF CVOL PTR ENTRY
+         BNE   NT0                 NO - GO TO NEXT TEST
+         MVC   IEHPROGM(15),=C' CONNECT INDEX='  **
+         BAL   R4,MVCDSI                          *> 'CONNECT' CONTROL
+         BAL   R4,DEVCVOL                         *   CARD FOR IEHPROGM
+         BAL   R4,DEVICE                         **
+         LA    R7,CARDSIN+10
+         LA    R8,6                ZERO AND ADD 6
+LOOP0    CLC   0(6,R7),VOLSER
+         BE    NT
+         LA    R7,10(R7)
+         BCT   R8,LOOP0
+         BAL   R4,BADCVOL          PERFORM BADCVOL ROUTINE
+NT       CLI   TCVOL,ON            TEST IF LAST CVOL PTR IS USED
+         BE    LCVOLUS             YES
+         BAL   R4,UNUCVOL          NO - PERFORM UNUCVOL ROUTINE
+LCVOLUS  MVC   LASTCVOL,RECIN      SAVE NEW CVOL PTR
+         MVI   TCVOL,OFF           SET OFF
+         B     READ                GO TO NEXT READ
+         SPACE 2
+NT0      CLI   FLAG,FLAGINX        TEST IF INDEX ENTRY
+         BE    NT1                 YES
+         CLI   FLAG,FLAGGINX       TEST IF GENERATION INDEX
+         BNE   NT2                 NO - GO TO NEXT TEST
+         MVC   IEHPROGM(15),=C' BLDG    INDEX=' ***
+         BAL   R4,MVCDSI                          *
+         BAL   R4,DEVCVOL                         *
+         MVC   0(9,R10),=C',ENTRIES='             *
+         SR    R7,R7                              *
+         IC    R7,MAXGDG                          **
+         CVD   R7,DECIMAL                         **> 'BLDG' CONTROL
+         UNPK  9(3,R10),DECIMAL+6(2)              **   CARD FOR IEHPROG
+         OI    11(R10),SIGN                       *
+         CLI   GDGFLAG,X'00'                      *
+         BE    NTC                                *
+         MVC   12(7,R10),=C',DELETE'              *
+         CLI   GDGFLAG,X'02'                      *
+         BE    NTC                                *
+         BH    EAND                               *
+         MVC   12(7,R10),=C',EMPTY '              *
+         B     NTC                                *
+EAND     MVC   19(6,R10),=C',EMPTY'             ***
+         B     NTC
+NT1      MVC   IEHPROGM(15),=C' BLDX    INDEX='  **
+         BAL   R4,MVCDSI                          *> 'BLDX' CONTROL
+         BAL   R4,DEVCVOL                        **  CARD FOR IEHPROGM
+NTC      SR    R7,R7               CLEAR
+         LA    R8,DSNINX+1
+         LA    R9,8                ZERO AND ADD 8
+LOOP1    CLI   0(R8),C'.'          TEST IF HIGH LEVEL INDEX
+         BNE   NT3
+         CLI   1(R8),BLANK
+         BNE   NT5
+         EX    R7,SPT1             EXECUTE SPT1
+         BNE   NT4
+         MVI   TCVOL,ON            SET ON
+         B     NT5
+NT3      LA    R7,1(R7)            ADD ONE
+         LA    R8,1(R8)            ADD ONE
+         BCT   R9,LOOP1
+         B     NT5
+NT4      BAL   R4,NCONNECT         PERFORM NCONNECT ROUTINE
+NT5      LA    R7,43               ZERO AND ADD 43
+         LA    R8,DSNINX+43
+LOOP2    CLC   0(2,R8),=C'. '      TEST FOR LENGTH OF NAME FOR THIS ENT
+         BE    NT6
+         BCTR  R8,R0               SUBTRACY ONE
+         BCT   R7,LOOP2
+NT6      EX    R7,SPT2             EXECUTE SPT2
+         BNE   NT7
+         BAL   R4,DOUBLIX          PERFORM DOUBLIX ROUTINE
+NT7      CLI   TINDEX,ON           TEST IF THIS INDEX IS USED
+         BE    NT8                 YES
+         LH    R9,LINDEX           NO - LOAD LENGTH OF LAST INDEX NAME
+         EX    R9,SPT2             EXECUTE SPT2
+         BE    NT8
+         BAL   R4,UNUDEX           PERFORM UNUDEX ROUTINE
+NT8      MVC   LASINDEX,RECIN      SAVE NEW INDEX OR GEN. IX.
+         STH   R7,LINDEX           SAVE LENGTH OF NAME
+         MVI   TINDEX,OFF          SET OFF
+         B     READ                GO TO NEXT READ
+         EJECT
+NT2      TM    FLAG,FLAGDS         TEST IF DATA SET ENTRY
+         BNO   NT9                 GO TO NEXT TEST
+         CLI   FLAG,X'4A'                *********
+         BNE   NT11                              *
+         MVC   IEHPROGM(15),=C' CATLG  DSNAME='  *
+         BAL   R4,MVCDSI                         *
+         BAL   R4,DEVCVOL                        *
+         BAL   R4,DEVICE                         *
+         LA    R4,LT                             *
+MVSQ     CLI   DEVICECD+2,X'80'                  *
+         BE    NT17                              *
+         BR    R4                                *
+NT17     S     R10,=F'6'                         *
+         MVI   0(R10),C'('                       *
+         MVC   1(6,R10),VOLSER                   *
+         MVI   7(R10),C','                       *
+         MVC   DECIMAL(2),DSEQVOL                *
+         LH    R5,DECIMAL                        *
+         CVD   R5,DECIMAL                        *
+         UNPK  8(3,R10),DECIMAL+6(2)             *
+         OI    10(R10),SIGN                      *
+         MVI   11(R10),C')'                      *
+         LA    R10,12(R10)                       *
+         BR    R4                                *
+NT11     CLI   FLAG,X'42'                        *
+         BNE   NT12                              *
+         MVC   IEHPROGM(15),=C' CATLG  DSNAME='  **
+         BAL   R4,MVCDSI                         ***
+         BAL   R4,DEVCVOL                        ***> 'CATLG' CONTROL
+         BAL   R4,DEVICE                         ***  CARD FOR IEHPROGM
+         S     R10,=F'6'                         **
+         MVI   0(R10),C'('                       *
+         MVC   1(6,R10),VOLSER                   *
+         A     R10,=F'7'                         *
+         CLI   DEVICECD+2,X'80'                  *
+         BNE   PT12                              *
+         BAL   R4,NT17                           *
+PT12     MVI   0(R10),C','                       *
+         MVI   IEHPROGM+151,C'C'                 *
+         B     LT                                *
+NT12     CLI   FLAG,X'40'                        *
+         BNE   NT13                              *
+         MVI   IEHPROGM+71,C'C'                  *
+         LA    R4,LT                             *
+LASMVS   MVC   IEHPROGM+74(6),CATLGVS            *
+         MVC   IEHPROGM+15(6),VOLSER             *
+         MVI   IEHPROGM+21,C','                  *
+         CLI   DEVICECD+2,X'80'                  *
+         BE    NT14                              *
+         BR    R4                                *
+NT14     MVI   IEHPROGM+15,C'('                  *
+         MVC   IEHPROGM+16(6),VOLSER             *
+         MVI   IEHPROGM+22,C','                  *
+         MVC   DECIMAL(2),DSEQVOL                *
+         LH    R5,DECIMAL                        *
+         CVD   R5,DECIMAL                        *
+         UNPK  IEHPROGM+23(3),DECIMAL+6(2)       *
+         OI    IEHPROGM+25,SIGN                  *
+         MVC   IEHPROGM+26(2),=C'),'             *
+         BR    R4                                *
+NT13     CLI   FLAG,X'48'                        *
+         BNE   ABEND                             *
+         BAL   R4,LASMVS                         *
+         CLI   DEVICECD+2,X'80'                  *
+         BE    PLT                               *
+         MVI   IEHPROGM+21,C')'                  *
+         B     LT                                *
+PLT      MVI   IEHPROGM+27,C')'          *********
+LT       LH    R7,LINDEX           LOAD LENGTH OF LAST INDEX ENTRY
+         EX    R7,SPT2             EXECUTE SPT2
+         BNE   READ                GO TO NEXT READ
+         MVI   TINDEX,ON           SET ON
+         B     READ                GO TO NEXT READ
+         SPACE 2
+NT9      CLI   FLAG,FLAGALS        TEST IF ALIAS ENTRY
+         BNE   ABEND               NO
+         MVC   IEHPROGM(15),=C' BLDA    INDEX=' **
+         BAL   R4,MVCDSI                         *
+         MVC   0(6,R10),=C'ALIAS='               *
+         LA    R7,40                             *
+         LA    R8,DSNINX+3                       *
+LOOP6    CLC   0(8,R8),=C'ALIAS OF'              **
+         BE    NT15                              **> 'BLDA' CONTROL
+         LA    R8,1(R8)                          **  CARD FOR IEHPROGM
+         BCT   R7,LOOP6                          *
+         MVC   6(9,R10),=C'????????.'            *
+         LA    R10,9(R10)                        *
+         B     NT16                              *
+NT15     MVC   6(8,R10),9(R8)                    *
+         LA    R7,8                              *
+LOOP7    CLC   7(2,R10),=C'. '                   *
+         BE    NT16                              *
+         LA    R10,1(R10)                        *
+         BCT   R7,LOOP7                          *
+NT16     MVI   7(R10),C','                       *
+         LA    R10,8(R10)                        *
+         BAL   R4,DEVCVOL                      ***
+         B     READ                GO TO NEXT READ
+         SPACE 3
+SPT1     CLC   LASTCVOL+6(0),DSNINX
+SPT2     CLC   LASINDEX+6(0),DSNINX
+         EJECT
+MVCDSI   SUBIN PREFIX=B
+         MVC   IEHPROGM+15(44),DSNINX
+         MVI   IEHPROGM+71,C'C'
+         MVC   IEHPROGM+74(6),CATLGVS
+         MVC   IEHPROGM+154(6),CATLGVS
+         LA    R10,IEHPROGM+16
+LOOP3    CLI   0(R10),BLANK
+         BE    EMDSI
+         CLC   0(2,R10),=C'. '
+         BE    EMDSI
+         LA    R10,1(R10)
+         B     LOOP3
+EMDSI    MVI   0(R10),C','
+         CLC   2(8,R10),=C'ALIAS OF'
+         BNE   EMDS
+         MVC   2(18,R10),1(R10)
+EMDS     LA    R10,IEHPROGM+95
+         SUBOUT PREFIX=B
+         SPACE 1
+DEVICE   SUBIN PREFIX=C
+         LA    R7,DEVTAB
+LOOP4    LA    R3,6(R7)
+         MVC   DECIMAL,4(R7)
+         LH    R11,DECIMAL
+         CLC   0(4,R7),DEVICECD
+         BE    ENDEV
+         CLC   0(4,R7),UNK
+         BE    ENDEV
+         LA    R7,7(R11,R7)
+         B     LOOP4
+ENDEV    EX    R11,MIEHP1
+         LA    R10,1(R11,R10)
+         MVC   0(6,R10),VOLSER
+         LA    R10,6(R10)
+         SUBOUT PREFIX=C
+         SPACE 1
+MIEHP1   MVC   0(0,R10),0(R3)
+         SPACE 1
+DEVCVOL  SUBIN PREFIX=D
+         MVC   0(10,R10),=C'CVOL=????='
+         MVC   10(6,R10),IEHPROGM+74
+         LA    R7,6
+         LA    R8,CARDSIN+10
+LOOP5    CLC   0(6,R8),IEHPROGM+74
+         BE    MCV
+         LA    R8,10(R8)
+         BCT   R7,LOOP5
+         BE    EDCVOL
+MCV      MVC   5(4,R10),6(R8)
+         LA    R10,16(R10)
+EDCVOL   SUBOUT PREFIX=D
+         EJECT
+***********************************************************************
+*        SYSCTLG EXCEPTION REPORT                                     *
+***********************************************************************
+         SPACE 1
+BADCVOL  MVC   NAME+46(26),=C'''      ''  BAD CVOL    ****'
+         MVC   NAME,DSNINX
+         MVC   NAME+47(6),VOLSER
+         B     WEB
+UNUCVOL  MVC   NAME+46(26),=C'UNUSED CVOL PTR        ***'
+         MVC   NAME,LASTCVOL+6
+         B     WEB
+NCONNECT MVC   NAME,DSNINX
+         CLC   CATLGVS,=C'SYSRES'
+         BNE   INC
+         MVC   NAME+46(26),=C'INDEX ON SYSRES           '
+         B     WEB
+INC      MVC   NAME+46(26),=C'INDEX NOT CONNECT    *****'
+         B     WEB
+DOUBLIX  MVC   NAME+46(26),=C'DUPLICATE INDEX         **'
+         B     WEA
+UNUDEX   MVC   NAME+46(26),=C'UNUSED INDEX             *'
+         CLI   LASINDEX+50,FLAGGINX
+         BNE   WEA
+         MVC   NAME+46(26),=C'UNUSED GDG INDEX          '
+WEA      MVC   NAME,LASINDEX+6
+WEB      SUBIN PREFIX=A,SAVE=(R4)
+         BAL   R4,WRITEB           PERFORM WRITEB ROUTINE
+         SUBOUT PREFIX=A,RESTORE=(R4)
+         EJECT
+***********************************************************************
+*        PRINT ROUTINE                                                *
+***********************************************************************
+         SPACE 1
+WRITE    SUBIN PREFIX=P,SAVE=(R4)
+         MVC   FROMCVOL,CATLGVS    MOVE CVOL TO PRINT DETAIL LINE
+         MVC   NAME,DSNINX         MOVE NAME TO PRINT DETAIL LINE
+         MVC   CTYPE,=C'VSAM'      INDICATE IS AN VSAM CATALOG
+         TM    FLAG,FLAGVSAM       TEST IF ENTRY FOR VSAM CATALOG
+         BO    NNEND               BRANCH IF YES
+         MVC   CTYPE,=C'CVOL'      INDICATE IS AN CVOL CATALOG
+         CLI   FLAG,FLAGINX        TEST IF INDEX ENTRY
+         BNE   NN1                 NO - GO TO NEXT TEST
+         MVC   TYPE,=C'INDEX   '   MOVE TITLE
+         B     NNEND
+NN1      CLI   FLAG,FLAGGINX       TES TIF GENERATION INDEX ENTRY
+         BNE   NN2                 NO - GO TO NEXT TEST
+         MVC   TYPE,=C'GEN. IX.'   MOVE TITLE
+         B     NNEND
+NN2      CLI   FLAG,FLAGCVOL       TEST IF CONTROL VOLUME ENTRY
+         BNE   NN3                 NO - GO TO NEXT TEST
+         MVC   TYPE,=C'CVOL PTR'   MOVE TITLE
+         B     NNEND
+NN3      CLI   FLAG,FLAGALS        TEST IF ALIAS NAME ENTRY
+         BNE   NN4                 NO - GO TO NEXT TEST
+         MVC   TYPE,=C'ALIAS   '   MOVE TITLE
+         B     NNEND
+NN4      MVC   TYPE,=C'        '   MOVE TITLE
+NNEND    MVC   HEXSTOR(4),DEVICECD PREPARE FOR TRANSLATE DEVICE CODE
+         BAL   R4,HEXTRANS         PERFORM TRANSLATE
+         MVC   DEVICECX,HEXSTOR    MOVE DEVICE CODE TO PRINT DETAIL LNE
+         CLC   DEVICECX,DEVBLANK
+         BE    CLEARDEV
+         B     MVS
+CLEARDEV MVI   DEVICECX,BLANK
+         MVC   DEVICECX+1(7),DEVICECX
+MVS      MVC   VOLSERP,VOLSER      MOVE VOL SER TO PRINT DETAIL LINE
+         TM    FLAG,FLAGVSPT       TEST IF VSAM POINTER
+         BNO   W0                  BRANCH IF NO
+         MVC   INFORM(7),=C'DSNAME' YES - MOVE DATA SET NAME
+         MVC   INFORM+7(17),VSPTDSN        TO DETAIL LINE
+         MVC   TYPE,=C'VSAM PTR'
+         B     MFLAG
+W0       CLI   FLAG,FLAGCVOL+FLAGVSAM TEST IF CVOL POINTER FROM VSAM
+         BNE   W1                  BRANCH IF NO
+         MVC   TYPE,=C'CVOL PTR'
+         B     MFLAG
+         EJECT
+***********************************************************************
+*        PRINT ROUTINE (CONT'D)                                       *
+***********************************************************************
+         SPACE 1
+W1       TM    FLAG,FLAGVOL        TEST IF VSAM VOLUME
+         BNO   W2                  BRANCH IF NO
+         MVC   TYPE,=C'VOLUME  '
+         B     MFLAG
+W2       TM    FLAG,FLAGVSUC       TEST IF VSAM USER CATALOG
+         BNO   W3                  BRANCH IF NO
+         MVC   TYPE,=C'VSAM CTG'
+         B     MFLAG
+W3       TM    FLAG,FLAGVSAL       TEST IF VSAM ALIAS
+         BNO   W4                  BRANCH IF NO
+         MVC   TYPE,=C'VSAM AL.'
+         B     CVS
+W4       TM    FLAG,FLAGVSIN       TEST IF VSAM INDEX
+         BNO   W5                  BRANCH IF NO
+         MVC   TYPE,=C'VSAM I  '
+         B     CVS
+W5       TM    FLAG,FLAGVSDA       TEST IF VSAM DATA
+         BNO   W6                  BRANCH IF NO
+         MVC   TYPE,=C'VSAM D  '
+         B     CVS
+W6       TM    FLAG,FLAGCLUS       TEST IF CLUSTER
+         BNO   W7                  BRANCH IF NO
+         MVC   TYPE,=C'CLUSTER '
+CVS      MVC   INFORM(L'MSGDS),MSGDS
+         MVC   OWNID,OWNERID       MOVE OWNER ID TO DETAIL LINE
+         UNPK  CDATE,DSETCRDT      UNPACK CREATION DATE IN DET. LINE
+         OI    CDATE+4,SIGN        FORCE SIGN TO 'F'
+         UNPK  EDATE,DSETEXDT      UNPACK EXPIRATION DATE IN DET. LINE
+         OI    EDATE+4,SIGN        FORCE SIGN TO 'F'
+         B     MFLAG
+W7       CLI   FLAG,FLAGGINX       TEST IF THIS ENTRY IS A GEN.INDEX
+         BNE   TIFDS               NO - GO TO NEXT TEST
+         MVI   VOLSERP,BLANK       CLEAR
+         MVC   VOLSERP+1(5),VOLSERP VOLSERP
+         MVC   INFORM(L'MSGDG),MSGDG
+         MVC   DECIMAL(2),CURGENC  YES - ALIGNMENT
+         LH    R5,DECIMAL          LOAD CURRENT GEN, COUNT INTO REG.5
+         CVD   R5,DECIMAL          CONVERT BINARY
+         UNPK  CUGEN,DECIMAL+6(2)  UNPACK
+         OI    CUGEN+2,SIGN        FORCE SIGN
+         MVC   HEXSTOR(1),GDGFLAG  PREPARE FOR TRANSLATE GDG FLAG
+         BAL   R4,HEXTRANS         PERFORM TRANSLATE
+         MVC   GDGF,HEXSTOR        MOVE GDG FLAG TO PRINT DET. LINE
+         SR    R5,R5               CLEAR
+         IC    R5,MAXGDG           LOAD MAX.GEN. ALLOWED INTO REG.5
+         CVD   R5,DECIMAL          CONVERT BINARY
+         UNPK  GDGMAX,DECIMAL+6(2) UNPACK
+         OI    GDGMAX+2,SIGN       FORCE SIGN
+         B     MFLAG               NO - GO TO MOVE FLAG TO PRINT DET.L.
+         EJECT
+***********************************************************************
+*        PRINT ROUTINE (CONT'D)                                       *
+***********************************************************************
+         SPACE 1
+TIFDS    TM    FLAG,FLAGDS         TEST IF THIS ENTRY IS A DATA SET
+         BNO   MFLAG               NO - GO TO MOVE FLAG TO PRINT DET.L.
+         MVC   TYPE,=C'DATA SET'
+         MVC   DECIMAL(2),DSEQVOL  YES - ALIGNMENT
+         LH    R5,DECIMAL          LOAD SEQ. OF VOL INTO REG.5
+         CVD   R5,DECIMAL          CONVERT BINARY
+         UNPK  SEQNO,DECIMAL+6(2)  UNPACK
+         OI    SEQNO+2,SIGN        FORCE SIGN
+         MVC   DECIMAL(2),SEQVOLMV ALIGNMENT
+         LH    R5,DECIMAL          LOAD SEQ. OF VOL IN MULTI-VOL LIST
+         CVD   R5,DECIMAL          CONVERT BINARY
+         UNPK  MVSEQNO,DECIMAL+6(2) UNPACK
+         OI    MVSEQNO+2,SIGN      FORCE SIGN
+         TM    FLAG,FLAGVSAM       TEST IF ENTRY FROM VSAM CATALOG
+         BNO   MFLAG               BRANCH IF NO
+         MVC   INFORM(L'MSGDS),MSGDS
+         MVC   OWNID,OWNERID       MOVE OWNER ID. TO DETAIL LINE
+         UNPK  CDATE,DSETCRDT      UNPACK CREATION DATE TO DET. LINE
+         OI    CDATE+4,SIGN        FORCE SIGN TO 'F'
+         UNPK  EDATE,DSETEXDT      UNPACK EXPIRATION DATE TO DET. LINE
+         OI    EDATE+4,SIGN        FORCE SIGN TO 'F'
+MFLAG    MVC   HEXSTOR(1),FLAG     PREPARE FOR TRANSLATE FLAG CHAR.
+         BAL   R4,HEXTRANS         PERFORM TRANSLATE
+         MVC   FLAGX,HEXSTOR       MOVE FLAG TO PRINT DETAIL LINE
+TCTRLCH  AP    LINECOUN,ONE        ADD ONE TO LINE COUNT
+         CP    LINECOUN,MAXLINE    TEST IF LINE COUNT IS > MAX.LINE
+         BE    OVFLOW
+         MVI   CTRCHAR,SPACE1      NO - MOVE SPACE1 TO CONTROL CHAR.
+         B     PUT
+OVFLOW   MVI   CTRCHAR,SKIP        YES - MOVE SKIP TO CONTROL CHAR.
+PUT      PUT   T581R10A,OUTPRINT
+         CP    LINECOUN,MAXLINE    TEST IF LINE COUNT IS > MAX.LINE
+         BNE   NOHL                NO
+         BAL   R4,HEADLNEA         PERFORM PRINT HEAD LINES
+NOHL     MVI   OUTPRINT,BLANK           ## CLEAR WA
+         MVC   OUTPRINT+1(132),OUTPRINT ## OUTPRINT
+ENDW     SUBOUT PREFIX=P,RESTORE=(R4)
+         EJECT
+***********************************************************************
+*        PRINT ROUTINE   (CONT'D)                                     *
+***********************************************************************
+         SPACE 1
+WRITEB   SUBIN PREFIX=U,SAVE=(R4)
+         AP    LINECOUB,ONE        ADD ONE TO LINE COUNT
+         CP    LINECOUB,MAXLINE    TEST IF LINE COUNT IS > MAX.LINE
+         BE    OVFLOWB
+         MVI   CTRCHAR,SPACE1      NO - MOVE SPACE1 TO CONTROL CHAR.
+         B     PUTB
+OVFLOWB  MVI   CTRCHAR,SKIP        YES - MOVE SKIP TO CONTROL CHAR.
+PUTB     PUT   T581R10B,OUTPRINT
+         CP    LINECOUB,MAXLINE    TEST IF LINE COUNT IS > MAX.LINE
+         BNE   NOHLB               NO
+         BAL   R4,HEADLNEB         PERFORM PRINT HEAD LINES
+NOHLB    MVI   OUTPRINT,BLANK           ## CLEAR WA
+         MVC   OUTPRINT+1(132),OUTPRINT ## OUTPRINT
+         SUBOUT PREFIX=U,RESTORE=(R4)
+         SPACE 2
+CLEAR    SUBIN PREFIX=Q,SAVE=(R4)
+         MVI   OUTPRINT,BLANK           ## CLEAR WA
+         MVC   OUTPRINT+1(132),OUTPRINT ## OUTPRINT
+         SUBOUT PREFIX=Q,RESTORE=(R4)
+         EJECT
+***********************************************************************
+*        PRINT ROUTINE FOR HEAD LINES                                 *
+***********************************************************************
+         SPACE 1
+HEADLNEA SUBIN PREFIX=R,SAVE=(R4)
+         MVI   REPNUM,C'A'         MOVE REPORT NUMBER
+         MVC   TITLE,TITLEA        MOVE REPORT TITLE
+         AP    PAGECOUN,ONE        ADD ONE TO PAGE COUNT
+         UNPK  PAGE,PAGECOUN       UNPACK
+         OI    PAGE+2,SIGN         FORCE SIGN
+         PUT   T581R10A,HEADLNE1
+         PUT   T581R10A,HEADLNE2
+         PUT   T581R10A,HEADLNE3
+         ZAP   LINECOUN,=P'5'      ZERO AND ADD FIVE TO LINE COUNT
+         SUBOUT PREFIX=R,RESTORE=(R4)
+         SPACE 3
+HEADLNEB SUBIN PREFIX=S,SAVE=(R4)
+         MVI   REPNUM,C'B'         MOVE REPORT NUMBER
+         MVC   TITLE,TITLEB        MOVE REPORT TITLE
+         AP    PAGECOUB,ONE        ADD ONE TO PAGE COUNT
+         UNPK  PAGE,PAGECOUB       UNPACK
+         OI    PAGE+2,SIGN         FORCE SIGN
+         PUT   T581R10B,HEADLNE1
+         PUT   T581R10B,HEADLNE4
+         ZAP   LINECOUB,=P'5'      ZERO AND ADD FIVE TO LINE COUNT
+         SUBOUT PREFIX=S,RESTORE=(R4)
+         EJECT
+***********************************************************************
+*        CONVERT A FW OF HEX CHARACTERS TO DISPLAY FORMAT             *
+***********************************************************************
+         SPACE 1
+HEXTRANS SUBIN PREFIX=T,SAVE=(R4)
+         LA    R5,8
+         LA    R6,HEXSTOR
+HEXLOOP  MVO   0(5,R6),0(4,R6)
+         LA    R6,1(R6)
+         BCT   R5,HEXLOOP
+         TR    HEXSTOR(8),HEXTABLE
+         SUBOUT PREFIX=T,RESTORE=(R4)
+         SPACE 3
+***********************************************************************
+*    CLOSE THE FILES AND END OF PROGRAM                               *
+***********************************************************************
+         SPACE 1
+CLOSE    CLI   TCVOL,ON
+         BE    TCB1
+         BAL   R4,UNUCVOL
+TCB1     CLI   TINDEX,ON
+         BE    CLOFIL
+         BAL   R4,UNUDEX
+CLOFIL   CLOSE (T581F100,,T581R10A,,T581R10B)
+         CLOSE (SYSOUT)
+         SPACE 2
+         PGMOUT ,                  END OF PROGRAM
+         EJECT
+***********************************************************************
+*        DATA CONTROL BLOCKS
+***********************************************************************
+         SPACE 1
+T581F100 DCB   DDNAME=T581F100,                                        C
+               EODAD=CLOSE,                                            C
+               DSORG=PS,                                               C
+               RECFM=FB,                                               C
+               MACRF=GM,                                               C
+               LRECL=100,                                              C
+               BLKSIZE=1600        (BLOCKING FACTOR = 16)
+         SPACE 3
+T581R10A DCB   DDNAME=T581R10A,                                        C
+               DSORG=PS,                                               C
+               RECFM=FM,                                               C
+               LRECL=133,                                              C
+               BLKSIZE=133,                                            C
+               MACRF=PM
+         SPACE 3
+T581R10B DCB   DDNAME=T581R10B,                                        C
+               DSORG=PS,                                               C
+               RECFM=FM,                                               C
+               LRECL=133,                                              C
+               BLKSIZE=133,                                            C
+               MACRF=PM
+         SPACE 3
+SYSIN    DCB   DDNAME=SYSIN,                                           C
+               EODAD=ENDSYSIN,                                         C
+               DSORG=PS,                                               C
+               RECFM=F,                                                C
+               MACRF=GM,                                               C
+               LRECL=80,                                               C
+               BLKSIZE=80
+         SPACE 3
+SYSOUT   DCB   DDNAME=SYSOUT,                                          C
+               DSORG=PS,                                               C
+               RECFM=FB,                                               C
+               LRECL=80,                                               C
+               BLKSIZE=1680,                                           C
+               MACRF=PM
+         EJECT
+***********************************************************************
+*        DEFINITION FOR INPUT RECORD  ( T581F100)                     *
+***********************************************************************
+               SPACE 1
+RECIN    DS    0CL65
+CATLGVS  DS    CL6
+DSNINX   DS    CL44
+FLAG     DS    C
+DEVICECD DS    CL4
+VOLSER   DS    CL6
+CURGENC  EQU   VOLSER    (LENGTH=2)
+DSEQVOL  DS    CL2
+GDGFLAG  EQU   DSEQVOL
+MAXGDG   EQU   DSEQVOL+1
+SEQVOLMV DS    CL2
+OWNERID  DS    CL8                 ONLY FOR VSAM
+DSETCRDT DS    CL3                 ONLY FOR VSAM
+DSETEXDT DS    CL3                 ONLY FOR VSAM
+VOLFLG   DS    CL1                 ONLY FOR VSAM
+DSCBTTR  DS    CL3                 ONLY FOR VSAM
+VSPTDSN  DS    CL17                ONLY FOR VSAM
+         EJECT
+***********************************************************************
+*        DEFINITION DETAIL LINE AND HEAD LINES FOR T581R10A,B         *
+***********************************************************************
+         SPACE 1
+OUTPRINT DS    0CL133
+CTRCHAR  DS    CL1
+NAME     DS    CL44
+         DS    CL2
+TYPE     DS    CL8
+         DS    CL2
+FLAGX    DS    CL2
+         DS    CL2
+DEVICECX DS    CL8
+         DS    CL2
+VOLSERP  DS    CL6
+         DS    CL2
+SEQNO    DS    CL3
+         DS    CL3
+MVSEQNO  DS    CL3
+         DS    CL3
+INFORM   DS    CL30
+         ORG   *-30
+         DS    CL8
+CUGEN    DS    CL3
+         DS    CL6
+GDGF     DS    CL2
+         DS    CL5
+GDGMAX   DS    CL3
+         DS    CL4
+         ORG   *-31
+         DS    CL6
+OWNID    DS    CL8
+         DS    CL3
+CDATE    DS    CL5
+         DS    CL3
+EDATE    DS    CL5
+         DS    C
+CTYPE    DS    CL4
+         DS    C
+FROMCVOL DS    CL6
+         SPACE 1
+MSGDG    DC    C'CUR.GEN=    FLAG=   MAX='
+MSGDS    DC    C'OWNID=         C=      E='
+         EJECT
+HEADLNE1 DS    0CL133
+         DC    X'11'
+         DC    C'T581P10'
+REPNUM   DS    C
+         DC    CL31' '
+TITLE    DC    C'                       '
+         DC    CL20' '
+         DC    C'DATE '
+DATE458  DC    CL9'         '
+         DC    C'   TIME '
+THH458   DC    CL2'  '
+         DC    C'.'
+TMM458   DC    CL2'  '
+         DC    CL14' '
+         DC    C'PAGE  '
+PAGE     DS    CL3
+         SPACE 3
+HEADLNE2 DS    0CL133
+         DC    X'09'
+         DC    CL46' '
+         DC    C'ENTRY          DEVICE   VOLUME  SEQ  M-VOL  *----    '
+         DC    C'INFORMATION    -----*  CATALOGUED'
+         SPACE 3
+HEADLNE3 DS    0CL133
+         DC    X'11'
+         DC    CL46'*------------------ NAME ------------------*  '
+         DC    C'   TYPE   F.    CODE      ID.    NO  SEQ.NO          '
+         DC    C'                          ON     '
+         SPACE 3
+HEADLNE4 DS    0CL133
+         DC    X'11'
+         DC    CL46'*------------------ NAME ------------------*  '
+         DC    CL27'     STATUS          ACTION'
+         DC    CL59' '
+         EJECT
+***********************************************************************
+*        WORK AREAS                                                   *
+***********************************************************************
+         SPACE 1
+DECIMAL  DS    D                   WA FOR DECIMAL OPERATION
+HEXSTOR  DC    3F'0'
+HEXTABLE DC    C'0123456789ABCDEF'
+LASTCVOL DS    CL65
+TCVOL    DC    X'FF'
+LASINDEX DS    CL65
+TINDEX   DC    X'FF'
+LINDEX   DC    H'0'
+TCARDSIN DC    X'00'
+CARDSIN  DS    CL80
+         SPACE 1
+LINECOUN DC    PL2'0'
+LINECOUB DC    PL2'0'
+PAGECOUN DC    PL2'0'
+PAGECOUB DC    PL2'0'
+MAXLINE  DC    P'60'
+         SPACE 1
+IEHPROGM DS    0CL160
+         DC    CL80' '
+CONTIGCD DC    CL80' '
+VOP      DC    CL6' '
+         EJECT
+***********************************************************************
+*        DEVICE CODE NAME TABLE                                       *
+***********************************************************************
+         SPACE 1
+         DS    0D
+DEVTAB   DC    X'30008001',H'09',C',VOL=2400='
+         DC    X'30502009',H'11',C',VOL=3330-1='
+         DC    X'3050200D',H'11',C',VOL=3330-1='
+         DC    X'00032000',H'11',C',VOL=3330-1='
+         DC    X'00042000',H'11',C',VOL=3330-1='
+         DC    X'00052000',H'11',C',VOL=3330-1='
+         DC    X'00062000',H'11',C',VOL=3330-1='
+         DC    X'00072000',H'11',C',VOL=3330-1='
+         DC    X'34008003',H'11',C',VOL=3400-3='
+         DC    X'34208003',H'11',C',VOL=3400-4='
+         DC    X'32008003',H'11',C',VOL=3400-5='
+         DC    X'FFFFFFFF',H'09',C',VOL=FREE='
+         DC    X'FFFFFFFF',H'09',C',VOL=FREE='
+         DC    X'FFFFFFFF',H'09',C',VOL=FREE='
+         DC    X'FFFFFFFF',H'09',C',VOL=FREE='
+         DC    X'FFFFFFFF',H'09',C',VOL=FREE='
+UNK      DC    X'00000000',H'09',C',VOL=????='
+         EJECT
+***********************************************************************
+*        CONSTANTS , EQUATES AND LITERAL POOL                         *
+***********************************************************************
+         SPACE 1
+TITLEA   DC    C'MERGE CATALOGS LIST    '
+TITLEB   DC    C'SYSCTLG EXCEPTION REP. '
+ONE      DC    P'1'
+DEVBLANK DC    C'40404040'
+         SPACE 1
+BLANK    EQU   X'40'
+SIGN     EQU   X'F0'
+SPACE1   EQU   X'09'
+SKIP     EQU   X'89'
+FLAGCVOL EQU   B'10000000'
+FLAGVSPT EQU   B'11000000'
+FLAGDS   EQU   B'01000000'
+FLAGINX  EQU   B'00100000'
+FLAGCLUS EQU   B'01100000'
+FLAGVSDA EQU   B'01110000'
+FLAGVSIN EQU   B'01111000'
+FLAGVSAL EQU   B'01111100'
+FLAGVOL  EQU   B'01111110'
+FLAGVSUC EQU   B'01111010'
+FLAGGINX EQU   B'00010000'
+FLAGALS  EQU   B'00000100'
+FLAGLVDS EQU   B'00001000'
+FLAGFVDS EQU   B'00000010'
+FLAGVSAM EQU   B'00000001'
+ON       EQU   X'FF'
+OFF      EQU   X'00'
+         END

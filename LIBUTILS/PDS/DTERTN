@@ -1,0 +1,196 @@
+         TITLE 'D T E R T N - GIVE THE DATE IN THE FORMAT DD MMM YY'
+**********************************************************************
+*                                                                    *
+*        PROGRAM ID. :        DTERTN                                 *
+*                                                                    *
+*        DATE WRITTEN :       JANUARY,1977                           *
+*                                                                    *
+*        LOCATION :           BRUSSELS                               *
+*                                                                    *
+**********************************************************************
+         SPACE
+**********************************************************************
+*                                                                    *
+*    DESCRIPTION:   THIS SUBROUTINE RETRIEVES THE COMPUTER DATE      *
+*    ------------    USING THE TIME MACRO AND RETURNS IT TO THE      *
+*                    CALLER UNDER THE FOLLOWING FORM : 'DD MMM YY'   *
+*                    (EX. '23 DEC 76')                               *
+*                   IF THE CALLING PROGRAM IS WRITTEN IN RPG :       *
+*                     -A 'ULABL    JPDATE  9' CARD MUST BE CODED     *
+*                    TO ACCESS THE SUB-ROUTINE COMPUTED DATE.        *
+*                                                                    *
+*                                                                    *
+*                                                                    *
+*                   IF THE CALLING PROGRAM IS USING STANDARD         *
+*                    MUST BE RESERVED IN THE PROGRAM AND INITIALIZED *
+*                    TO 'COBOLDATE'. AT THE ENTRY TO DTERTN R1 MUST  *
+*                    POINT TO AN ADDRESS LIST (1 ADDR) POINTING TO   *
+*                    THE DATE FIELD                                  *
+*                                                                    *
+*                   THIS SUBROUTINE MAY BE USED UNDER MFT OR MVS     *
+*                                                                    *
+**********************************************************************
+         EJECT
+*
+**   MONTH REFERENCE TABLE DSECT
+*
+MONTHDS  DSECT
+DAY#     DS    AL1                 MAX NBR OF DAYS
+MNTH     DS    CL3                 MONTH CODE (3 CHARACTERS)
+SMNTH    EQU   *-MONTHDS           ENTRY LENGTH IN REF. TABLE
+         SPACE
+*
+**   REGISTER EQUATES AND USAGE
+*
+R0       EQU   0
+R1       EQU   1
+R2       EQU   2
+R3       EQU   3
+R4       EQU   4
+R5       EQU   5
+R6       EQU   6
+R7       EQU   7
+R8       EQU   8
+R9       EQU   9
+R10      EQU   10
+R11      EQU   11
+R12      EQU   12
+R13      EQU   13   SAVE AREA POINTER / BASE REGISTER
+R14      EQU   14   RETURN ADDRESS
+R15      EQU   15
+         EJECT
+DTERTN   CSECT
+         ENTRY JPDATE
+         SPACE
+*
+**   HOUSEKEEPING
+*
+         PGMIN EQUATES=NO,USING=(R13)   ESTABLISH ADDRESSABILITY
+         LR    R2,R1               SAVE ADDR. OF ARG. LIST
+         CLI   JPDATEMN,C' '       TEST IF DATE ALREADY COMPUTED
+         BNE   MOVENEXT            BRANCH IF DATE ALREADY COMPUTED
+         SPACE
+*
+**   GET COMPUTER DATE
+*
+         TIME
+         STH   R1,WORK+6           SAVE DAY (PACKED 'DDDC')
+         SRL   R1,12
+         ST    R1,WORK
+         OI    WORK+3,X'0F'        SAVE YEAR (PACKED '00000YYF')
+         UNPK  JPDATEYR,WORK+2(2)   AND UNPACK YEAR TO JPDATE
+         SPACE
+*
+**   CHECK IF LEAPYEAR AND UPDATE MONTH REF. TABLE
+*
+         DP    WORK(4),PC4         DIVIDE YEAR BY 4
+         MVI   FEBD,X'1C'          ASSUME 28 DAYS IN FEBRUARY
+         TM    WORK+3,X'F0'        TEST IF LEAPYEAR
+         BNZ   INITSCAN            BRANCH IF NO
+         MVI   FEBD,X'1D'          29 DAYS IN FEBRUARY IF LEAPYEAR
+         EJECT
+*
+**   INIT SCANNING OF MONTH REF. TABLE
+*
+INITSCAN XC    WORK(6),WORK
+         CVB   R5,WORK             CONVERT DAY FROM PACKED TO BINARY
+         SR    R4,R4               INIT WORK REG.
+         LA    R1,MNTHRFTB         R1 PTS TO MONTH REF. TABLE
+         LA    R0,12               INIT LOOP CTR (12 MONTHS)
+         SPACE
+*
+**   SCAN MONTH REF. TABLE AND FORMAT DATE
+*
+         USING MONTHDS,R1
+SCANRFTB IC    R4,DAY#             R4 = DAY MAX
+         CR    R5,R4               COMPARE CURRENT DAY WITH REF. DAY
+         BNH   FOUND               BRANCH IF CURRENT DAY .LE. REF. DAY
+         SR    R5,R4               DECREMENT CURRENT DAY
+         LA    R1,SMNTH(R1)        POINT TO NEXT ENTRY IN REF. TABLE
+         BCT   R0,SCANRFTB         DECR. LOOP CTR AND LOOP IF NON ZERO
+*
+NOTFOUND MVI   JPDATE,C'9'         COMPUTER DATE OUT OF LIMIT ??
+         MVC   JPDATE+1(L'JPDATE-1),JPDATE   FILL UP JPDATE WITH '9'
+         B     MOVE
+*
+FOUND    MVC   JPDATEMN,MNTH       MOVE MONTH CODE TO JPDATE
+         CVD   R5,WORK             CONVERT DAY OF MONTH TO PACKED
+         UNPK  JPDATEDY,WORK+6(2)       AND UNPACK IT TO JPDATE
+         OI    JPDATEDY+1,X'F0'
+         DROP  R1
+         SPACE
+*
+**  CHECK IF CALLED WITH ARGUMENT LIST (YES - MOVE DATE IN LINK FIELD)
+*
+MOVE     EQU   *
+         LA    R6,SWOFF            LOAD ADDRESS OF SWOFF
+         LA    R7,SPIELIST         LOAD ADDRESS OF SPIE LIST
+         SPIE  (6),,MF=(E,(R7))    TO INTERCEPT 0C4 AND 0C5
+         LR    R3,R1               SAVE R1
+         L     R2,0(R2)            GET ARG. ADDR
+         CLC   0(L'COBOLREF,R2),COBOLREF  TEST IF ARG. = 'COBOLDATE'
+         BNE   RSTSPIE             BRANCH IF NO
+         MVC   0(L'JPDATE,R2),JPDATE
+RSTSPIE  SPIE  MF=(E,(R3))         RESTORE SPIE ENVIRONMENT
+*
+         EJECT
+*
+**   RESTORE REGISTERS AND RETURN TO CALLER
+*
+OUT      PGMOUT
+*
+**   MOVE DATE IN LINK FIELD (LINK CONV SET FIRST TIME IN ROUTINE)
+*
+MOVENEXT EQU   *
+         CLI   MOVESW,X'FF'        SPIE EXIT PERFORM ?
+         BE    OUT                 YES - S/R CALLED WITHOUT ARG LIST
+         L     R2,0(R2)            GET ARG. ADDR
+         CLC   0(L'COBOLREF,R2),COBOLREF  TEST IF ARG. = 'COBOLDATE'
+         BNE   OUT                 BRANCH IF NO
+         MVC   0(L'JPDATE,R2),JPDATE  MOVE DATE IN ARGUMENT
+         B     OUT                 RETURN
+*
+**   SPIE EXIT ROUTINE
+*
+SWOFF    EQU   *
+         LA    R6,RSTSPIE          LOAD ADDRESS OF SPIE RETURN
+         ST    R6,8(R1)            MODIFY RETURN ADDRESS TO SKIP MOVE
+         MVI   MOVESW,X'FF'        SET MOVE SWITCH TO NO ARG. LIST
+         BR    14                  RETURN
+         SPACE
+*
+**   MONTH REF.TABLE  (DSECT = MONTHDS)
+*
+MNTHRFTB DC    AL1(31),CL3'JAN'
+FEBD     DC    AL1(28),CL3'FEB'
+         DC    AL1(31),CL3'MAR'
+         DC    AL1(30),CL3'APR'
+         DC    AL1(31),CL3'MAY'
+         DC    AL1(30),CL3'JUN'
+         DC    AL1(31),CL3'JUL'
+         DC    AL1(31),CL3'AUG'
+         DC    AL1(30),CL3'SEP'
+         DC    AL1(31),CL3'OCT'
+         DC    AL1(30),CL3'NOV'
+         DC    AL1(31),CL3'DEC'
+*
+**   PATCH AREA TO ALIGN JPDATE TO OLD DTERTN ROUTINES TO BE ZAPPED
+*
+PTCHAREA DS    CL68                ALIGN JPDATE TO X'1C4'
+JPDATE   DC    CL9' '
+         ORG   JPDATE              COMPUTED DATE
+JPDATEDY DS    CL2
+JPDATES1 DS    CL1
+JPDATEMN DS    CL3
+JPDATES2 DS    CL1
+JPDATEYR DS    CL2
+PC4      DC    PL1'4'
+MOVESW   DC    XL1'00'             LINKAGE CONVENTION SWITCH
+COBOLREF DC    CL9'COBOLDATE'
+SPIELIST SPIE  ,(4,5),MF=L         SPIE EXIT LIST
+*
+**   PATCH AREA TO ALIGN PROG LENGTH TO OLD ROUTINES TO BE ZAPPED
+*
+PTCHAREB DS    CL18                ALIGN PROG LENGTH TO X'1F8'
+WORK     DS    D                   WORK AREA
+         END
