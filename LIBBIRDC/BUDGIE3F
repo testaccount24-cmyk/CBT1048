@@ -1,0 +1,943 @@
+         TITLE 'BUDGIE3F - INTERNAL MACROS'                             F 000010
+         MACRO                                                          F 000020
+         $CB   &PRINT=OFF                                               F 000030
+         PUSH PRINT                PRESERVE CURRENT PRINT STATUS        F 000040
+         PRINT &PRINT              ESTABLISH NEW PRINT STATUS           F 000050
+               TITLE 'CB02 - CB02 CONTROL BLOCK'                        F 000060
+         CB02  ,                   GENERATE DSECT                       F 000070
+               TITLE 'CB03 - CB03 CONTROL BLOCK'                        F 000080
+         CB03  ,                   GENERATE DSECT                       F 000090
+               TITLE 'CB04 - CB04 CONTROL BLOCK'                        F 000100
+         CB04  ,                   GENERATE DSECT                       F 000110
+               TITLE 'CB05 - CB05 CONTROL BLOCK'                        F 000120
+         CB05  ,                   GENERATE DSECT                       F 000130
+               TITLE 'CCB  - CENTRAL CONTROL BLOCK'                     F 000140
+         CCB   ,                   GENERATE DSECT                       F 000150
+               TITLE '     - BATCH BALANCING REPORT LINES'              F 000160
+      DETAILBB ,                   GENERATE DSECTS                      F 000170
+               TITLE '     - GENERAL EQUATES'                           F 000180
+       EQUATES ,                   GENERATE EQUATES                     F 000190
+               TITLE '     - FORMAT OF BATCH LOG RECORD'                F 000200
+      LOGCARD  ,                   GENERATE DSECT                       F 000210
+         POP   PRINT               RESTORE ORIGINAL PRINT STATUS        F 000220
+         MEND                                                           F 000230
+         SPACE 5                                                        F 000240
+BUDGIE3F CSECT                                                          F 000250
+         $CB   ,                   GENERATE DSECTS AND EQUATES          F 000260
+         TITLE 'BUDGIE3F - BATCH CARD PROCESSING'                       F 000270
+        SCSECT F                   START CSECT BUDGIE3F                 F 000280
+         ENTRY BATCHI              BATCH INITIALISATION                 F 000290
+         ENTRY BATCHT              BATCH TERMINATION                    F 000300
+         ENTRY BCSCAN              DETERMINE IF CARD IS A BARCH CARD    F 000310
+         SPACE 1                                                        F 000320
+         USING CB02NTRY,R10        ESTABLISH CB02 ADDRESSABILITY        F 000330
+         USING CB05NTRY,R11         ESTABLISH CB05 ADDRESSABILITY       F 000340
+         USING DETAILBB,R7         ESTABLISH DETAIL LINE ADDRESSABILITY F 000350
+         TITLE 'BUDGIE3F - BATCH CARD PROCESSING'                       F 000360
+*********************************************************************** F 000370
+*        BATCH INITIALISATION PROCESSING - MAIN-LINE                  * F 000380
+*********************************************************************** F 000390
+         SPACE 1                                                        F 000400
+BATCHI   SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              F 000410
+         CBAL  R4,WORKOPO          PREPARE WORK FILE AS OUTPUT          F 000420
+         CBAL  R4,INITBC           PERFROM APPROPRIATE INITIALISATION   F 000430
+         CBAL  R4,SETUPLOG         SET UP BATCH LOG RCORD               F 000440
+         CBAL  R4,GETSUSP          MERGE SUSPIN WITH SUSPOUT            F 000450
+         CBAL  R4,GETCCNT          GET CARD COUNT FROM B/C              F 000460
+         CBAL  R4,INITCB05         INITIALSIE CB05 ACCUMULATORS         F 000470
+         CBAL  R4,INITCREC         INITIALISE CONTROL RECORD FIELDS     F 000480
+         CBAL  R4,BCCB13           PERFROM ANY B/C CB13 TESTS           F 000490
+         CBAL  R4,BCURTN           PERFORM USER EXIT IF ANY             F 000500
+        SUBOUT RESTORE=R4          RESTORE AND RETURN TO CALLER         F 000510
+         EJECT                                                          F 000520
+*********************************************************************** F 000530
+*        BATCH TERMINATION PROCESSING - MAIN-LINE                     * F 000540
+*********************************************************************** F 000550
+         SPACE 1                                                        F 000560
+BATCHT   SUBIN SAVE=R4             PRESERVE RETUN ADDRESS               F 000570
+         CBAL  R4,BLCB13           PERFROM ANT BATCH LEVEL CB13 TESTS   F 000580
+         TM    APSWITCH,APSWMS05   IS THERE ANY BALANCING TO REPORT ON  F 000590
+         BZ    BATCHT02            BRANCH I FNOT                        F 000600
+         OI    BRSWITCH,SWBRRCNT   FLAG TO INSERT CARD COUNT IN 1ST SET F 000610
+         LA    R11,CB02CB05         TREAT POINTER AS CURRENT CB05       F 000620
+         CBAL  R4,NEXTCB05         GET 1ST CB05 FOR PRINTING            F 000630
+         ST    R11,$PTRCB05         PRESERVE ADDRESS OF 1ST PRINTABLE C F 000640
+BATCHT01 CBAL  R4,PREPRNT          DETERMINE IF PAGE SKIP REQUIRED      F 000650
+         CBAL  R4,CTHEADS          PRINT CONTROL LINE HEADINGS          F 000660
+         CBAL  R4,CTBVAL           PRINT BATCH CARD VALUES              F 000670
+         CBAL  R4,CTBACC           PRINT ACCUMULATED DETAIL VALUES      F 000680
+         CBAL  R4,CTDIFF           PRINT DIFFERENCES IF ANY             F 000690
+         CBAL  R4,NEXTCB05         GET ADDRESS OF NEXT CB05 REQUIRED    F 000700
+         ST    R11,$PTRCB05        PRESERVE ADDRESS OF THIS CB05 FOR LO F 000710
+         BNZ   BATCHT01            LOOP BACK IF CB05'S LEFT             F 000720
+BATCHT02 CBAL  R4,BSTATUS          TELL IF ACCEPTED ETC                 F 000730
+         TM    MASTER,SWMHARD+SWMDUPIN+SWMDUPLG IS BATCH TO BE REJECTED F 000740
+         BNZ   BATCHT03            BR IF BATCH TO BE REJECTED           F 000750
+         L     R11,CB02CB03         GET ADDRESS OF C/R C/B CHAIN        F 000760
+         LTRR  R11,R11               PURIFY AND TEST IF PRESENT         F 000770
+         BZ    BATCHT03            BR IF NO C/R PROCESSING              F 000780
+         CBAL  R4,BLDCREC          CONSTRUCT CONTROL RECORD             F 000790
+         CBAL  R4,WRITECR          WRITE CONTROL RECORD                 F 000800
+BATCHT03 CBAL  R4,BATCHIO          READ FROM WORK FILE & WRITE AS NEC   F 000810
+         CBAL  R4,BLDBLOG          PROCUCE BATCH LOG REORD              F 000820
+        SUBOUT RESTORE=R4          RESTOE AND RETURN                    F 000830
+         TITLE 'BUDGIE3F - BATCH TERMINATION PROCESING'                 F 000840
+*********************************************************************** F 000850
+*        PERFORM ANY BATCH LEVEL TESTS                                * F 000860
+*********************************************************************** F 000870
+         SPACE 1                                                        F 000880
+BLCB13   SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              F 000890
+         L     R8,CB02CB14         GET ADDRESS OF 1ST BATCH LEVEL TEST  F 000900
+*        NOTE THAT THIS POINTER REALLY POINTS AT A CB13.  THE CB13      F 000910
+*         POINTS AT THE RELEVANT CB14.                                  F 000920
+         BLANK (R7),,SPCE1AFT      BLANK OUT PRINT LINE BUFFER          F 000930
+*                                  THIS IS NECESSARY BECAUSE THE BUFFER F 000940
+*                                   WILL NOT BE BLANK IF :-             F 000950
+*                                   A) ERRORS ONLY ARE BEING PRINTED  & F 000960
+*                                   B) LAST RECORD IN INPUT CONTAINED   F 000970
+*                                      NO ERRORS                        F 000980
+         CBAL  R4,BATCHBBL         PRINT BLANK LINE                     F 000990
+         CBAL  R4,CB13TST          PERFORM BATCH LEVEL TESTS            F 001000
+        SUBOUT RESTORE=R4          RESTORE AND REURN                    F 001010
+         EJECT                                                          F 001020
+*********************************************************************** F 001030
+*        PREPARE TO PRINT CONTROL TOTALS                              * F 001040
+*********************************************************************** F 001050
+         SPACE 1                                                        F 001060
+PREPRNT  SUBIN SAVE=R4             PRESERVE REURN ADDRESS               F 001070
+BATCH0   COUNT PRINTBB,14          FORCE LINE COUNT TO INCLUDE BATCH    F 001080
+*                                   TOTAL LINE REQUIREMENTS.  IF TOO    F 001090
+*                                   CLOSE TO EOP, THEN THE FOLLOWING    F 001100
+*                                   CBAL WILL FORCE A PAGE SKIP SO THAT F 001110
+*                                   THE TOTALS ARE NOT SPLIT ACROSS PGE F 001120
+         CBAL  R4,BATCHBBL         PR BL LINE & TEXT IF SPCE LEFT       F 001130
+         COUNT PRINTBB,-14         DECREMENT LINE COUNT TO TRUE VALUE   F 001140
+         CBAL  R4,BATCHBBL         PRINT 2ND BLANK LINE                 F 001150
+         SUBOUT RESTORE=R4         RESTORE AND RETRUN                   F 001160
+         EJECT                                                          F 001170
+*********************************************************************** F 001180
+*        ESTABLISH CONTROL TOTAL HEADINGS                             * F 001190
+*********************************************************************** F 001200
+         SPACE 1                                                        F 001210
+CTHEADS  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              F 001220
+BATCH00  LA    R5,6                ESTABLISH LOOP OF 6 CB05 ELEMENTS    F 001230
+         TM    BRSWITCH,SWBRRCNT   TEST IF RECORD COUNT FOR THIS LINE   F 001240
+         BZ    *+10                BYPASS HEADING IF NOT                F 001250
+         MVC   TTBBCNT,BBLINE14    MOVE RECORD COUNT HEADING TO LINE    F 001260
+         L     R11,$PTRCB05         GET 1ST CB05 FOR THIS TOTLA LINE    F 001270
+         LA    R8,TTBBFLD1         POINT R8 AT 1ST REPORT BUCKET        F 001280
+         B     *+8                 BYPASS FORWARD CHAINING              F 001290
+BATCH01  CBAL  R4,NEXTCB05         GET ADDRESS OF NEXT CB05 ALAMANT     F 001300
+         LTRR  R11,R11               PURIFY & TEST FOR END OF CHAIN     F 001310
+         BZ    BATCH02             BR IF END OF CHAIN TO PRINT LINE     F 001320
+         MVC   0(16,R8),CB05LNE1   ADD HEADING LINE TO REPORT           F 001330
+         LA    R8,19(,R8)          INCREMENT TO NEXT REPORT BUCKET      F 001340
+         BCT   R5,BATCH01          GO GET NEXT CB05 IF LOOP LEFT        F 001350
+BATCH02  CBAL  R4,BATCHBBL         PRINT TOTAL LINE                     F 001360
+         MVI   DTBBCC,SPCE2AFT     ESTABLISH DOUBLE SPACE               F 001370
+         TM    BRSWITCH,SWBRRCNT   TEST IF RECORD COUNT FOR THIS LINE   F 001380
+         BZ    *+10                BYPASS HEADING IF NOT                F 001390
+         MVC   TTBBCNT,BBLINE15    ADD ' COUNT' TO TOTAL LINE           F 001400
+         LA    R5,6                ESTABLISH LOOP OF 6 CB05 ELEMENTS    F 001410
+         LA    R8,TTBBFLD1         POINT R8 AT 1ST REPORT BUCKET        F 001420
+         L     R11,$PTRCB05         POINT R11 AT 1ST CB05 FOR FHIS SET  F 001430
+         B     *+8                 BYPASS FORWARD CHAINING              F 001440
+BATCH03  CBAL  R4,NEXTCB05         GET NEXT REQUIRED CB05               F 001450
+         LTRR  R11,R11               PURIFY & TEST FOR END OF CHAIN     F 001460
+         BZ    CTHEADSX            EXIT F END OF CHAIN                  F 001470
+         MVC   0(16,R8),CB05LNE2   SECOND HEADING LINE TO LINE          F 001480
+         LA    R8,19(,R8)          INCREMENT TO NEXT LINE BUCKET        F 001490
+         BCT   R5,BATCH03          LOOP BACK IF BUCKETS LEFT            F 001500
+CTHEADSX CBAL  R4,BATCHBBL         WRITE PRINT LINE                     F 001510
+        SUBOUT RESTORE=R4          RESTORE AND RETURN                   F 001520
+         EJECT                                                          F 001530
+*********************************************************************** F 001540
+*        PRINT BATCH CARD VALUES                                      * F 001550
+*********************************************************************** F 001560
+         SPACE 1                                                        F 001570
+CTBVAL   SUBIN SAVE=R4             PRESERVE RETURB ADDRESS              F 001580
+         MVI   DTBBCC,SPCE2AFT     ESTABLISH NEXT DOUBLE SPACE          F 001590
+         LA    R5,6                ESTABLISH LOOP OF 6 BUCKETS          F 001600
+         LA    R8,TTBBFLD1-1       POINT R8 AT 1ST REPORT BUCKET        F 001610
+         L     R11,$PTRCB05        GET ADDRESS OF 1ST CB05 FOR THIS SET F 001620
+         MVC   TTBBTEXT,BBLINE16   MOVE 'BATCH CARD' TO LINE            F 001630
+         TM    BRSWITCH,SWBRRCNT   TEST IF CARD COUNT IN THIS SET       F 001640
+         BZ    BATCH05+4           BR IF CARD COUNT NOT REQUIRED        F 001650
+         TM    CB02SW,SW02RCNT     DOES BATCH CARD HVE RECORC COUNT     F 001660
+         BZ    BATCH05+4           BR IF NO BATCH CARD RECORD COUNT     F 001670
+         MVC   TTBBCNT,EDITPL3     EDIT MASK TO LINE                    F 001680
+         ED    TTBBCNT,CB02CNTR    EDIT RECORD COUNT FROM BATCH CARD    F 001690
+         B     *+8                 BYPASS FORWARD CHAINING              F 001700
+BATCH05  CBAL  R4,NEXTCB05         GET NEXT RESUIRED CB05               F 001710
+         LTRR  R11,R11               PURIFY & TEST FOR END OF CHAIN     F 001720
+         BZ    CTBVALX             EXIT IF EXD OF CHAIN                 F 001730
+         LA    R1,CB05BVAL         POINT AT VALUE TO BE EDITED          F 001740
+         CBAL  R4,FLDEDIT          EDIT VALUE FILED                     F 001750
+         LA    R8,19(,R8)          NNCREMENT TO NEXT BUCKET             F 001760
+         BCT   R5,BATCH05          LOOP BACK IF BUCKETS LEFT            F 001770
+CTBVALX  CBAL  R4,BATCHBBL         WRITE DETAIL LINE                    F 001780
+        SUBOUT RESTORE=R4          RESTORE AND RETURN                   F 001790
+         EJECT                                                          F 001800
+*********************************************************************** F 001810
+*        PRINT ACCUMULATED VALUES                                     * F 001820
+*********************************************************************** F 001830
+         SPACE 1                                                        F 001840
+CTBACC   SUBIN SAVE=R4             PESERVE RETURN ADDRESS               F 001850
+         MVI   DTBBCC,SPCE2AFT     ESTAVLISH DOUBLE SPACE               F 001860
+         LA    R5,6                ESTABLISH LOOP OF 6 BUCKETS          F 001870
+         LA    R8,TTBBFLD1-1       POINT R8 AT 1ST REPORT BUCKET        F 001880
+         L     R11,$PTRCB05         GET ADDR OF 1ST CB05 FOR THIS SET   F 001890
+         MVC   TTBBTEXT,BBLINE17   ADD MESSAGE TO START O FLINE         F 001900
+         TM    BRSWITCH,SWBRRCNT   ARE WE PRODUCINR REC CNT FOR THIS SE F 001910
+         BZ    BATCH07+4           BR IF N REC CNT FOR THIS SET         F 001920
+         MVC   TTBBCNT,EDITPL3     EDIT MASK TO LINE                    F 001930
+         ED    TTBBCNT,CB02RCNT    EDIT CALCULATED REC CNT              F 001940
+         B     *+8                 BYPASS FORWARD CHAINING              F 001950
+BATCH07  CBAL  R4,NEXTCB05         GET BEXT REQUIRED CB05               F 001960
+         LTRR  R11,R11               PURIFY AND TEST FOR END OF CHAIN   F 001970
+         BZ    CTBACCX             EXIT IF END OF CHAIN                 F 001980
+         LA    R1,CB05BACC         POINT AT VALUE TO BE EDITED          F 001990
+         CBAL  R4,FLDEDIT          EDIT VALUE FILED                     F 002000
+         LA    R8,19(,R8)          INCREMENT TO NEXT BICKET             F 002010
+         BCT   R5,BATCH07          LOOP BACK IF BUCKETS LEFT            F 002020
+CTBACCX  CBAL  R4,BATCHBBL         WRITE PRINT LINE                     F 002030
+        SUBOUT RESTORE=R4          RESTORE AND RETURN                   F 002040
+         EJECT                                                          F 002050
+*********************************************************************** F 002060
+*        PRINT DIFFERENCES IF ANY                                       F 002070
+*********************************************************************** F 002080
+         SPACE 1                                                        F 002090
+CTDIFF   SUBIN SAVE=R4             PRESERVE RETIRN ADDRESS              F 002100
+         LA    R5,6                ESTABLISH LOOP OF 6 BUCKETS          F 002110
+         LA    R8,TTBBFLD1-1       POINT R8 AT 1ST REPORT BUCKET        F 002120
+         L     R11,$PTRCB05        GET ADDRESS OF 1ST CB05 FOR THIS SET F 002130
+         MVC   TTBBTEXT,BBLINE18   ADD MESSAGE TO START OF LINE         F 002140
+         TM    BRSWITCH,SWBRRCNT   ARE WE PODUCING REC CNT FIR THIS SET F 002150
+         BZ    BATCH09+4           BR IF NO REC CNT REQUIRED            F 002160
+         TM    CB02SW,SW02RCNT     DOES B/C RECORD COUNT EXIST          F 002170
+         BZ    BATCH09+4           BR IF B/C REC CNT DOES NOT EXIST     F 002180
+         SP    CB02CNTR,CB02RCNT   DETERMINE DIFFERENCE IF ANY          F 002190
+         BZ    BATCH09+4           BR IF DIFERENCE ZERO                 F 002200
+         MVC   TTBBCNT,EDITPL3     EDIT MASK TO INE                     F 002210
+         ED    TTBBCNT,CB02CNTR    EDIT DIFFERENCE INTO LINE            F 002220
+         BNL   *+8                 BR IF DIEFERENECE NOT -BE            F 002230
+         MVI   TTBBCNT+L'TTBBCNT-1,C'-' MOVE MINUS SIGN BEHIND DIFF     F 002240
+         OI    MASTER,SWMBALNC     SET TO SHOW OUT OF BALANCE           F 002250
+         TM    CB02SW,SW02RCSF     TEST IF ERROR IS SOFT                F 002260
+         BZ    *+12                BR IF ERROR IS HARD                  F 002270
+         OI    MASTER,SWMSOFT      SET ON SOFT ERROR SWITCH             F 002280
+         B     *+8                 BYPASS SETTING HARD SW               F 002290
+         OI    MASTER,SWMHARD      SET ON HARD ERROR SW                 F 002300
+         B     *+8                 BYPASS FORWARD CHAINING              F 002310
+         EJECT                                                          F 002320
+*********************************************************************** F 002330
+*        PRINT DIFFERENCES IF ANY ( CONT'D )                          * F 002340
+*********************************************************************** F 002350
+         SPACE 1                                                        F 002360
+BATCH09  CBAL  R4,NEXTCB05         GET NEXT REQUIRED CB05               F 002370
+         LTRR  R11,R11               PURIFY & TEST FOR END OF CHAIN     F 002380
+         BZ    CTDIFFX             EXIT IF END OF CHAIN                 F 002390
+         ZAP   $WRKPACK,CB05BVAL   PUT B/C VALUE IN WORK AREA           F 002400
+         TM    CB05SW,SW05BAL      IS BATCH VALUE BALABCING             F 002410
+         BZ    *+14                BRANCH FI B/C ALGEBRAIC              F 002420
+         AP    $WRKPACK,CB05BACC   DETERMINE BALANCING DIFFERENCES      F 002430
+         B     *+10                BYPASS ALGEBRAIC SUBTRACTION         F 002440
+         SP    $WRKPACK,CB05BACC   DETERMINE DIFFERENCE IF ANY          F 002450
+         BZ    BATCH10             BR IF NO DIFFERENCE                  F 002460
+         LA    R1,$WRKPACK         POINT AT VALUE TO BE EDITED          F 002470
+         CBAL  R4,FLDEDIT          EDIT VALUE FILED                     F 002480
+         OI    MASTER,SWMBALNC     SET ON OUT OF BALANCE SW             F 002490
+         TM    CB05SW,SW05SOFT     TEST IF ERROR OS SOFT                F 002500
+         BZ    *+12                BR IF ERROR IS HARD                  F 002510
+         OI    MASTER,SWMSOFT      SET ON SOFT ERROR SW                 F 002520
+         B     *+8                 BYPASS SETTINT HARD ERROR SW         F 002530
+         OI    MASTER,SWMHARD      SET ON HARD ERROR SW                 F 002540
+BATCH10  LA    R8,19(,R8)          INCREMENT TO NEXT REPORT BUCKET      F 002550
+         BCT   R5,BATCH09          LOOP BACK IF BUCKETS LEFT            F 002560
+CTDIFFX  CBAL  R4,BATCHBBL         PRINT LINE                           F 002570
+         COUNT PRINTBB,4           INCREMENT LINE COUNT FOR DOUBLE SPAC F 002580
+         NI    BRSWITCH,FF-SWBRRCNT SHOW REC CNT NOT REQUIRED FOR NEXT  F 002590
+        SUBOUT RESTORE=R4          RESTORE AND RETURN                   F 002600
+         EJECT                                                          F 002610
+*********************************************************************** F 002620
+*        GET NEXT CB05 ADDRESS                                        * F 002630
+*********************************************************************** F 002640
+         SPACE 1                                                        F 002650
+*        THE PRECEDING CONTROL TOTAL ROUTINES DO NOT PROCESS CB05'S     F 002660
+*         THAT DEFINE TESTS, AND, OPTIONALLY, DO NOT PROCESS            F 002670
+*         INDIVIDUAL CB05'S IF THERE IS NO DIFFERENCE BETWEEN THE       F 002680
+*         BATCH CARD VALUE AND THE DETAIL CARD VALUE.  THIS ROUTINE     F 002690
+*         RETIEVES THE ADDRESS OF THE NEXT APPROPRIATE CB05.            F 002700
+         SPACE 1                                                        F 002710
+*        ON ENTRY, R11  - ADDRESS OF CURRENT CB05                       F 002720
+*        ON EXIT,  R11  - ADDRESS OF NEXT CB05 OR ZERO                  F 002730
+         SPACE 1                                                        F 002740
+*        THE CONDITION CODE IS SET SUCH THAT THE CALLER MAY ,AKE        F 002750
+*         THE FOLLOWING CONFITIONAL TESTS :-                            F 002760
+*              BZ  - CHAIN EXHAUSTED                                    F 002770
+*              BNZ - CB05 ADDRESS RETRUNED                              F 002780
+         SPACE 1                                                        F 002790
+NEXTCB05 SUBIN ,                   ENTR ROUTINE                         F 002800
+         LTR   R11,R11               ARE WE ALREADY AT EOC              F 002810
+         BZ    NXTCB05X            EXIT IF EOC                          F 002820
+NXTCB05L L     R11,CB05CB05         GET ADDRESS F NEXT CB05 IN CHAIN    F 002830
+         LTRR  R11,R11               PURIFY AND TEST FOR EOC            F 002840
+         BZ    NXTCB05X            EXIT IF EOC                          F 002850
+         TM    CB05SW,SW05TST      IS THIS S TEST REQUEST               F 002860
+         BO    NXTCB05L            IGNORE IF YES                        F 002870
+         TM    CB05SW,SW05DPRT     DO WE ONLY PRINT IF DISCREPANCY      F 002880
+         BZ    NXTCB05F            BR IF NOT TO RETURN WITH THIS ONE    F 002890
+         CP    CB05BVAL,CB05BACC   IS THERE A DISCREPANCY               F 002900
+         BE    NXTCB05L            IF NOT IGNORE AND GET NEXT           F 002910
+NXTCB05F LTR   R11,R11               SET COND CODE FOR CALLER           F 002920
+NXTCB05X SUBOUT ,                  RETURN TO CALLER                     F 002930
+         EJECT                                                          F 002940
+*********************************************************************** F 002950
+*        TELL WHETHER BATCH BALANCED, ACCEPTED, ETC                   * F 002960
+*********************************************************************** F 002970
+         SPACE 1                                                        F 002980
+BSTATUS  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              F 002990
+BATCH12  MVI   DTBBCC,SPCE2AFT     ESTABLISH DOUBLE SPACE               F 003000
+         CBAL  R4,BATCHBBL         PRINT 2 BL LINES                     F 003010
+         COUNT PRINTBB,1           INCREMENT LINE COUNT                 F 003020
+         MVI   95(R7),C'*'         MOVE * TO START OF MESSAGE AREA .... F 003030
+         MVC   96(37,R7),95(R7)     ... AND PROPAGTE ACROSS THE LINE    F 003040
+         AP    $CNTREJ,$ONE          ASSUME REJECTED & INCREMENT COUNT  F 003050
+         LINE  BBLINE19,3,(R7),P=N ASSUNE DUP INPUT BATCH NO            F 003060
+         MVC   3+L'BBLINE19(L'BBLINE08,R7),BBLINE08 'FROM SYSTEM'       F 003070
+         TM    DUPLICAT+IOPSSW,IOSWPRES IS DUPLICAT FILE PRESENT        F 003080
+         BZ    *+10                BR IF NOT                            F 003090
+         MVC   3+L'BBLINE19(L'BBLINE20,R7),BBLINE20 'TO DUPLICATE'      F 003100
+         TM    MASTER,SWMDUPIN     IS THIS BATCH NO = LAST              F 003110
+BRUT1DUP BO    BATCH13             GO PRINT LINE IF YES                 F 003120
+         MVI   3(R7),C' '          BLANK OUT ....                       F 003130
+         MVC   4(80,R7),3(R7)       .... MESSAGE AREA                   F 003140
+         LINE  BBLINE05,3,(R7),P=N ASSUME BATCH NO ALREADY IN LOG       F 003150
+         MVC   3+L'BBLINE05(L'BBLINE08,R7),BBLINE08 'FROM SYSTEM'       F 003160
+         TM    DUPLICAT+IOPSSW,IOSWPRES IS 'DUPLICAT' PRESENT           F 003170
+         BZ    *+10                BR IF NOT                            F 003180
+         MVC   3+L'BBLINE05(L'BBLINE20,R7),BBLINE20 ' TO DUPLICATE'     F 003190
+         TM    MASTER,SWMDUPLG     TEST IF BATCH NO IS DUPLICATED       F 003200
+         BO    BATCH13             GO PRINT LINE IF YES                 F 003210
+         MVI   3(R7),C' '          BLANK OUT ....                       F 003220
+         MVC   4(80,R7),3(R7)       .... MESSAGE AREA                   F 003230
+         LINE  BBLINE03,3,(R7),P=N   ASSUME OUT OF BALANCE & REJECTED   F 003240
+         MVC   3+L'BBLINE03(L'BBLINE08,R7),BBLINE08 MESSAGE TO LINE     F 003250
+         TM    SUSPOUT+IOPSSW,IOSWPRES IS SUSPENSE FILE PRESENT         F 003260
+         BZ    *+10                BR IF NO SUSPENSE                    F 003270
+         MVC   3+L'BBLINE03(L'BBLINE07,R7),BBLINE07 MESSAGE TO LINE     F 003280
+         TM    MASTER,SWMBALNC+SWMHARD TEST IF OUT OF BALANCE & REJECTE F 003290
+         BO    BATCH13             GO PRINT LINE IF YES                 F 003300
+         BLANK (R7),90             BLANK OUT MESSAGE                    F 003310
+         EJECT                                                          F 003320
+*********************************************************************** F 003330
+*        TELL WHETHER BATCH BALANCED, ACCEPTED, ETC ( CONT'D )        * F 003340
+*********************************************************************** F 003350
+         SPACE 1                                                        F 003360
+         LINE  BBLINE04,3,(R7),P=N   ASSUME IN BALANCE - REJECTED       F 003370
+         MVC   3+L'BBLINE04(L'BBLINE08,R7),BBLINE08 MESSAGE TO LINE     F 003380
+         TM    SUSPOUT+IOPSSW,IOSWPRES TEST IF SUSPENSE FILE EWISTS     F 003390
+         BZ    *+10                BR IF NO SUSPENSE                    F 003400
+         MVC   3+L'BBLINE04(L'BBLINE07,R7),BBLINE07 MESSAGE TO LINE     F 003410
+         TM    MASTER,SWMHARD      TEST IF REJECTED                     F 003420
+         BO    BATCH13             GO PRINT LINE IF YES                 F 003430
+         BLANK (R7),133            BLANJ OUT MESSAGES & ****            F 003440
+         SP    $CNTREJ,$ONE        BATCH NOT REJ SO DECREMENT COUNT     F 003450
+         AP    $CNTACC,$ONE          INCREMENT COUNT OF ACCEPTED BATCHE F 003460
+         LINE  BBLINE02,3,(R7),P=N   ASSUME OUT OF BALANCE BUT ACCEPTED F 003470
+         TM    MASTER,SWMBALNC     TETS IF OUT OF BALANCE               F 003480
+         BO    BATCH13             GO PRINT LINE IF OUT OF BALANCE      F 003490
+         BLANK (R7),90             BLANK OUT MESSAGE                    F 003500
+         LINE  BBLINE01,3,(R7),P=N   SHOW BALANCED AND ACCEPTED         F 003510
+BATCH13  MVI   DTBBCC,SPCE3AFT     ESTABLISH TRIPLE SPACE LEST C/R PRT  F 003520
+         CBAL  R4,BATCHBBL         PRINT BATCH ACTION MESSAGE           F 003530
+         TM    MASTER,SWMHARD      WAS THERE A HARD ERROR               F 003540
+         BZ    *+16                BR IF NO HARD ERROR IN BATCH         F 003550
+         CLI   $COMPCDE+1,COND12   IS COND CODE GREATER THAN 12         F 003560
+         BH    *+8                 BR IF YES                            F 003570
+         MVI   $COMPCDE+1,COND12   SET COND CODE TO 12                  F 003580
+        SUBOUT RESTORE=R4          RESTORE AND RETURN                   F 003590
+         EJECT                                                          F 003600
+*********************************************************************** F 003610
+*        CONSTRUCT CONTROL RECORD IF NESESSARY                        * F 003620
+*********************************************************************** F 003630
+         SPACE 1                                                        F 003640
+         DROP  R11                  DROP CB05 ADDRESSABILITY            F 003650
+         USING CB03NTRY,R11         ESTABLISH CB03 ADDRSSSABILITY       F 003660
+         USING CB04NTRY,R8         ESTABLISH CB04 ADDRESSABILITY        F 003670
+BLDCREC  SUBIN SAVE=R4             PRESERVE REYNR ADDRESS               F 003680
+         L     R6,$DBUFF            POINT R6 AT DUMMY BUFFER AREA       F 003690
+         MVI   0(R6),C' '          MOBE BL TO STRAT OF BUFFER           F 003700
+         LH    R1,$RECLUT2         GET LENGHT OF OUTPUT RECORD          F 003710
+         BCTR  R1,0                DECREMENT FOR EXECUTE                F 003720
+         BCTR  R1,0                DECREMENT TO ALOW FOR *+1 START OF   F 003730
+         EX    R1,BTCHMVC1         EXECUTE TO PROPAGATE BLANKS          F 003740
+         SR    R14,R14             ZEROISE WORK REGISTER                F 003750
+         SR    R15,R15             ZEROISE WORK REGISTER                F 003760
+         IC    R14,CB03PCRK        GET POSN OF CONTROL RECORD KEY       F 003770
+         BCTR  R14,0               DECREMENT ( POSN - 1 = DISPLACEMENT) F 003780
+         AR    R14,R6              PONT R14 AT START OF C/R KEY         F 003790
+         IC R15,CB03LCRK           GET LENFTH OF C/R KEY                F 003800
+         BCTR  R15,0               DECREMENT FOR EXECUTE                F 003810
+         EX    R15,BTCHMVC2        MOVE KET TO CONTROL RECORD           F 003820
+         L     R8,CB03CB04         GET ADDRESS OF 1ST CB04 C/B          F 003830
+         B     *+8                 BYPASS FORWARD CHAINING              F 003840
+BATCH14  L     R8,CB04CB04         GET ADDRESS OF NEXT CB04             F 003850
+         LTRR  R8,R8               PURIFY AND TEST FOR END OF CHAIN     F 003860
+         BZ    BATCH25             BR IF EOC TO PRFORM I/O              F 003870
+         CLC   CB04FNO,=C'RC'      IS THIS A REQUEST FOR THE RECORD COU F 003880
+         BNE   *+10                BR IF NOT REC CNT                    F 003890
+         ZAP   CB04BACC,CB02RCNT   RETRIEVE COMPUTED REC CNT            F 003900
+         SR    R15,R15             ZEROISE WORK REGISTER                F 003910
+         IC    R15,CB04LCRF        GET EXECUTABLE LENGTH OF OUTPUT FIEL F 003920
+         SR    R14,R14             ZEROISE WORK REGISTER                F 003930
+         IC    R14,CB04PCRF        GET POSN OF OUTPUT FIELD             F 003940
+         BCTR  R14,0               DECREMENT POSN TO DISPLACEMENT       F 003950
+         AR    R14,R6              PINT AT OUTPUT FIELD IN C/R          F 003960
+         TM    CB04SW,SW04BNO      IS THE BATCH NUMBER REQUIRED         F 003970
+         BO    BATCH17             BR IF BNO REQUIRED                   F 003980
+         TM    CB04SW,SW04SRC      IS F LD TO BE RETRIEVED FROM W/R     F 003990
+         BO    BATCH18             BR IF YES TO RETRIEVE FIELD          F 004000
+         EJECT                                                          F 004010
+*********************************************************************** F 004020
+*        CONSTRUCT CONTROL RECORD ( CONT4D )                          * F 004030
+*********************************************************************** F 004040
+         SPACE 1                                                        F 004050
+         TM    CB04BACC+7,X'03'    IS THE SIGN A 'C'                    F 004060
+         BNZ   *+8                 BR IF NOT                            F 004070
+         OI    CB04BACC+7,X'03'    CHANGE TO 'F' FOR EBCDIC CLARITY     F 004080
+         TM    CB04SW,SW04PACK     IS OUTPUT FIELD TO BE PACKED         F 004090
+         BZ    BATCH15             BR IF NOT                            F 004100
+         EX    R15,BTCHMVC3        ZAP ACCUMULATED TOTAL INTO C/R       F 004110
+         B     BATCH14             GO GET NEXT CB04                     F 004120
+BATCH15  EX    R15,BTCHMVC4        UNPACJ TOTAL INTO C/R                F 004130
+BATCH16  B     BATCH14             GO GET NEXT CB04                     F 004140
+BATCH17  EX    R15,BTCHMVC5        MOVE CURREBT BNO TO C/R              F 004150
+         B     BATCH14             GO GET NEXT CB04                     F 004160
+BATCH18  SR    R1,R1               ZEROISE WORJ REGISTER                F 004170
+         IC    R1,CB04PSRC         GET POSN OF SOURE FILED              F 004180
+         BCTR  R1,0                RECREMENT POSN TO DISPLACEMENT       F 004190
+         A     R1,SYSUT1+IOPSRECA  POINT AT FIELD WITHIN REC OR W/S     F 004200
+         EX    R15,BTCHMVC6        RETRIEVE FLD FROM W/S                F 004210
+         B     BATCH14             GO GET NEWT CB04                     F 004220
+BATCH25  SUBOUT RESTORE=R4         RESTORE AND RETURN                   F 004230
+         EJECT                                                          F 004240
+*********************************************************************** F 004250
+*        WRITE CONTROL RECORD TO 'WORK' AND 'PRINT' AS NECESSARY      * F 004260
+*********************************************************************** F 004270
+         SPACE 1                                                        F 004280
+WRITECR  SUBIN SAVE=R4             PREERVE RETURN ADDRESS               F 004290
+         DROP  R11                  DROP CB05 ADDRESSABILITY            F 004300
+         USING CB03NTRY,R11         ESTABLISH CB03 ADDRESSABILITY       F 004310
+         L     R11,CB02CB03         GET ADDRESS OF CB03 C/B             F 004320
+         TM    CB03SW,SW03LIST     IS C/R TO BE WRITTEN TO PRINT        F 004330
+         BZ    BATCH26             BYPASS PRINTING IF NOT               F 004340
+         MVC   DTBBCARD,0(R6)      MOVE C/R TO PRINT LINE               F 004350
+         MVC   DTBBEMSS(L'BBMESS14),BBMESS14 IDENTIFY AS C/R            F 004360
+         CBAL  R4,BATCHBBL         GO PRINT LINE                        F 004370
+BATCH26  TM    CB02SW,SW02WCR      IS CONTRO RECORD TO BE WRITTEN UT2   F 004380
+         BZ    WRITECRX            EXIT IF NOT                          F 004390
+         TM    CB03SW,SW03POSN     DOES C/R FOLLOW BATCH                F 004400
+         BO    BATCH27             BR IF C/R PRECEDES BATCH             F 004410
+         CBAL  R4,WORKPUT          ADD C/R TO END OF BATCH IN WORK FILE F 004420
+         B     WRITECRX            GO TO EXIT                           F 004430
+BATCH27  CBAL  R4,PUTUT2           WRITE C/R DIRECT TO SYSUT2 SO THAT   F 004440
+*                                   IT PRCEDES THE BATCH - IT IS KNOWN  F 004450
+*                                   THAT THE BATCH IS ACCEPETD.         F 004460
+WRITECRX SUBOUT RESTORE=R4         RESTORE AND RETURN                   F 004470
+         EJECT                                                          F 004480
+*********************************************************************** F 004490
+*        READ BATCH FROM WORK FILE                                    * F 004500
+*********************************************************************** F 004510
+         SPACE 1                                                        F 004520
+BATCHIO  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              F 004530
+         TM    MASTER,SWMDUPIN+SWMDUPLG IS THIS A DUP BATCH NUMBER      F 004540
+         BZ    *+12                GO PROCEED IF NOT DUP BATCH NO       F 004550
+         TM    DUPLICAT+IOPSSW,IOSWPRES IS 'DUPLICAT' PREEENR           F 004560
+         BZ    BATCH33             GO REJECT BATCH IF NO                F 004570
+         TM    BRSWITCH,SWBRNOBC   WAS PARM=NOBC SPECIFIED              F 004580
+         BO    BATCH33             RECORD ALREADY WRITTEN TO SYSUT2 IF  F 004590
+         CBAL  R4,WORKOPI          CLOSE WORK AS OUTPUT AND OPEN INPUT  F 004600
+         TM    MASTER,SWMDUPIN+SWMDUPLG IS THIS A DUPLIACTE B/NO        F 004610
+         BNZ   BATCH31             BR IF YES TO READ BATCH              F 004620
+         TM    CB02SW,SW02WBC      IS B/C TO BE WTITTEN TO SYSUT2       F 004630
+         BO    BATCH31             BR IF YES                            F 004640
+         TM    BRSWITCH,SWBRNOBC   HAS PARM=NOBC BEEN SPECIFIED         F 004650
+         BO    BATCH31             IS YES THEN 1ST CARD NOT B/C SO INCL F 004660
+         TM    BRSWITCH,SWBRKB+SWBRCRT ?PARM=KEYBREAK + TRAINING C/R    F 004670
+         BO    BATCH31             GO RETRIEVE C/R (1ST RECORD) IF YES  F 004680
+*                                  THIS ASSUMES THAT ALL DETAIL RECORDS F 004690
+*                                   HAVE BEEN DELETED AND THAT THE      F 004700
+*                                   WORKFILE CONTAINS OMLY THE TRAINING F 004710
+*                                   CONTROL RECORD.                     F 004720
+         TM    MASTER,SWMHARD      IS BATCH TO BE WRITTEN TO SYSUT2     F 004730
+         BO    BATCH31             BR IF NO                             F 004740
+         CBAL  R4,WORKGET          RETRIEVE & IGNORE BATCH CARD         F 004750
+BATCH31  CBAL  R4,WORKGET          GET RECORD FROM WORK FILE            F 004760
+         EJECT                                                          F 004770
+*********************************************************************** F 004780
+*        READ BATCH FROM WORK FILE ( CONT'D )                         * F 004790
+*********************************************************************** F 004800
+         SPACE 1                                                        F 004810
+         BNE   BATCH33             BRANCH IF EOND OF FILE               F 004820
+         TM    MASTER,SWMDUPIN+SWMDUPLG IS THIS A DUPLICATE BATCH       F 004830
+         BNZ   BATCH32A            GO WRITE TO 'DUPLICAT' IF YES        F 004840
+         TM    MASTER,SWMHARD      IS BTTCH TO BE ACCEPTED              F 004850
+         BO    BATCH32             BR IF BATCH REJECTED                 F 004860
+         CLI   0(R6),X'00'         HAS THIS RECORD BEEN DELETED ?       F 004870
+         BE    BATCH31             IF YES, LOOP BACK FOR NEXT RECORD    F 004880
+         CBAL  R4,PUTUT2           WRITE RECORD TO SYSUT2               F 004890
+         B     BATCH31             GO GET NEWT RECORD                   F 004900
+BATCH32  TM    SUSPOUT+IOPSSW,IOSWPRES TEST IF SUSPENSE FILE EXISTS     F 004910
+         BZ    BATCH33             BR IF NOT TO AVOID UNNCEC I/O        F 004920
+         TM    YPSWITCH,YPSWSFIN   WAS SF=IN SPECIFIED                  F 004930
+         BZ    *+16                BYPASS SF=IN CODING IF NOT           F 004940
+         AH    R6,$RECLUT2         POINT PAST OUTPUT RECORD AT INPUT RE F 004950
+         CLI   0(R6),X'00'         HAS RECORD ALREADY BEEM WRITTEN      F 004960
+         BE    BATCH31             GO GET NEXT IF ALREADY WRITTEN       F 004970
+*                                   NOTE THAT IF 'WR' IS USED TO CRATE  F 004980
+*                                   EXTRA RECORDS, MORE RECORDS WILL BE F 004990
+*                                   ON THE WORKFILE THAN WERE ORIGINALL F 005000
+*                                   READ.  THIS CODING ENSURES THAT THE F 005010
+*                                   SUSPENSE FILE CONTAINS ONLY 1 COPY  F 005020
+*                                   OF EACH INPUT RECORD                F 005030
+         CBAL  R4,PUTSUSP          WRITE BATCH TO SUSPENSE              F 005040
+         B     BATCH31             GO GET NEXT RECORD                   F 005050
+BATCH32A CBAL  R4,PUTDUP           GO WRITE TO 'DUPLICAT'               F 005060
+         B     BATCH31             GO GET NEXT RECORD                   F 005070
+BATCH33  SUBOUT RESTORE=R4         RESTOR AND RETURN                    F 005080
+         EJECT                                                          F 005090
+*********************************************************************** F 005100
+*        PRODUCE BATCH LOG RECORD                                     * F 005110
+*********************************************************************** F 005120
+         SPACE 1                                                        F 005130
+BLDBLOG  SUBIN SAVE=R4             PRESERVERETURN ADDRESS               F 005140
+         TM    APSWITCH,APSWLOG    IS BTCH LOG RECORD REQUIRED          F 005150
+         BZ    BATCH33C            BR IF NO LOG WANTED                  F 005160
+         TM    MASTER,SWMDUPIN+SWMDUPLG IS THIS A DUPLICATE BATCH NO.   F 005170
+         BNZ   BATCH33C            BYPASS LOG PROCESSING IF YES         F 005180
+         DROP  R11                  DROP CB05 ADDRESSABILTTY            F 005190
+         USING LOGCARD,R11          ESTABLISH LOG ENTRY ADDRESSABILITY  F 005200
+         L     R11,LOGOUT+IOPSRECA  GET ADDRESS OF OUTPUT BUFFER        F 005210
+         MVC   LOGSW,$LOGSUSP       ASSUME SUSPENSE / REJECTED          F 005220
+         TM    MASTER,SWMHARD      TEST IF TO BE REJECTED               F 005230
+         BO    BATCH33A            BR IF REJECT                         F 005240
+         MVI   LOGSW,C'A'          SHOW BATCH ACCEPTED                  F 005250
+         MVC   LOGADTE1,$IPLDATE   ADD ACCEPTED DATE IN JULIAN FORMAT   F 005260
+         MVC   LOGADTE2,$DATEREP   ADD ACCEPTED DATE IN REPORT FORMAT   F 005270
+BATCH33A ZAP   LOGLCNT,CB02RETC    RECORDS RETAINED IN BATCH            F 005280
+         CLC   LOGRCNT,$SPACES      LEST B/L UPDATED BY CARDS           F 005290
+         BE    *+14                BR IF 'CARDS ENTERED' BLANK          F 005300
+         CP    LOGRCNT,$ZERO        DOES 'RECORDS ENTERED' EXIST ALREAD F 005310
+         BNE   *+10                BR IF IT EXISTS                      F 005320
+         ZAP   LOGRCNT,CB02RCNT    COUNT OF RECORDS ENTERED             F 005330
+         MVC   LOGSUBID,$SUBID     ADD SUBMITTOR ID                     F 005340
+         MVC   $SUBID,$SPACES        BLANK OUT SUBMITTOR ID             F 005350
+         ZAP   LOGHCNT,CB02HCNT    COUNT OF HARD ERRORS                 F 005360
+         ZAP   LOGSCNT,CB02SCNT    COUNT OF SOFT ERRORS                 F 005370
+         MVC   LOGBTYPE,CB02BCI    BATCH CARD TYPE                      F 005380
+BATCH33B LR    R1,R11               POINT R1 AT WORK AREA               F 005390
+         CBAL  R4,PUTLOG           GO WRITE TO LOGOUT                   F 005400
+         DROP  R11                  DROP LOG ENTRY ADDRESSABILITY       F 005410
+         USING CB05NTRY,R11         RE-ESTABLISH CB05 ADDRESSABILITY    F 005420
+BATCH33C SUBOUT RESTORE=R4         RESTORE AND RETURN                   F 005430
+         TITLE 'BUDGIE3F - BATCH INITIALSIATION PROCESSING'             F 005440
+*********************************************************************** F 005450
+*        INITIALISE FOR NEW BATCH CARD                                * F 005460
+*********************************************************************** F 005470
+         SPACE 1                                                        F 005480
+INITBC   SUBIN SAVE=R4             PRESERVERETURN ADDRESS               F 005490
+*                                                                       F 005500
+*                                  C/R PROCESSING MAY HAVE OVERWRITTEN  F 005510
+*                                   THE NEW BATCH CARD, SO IT MUST BE   F 005520
+*                                   RESTORED FROM THE SAVE AREA.        F 005530
+         LH    R2,$RECLUT1         GET SYSUT1 RECORD LENGTH             F 005540
+         L     R1,$PTRPARM          POINT R1 AT THE RECORD S/A          F 005550
+         L     R3,SYSUT1+IOPSRECA  POINT R3 AT RECORD W/A               F 005560
+         CBAL  R4,VARMOVE          MOVE RECORD TO WORK AREA             F 005570
+         MVC   $PRVUT1,$CURUT1     MOVE CURRENT BATCH NO TO LAST        F 005580
+         MVC   $CURSCAN,$NXTSCAN   GET NEXT BATCH NUMBER                F 005590
+         MVC   $CURUT1,$NXTSCAN    PRESERVE NEXT AS CURRENT             F 005600
+         CLC   $PRVUT1,$CURUT1     IS THIS BATCH NO LESS THAN LAST      F 005610
+         BNH   BRDUMP20            CONTINUE PROCESSING IF NOT HIGH      F 005620
+         TM    APSWITCH,APSWNSEQ   IS SEQ NOT TO BE CHECKED             F 005630
+         BO    BRDUMP20            IGNORE SEQ ERROR IF NO CHECKING      F 005640
+         ABEND 20                  SYSUT1 SEQ ERROR SO ABEND            F 005650
+BRDUMP20 EQU   *                   CONTINUE PROCESSING                  F 005660
+         MVC   $PTRCB02,$NXTCB02   GET ADDRESS OF NEXT CB02             F 005670
+         L     R10,$PTRCB02        ESTABLISH ADDRESS'Y FOR CURR CB02    F 005680
+         AP    CB02CNT,$ONE         INCREMENT COUNT OF BATCHES OF THIS  F 005690
+         XC    CB02INDB(7),CB02INDB SET OFF BATCH INDS 00-55            F 005700
+         TM    AFSWITCH,AFSWKIND   ARE INDS 56-99 TO BE PRESERVED       F 005710
+         BO    *+10                BR IF YES                            F 005720
+         XC    CB02INDB,CB02INDB   SET OFF ALL BATCH LEVEL INDICATORS   F 005730
+         XC    CB02INDD,CB02INDD   SET OFF DETAIL LEVEL INDICATORS      F 005740
+         L     R6,SYSUT1+IOPSRECA  RETRIEVE ADDRESS OF CURRENT BUFFER   F 005750
+         MVC   $BNOPRT,$SPACES     BLANK OUT OLD BATCH NUMBER           F 005760
+         LA    R2,$BNOPRT          POINT AT $BNOPRT FOR EXTRACT RTN     F 005770
+         LA    R11,5                ESTABLISH LOOP OF 5 COMPONENTS      F 005780
+         LA    R3,CB02PBN1         POINT AT 1ST BATCH NO COMPONENT PL   F 005790
+         EJECT                                                          F 005800
+*********************************************************************** F 005810
+*        INITIALISE FOR NEEW BATCH CARD ( CONT'D )                    * F 005820
+*********************************************************************** F 005830
+         SPACE 1                                                        F 005840
+BATCH331 CBAL  R4,EXTRACT          ADD BTCH NO COMPONENT TO HEADING     F 005850
+         BCTR  R2,0                DECREMENT TO POINT AT LAST CHAR      F 005860
+         CLI   0(R2),C'-'          WAS LAST CHAR A HYPHEN               F 005870
+         BE    *+12                BYPASS INSERTING HYPHEN              F 005880
+         LA    R2,1(,R2)           INCREMENT TO POINT PAST LAST CHAR    F 005890
+         MVI   0(R2),C'-'          INSERT HYPHEN BETWEEN COMPONENTS     F 005900
+         LA    R2,1(,R2)           INCREMENT POINTER PAST HYPHEN        F 005910
+         LA    R3,2(,R3)           INCREMENT TO NEXT COMPONENT PL       F 005920
+         BCT   R11,BATCH331         LOOP IF COMPONENTS LEDT             F 005930
+         BCTR  R2,0                DECREMENT TO POINT AT LAST HYPHEN    F 005940
+         MVI   0(R2),C' '          BLANK OIT LAST HYPHEN                F 005950
+         MVC   $SUBID,$SPACES      BLANK OUT PRINTABLE SUBID            F 005960
+         LA    R2,$SUBIDP          POINT AT SUBID  FOR EXTRACT RTN      F 005970
+         TM    CB02SW2,SW02PID     IS SUBMITTOR ID TO BE PRINTED        F 005980
+         BZ    BATCH333            BR IF NOT                            F 005990
+         LA    R11,3                ESTABLISH LOOP OF 3 COMPONENTS      F 006000
+         LA    R3,CB02PID1         POINT AT 1ST COMPONENT PL            F 006010
+BATCH33D CBAL  R4,EXTRACT          ADD SUBMITTOR ID COMPONENT TO HEADIN F 006020
+         BCTR  R2,0                DECREMENT TO POINT AT LAST CHARACTER F 006030
+         CLI   0(R2),C'-'          WAS LAST CHAR A HYPHEN               F 006040
+         BE    *+12                BYPASS INSERTING HYPHEN IF YES       F 006050
+         LA    R2,1(,R2)           INCREMENET PAST LAST CHARACTER       F 006060
+         MVI   0(R2),C'-'          INSERT HYPHEN BETWEEN COMPONENTS     F 006070
+         LA    R2,1(,R2)           INCREMENT PPAST HYPFEN               F 006080
+         LA    R3,2(,R3)           INCREMENT TO NEXT COMPONENT          F 006090
+         BCT   R11,BATCH33D         LOOP BACK IF COMPONENTS LEFT        F 006100
+         BCTR  R2,0                DECREMENT TO POINTT AT LAST HYUPHEN  F 006110
+         MVI   0(R2),C' '          BLANK OUT LAST HYPHEN                F 006120
+         LA    R11,3                SET TO LOOP 3 TIMES                 F 006130
+         LA    R3,CB02PID1         POINT AT 1ST COMPONENT PL            F 006140
+         MVC   $SUBID,$SPACES        BLANK OUT SAVE AREA                F 006150
+         LA    R2,$SUBID            POINT AT SAVE AREA                  F 006160
+         CBAL  R4,EXTRACT          ADD COMPONENT TO STORE               F 006170
+         LA    R3,2(,R3)           INCREMENT TO NEXT COMPONENT          F 006180
+         BCT   R11,*-8              LOOP BACK IF COMPONENTS LEFT        F 006190
+         EJECT                                                          F 006200
+*********************************************************************** F 006210
+*        INITIALISE FOR NEW BATCH CARD ( CONT'D )                     * F 006220
+*********************************************************************** F 006230
+         SPACE 1                                                        F 006240
+BATCH333 CBAL  R4,HEADBB           PRINT HEADINGS FOR NEW BATCH         F 006250
+         TM    BRSWITCH,SWBRNOBC   IS THERE NO B/C THIS RUN             F 006260
+         BO    BATCH334            AVOID SETTING UP PRINT LINE IF NOBC  F 006270
+         MVC   DTBBCARD,0(R6)      MOVE RECORD TO LINE                  F 006280
+         MVC   DTBBCC,$DTBSPCE     ESTABLISH CARRIAGE CONTROL           F 006290
+         ZAP   $BLNECNT,$ZERO       ZEROISE COUNT OF LINES THIS RCEORD  F 006300
+         CBAL  R4,BATCHBBL         PERFORM WRITE OF LINE                F 006310
+         SP    PRINTBB+IOPSRCNT(4),$ULNDECR DECREMENT LINE COUNT IF     F 006320
+*                                   NO SPACE ON PREVIOUS WRITE          F 006330
+         SP    $BLNECNT,$ULNDECR   ZEROISE LINE CNT IF PRINT-NO-SPACE   F 006340
+BATCH334 NI    PSWITCH,PSWULINE    SET OFF PRINT SW'S FOR RECORD        F 006350
+         NI    MASTER,FF-SWMBATCH-SWMDETL SET OFF BATCH-ORIENTED SW'S   F 006360
+         OI    PSWITCH,PSWBCARD    SHOW PROCESSING BATCH CARD           F 006370
+         CLC   $PRVUT1,$CURUT1     IS CURRENT BATCH NO = LAST           F 006380
+         BNE   *+16                BR IF NO                             F 006390
+         TM    APSWITCH,APSWNSEQ   IS SEQUENCE CHECKING SUPPRESSED      F 006400
+         BO    *+8                 BYPASS SETTING INDICATOR IF YES      F 006410
+         OI    MASTER,SWMDUPIN     SET ON SW TO SWOW DUP INPUT B NO     F 006420
+         ZAP   CB02HCNT,$ZERO       ZEROISE BATCH-ORIENTED ACCULULATOR  F 006430
+         ZAP   CB02SCNT,$ZERO       ZEROISE BATCH-ORIENTED ACCULULATOR  F 006440
+         ZAP   CB02RCNT,$ZERO       ZEROISE BATCH-ORIENTED ACCULULATOR  F 006450
+         ZAP   CB02LCNT,$ZERO       ZEROISE CARD NO WITHIN BATCH        F 006460
+         ZAP   CB02RETC,$ZERO       ZEROISE COUNT OF RETAINED RCORDS    F 006470
+        SUBOUT RESTORE=R4          RESTORE AND RETRUN                   F 006480
+         EJECT                                                          F 006490
+*********************************************************************** F 006500
+*        SET UP BATCH LOG RCEORD                                      * F 006510
+*********************************************************************** F 006520
+         SPACE 1                                                        F 006530
+SETUPLOG SUBIN SAVE=R4             PRESERVERETURN ADDRESS               F 006540
+         TM    APSWITCH,APSWLOG    IS BATCH OG RECORD REQUIRED          F 006550
+         BZ    BATCH332            BR IF NOT                            F 006560
+         L     R11,LOGOUT+IOPSRECA  GET ADDRESS OF LOG WORK AREA        F 006570
+         DROP  R11                  DROP CB05 ADDRESSABILITY            F 006580
+         USING LOGCARD,R11          ESTABLISH BUFFER ADDRESSABILITY     F 006590
+         MVC   LOGBNO,$CURUT1      MOVE BETCH NO TO RECORD              F 006600
+         MVC   LOGIDTE1,$IPLDATE   ADD JULIAD ENTRY DATE                F 006610
+         MVC   LOGIDTE2,$DATEREP   ADD ENTRY DATE IN REPORT FORMAT      F 006620
+         MVC   LOGADTE1,$SPACES     BLANK OUT ACCEPTED DATE ( JULIAN )  F 006630
+         MVC   LOGADTE2,$SPACES     BLANK OUT ACCEPTED DATE ( REPORT )  F 006640
+         ZAP   LOGRCNT,$ZERO        SET 'CARDS ENTERED TO ZERO          F 006650
+         MVC   LOGSUBID,$SPACES    BLANK OUT SUBMITTOR ID               F 006660
+         CBAL  R4,GETLOG           GET LOGIN/LOGOUT IN PHASE AND TEST   F 006670
+*                                   FOR DUPLICATE BATCH NO IN LOGIN     F 006680
+         DROP  R11                  DROP BUFFER ADDRESSABILITY          F 006690
+         USING CB05NTRY,R11         RE-ESTABLISG CB05 ADRESSABILITY     F 006700
+BATCH332 EQU   *                   END OF BATCH LOG INITIALISATION      F 006710
+        SUBOUT RESTORE=R4          RESTORE AND RETRUN                   F 006720
+         EJECT                                                          F 006730
+*********************************************************************** F 006740
+*        RETRIEVE CARD COUNT FROM BATCH CARD                          * F 006750
+*********************************************************************** F 006760
+         SPACE 1                                                        F 006770
+GETCCNT  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              F 006780
+         TM    CB02SW,SW02RCNT     DOES BATCH CARD CONTIAN RECORD COUNT F 006790
+         BZ    GETCCNTX            EXIT IF NO                           F 006800
+         MVC   $SFTEST,$SFUDFLT    ESTABLISH UNSIGNED TEST              F 006810
+         MVC   $ULINEPL,CB02CNTP   SET TO UNDERLINE R/C IF ERROR        F 006820
+         LA    R3,CB02CNTP         POINT R3 AT RECORD COUNT PL          F 006830
+         CBAL  R4,SFVERIF          VERIFY FIELD IS NUMERIC              F 006840
+         BNH   BATCH34             BR IF FLD BL OR NUMERIC              F 006850
+         TM    CB02SW,SW02RCSF     IS RECORD COUNT A SOFT ERROR         F 006860
+         BZ    *+22                BR IF NOT SOFT ERROR                 F 006870
+         AP    CB02SCNT,$ONE        INCREMENT SOFT ERRROR COUNT FOR BAT F 006880
+         OI    MASTER,SWMSOFT      SET ON SOFT EEROR SW FOR BATCH       F 006890
+         OI    PSWITCH,PSWSOFT     SET ON SOFT EEROR SW FOR CARD        F 006900
+         B     *+24                BYPASS SETTING HARD SWITCHES         F 006910
+         OI    MASTER,SWMHARD      SET ON HARD ERROR SW FOR BATCH       F 006920
+         OI    PSWITCH,PSWHARD     SET ON HARD ERROR SW FOR CARD        F 006930
+         AP    CB02HCNT,$ONE        INCREMENT HARD ERROR COUNT FOR BATC F 006940
+         MVC   DTBBFLAG,=C'****'   SOW ERROR IS HARD IN MESSAGE         F 006950
+         CBAL  R4,BATCHBBL         PRINT ERROR MESSAGE                  F 006960
+BATCH34  ZAP   CB02CNTR,$WRKPACK   PRESERVE B/C RECORD COUNT            F 006970
+GETCCNTX SUBOUT RESTORE=R4         RESTORE AND RETURN                   F 006980
+         EJECT                                                          F 006990
+*********************************************************************** F 007000
+*        INITIALISE CB05 FIELDS                                       * F 007010
+*********************************************************************** F 007020
+         SPACE 1                                                        F 007030
+INITCB05 SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              F 007040
+         L     R11,CB02CB05         GET ADDRESS OF 1ST CB05             F 007050
+         B     *+8                 BYPASS FPRWARD CHAINING              F 007060
+BATCH35  L     R11,CB05CB05         GET ADDRESS OF NEXT CB05            F 007070
+         LTRR  R11,R11               PURIFY & TEST FOR END OF CHAIN     F 007080
+         BZ    BATCH38             BR IF END OF CHAIN                   F 007090
+         ZAP   CB05BACC,$ZERO       ZEROISE ACCUMULATOR FOR BATCH       F 007100
+         ZAP   CB05BVAL,CB05LVAL   ZEROISE BATCH CARD VALUE OR REFRESH  F 007110
+*                                   LITERAL BALANCING VALUE AS APPROPRI F 007120
+         TM    CB05SW,SW05VALU     IS VALUE A CONSTANT FROM MS05 CARD   F 007130
+         BO    BATCH35             BR IF YES TO GET NEXT CB05           F 007140
+         TM    CB05SW,SW05TST      IS THIS A ETS REQUEST                F 007150
+         BO    BATCH35             IF TEST, NO INIT SO GET NEXT CB05    F 007160
+         MVC   $SFTEST,$SFDFLT     ASSUME SIGNED TEST                   F 007170
+         NI    PSWITCH,FF-PSWNEG   ASSUME NO -VE ID                     F 007180
+         TM    CB05SW,SW05NGID+SW05NGNZ TEST IF -VE ID EXISTS           F 007190
+         BZ    BATCH36             BR IF NO SEPARATE -VE ID             F 007200
+         MVC   $SFTEST,$SFUDFLT    ESTABLISG UNSIGNED TEST              F 007210
+         OI    PSWITCH,PSWNEG      ASSUME -VE ID IS ON                  F 007220
+         TM    CB05SW,SW05NGNZ     TEST IF NON-ZERO AOTU -VE            F 007230
+         BO    BATCH36             BR IF NON-ZERO AUTO -VE              F 007240
+         MVC   $SFTEST,$SFUDFLT    ESTABLISG UNSIGNED TEST              F 007250
+         MVC   $WRKAREA,$SPACES     BLANK OUT WORK AREA                 F 007260
+         LA    R2,$WRKAREA         POINT R2 AT RECEIVING FIELD          F 007270
+         LA    R3,CB05PNEG         POINT R3 AT PL OF -VE FLD            F 007280
+         CBAL  R4,EXTRACT          MOVE -VE ID TO WORJ AEEA             F 007290
+         CLC   CB05IDNG,$WRKAREA   SEE IF IDENTIFEER SHOWS -VE          F 007300
+         BE    BATCH36             BR IF FIELD IS -VE                   F 007310
+         NI    PSWITCH,FF-PSWNEG   SET OFF -VE FLAG                     F 007320
+BATCH36  LA    R3,CB05PBCF         POINT R3 AT PL OF FIELD IN B/C       F 007330
+         MVC   $ULINEPL,CB05PBCF   SET TO UNDERLINE B/C FLD IF ERROR    F 007340
+         CBAL  R4,SFVERIF          VERIFY FLD IS NUMERIC & PACK INTO $  F 007350
+         EJECT                                                          F 007360
+*********************************************************************** F 007370
+*        INITIALISE CB05 FIELDS ( CONT'D )                            * F 007380
+*********************************************************************** F 007390
+         SPACE 1                                                        F 007400
+         BNH   BATCH37             BT IF BL OR NUMERIC                  F 007410
+         TM    CB05SW,SW05SOFT     TEST IF THIS IS SOFT ERROR           F 007420
+         BZ    *+16                BR IF HARD                           F 007430
+         OI    PSWITCH,PSWSOFT     SET ON SOFT ERROR FLAG FOR CARD      F 007440
+         OI    MASTER,SWMSOFT      SET ON SOFT ERROR FLAG FOR BATCH     F 007450
+         B     *+18                BYPASS SETTING HARD SWITCHES         F 007460
+         MVC   DTBBFLAG,=C'****'   SHOW HARD ERROR IN MESSAGE           F 007470
+         OI    MASTER,SWMHARD      SET ON HARD ERROR SW FOR BATCH       F 007480
+         OI    PSWITCH,PSWHARD     EET IN HARD ERROR SW FOR CARD        F 007490
+         CBAL  R4,BATCHBBL         PRINT ERROR MESSAGE                  F 007500
+BATCH37  TM    PSWITCH,PSWNEG      TEST IF FIELD -VE                    F 007510
+         BO    *+14                B R TO SUBTRACT IF -VE               F 007520
+         AP    CB05BVAL,$WRKPACK   ADD B/C VALUE TO STORE               F 007530
+         B     *+10                BYPASS SUBTRACTION                   F 007540
+         SP    CB05BVAL,$WRKPACK   PRESERVE B/C VALUE                   F 007550
+         B     BATCH35             GO GET NEXT CB05                     F 007560
+BATCH38  SUBOUT RESTORE=R4         RESTORE AND RETURN                   F 007570
+         EJECT                                                          F 007580
+*********************************************************************** F 007590
+*        INITIALISE CONTROL RECORD CONTROL BLOCKS                     * F 007600
+*********************************************************************** F 007610
+         SPACE 1                                                        F 007620
+INITCREC SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              F 007630
+         L     R11,CB02CB03        GET ADDRESS OF ASSOCIATED CB03       F 007640
+         LTRR  R11,R11               PURIFY & TEST IF CB03 EXISTS       F 007650
+         BZ    BATCH40             BT IF NO C/R TO BE PRODUCED          F 007660
+         DROP  R11                  DROP CB05 ADDRESSABILITY            F 007670
+         USING CB04NTRY,R11         ESTABLISH CB04 ADDRESSABILITY       F 007680
+         L     R11,CB03CB04-CB03NTRY(,R11) GET ADDRESS OF 1ST CB04      F 007690
+         B     *+8                 BYPASS FORWARD CHAINING              F 007700
+BATCH39  L     R11,CB04CB04         GET ADDRES OF NEXT CB04             F 007710
+         LTRR  R11,R11               TEST FOR END OF CHAIN              F 007720
+         BZ    BATCH40             BR IF END OF CHAIN                   F 007730
+         ZAP   CB04BACC,$ZERO       ZEROISE BATCH ACCUMULATOT           F 007740
+         B     BATCH39             GO GET NEXT CB04                     F 007750
+BATCH40  SUBOUT RESTORE=R4         RESTORE AND RETURN                   F 007760
+         DROP  R11                  DROP CB04 ADDRESSABLLITY            F 007770
+         SPACE 5                                                        F 007780
+*********************************************************************** F 007790
+*        MAKE ANY TESTS REQUESTED                                     * F 007800
+*********************************************************************** F 007810
+         SPACE 1                                                        F 007820
+BCCB13   SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              F 007830
+         L     R8,CB02CB13         GET ADDRESS OF 1ST CB13              F 007840
+         CBAL  R4,CB13TST          PERFORM ANY B/C CB13 TESTS           F 007850
+        SUBOUT RESTORE=R4          RSTORE AND RETURN                    F 007860
+         EJECT                                                          F 007870
+*********************************************************************** F 007880
+*        PERFORM USER EXIT IF REQUIRED                                * F 007890
+*********************************************************************** F 007900
+         SPACE 1                                                        F 007910
+BCURTN   SUBIN SAVE=R4             PERFORM USER EXIT IF R               F 007920
+         TM    CB02SW,SW02URTN     TEST IF USER RTN REQUIRED            F 007930
+         BZ    BATCH42             BR IF NOT                            F 007940
+         CBAL  R4,URTCALL          PERFORM USER EXIT                    F 007950
+BATCH42  EQU   *                   CONTINUE PRICESSING                  F 007960
+        SUBOUT RESTORE=R4          RESTORE AND RETURN                   F 007970
+         SPACE 1                                                        F 007980
+         EJECT                                                          F 007990
+*********************************************************************** F 008000
+*        INVOKE ROUTINE PRNTBBL  FROM CSECT BUDGIE3E                  * F 008010
+*********************************************************************** F 008020
+         SPACE 1                                                        F 008030
+*        SUB-CSECT BUDGIE3E ISSUES MANY CALLS TO THE SUB-ROUTINE        F 008040
+*         'PRNTBBL ', WHICH IS IN ANOTHER CSECT.  IN ORDER TO REDUCE    F 008050
+*         THE AMOUNT OF GENERATED CODE, PRNTBBL  IS INVOKED BY          F 008060
+*         THIS SUB-ROUTINE, WHICH IS THE ONLT ONE TO ESTABLISH          F 008070
+*         THE NECESSARY LINKAGE.                                        F 008080
+         SPACE 1                                                        F 008090
+BATCHBBL SUBIN SAVE=R4             PRESERVE REGISTER 4                  F 008100
+         CBAL  R4,PRNTBBL          PERFORM SUB-ROUTINE                  F 008110
+        SUBOUT RESTORE=R4          RESTORE AND RETRUN                   F 008120
+         TITLE 'BUDGIE3F - SELECT EDIT PATTERN AND EDIT DATA'           F 008130
+*********************************************************************** F 008140
+*        SELECT APPROPRIATE EDIT PATTERN & EDIT VALUE                 * F 008150
+*********************************************************************** F 008160
+         SPACE 1                                                        F 008170
+*        ON ENTRY, R8 POINTS AT THE REPORT LINE 'BUCKET', R11           F 008180
+*         CONTAINS THE ADDRESS OF THE CURRENT CB05, AND R1 POINTS       F 008190
+*         AT THE FIELD TO BE EDITED                                     F 008200
+         SPACE 1                                                        F 008210
+         USING CB05NTRY,R11         ESTABLISH CB05 ADDRESSABILITY       F 008220
+FLDEDIT  SUBIN ,                   EDIT FIELD                           F 008230
+         MVC   0(18,R8),EDITPL84   ASSUME 4 DECIMAL PLACES              F 008240
+         CP    CB05NDEC,=P'4'      TEST IF 4 DECIMAL PLACES             F 008250
+         BE    FLDEDIT1            BR IF YES                            F 008260
+         MVC   0(18,R8),EDITPL83   ASSUME 3 DECIMAL PLACES              F 008270
+         CP    CB05NDEC,=P'3'      TEST IF 3 DECIMAL PLACES             F 008280
+         BE    FLDEDIT1            BR IF YES                            F 008290
+         MVC   0(18,R8),EDITPL82   ASSUME 2 DECIMAL PLACES              F 008300
+         CP    CB05NDEC,=P'2'      TEST IF 2 DECIMAL PLACES             F 008310
+         BE    FLDEDIT1            BR IF YES                            F 008320
+         MVC   0(18,R8),EDITPL81   ASSUME 1 DECIMAL PLACES              F 008330
+         CP    CB05NDEC,=P'1'      TEST IF 1 DECIMAL PLACES             F 008340
+         BE    FLDEDIT1            BR IF YES                            F 008350
+         MVC   0(18,R8),EDITPL80   ASSUME 0 DECIMAL PLACES              F 008360
+FLDEDIT1 ED    0(18,R8),0(R1)      EDIT VALUE INTO BUCKET               F 008370
+        SUBOUT ,                   RETURN TO CALLER                     F 008380
+         SPACE 5                                                        F 008390
+EDITPL84 DC    X'4020202020202020202020214B2020202060'                  F 008400
+EDITPL83 DC    X'402020202020202020202020214B20202060'                  F 008410
+EDITPL82 DC    X'40202020202020202020202020214B202060'                  F 008420
+EDITPL81 DC    X'4020202020202020202020202020214B2060'                  F 008430
+EDITPL80 DC    X'404020202020202020202020202020212060'                  F 008440
+         TITLE 'BUDGIE3F - DETERMINE IF CARD IS A BATCH CARD'           F 008450
+*********************************************************************** F 008460
+*        DETERMINES WHETHER IT IS A BATCH CARD.  ON INPUT, R6 POINTS  * F 008470
+*         AT THE RECRD TO BE TESTED.  ON OUTPUT, 'NEXTSCAN' CONTAINS    F 008480
+*         THE BATCH NUMBER ( IF ANY ), AND 'NEXTMS02' CONTAINS THE      F 008490
+*         ADDRESS OF THE RELEVANT MS02 CONTROL BLOCK.  THE CONDITION    F 008500
+*         CODE IS SET SUCH THAT THE CALLER CAN MAKE THE FOLLOWING TESTS F 008510
+*              BE  - CARD IS A BATCH CARD                               F 008520
+*              BNE - CARD IS NOT A BATCH CARD                           F 008530
+*********************************************************************** F 008540
+         PRINT NOGEN               SUPPRESS EXPANSION OF SUBIN          F 008550
+         USING CB02NTRY,R10        ESTABLISH CB ADDRESSABILITY          F 008560
+BCSCAN   SUBIN SAVE=(R4,R10)       PRESERVE REGISTERS                   F 008570
+         PRINT GEN                 ALLOW EXPANSION OF MACROS            F 008580
+         MVI   BCSCANX,C'Y'        ASSUME CARD IS NOT A BATCH CARD      F 008590
+         MVC   $NXTSCAN,$SPACES    BLANK OUT RECEIVING AREA             F 008600
+         XC    $NXTCB02,$NXTCB02   ZEROISE RESULTANT C/B POINTER        F 008610
+         TM    BRSWITCH,SWBRKB     TEST FOR 'KEYBREAK' SPECIFIACTION    F 008620
+         BO    BCSCAN03            BR IF YES                            F 008630
+         L     R10,$FSTCB02        PICK UP 1ST CONTROL BLABK ADDRESS    F 008640
+         B     *+8                 BYPASS LOAD 1ST TIME                 F 008650
+BCSCAN01 L     R10,CB02CB02        GET NEXT CONTROL BLOCK               F 008660
+         LA    R10,0(,R10)         PURIFY HIGH-ORDER BYTE               F 008670
+         LTR   R10,R10             TEST IF END OF CHAIN                 F 008680
+         BZ    BCSCANX1            BRANCH IF YES                        F 008690
+         LA    R2,$WRKAREA         POINT R2 AT WORK AREA                F 008700
+         LA    R3,CB02PBCI         POINT R3 AT CARD ID 'PL'             F 008710
+         MVC   $WRKAREA,$SPACES    BLANK OUT WORK AREA                  F 008720
+         CBAL  R4,EXTRACT          MOVE CARD ID TO WORKAREA             F 008730
+         CLC   CB02BCI,$WRKAREA    TEST IF FIELD IS B/C IDENTIFIER      F 008740
+         BNE   BCSCAN01            BRANCH IF NO TO TEST NEXT            F 008750
+         ST    R10,$NXTCB02        PRESERVE C/B POINTER                 F 008760
+         LA    R2,$NXTSCAN         POINT AT BATCH NUMBER STORAGE AREA   F 008770
+         MVC   $NXTSCAN,$SPACES    BLANK OUT RECEIVING AREA             F 008780
+         LA    R3,CB02PBN1         POINT AT 1ST BATCH NO COMPONENT PL   F 008790
+         LA    R11,5                ESTABLISH LOOP FOR 5 COMPONENTS     F 008800
+BCSCAN02 CBAL  R4,EXTRACT          ADD BATCH NO COMPONENT TO STORE      F 008810
+         LA    R3,2(,R3)           POINT AT NEXT COMPONENT PL           F 008820
+         BCT   R11,BCSCAN02         LOOP BACK FOR NEXT COMPONENT        F 008830
+         MVI   BCSCANX,C'X'        SET TO HSOW BATCH CARD               F 008840
+BCSCANX1 CLI   BCSCANX,C'X'        SET CONFITION CODE FOR CALLER        F 008850
+        SUBOUT RESTORE=(R4,R10)    RETURN TO CALLER                     F 008860
+         EJECT                                                          F 008870
+*********************************************************************** F 008880
+*        BATCH CARD RECOGNITION ( CONT'D )                            * F 008890
+*********************************************************************** F 008900
+         SPACE 1                                                        F 008910
+BCSCAN03 L     R10,$FSTCB02        PICK UP 1ST - & PRESUMABLY ONLY -CB  F 008920
+         ST    R10,$NXTCB02        PRESERVE C/B PTR LEST CONTROL BREAK  F 008930
+         MVC   $NXTSCAN,$SPACES    BLANK OUT WORK AREA                  F 008940
+         LA    R2,$NXTSCAN         POINT R2 AT OUTPUT AREA              F 008950
+         LA    R3,CB02PBN1         POINT R3 AT 1ST 'PL' OF BNO          F 008960
+         LA    R11,5                ESTABLISH LOOP OF 5 COMPONENTS      F 008970
+BCSCAN04 CBAL  R4,EXTRACT          MOVE BNO COMPONENT TO OUTPUT AREA    F 008980
+         LA    R3,2(,R3)           POINTA AT NET COMPONNET PL           F 008990
+         BCT   R11,BCSCAN04         LOOP BACK  FOR NEXT COMPONENT       F 009000
+         CLC   $CURSCAN,$NXTSCAN   HAS THE KEY ( BATCH NO ) CHANGED     F 009010
+         BE    BCSCANX1            RETURN TO SHOW SAME BATCH IF NOT     F 009020
+         MVI   BCSCANX,C'X'        SET TO SHOW CHABGE OF BATCH          F 009030
+         B     BCSCANX1            RETURN TO SET COND CODE              F 009040
+         TITLE 'BUDGIE3F - EXECUTED INSTRUCTIONS'                       F 009050
+*********************************************************************** F 009060
+*        EXECUTED INSTRUCTIONS                                        * F 009070
+*********************************************************************** F 009080
+         SPACE 1                                                        F 009090
+BTCHMVC1 MVC   1(0,R6),0(R6)       PROPAGATE BL FOR LGTH OF SYSUT2 RECD F 009100
+BTCHMVC2 MVC 0(0,R14),CB03CRK-CB03NTRY(R11) MOVE C/R KEY TO BUFFER      F 009110
+BTCHMVC3 ZAP   0(0,R14),CB04BACC   MOVE TOTAL INTO C/R                  F 009120
+BTCHMVC4 UNPK  0(0,R14),CB04BACC   UNPACK TOTAL INTO C/R                F 009130
+BTCHMVC5 MVC   0(0,R14),$CURUT1    RETRIEVE CURRENT BATCH NUMBER        F 009140
+BTCHMVC6 MVC   0(0,R14),0(R1)      RETRIEVE FIELD FORM W/S              F 009150
+         TITLE 'BUDGIE3F - MUSCELLANEOUS CONSTANTS AND FIELDS'          F 009160
+BBLINE01 DC    C'BATCH BALANCED AND ACCEPTED'                           F 009170
+BBLINE02 DC    C'BATCH OUT OF BALANCE BUT ACCEPTED'                     F 009180
+BBLINE03 DC    C'BATCH OUT OF BALANCE  -  REJECTED'                     F 009190
+BBLINE04 DC    C'BATCH IN BALANCE BUT REJECTED'                         F 009200
+BBLINE05 DC    C'BATCH NO. ON ACCEPTED BATCH LOG  -  REJECTED'          F 009210
+BBLINE06 DC    C'SUSPENSE'                                              F 009220
+BBLINE07 DC    C' TO SUSPENSE FILE'                                     F 009230
+BBLINE08 DC    C' FROM SYSTEM'                                          F 009240
+BBLINE14 DC    C'  RECORD'                                              F 009250
+BBLINE15 DC    C'   COUNT'                                              F 009260
+BBLINE16 DC    C' BATCH CARD'                                           F 009270
+BBLINE17 DC    C'INPUT TOTAL'                                           F 009280
+BBLINE18 DC    C'DISCREPANCY'                                           F 009290
+BBLINE19 DC    C'BATCH NO. ALREADY ENCOUNTERED IN INPUT - REJECTED'     F 009300
+BBLINE20 DC    C' TO DUPLICATES FILE'                                   F 009310
+BBMESS14 DC    C'** GENERATED CONTROL RECORD **'                        F 009320
+         SPACE 1                                                        F 009330
+EDITPL3  DC    X'4040202020212040'                                      F 009340
+BCSCANX  DC    C'X'                USED BY BCSCAN TO SET COND CODE      F 009350
+         SPACE 1                                                        F 009360
+         DROP  R7,R10              DROP C/B ADDRESSABILITY              F 009370
+        SCSEND F                   TERMINATE CSECT BUDGIE3F             F 009380
+         END                                                            F 009390
+         SPACE 1                                                        F 009400
+         REPRO                                                          F 009410
+ IDENTIFY BUDGIE3F('BATCH CARD PROCESSING')                             F 009420
+         END                                                            F 009430

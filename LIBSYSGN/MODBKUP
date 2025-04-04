@@ -1,0 +1,1223 @@
+*
+*
+*
+         TITLE '     ASSEMBLY LISTING OF LIBRARIAN INDEX SCAN'
+         SPACE 15
+***********************************************************************
+*                                                                     *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+*                             **************                          *
+*                             *            *                          *
+*                             * LIBRARIAN  *                          *
+*                             * INDEX SCAN *                          *
+*                             *            *                          *
+*                             **************                          *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*                                                                     *
+*                                                                     *
+*        **********     ESTABLISH BASE REGISTORS,       **********    *
+*        **********     SAVE AREA, CONTROL SECTION      **********    *
+*        **********     NAME AND PROGRAM IDENTIFIER     **********    *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+*
+*
+*
+         ZBEGIN BASE=(10,11),CSECT=ZUTBA025,SAVE=SAVEAREA,             +
+               ID=START.OF.ZUTBA025.CSECT
+         EJECT
+***********************************************************************
+*                                                                     *
+*                                                                     *
+*              **********     PROCESS RECORDS     **********          *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+*
+*
+*        *****     PROCESS PARM INFORMATION     *****
+*
+         USING PARMDSCT,R4              ESTABLISH ADDRESSABILITY
+         L     R4,0(0,R1)               ADDRESS OF PARM LIST
+         CLC   0(2,R4),=AL2(0)          IS PARM SUPPLIED
+         BNE   PARMSUP                  BRANCH IF YES
+         LA    R15,16                   INSERT RETURN CODE
+         B     BADPARM                  EXIT
+*
+PARMSUP  LA    R4,2(0,R4)               INCREMENT PAST LENGTH
+PARM1    CLC   PARMOPT1(5),=C'DAYS='    CHECK CONSTANT
+         BNE   INVAL1                   BRANCH IF INVALID
+         TRT   PDAYS(3),NUMTAB-240      TEST FOR NUMERIC
+         BZ    PARM2                    BRANCH IF VALID
+INVAL1   LA    R15,20                   INSERT RETURN CODE
+         B     BADPARM                  EXIT
+*
+PARM2    PACK  CUTOFF(2),PDAYS(3)       PACK DAYS FOR CUTOFF
+         CLC   PARMOPT2(6),=C',TYPE='   CHECK CONSTANT
+         BNE   INVAL2                   BRANCH IF INVALID
+         CLC   PTYPE(3),=C'BNK'         CHECK CONSTANT
+         BE    OPEN1                    HIT
+         CLC   PTYPE(3),=C'ACT'         CHECK CONSTANT
+         BNE   TRYINA                   TRY NEXT TYPE
+         MVC   DELMSG+34(8),CYCLCON     MODIFY -OPT MESSAGE
+         MVC   DANDSARE+12(8),CYCLCON   MODIFY -OPT MESSAGE
+         MVI   TYPESW,X'01'             SET INDICATOR
+         B     PARM3                    BRANCH
+TRYINA   CLC   PTYPE(3),=C'INA'         CHECK CONSTANT
+         BNE   INVAL2                   INVALID
+         MVI   TYPESW,X'02'             SET INDICATOR
+         B     OPEN1                    BRANCH
+INVAL2   LA    R15,24                   INSERT RETURN CODE
+         B     BADPARM                  EXIT
+*
+PARM3    CLC   PARMOPT3(7),=C',GROUP='  CHECK CONSTANT
+         BNE   INVAL3                   BRANCH IF INVALID
+         TRT   PGROUP(8),ALPHATAB-193   TEST FOR ALPHABETIC
+         BZ    SAVEGRPS                 BRANCH IF VALID
+INVAL3   LA    R15,28                   INSERT RETURN CODE
+         B     BADPARM                  EXIT
+*
+SAVEGRPS MVC   GROUPS(8),PGROUP         SAVE GROUP
+*
+*        *****     OPEN DATA SETS     *****
+*
+OPEN1    BAL   R9,OPINDX1               LINK TO I/O
+         TM    INDEX1+48,X'10'          TEST FOR SUCCESSFUL OPEN
+         BO    OPEN2                    BRANCH IF GOOD
+         MVC   DDMISS+8(8),=C'INDEX1  ' INSERT DDNAME
+         LA    R15,32                   INSERT RETURN CODE
+         B     NODDRET                  EXIT
+*
+OPEN2    EQU   *
+         CLI   TYPESW,X'02'             INACTIVE LISTING ONLY
+         BE    OPEN3                    BRANCH IF YES
+         BAL   R9,OPINDX2               LINK TO I/O
+         TM    INDEX2+48,X'10'          TEST FOR SUCCESSFUL OPEN
+         BO    OPEN3                    BRANCH IF GOOD
+         MVC   DDMISS+8(8),=C'INDEX2  ' INSERT DDNAME
+         LA    R15,32                   INSERT RETURN CODE
+         B     NODDRET                  EXIT
+*
+OPEN3    BAL   R9,OPDANDS               LINK TO I/O
+         TM    DLMSELS+48,X'10'         TEST FOR SUCCESSFUL OPEN
+         BO    OPEN4                    BRANCH IF GOOD
+         MVC   DDMISS+8(8),=C'COPYMEM ' INSERT DDNAME
+         LA    R15,32                   INSERT RETURN CODE
+         B     NODDRET                  EXIT
+*
+OPEN4    BAL   R9,OPDELT1               LINK TO I/O
+         TM    DELETE1+48,X'10'         TEST FOR SUCCESSFUL OPEN
+         BO    OPEN5                    BRANCH IF GOOD
+         MVC   DDMISS+8(8),=C'DELETE1 ' INSERT DDNAME
+         LA    R15,32                   INSERT RETURN CODE
+         B     NODDRET                  EXIT
+*
+OPEN5    BAL   R9,OPPRINT               LINK TO I/O
+         TM    INDXLST+48,X'10'         TEST FOR SUCCESSFUL OPEN
+         BO    ALLOPEN                  BRANCH IF GOOD
+         MVC   DDMISS+8(8),=C'INDXLST ' INSERT DDNAME
+         LA    R15,32                   INSERT RETURN CODE
+         B     NODDRET                  EXIT
+*
+*        *****     PROCESS RECORDS     *****
+*
+ALLOPEN  EQU   *
+         BAL   R9,TIME                  LINK TO I/O
+         ST    R1,DATE                  STORE DATE
+         UNPK  RPOINT(5),DATE+1(3)      UNPACK YEAR AND DAY
+         OI    RDAY+2,X'F0'             SET ZONE
+         BAL   R9,GETMAIN               LINK TO I/O
+         LTR   R15,R15                  CORE AVAILABLE
+         BZ    COREOK                   BRANCH IF YES
+         B     NOCORE                   EXIT
+*
+COREOK   L     R9,ALLOC                 STORAGE ADDRESS
+         MVC   ALLOCX(4),ALLOC          SAVE NEXT ENTRY ADDRESS
+         MVC   0(13,R9),LISTEND         END OF LIST INDICATOR
+         BAL   R9,PTDELT1               LINK TO I/O
+         BAL   R9,PTDANDS               LINK TO I/O
+         MVC   DANDSARE(80),OPTMSG      MOVE IN MESSAGE
+         BAL   R9,PTDANDS               LINK TO I/O
+*
+*        *****     INDEX1 ORIENTATION     *****
+*
+         USING INDEXID1,R3              ESTABLISH ADDRESSABILITY
+RDINDX1  BAL   R9,GTINDX1               LINK TO I/O
+         LR    R3,R1                    ADDRESS OF BUFFER
+         CLC   IDCON(6),LISTID1         CHECK FOR TITLE PAGE
+         BNE   RDINDX1                  TRY AGAIN
+         MVC   RUNDATE(8),IDATE         MOVE DATE TO HEADER 6
+         MVC   HDATE(8),IDATE           MOVE DATE TO HEADER 1
+         MVC   HTIME(2),ITIME           HH TIME TO HEADER 1
+         MVI   HTIME+2,C'.'             SEPARATOR
+         MVC   HTIME+3(2),ITIME+2       MM TIME TO HEADER 1
+*
+RDINDX1A BAL   R9,GTINDX1               LINK TO I/O
+         LR    R3,R1                    ADDRESS OF BUFFER
+         CLC   IMOD1(10),LISTID2        ORIENT ON HEADER
+         BNE   RDINDX1A                 READ TILL HIT
+*
+RDINDX1B BAL   R9,GTINDX1               LINK TO I/O
+         LR    R3,R1                    ADDRESS OF BUFFER
+         CLI   IMOD1,X'40'              ORIENT TO FIRST MODULE
+         BE    RDINDX1B                 READ TILL HIT
+         CLC   IMOD1(8),LISTID3         ENDING LINES OF REPORT
+         BE    RDINDX1B                 GET NEXT RECORD
+         MVC   RPOINT(1),IMOD1          MOVE IN DIVISION POINTER
+         MVC   TEMPNAME(8),RENAME       MOVE NAME TO WORK
+         MVC   POINTER(1),IMOD1         SAVE DIVISION POINTER
+         MVC   DIVPTR(1),IMOD1          DIVISION POINTER TO HEADER 2
+*
+*        *****     PRINT HEADERS     *****
+*
+         CLI   TYPESW,X'00'             TESTBANK REPORT
+         BE    NOSUB                    BRANCH IF YES
+         CLI   TYPESW,X'01'             ACTIVE ARCHIVE REPORT
+         BNE   NEXTTYPE                 NO
+         MVC   TYPEREPT(L'NEWHEAD1),NEWHEAD1 REPLACE TITLE
+         B     NOSUB                    BYPASS
+NEXTTYPE MVC   TYPEREPT(L'NEWHEAD2),NEWHEAD2 REPLACE TITLE
+NOSUB    MVC   PRNTAREA(133),HEADER1    MOVE IN MESSAGE
+         BAL   R9,PTPRINT               LINK TO I/O
+         MVC   PRNTAREA+49(L'HEADER2),HEADER2 MOVE IN MESSAGE
+         BAL   R9,PTPRINT               LINK TO I/O
+         MVC   PRNTAREA(133),HEADER3    MOVE IN MESSAGE
+         MVI   PRNTAREA,C'-'            SPACE 3 LINES
+         BAL   R9,PTPRINT               LINK TO I/O
+         MVI   HEADER3,C'1'             INITIALIZE FO PAGE EJECTION
+         MVC   PRNTAREA(2),=C'0-'       MOVE IN CHARACTER
+         MVC   PRNTAREA+2(131),PRNTAREA+1 PROPIGATE IT
+         BAL   R9,PTPRINT               LINK TO I/O
+*
+*        *****     INDEX2 ORIENTATION     *****
+*
+         USING INDEXID2,R4              ESTABLISH ADDRESSABILITY
+         CLI   TYPESW,X'02'             INACTIVE LISTING ONLY
+         BE    READRTN                  BRANCH IF YES
+RDINDX2A BAL   R9,GTINDX2               LINK TO I/O
+         LR    R4,R1                    ADDRESS OF BUFFER
+         CLC   IMOD2(10),LISTID2        ORIENT ON HEADER
+         BNE   RDINDX2A                 READ TILL HIT
+*
+RDINDX2B BAL   R9,GTINDX2               LINK TO I/O
+         LR    R4,R1                    ADDRESS OF BUFFER
+         CLI   IMOD2,X'40'              ORIENT TO FIRST MODULE
+         BE    RDINDX2B                 READ TILL HIT
+         CLC   IMOD2(8),LISTID3         ENDING LINES OF REPORT
+         BE    RDINDX2B                 GET NEXT RECORD
+*
+*        *****     READ ROUTINE     *****
+*
+READRTN  EQU   *
+         CLI   TYPESW,X'01'             ACTIVE ARCHIVE PROCESSING
+         BNE   PROCEED                  BRANCH IF NO
+         LA    R8,GROUPS                LIST OF VALID GROUPS
+         LA    R9,8                     COUNTER
+GRPLOOP  CLC   0(1,R8),IMOD1            IS MODULE IN GROUP
+         BE    PROCEED                  BRANCH IF YES
+         LA    R8,1(0,R8)               INCREMENT LIST ADDRESS
+         BCT   R9,GRPLOOP               TRY AGAIN
+         B     READRTNX                 GET NEXT MODULE
+PROCEED  EQU   *
+         CLC   IMOD1(1),POINTER         CHANGE IN DIVISION
+         BE    NOCHANGE                 BRANCH IF NO
+         B     WRAPUP                   GO WRAPUP DIVISION
+*
+*        *****     FORMAT PRINT RECORD ROUTINE     *****
+*
+RESTART  MVC   POINTER(1),IMOD1         SAVE POINTER
+         MVC   DIVPTR(1),IMOD1          DIVISION POINTER TO HEADER 2
+NOCHANGE AP    MODCNT(3),=P'1'          INCREMENT ACCUMULATOR
+         MVC   PJOB(8),IMOD1            MODULE NAME
+         MVC   PASSWORD(4),IPSWORD1     PASSWORD
+         MVC   PGMDESC(24),IDESC1       DESCRIPTION
+         MVC   PGMADD(8),IDTEADD1       ADDED
+         CLI   ISLSHUA1,C'/'            IS FIELD PRESENT
+         BNE   NOUPD                    BRANCH IF NO
+         MVC   PGMUPD(8),IDTEUPD1       UPDATED - DATE
+         MVC   PTIME(2),ITIME1          UPDATED - HOURS
+         MVI   PTIME+2,C'.'             SEPARATOR
+         MVC   PTIME+3(2),ITIME1+2      UPDATED - MINUTES
+NOUPD    MVC   PRECRDS(5),IRECORD1+1    NO OF RECORDS
+         PACK  WORK(8),IRECORD1+1(5)    PACK IT
+         AP    RECDCNT(4),WORK+5(3)     INCREMENT ACCUMULATOR
+         MVC   PRGMMER(10),IPRGMR1      PROGRAMMER
+         MVC   PACCESS(5),IACCESS1+2    ACCESSES
+         CLI   IACCESS1+6,X'40'         IS FIELD BLANK
+         BE    BYPACK1                  BRANCH IF YES
+         PACK  WORK(8),IACCESS1+2(5)    PACK IT
+         AP    ACCSCNT(4),WORK+5(3)     INCREMENT ACCUMULATOR
+BYPACK1  MVC   PUPDT(5),IUPDT1+2        UPDATES
+         CLI   IUPDT1+6,X'40'           IS FIELD BLANK
+         BE    BYPACK2                  BRANCH IF YES
+         PACK  WORK(8),IUPDT1+2(5)      PACK IT
+         AP    UPDTCNT(3),WORK+5(3)     INCREMENT ACCUMULATOR
+BYPACK2  MVC   PRDONLY(5),INOUPDT1+2    READ ONLY
+         CLI   INOUPDT1+6,X'40'         IS FIELD BLANK
+         BE    PROJRTN                  BRANCH IF YES
+         PACK  WORK(8),INOUPDT1+2(5)    PACK IT
+         AP    NUPDCNT(3),WORK+5(3)     INCREMENT ACCUMULATOR
+*
+*        *****     PROJECTED COPY DATE ROUTINE     *****
+*
+PROJRTN  CLI   ISLSHUA1,C'/'            IS UPDATE PRESENT
+         BNE   ADDONLY                  BRANCH IF NO
+         PACK  WORK+5(3),IYEARU1(2)     YEAR(UPDATE)
+         MVC   DATESAVE(8),IDTEUPD1     SAVE DATE
+         B     BYPASS                   AROUND
+ADDONLY  PACK  WORK+5(3),IYEARA1(2)     YEAR(ADD)
+         MVC   DATESAVE(8),IDTEADD1     SAVE DATE
+BYPASS   DP    WORK+5(3),=P'4'          DETERMINE IF LEAP YEAR
+         CP    WORK+7(1),=P'0'          ANY REMAINDER
+         BNE   NOLEAP                   IF NO - REG YEAR
+         LA    R8,LEAPTAB               LEAP YEAR TABLE
+         MVI   YEARTYPE,X'00'           LEAP YEAR INDICATOR
+         B     FINDMON                  BYPASS
+NOLEAP   LA    R8,REGTAB                REG YEAR TABLE
+         MVI   YEARTYPE,X'FF'           REG YEAR INDICATOR
+*
+FINDMON  CLC   4(2,R8),MONTH            FIND MONTH
+         BE    HITMON                   BRANCH IF YES
+         LA    R8,6(0,R8)               UPDATE TABLE ENTRY
+         B     FINDMON                  TRY AGAIN
+*
+HITMON   PACK  WORK(2),DAY(2)           PACK DAYS
+         AP    WORK(2),2(2,R8)          JULIAN DATE FROM START OF MONTH
+         AP    WORK(2),CUTOFF(2)        PROJECTED COPY DATE
+         CP    WORK(2),=P'367'          DETERMINE IF CHANGE IN YEAR
+         BL    NOYRCHNG                 BRANCH IF NO
+*
+         CLI   YEARTYPE,X'00'           CHECK TYPE OF OLD YEAR
+         BE    LEAPX                    BRANCH IF LEAP YEAR
+         SP    WORK(2),=P'365'          CALCULATE DISPLACEMENT
+         B     CHKYEAR                  BYPASS
+LEAPX    SP    WORK(2),=P'366'          CALCULATE DISPLACEMENT
+CHKYEAR  PACK  WORK+5(3),YEAR(2)        PACK OLD YEAR
+         AP    WORK+5(3),=P'1'          INCREMENT YEAR
+         UNPK  YEAR(2),WORK+6(2)        MOVE TO COMMON AREA
+         OI    YEAR+1,X'F0'             SET ZONE
+         DP    WORK+5(3),=P'4'          DETERMINE IF NEW YEAR IS LEAP
+         CP    WORK+7(1),=P'0'          ANY REMAINDER
+         BNE   NOLEAPX                  BRANCH IF NO
+         MVI   YEARTYPE,X'00'           LEAP YEAR INDICATOR
+         B     NOYRCHNG                 BYPASS
+NOLEAPX  MVI   YEARTYPE,X'FF'           RESET NOLEAP INDICATOR
+*
+NOYRCHNG MVC   PCPYYEAR(2),YEAR         MOVE YEAR TO PRINT
+         MVI   PSLSH2,C'/'              SLASH
+         CLI   YEARTYPE,X'00'           TYPE OF YEAR
+         BE    LEAP                     BRANCH IF LEAP
+         LA    R8,REGTAB                ADDRESS OF REG TABLE
+         B     FINDDAY                  BYPASS
+LEAP     LA    R8,LEAPTAB               ADDRESS OF LEAP TABLE
+*
+FINDDAY  CP    0(2,R8),WORK(2)          FIND HIGHEST DAY IN MONTH
+         BNL   HITDAY                   FOUND IT
+         LA    R8,6(0,R8)               UPDATE TABLE ENTRY
+         B     FINDDAY                  TRY AGAIN
+*
+HITDAY   ZAP   SAVEDAY(2),WORK(2)       SAVE DAY
+         SP    WORK(2),2(2,R8)          CALCULATE DAY
+         UNPK  PCPYDAY(2),WORK(2)       MOVE DAY TO PRINT
+         OI    PCPYDAY+1,X'F0'          CLEAR ZONE
+         MVI   PSLSH1,C'/'              SLASH
+         MVC   PCPYMO(2),4(R8)          MOVE MONTH TO PRINT
+*
+*        *****     ELIGIBILITY ROUTINE     *****
+*
+         PACK  PROJDATE(2),YEAR(3)      PACK YEAR - DUMMY BYTE AT END
+         ZAP   PROJDATE+1(2),SAVEDAY(2) DAY IN PACKED FORMAT
+         CP    PROJDATE(3),DATE+1(3)    CHECK ELIGIBILITY
+         BNH   REMOVE                   BRANCH TO REMOVE MEM
+         BAL   R7,PRNTLINE              LINK TO I/O
+         B     READRTNX                 EXIT
+*
+REMOVE   EQU   *
+         AP    DLMCNT(2),=P'1'          INCREMENT COUNTER
+         CP    DLMCNT(2),=P'100'        MAXIMUM REACHED
+         BNH   GOODCOPY                 BRANCH IF NO
+         MVC   RETPOINT+2(2),SCON       MODIFY RETURN POINT
+         MVI   EODSW1,X'FF'             SET EOF INDICATOR
+         MVI   PRNTAREA+1,C' '          CLEAR FIELD
+         MVC   PRNTAREA+2(131),PRNTAREA+1 PROPIGATE BLANKS
+         B     WRAPUP                   EXIT
+MAXRET   MVC   PRNTAREA(133),MAXMSG     MOVE IN MESSAGE
+         BAL   R9,PTPRINT               LINK TO I/O
+         B     ENDIT                    EXIT
+*
+GOODCOPY MVI   COPYIND,C'*'             COPY MODULE INDICATOR
+         BAL   R7,PRNTLINE              LINK TO I/O
+*
+         AP    COPYCNT(2),=P'01'        INCREMENT COUNTER
+         MVC   OPERD(5),=C'-DLM '       OPERATION
+         MVC   MODNAMED(8),IMOD1        SCRATCH FROM INPUT1
+         LA    R8,MODNAMED              BEGINNING ADDRESS OF MOD NAME
+LOOP     CLI   0(R8),C' '               SCAN FOR END
+         BNE   INCR                     NOT YET
+         MVI   0(R8),C','               SEPARATOR
+         MVC   1(4,R8),IPSWORD1         PASSWORD
+         B     WRITE                    EXIT
+INCR     LA    R8,1(0,R8)               INCREMENT ADDRESS
+         B     LOOP                     TRY AGAIN
+*
+WRITE    MVI   RETSW1,X'FF'             SET RETURN CODE INDICATOR
+         BAL   R9,PTDELT1               WRITE RECORD
+*
+         MVC   OPERS(6),=C'-COPY '      OPERATION
+         MVC   MODNAMES(8),IMOD1        COPY FROM INPUT1
+         LA    R8,MODNAMES              BEGINNING ADDRESS OF MOD NAME
+LOOP1    CLI   0(R8),C' '               SCAN FOR END
+         BNE   INCR1                    NOT YET
+         B     RENMRTN                  EXIT
+INCR1    LA    R8,1(0,R8)               INCREMENT ADDRESS
+         B     LOOP1                    TRY AGAIN
+*
+READRTNX BAL   R9,GTINDX1               LINK TO I/O
+         LR    R3,R1                    ADDRESS OF BUFFER
+         CLC   IMOD1(10),LISTID2        CHECK FOR PAGE ID
+         BE    READRTNX                 IF YES GET NEXT RECORD
+         CLI   IMOD1,X'40'              CHECK FOR LINE SEPARATOR
+         BE    READRTNX                 IF YES GET NEXT RECORD
+         CLC   IMOD1(8),LISTID3         ENDING LINES OF REPORT
+         BE    READRTNX                 GET NEXT RECORD
+         B     READRTN                  GET NEXT MODULE
+*
+*        *****     RENAME ROUTINE     *****
+*
+RENMRTN  EQU   *
+         CLI   TYPESW,X'02'             INACTIVE LISTING ONLY
+         BE    READRTNX                 BRANCH IF YES
+         L     R5,ALLOCX                ADDRESS OF TABLE ENTRY
+RENMLOOP CLC   IMOD2(8),TEMPNAME        CHECK INPUT FOR HIGHEST RENAME
+         BNE   NOREP                    BRANCH NOT FOUND
+         PACK  WORK(2),TEMPNAME+5(3)    PACK SEQ NUMBER -INCREMENT
+         AP    WORK(2),=P'1'            BY ONE
+         UNPK  TEMPNAME+5(3),WORK(2)    SAVE IT
+         OI    TEMPNAME+7,X'F0'         SET ZONE
+*
+NOREP    EQU   *
+         CLC   IMOD1(8),IMOD2           COMPARE INPUT1 AND INPUT2
+         BE    YESRENM                  BRANCH IF RENAME NECESSARY
+         BH    READIN2                  INPUT1 FILE HIGH
+         BAL   R9,PTDANDS               LINK TO I/O
+         B     READRTNX                 INPUT1 FILE LOW
+*
+READIN2  BAL   R9,GTINDX2               INPUT1 FILE HIGH - LINK TO I/O
+         LR    R4,R1                    ADDRESS OF BUFFER
+         CLC   IMOD2(10),LISTID2        CHECK FOR PAGE ID
+         BE    READIN2                  IF YES GET NEXT RECORD
+         CLI   IMOD2,X'40'              CHECK FOR LINE SEPARATOR
+         BE    READIN2                  IF YES GET NEXT RECORD
+         CLC   IMOD2(8),LISTID3         ENDING LINES OF REPORT
+         BE    READIN2                  GET NEXT RECORD
+         B     RENMLOOP                 LOOP
+*
+YESRENM  EQU   *
+         MVI   RETSW2,X'FF'             SET RETURN CODE INDICATOR
+         MVI   RENSW,X'FF'              INDICATE RENAME OPT FOR DIV
+         AP    RENMCNT(2),=P'1'         INCREMENT COUNT
+         CP    RENMCNT(2),=P'201'       MAX REACHED
+         BL    NOMAX                    NOT YET
+         CLI   RENMSW,X'FF'             SET INDICATOR
+         BE    NOENTER                  BYPASS MESSAGE
+         BAL   R9,RENWTO                LINK TO I/O
+         MVI   RENMSW,X'FF'             SET INDICATOR
+         B     NOENTER                  EXIT
+*
+NOMAX    MVC   1(8,R5),IMOD1            MOVE IN MODULE TO BE RENAMED
+         MVC   9(4,R5),IPSWORD1         MOVE IN PASSWORD
+         MVC   13(13,R5),LISTEND        END OF LIST INDICATOR
+         LA    R5,13(0,R5)              UPDATE ENTRY ADDRESS
+         ST    R5,ALLOCX                STORE ADDRESS
+NOENTER  B     READRTNX                 GET NEXT MODULE
+*
+*        *****     WRAPUP ROUTINE     *****
+*
+WRAPUP   EQU   *
+         CLI   RENSW,X'FF'              ANY RENAMES FOR DIVISION
+         BNE   SUMMARY                  BRANCH IF NO
+         MVI   PRNTAREA,C'1'            SKIP TO NEXT PAGE
+         MVC   PRNTAREA+45(L'HEADER4),HEADER4 MOVE IN HEADER
+         BAL   R9,PTPRINT               LINK TO I/O
+         MVC   PRNTAREA+52(L'HEADER5),HEADER5 MOVE IN HEADER
+         BAL   R9,PTPRINT               LINK TO I/O
+         ZAP   RENLNCNT(2),=P'05'       INITIALIZE COUNTER
+         L     R5,ALLOC                 ADDRESS OF BUFFER
+*
+LOOPTHRU CLC   0(13,R5),LISTEND         END OF LIST REACHED
+         BE    SUMMARY                  YES
+         CLC   1(1,R5),POINTER          CHANGE IN POINTER
+         BNE   SUMMARY                  YES
+         MVC   OLDNAME(8),1(R5)         MOVE OLD NAME TO PRINT
+         MVC   NEWNAME(8),TEMPNAME      MOVE IN TEMPNAME
+         MVC   SAVENAME(8),TEMPNAME     SAVE TEMPNAME
+         PACK  WORK(2),TEMPNAME+5(3)    PACK SEQ NUMBER
+         AP    WORK(2),=P'1'            INCREMENT BY ONE
+         UNPK  TEMPNAME+5(3),WORK(2)    STORE BACK
+         OI    TEMPNAME+7,X'F0'         SET ZONE
+*
+         BAL   R9,PTPRINT               LINK TO I/O
+*
+         AP    RENLNCNT(2),=P'02'       INCREMENT LINE COUNT
+         CP    RENLNCNT(2),=P'59'       MAXIMUM
+         BL    NOSKIP                   BRANCH IF NO
+         ZAP   RENLNCNT(2),=P'05'       INITIALIZE LINE COUNTER
+         MVI   PRNTAREA,C'1'            SKIP TO NEW PAGE
+*
+*        *****     SELECT ROUTINE     *****
+*
+NOSKIP   MVC   OPERS(6),=C'-COPY '      OPERATION
+         MVC   MODNAMES(8),1(R5)        MODULE TO BE RENAMED
+         LA    R8,MODNAMES              ADDRESS OF OUTPUT AREA
+MODLOOP  CLI   0(R8),C' '               CHECK FOR END OF NAME
+         BE    PSWRD                    FOUND IT
+         LA    R8,1(0,R8)               INCREMENT ADDRESS
+         B     MODLOOP                  LOOP
+PSWRD    MVI   0(R8),C','               INSERT DELIMITER
+         MVC   1(8,R8),SAVENAME         MOVE IN RENAME TO ENTRY
+         BAL   R9,PTDANDS               WRITE RECORD
+         LA    R5,13(0,R5)              UPDATE LIST POINTER
+         ST    R5,ALLOC                 SAVE ADDRESS
+         B     LOOPTHRU                 LOOP
+*
+*        *****     SUMMARY ROUTINE     *****
+*
+SUMMARY  EQU   *
+         MVI   PRNTAREA,C'1'            SKIP TO NEW PAGE
+         MVI   DIVIND,X'FF'             SET IND FOR PRINT RTN
+         MVC   DIVPTRX(1),POINTER       DIVISION POINTER
+         MVC   PRNTAREA+35(L'HEADER6),HEADER6 MOVE IN HEADER
+         BAL   R9,PTPRINT               LINK TO I/O
+         MVC   TOTMOD(6),PTRN5          PATTERN
+         ED    TOTMOD(6),MODCNT         MODULE COUNT
+         MVC   TOTACCES(8),PTRN7        PATTERN
+         ED    TOTACCES(8),ACCSCNT      ACCESS COUNT
+         MVC   PRNTAREA+27(L'HEADER7),HEADER7 MOVE IN HEADER
+         BAL   R9,PTPRINT               LINK TO I/O
+*
+         MVC   TOTRECDS(8),PTRN7        PATTERN
+         ED    TOTRECDS(8),RECDCNT      RECORD COUNT
+         MVC   TOTUPDTS(6),PTRN5        PATTERN
+         ED    TOTUPDTS(6),UPDTCNT      UPDATE COUNT
+         MVC   PRNTAREA+27(L'HEADER8),HEADER8 MOVE IN HEADER
+         BAL   R9,PTPRINT               LINK TO I/O
+*
+         MVC   TOTNUPDT(6),PTRN5        PATTERN
+         ED    TOTNUPDT(6),NUPDCNT      READ ONLY COUNT
+         MVC   TOTRENAM(4),PTRN3        PATTERN
+         ED    TOTRENAM(4),RENMCNT      RENAME COUNT
+         MVC   PRNTAREA+27(L'HEADER9),HEADER9 MOVE IN HEADER
+         BAL   R9,PTPRINT               LINK TO I/O
+*
+         MVC   TOTCOPY(4),PTRN3         PATTERN
+         ED    TOTCOPY(4),COPYCNT       COPY COUNT
+         MVC   PRNTAREA+27(L'HEADER10),HEADER10 MOVE IN HEADER
+         BAL   R9,PTPRINT               LINK TO I/O
+*
+         ZAP   MODCNT(3),=P'0'          INITIALIZE
+         ZAP   ACCSCNT(4),=P'0'
+         ZAP   RECDCNT(4),=P'0'              ALL
+         ZAP   UPDTCNT(3),=P'0'
+         ZAP   RENMCNT(2),=P'0'                THE
+         ZAP   NUPDCNT(3),=P'0'
+         ZAP   COPYCNT(2),=P'0'                   COUNTERS
+*
+         ZAP   LINECNT(2),=P'60'        FORCE PAGE EJECTION
+         MVI   RENSW,X'00'              INITIALIZE INDICATOR
+         MVC   RSEQ(3),=C'001'          INITIALIZE SEQUENCE
+         MVC   RPOINT(1),IMOD1          NEXT DIVISION POINTER
+         MVC   TEMPNAME(8),RENAME       INITIALIZED RENAME
+         CLI   EODSW1,X'FF'             END OF INPUT1 FILE
+RETPOINT BE    ENDIT                    BRANCH IF YES
+         B     RESTART                  PROCESS NEXT DIVISION
+*
+*        *****     EOD ROUTINE     *****
+*
+IND1EOD  EQU   *
+         MVI   EODSW1,X'FF'             SET INDICATOR
+         B     WRAPUP                   EXIT
+ENDIT    EQU   *
+         MVC   OPERS(5),=C'-END '       OPERATION
+         BAL   R9,PTDANDS               LINK TO I/O
+         MVC   OPERD(5),=C'-END '       OPERATION
+         BAL   R9,PTDELT1               LINK TO I/O
+*
+         XR    R9,R9                    CLEAR REG
+         CLI   RETSW1,X'FF'             DELETE FROM INDEX1
+         BNE   NEXTSWT                  BRANCH IF NO
+         AH    R9,=H'4'                 SET RETURN CODE
+NEXTSWT  CLI   RETSW2,X'FF'             RENAME NECESSARY
+         BNE   REGUPD                   BRANCH IF NO
+         AH    R9,=H'8'                 SET RETURN CODE
+REGUPD   STH   R9,RETCODE               SAVE RETURN CODE
+         B     RETURN                   EXIT
+*
+IND2EOD  EQU   *
+         MVI   EODSW2,X'FF'             SET EOD INDICATOR
+         B     GTINDX2                  LINK TO I/O
+*
+*        *****     PRINT ROUTINE     *****
+*
+PRNTLINE CP    LINECNT(2),=P'055'       LINE LIMIT REACHED
+         BNH   SKIPINIT                 BRANCH IF NO
+         ZAP   LINECNT(2),=P'04'        INITIALIZE LINE COUNT
+         MVC   HOLDREC(133),PRNTAREA    SAVE DATA RECORD
+         CLI   DIVIND,X'FF'             CHANGE IN DIVISIONS
+         BNE   SAMEDIV                  BRANCH IF NO
+         ZAP   LINECNT(2),=P'09'        INITIALIZE LINE COUNTER
+         MVI   DIVIND,X'00'             INITIALIZE SWITCH
+         MVC   PRNTAREA(133),HEADER1    MOVE IN MESSAGE
+         BAL   R9,PTPRINT               LINK TO I/O
+         MVC   PRNTAREA+49(L'HEADER2),HEADER2 MOVE IN MESSAGE
+         BAL   R9,PTPRINT               LINK TO I/O
+         MVI   HEADER3,C'-'             SPACE 3 LINES
+SAMEDIV  MVC   PRNTAREA(133),HEADER3    MOVE IN HEADER
+         BAL   R9,PTPRINT               LINK TO I/O
+         MVI   HEADER3,C'1'             SKIP TO NEW PAGE
+         MVC   PRNTAREA(2),=C'0-'       SPACE 2 LINES
+         MVC   PRNTAREA+2(131),PRNTAREA+1 PROPIGATE CHARACTER
+         BAL   R9,PTPRINT               LINK TO I/O
+         MVC   PRNTAREA(133),HOLDREC    RESTORE DATA RECORD
+*
+SKIPINIT AP    LINECNT(2),=P'2'         INCREMENT LINE COUNT
+         BAL   R9,PTPRINT               LINK TO I/O
+         BR    R7                       RETURN
+*
+*        *****     EOJ ROUTINE     *****
+*
+BADPARM  EQU   *
+         LR    R8,R15                   SAVE REG CONTENTS
+         BAL   R9,PARMWTO               LINK TO I/O
+         LR    R15,R8                   RESTORE REG
+         B     ABEND                    ABTERM
+*
+NODDRET  EQU   *
+         LR    R8,R15                   SAVE REG CONTENTS
+         BAL   R9,DDWTO                 LINK TO I/O
+         LR    R15,R8                   RESTORE REG
+         B     ABEND                    ABTERM
+NOCORE   BAL   R9,COREWTO               LINK TO I/O
+         LA    R15,40                   INSERT RETURN CODE
+         B     ABEND                    EXIT
+*
+RETURN   EQU   *
+         BAL   R9,CLINDX1               LINK TO I/O
+         CLI   TYPESW,X'02'             INACTIVE LISTING ONLY
+         BNE   CLSINDEX                 BRANCH IF NO
+         MVC   RETCODE(2),=H'36'        MOVE IN RETURN CODE
+         B     NEXTCLS                  BYPASS
+CLSINDEX BAL   R9,CLINDX2               LINK TO I/O
+NEXTCLS  EQU   *
+         BAL   R9,CLDELT1               LINK TO I/O
+         BAL   R9,CLDANDS               LINK TO I/O
+         BAL   R9,CLPRINT               LINK TO I/O
+         LH    R15,RETCODE              SET RETURN CODE
+         L     R13,SAVEAREA+4           RESTORE CALLERS SAVE ADDRESS
+         RETURN (14,12),T,RC=(15)       RESTORE REGISTERS
+*
+*
+*
+         EJECT
+***********************************************************************
+*                                                                     *
+*                                                                     *
+*        **********     STORAGE AND CONSTANTS     **********          *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+*
+*
+*
+WORK     DS    D
+SAVEAREA DS    18F
+ALLOCX   DS    F
+ALLOC    DS    F
+DATE     DS    F
+RETCODE  DS    H
+*
+*        *****     RETURN CODE TABLE     *****
+*
+*        REG 15 = 0      NO TRANSMIGRATION
+*               = 4      DELETE/COPY FROM INPUT1
+*               = 8      COPY AND/OR RENAME FROM INPUT1
+*               = 12     COPY AND/OR RENAME FROM INPUT1
+*               = 16     NO PARM SUPPLIED
+*               = 20     NON NUMERIC DAYS IN PARM
+*               = 24     INVALID TYPE IN PARM
+*               = 28     NON ALPHABETIC GROUP IN PARM
+*               = 32     MISSING DD CARD
+*               = 36     LIST INACTIVE ARCHIVES
+*               = 40     CORE NOT AVAILABLE
+*
+TEMPNAME DS    CL8
+SAVENAME DS    CL8
+GROUPS   DS    CL8
+PROJDATE DS    CL3
+SAVEDAY  DS    PL2
+POINTER  DS    C
+*
+*        *****     DELETE - SELECT AREAS     *****
+*
+DELAREA  DS    0CL80
+DELMSG   DC    C'-OPT NOEXEC,NOLIST,NOPUNCH,NORESEQ                    +
+                                         '
+         ORG   DELAREA
+OPERD    DS    CL5
+MODNAMED DS    CL8
+FILLERD  DS    CL67
+*
+DANDSARE DS    0CL80
+         DC    C'-OPT UTILITY                                          +
+                                         '
+         ORG   DANDSARE
+OPERS    DS    CL6
+MODNAMES DS    CL8
+FILLERS  DS    CL66
+*
+DATESAVE DS    0CL8
+MONTH    DS    CL2
+         DS    C
+DAY      DS    CL2
+         DS    C
+YEAR     DS    CL2
+*
+*
+RENAME   DS    0CL8
+RPOINT   DS    C
+RYEAR    DS    C
+RDAY     DS    CL3
+RSEQ     DC    C'001'
+*
+HOLDREC  DS    CL133
+PRNTAREA DS    CL133
+         ORG   PRNTAREA
+CARCONT  DS    C
+COPYIND  DS    C
+PJOB     DS    CL8
+         DS    CL3
+PASSWORD DS    CL4
+         DS    CL4
+PGMDESC  DS    CL24
+         DS    CL4
+PGMADD   DS    CL8
+         DS    CL3
+PGMUPD   DS    CL8
+         DS    C
+PTIME    DS    CL5
+         DS    CL3
+PCPYMO   DS    CL2
+PSLSH1   DS    C
+PCPYDAY  DS    CL2
+PSLSH2   DS    C
+PCPYYEAR DS    CL2
+         DS    CL5
+PRECRDS  DS    CL5
+         DS    CL4
+PRGMMER  DS    CL10
+         DS    CL1
+PACCESS  DS    CL5
+         DS    CL2
+PUPDT    DS    CL5
+         DS    CL3
+PRDONLY  DS    CL5
+         DS    CL3
+         ORG
+*
+LINECNT  DC    P'09'
+RENLNCNT DC    P'05'
+CUTOFF   DC    P'030'
+PTRN3    DC    X'40202120'
+PTRN5    DC    X'402020202120'
+PTRN7    DC    X'4020202020202120'
+*
+NUMTAB   DC    10X'00'
+ALPHATAB DC    9X'00'
+         DC    7X'FF'
+         DC    9X'00'
+         DC    8X'FF'
+         DC    8X'00'
+         DC    22X'FF'
+*
+*        *****     HEADERS     *****
+*
+HEADER1  DC    C'1       DATE = MM/DD/YY                    *****     L+
+               ISTING OF TESTBANK     *****                 TIME = HH.M+
+               M                      '
+HEADER2  DC    C'*****     DIVISION = X     *****'
+HEADER3  DC    C'1* MODULE * PSWRD *     MODULE DESCRIPTION     *  ADDE+
+               D   * UPDATED - TIME * COPY DATE * RECORDS * PROGRAMMER +
+               * ACC * UPDT * RDONLY *'
+HEADER4  DC    C'*****     RENAMING ACTIVITY     *****'
+HEADER5  DC    C'* MODULE  * RENAMED TO *'
+HEADER6  DC    C'*****     SUMMARIES FOR DIVISION - X - AS OF MM/DD/YY +
+                   *****'
+HEADER7  DC    C'***   NO. OF MODULES  =   XXXXX   *****   NO. OF ACCES+
+               SES    = XXXXXXX   ***'
+HEADER8  DC    C'***   NO. OF RECORDS  = XXXXXXX   *****   NO. OF UPDAT+
+               ES     =   XXXXX   ***'
+HEADER9  DC    C'***   MODULES RENAMED =     XXX   *****   NO. OF NON-U+
+               PDATES =   XXXXX   ***'
+HEADER10 DC    C'***   MODULES COPIED  =     XXX   *****'
+NEWHEAD1 DC    C'ACTIVE ARCHIVE     *****'
+NEWHEAD2 DC    C'INACTIVE ARCHIVE     *****'
+MAXMSG   DC    C'-*****     MAXIMUM NUMBER OF ALLOWABLE COPY STATEMENTS+
+                - 100 - HAS BEEN ATTAINED     *****                    +
+                                      '
+SCON     DC    S(MAXRET)
+LISTEND  DC    13C'X'
+LISTID1  DC    C'DATE  '
+LISTID2  DC    C'MODULE   P'
+LISTID3  DC    C'TOTAL NO'
+EODREC   DC    133C'Z'
+CYCLCON  DC    C',NOCYCLE'
+OPTMSG   DC    C'-OPT NOEXEC,NOLIST,NOPUNCH,NORESEQ,NOCYCLE            +
+                                         '
+*
+*        *****     CALENDAR TABLES     *****
+*
+REGTAB   DC    P'031',P'000',C'01'
+         DC    P'059',P'031',C'02'
+         DC    P'090',P'059',C'03'
+         DC    P'120',P'090',C'04'
+         DC    P'151',P'120',C'05'
+         DC    P'181',P'151',C'06'
+         DC    P'212',P'181',C'07'
+         DC    P'243',P'212',C'08'
+         DC    P'273',P'243',C'09'
+         DC    P'304',P'273',C'10'
+         DC    P'334',P'304',C'11'
+         DC    P'365',P'334',C'12'
+*
+LEAPTAB  DC    P'031',P'000',C'01'
+         DC    P'060',P'031',C'02'
+         DC    P'091',P'060',C'03'
+         DC    P'121',P'091',C'04'
+         DC    P'152',P'121',C'05'
+         DC    P'182',P'152',C'06'
+         DC    P'213',P'182',C'07'
+         DC    P'244',P'213',C'08'
+         DC    P'274',P'244',C'09'
+         DC    P'305',P'274',C'10'
+         DC    P'335',P'305',C'11'
+         DC    P'366',P'335',C'12'
+*
+*        *****     COUNTERS     *****
+*
+MODCNT   DC    PL3'0'
+RECDCNT  DC    PL4'0'
+ACCSCNT  DC    PL4'0'
+UPDTCNT  DC    PL3'0'
+RENMCNT  DC    PL2'0'
+NUPDCNT  DC    PL3'0'
+COPYCNT  DC    PL2'0'
+DLMCNT   DC    PL2'0'
+*
+*        *****     SWITCHES     *****
+*
+RETSW1   DC    X'00'
+RETSW2   DC    X'00'
+RENSW    DC    X'00'
+RENMSW   DC    X'00'
+TYPESW   DC    X'00'
+YEARTYPE DC    X'00'
+EODSW1   DC    X'00'
+EODSW2   DC    X'00'
+DIVIND   DC    X'00'
+*
+*
+*
+*        *****     PARM FIELD DESCRIPTION     *****
+*
+*        PARM='DAYS=XXX,TYPE=XXX,GROUP=XXXXXXXX'
+*
+PARMDSCT DSECT
+PARMOPT1 DS    CL5                      DAYS=
+PDAYS    DS    CL3                      DDD            NO. OF DAYS
+PARMOPT2 DS    CL6                      ,TYPE=
+PTYPE    DS    CL3                      TTT            BNK,ACT OR INA
+PARMOPT3 DS    CL7                      ,GROUP=
+PGROUP   DS    CL8                      XXXXXXXX       GROUP
+*
+*        *****     END OF PARM DESCRIPTION     *****
+*
+*        *****     INDEX INPUT DSECTS     *****
+*
+INDEXID1 DSECT
+ICAR1    DS    C
+IMOD1    DS    CL8
+         DS    CL3
+IPSWORD1 DS    CL4
+         DS    CL4
+IDESC1   DS    CL30
+         DS    C
+*
+IDTEADD1 DS    0CL8
+IMOA1    DS    CL2
+ISLSHAA1 DS    C
+IDAYA1   DS    CL2
+ISLSHAB1 DS    C
+IYEARA1  DS    CL2
+*
+         DS    CL4
+IDTEUPD1 DS    0CL8
+IMOU1    DS    CL2
+ISLSHUA1 DS    C
+IDAYU1   DS    CL2
+ISLSHUB1 DS    C
+IYEARU1  DS    CL2
+*
+         DS    C
+ITIME1   DS    CL4
+         DS    CL2
+IRECORD1 DS    CL6
+         DS    CL4
+IPRGMR1  DS    CL10
+         DS    CL3
+IACCESS1 DS    CL7
+         DS    CL3
+IUPDT1   DS    CL7
+         DS    CL2
+INOUPDT1 DS    CL7
+         DS    CL6
+*
+         ORG   INDEXID1
+         DS    CL17
+IDCON    DS    CL6
+IDATE    DS    CL8
+         DS    CL10
+ITIME    DS    CL4
+*
+         ORG
+*
+INDEXID2 DSECT
+ICAR2    DS    C
+IMOD2    DS    CL8
+         DS    CL3
+IPSWORD2 DS    CL4
+         DS    CL4
+IDESC2   DS    CL30
+         DS    C
+*
+IDTEADD2 DS    0CL8
+IMOA2    DS    CL2
+ISLSHAA2 DS    C
+IDAYA2   DS    CL2
+ISLSHAB2 DS    C
+IYEARA2  DS    CL2
+*
+         DS    CL4
+IDTEUPD2 DS    0CL8
+IMOU2    DS    CL2
+ISLSHUA2 DS    C
+IDAYU2   DS    CL2
+ISLSHUB2 DS    C
+IYEARU2  DS    CL2
+*
+         DS    C
+ITIME2   DS    CL4
+         DS    CL2
+IRECORD2 DS    CL6
+         DS    CL4
+IPRGMR2  DS    CL10
+         DS    CL3
+IACCESS2 DS    CL7
+         DS    CL3
+IUPDT2   DS    CL7
+         DS    CL2
+INOUPDT2 DS    CL7
+         DS    CL6
+*
+ZUTBA025 CSECT
+*
+*        **********     LITERAL POOL     **********
+*
+         LTORG
+         EJECT
+***********************************************************************
+*                                                                     *
+*                                                                     *
+*              **********     I/O MACROS     **********               *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+*
+*
+*
+TIME     TIME  DEC                      DATE IN REG 1
+         BR    R9                       RETURN
+*
+*
+*
+RENWTO   WTO   '***     MAXIMUM NUMBER OF RENAMES AFFECTED - 200     **+
+               *',ROUTCDE=11
+         BR    R9                       RETURN
+*
+*
+*
+COREWTO  WTO   '***     CORE NOT AVAILABLE - RUN IN LARGER PARTITION   +
+                 ***'
+         BR    R9                       RETURN
+*
+*
+*
+PARMWTO  WTO   '*****     PARM FIELD INVALID     *****',ROUTCDE=11
+         BR    R9                       RETURN
+*
+*
+*
+DDWTO    WTO   '****    XXXXXXXX DD CARD MISSING    ****',ROUTCDE=11
+         BR    R9                       RETURN
+*
+*
+*
+GETMAIN  GETMAIN EC,LV=2650,A=ALLOC     GET CORE FOR 200 RENAMES
+         BR      R9                     RETURN
+*
+*
+*
+ABEND    ABEND 999,DUMP                 ABNORMAL TERMINATION
+*
+*
+*
+OPINDX1  OPEN  (INDEX1,(INPUT))         OPEN INDEX 1 DATA SET
+         BR    R9                       RETURN
+*
+*
+*
+OPINDX2  OPEN  (INDEX2,(INPUT))         OPEN INDEX 2 DATA SET
+         BR    R9                       RETURN
+*
+*
+*
+OPDELT1  OPEN  (DELETE1,(OUTPUT))       OPEN DELETE 1 DATA SET
+         BR    R9                       RETURN
+*
+*
+*
+OPDANDS  OPEN  (DLMSELS,(OUTPUT))       OPEN DEL-SEL DATASET
+         BR    R9                       RETURN
+*
+*
+*
+OPPRINT  OPEN  (INDXLST,(OUTPUT))       OPEN PRINT DATA SET
+         BR    R9                       RETURN
+*
+*
+*
+CLINDX1  CLOSE INDEX1                   CLOSE INDEX 1 DATA SET
+         BR    R9                       RETURN
+*
+*
+*
+CLINDX2  CLOSE INDEX2                   CLOSE INDEX 2 DATA SET
+         BR    R9                       RETURN
+*
+*
+*
+CLDELT1  CLOSE DELETE1                  CLOSE DELETE DATA SET
+         BR    R9                       RETURN
+*
+*
+*
+CLDANDS  CLOSE DLMSELS                  CLOSE DLM-SEL DATA SET
+         BR    R9                       RETURN
+*
+*
+*
+CLPRINT  CLOSE INDXLST                  CLOSE PRINT DATA SET
+         BR    R9                       RETURN
+*
+*
+*
+GTINDX1  GET   INDEX1                   GET INDEX 1 RECORD
+         BR    R9                       RETURN
+*
+*
+*
+GTINDX2  EQU   *
+         CLI   EODSW2,X'FF'             ROUTINE BEEN ENTERED PREVIOUSLY
+         BNE   GREAD                    BRANCH IF NO
+         LA    R1,EODREC                DUMMY READ BUFFER
+         BR    R9                       RETURN
+GREAD    GET   INDEX2                   GET INDEX2 RECORD
+         BR    R9                       RETURN
+*
+*
+*
+PTDELT1  PUT   DELETE1,DELAREA          PUT DELETE 1 RECORD
+         MVI   DELAREA,C' '             PROPIGATE
+         MVC   DELAREA+1(79),DELAREA    BLANKS
+         BR    R9                       RETURN
+*
+*
+*
+PTDANDS  PUT   DLMSELS,DANDSARE         PUT COPY RECORD
+         MVI   DANDSARE,C' '            PROPIGATE
+         MVC   DANDSARE+1(79),DANDSARE  BLANKS
+         BR    R9                       RETURN
+*
+*
+*
+PTPRINT  PUT   INDXLST,PRNTAREA         PUT PRINT RECORD
+         MVC   PRNTAREA(2),=C'0 '       CLEAR
+         MVC   PRNTAREA+2(131),PRNTAREA+1 PRINT AREA
+         BR    R9                       RETURN
+*
+*
+*
+         EJECT
+***********************************************************************
+*                                                                     *
+*                                                                     *
+*              **********     INDEX1 DCB     **********               *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+*
+*
+*
+INDEX1   DCB   DDNAME=INDEX1,                                          +
+               DSORG=PS,                                               +
+               EODAD=IND1EOD,                                          +
+               MACRF=GL,                                               +
+               LRECL=133,                                              +
+               RECFM=FB
+*
+*
+*
+         EJECT
+***********************************************************************
+*                                                                     *
+*                                                                     *
+*              **********     INDEX2 DCB     **********               *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+*
+*
+*
+INDEX2   DCB   DDNAME=INDEX2,                                          +
+               DSORG=PS,                                               +
+               EODAD=IND2EOD,                                          +
+               MACRF=GL,                                               +
+               LRECL=133,                                              +
+               RECFM=FB
+*
+*
+*
+         EJECT
+***********************************************************************
+*                                                                     *
+*                                                                     *
+*              **********     DELETE1 DCB     **********              *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+*
+*
+*
+DELETE1  DCB   DDNAME=DELETE1,                                         +
+               DSORG=PS,                                               +
+               MACRF=PM,                                               +
+               LRECL=80,                                               +
+               RECFM=FB
+*
+*
+*
+         EJECT
+***********************************************************************
+*                                                                     *
+*                                                                     *
+*              **********     DLMSELS DCB     **********              *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+*
+*
+*
+DLMSELS  DCB   DDNAME=COPYMEM,                                         +
+               DSORG=PS,                                               +
+               MACRF=PM,                                               +
+               LRECL=80,                                               +
+               RECFM=FB
+*
+*
+*
+         EJECT
+***********************************************************************
+*                                                                     *
+*                                                                     *
+*              **********     INDXLST DCB     **********              *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+*
+*
+*
+INDXLST  DCB   DDNAME=INDXLST,                                         +
+               DSORG=PS,                                               +
+               MACRF=PM,                                               +
+               RECFM=FBA,                                              +
+               LRECL=133
+*
+*
+*
+         EJECT
+***********************************************************************
+*                                                                     *
+*                                                                     *
+*              **********     EQUATE STATEMENTS     **********        *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+*
+*
+*
+R0       EQU   0
+R1       EQU   1
+R2       EQU   2
+R3       EQU   3
+R4       EQU   4
+R5       EQU   5
+R6       EQU   6
+R7       EQU   7
+R8       EQU   8
+R9       EQU   9
+R10      EQU   10
+R11      EQU   11
+R12      EQU   12
+R13      EQU   13
+R14      EQU   14
+R15      EQU   15
+*
+DATELIST EQU   HEADER1+15
+TIMELIST EQU   HEADER1+53
+TYPEREPT EQU   HEADER1+64
+DIVPTR   EQU   HEADER2+21
+DIVPTRX  EQU   HEADER6+35
+RUNDATE  EQU   HEADER6+45
+TOTMOD   EQU   HEADER7+25
+TOTACCES EQU   HEADER7+62
+TOTRECDS EQU   HEADER8+23
+TOTUPDTS EQU   HEADER8+64
+TOTRENAM EQU   HEADER9+27
+TOTNUPDT EQU   HEADER9+64
+TOTCOPY  EQU   HEADER10+27
+*
+DDMISS   EQU   DDWTO+8
+OLDNAME  EQU   PRNTAREA+53
+NEWNAME  EQU   PRNTAREA+65
+HDATE    EQU   HEADER1+15
+HTIME    EQU   HEADER1+106
+         END

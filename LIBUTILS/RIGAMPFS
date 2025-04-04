@@ -1,0 +1,275 @@
+         TITLE '*RIGAM FILE SPACE PRINT FOR RECORD ADDITIONS. RLG.'
+         ISEQ  73,80
+         PRINT ON,NOGEN,NODATA
+*
+* THIS ROUTINE WILL READ THE *RIGAM PARAMETERS FOR EACH FILE AND WILL
+*     RESOLVE THE RECORD ADDITIONS SPACE REMAINING FOR THE NEXT PERIOD
+*        OF ACTIVITY TO ANY OF THE FILES.
+*
+FYLIMPRT START
+         SAVE  (0,12),T
+         BALR  11,0
+         USING HERE,11,12
+HERE     LA    12,HERE+4096
+         B     BEGIN
+SAVEAREA DS    18F
+BEGIN    LA    9,SAVEAREA
+         ST    9,8(13)
+         ST    13,4(9)
+         LR    13,9
+         BAL   4,TSTYPDEV          GO TEST DEVICE TYPE
+         OPEN  (RIGDSDCB)
+         OPEN  (RIGPTDCB,OUTPUT)
+         BAL   4,PRNTCNTL
+         MVC   TTR(3),=X'000001'                                    DAM
+READFILE READ  RIGAM,DI,RIGDSDCB,BLOCK,1693,0,TTR
+         CHECK RIGAM
+         CLC   TTR(3),=X'000303'                                    DAM
+         BNL   CLOSEALL                                             DAM
+         TM    BLOCK,X'F0'                                          DAM
+         BC    12,NEXTBLCK                                          DAM
+         TM    BLOCK,X'0F'                                          DAM
+         BC    1,NEXTBLCK                                           DAM
+         MVC   ROW1,BLOCK+3
+         MVC   ROW2,BLOCK
+         MVC   MOVEAREA,BLOCK+11
+         L     6,MOVEAREA
+         BAL   4,TTR2BLK
+         ST    6,LHLD
+         CVD   6,DBLWRD
+         MVC   ROW3,EDWORD1
+         ED    ROW3,DBLWRD+5
+         MVC   MOVEAREA,BLOCK+14
+         L     6,MOVEAREA
+         BAL   4,TTR2BLK
+         ST    6,HHLD
+         CVD   6,DBLWRD
+         MVC   ROW4,EDWORD1
+         ED    ROW4,DBLWRD+5
+         MVC   MOVEAREA,BLOCK+19
+         L     6,MOVEAREA
+         BAL   4,TTR2BLK
+         ST    6,LBUHLD
+         CVD   6,DBLWRD
+         MVC   ROW6,EDWORD1
+         ED    ROW6,DBLWRD+5
+         XR    6,6
+         IC    6,BLOCK+23
+         CVD   6,DBLWRD
+         MVC   ROW5,EDWORD3
+         ED    ROW5,DBLWRD+6
+         L     6,HHLD
+         L     7,LBUHLD
+         SR    6,7
+         XR    8,8
+         IC    8,BLOCK+23
+         LR    7,6
+         XR    6,6
+         MR    6,8
+         XR    6,6
+         IC    6,BLOCK+22
+         SR    8,6
+         AR    7,8
+         CVD   7,DBLWRD
+         MVC   ROW7,EDWORD1
+         ED    ROW7,DBLWRD+5
+         BAL   4,PRNTCNTL
+NEXTBLCK L     6,TTR
+         SRDA  6,16(0)
+         SRA   7,24(0)
+         AH    7,=H'1'
+         CH    7,BLKNOH            COMPARE R TO MAX-BLK-NO-PER-TRACK
+         BNH   TTROK               BRANCH IF R < AND = TO MBNPT
+         AH    6,=H'1'
+         LH    7,=H'1'
+TTROK    SLA   7,8(0)
+         SLA   6,16(0)
+         AR    6,7
+         ST    6,TTR
+         B     READFILE
+TTR2BLK  SRDA  6,16(0)
+         MH    6,BLKNOH            MULT TT BY  MAX-BLK-NO-PER-TRACK
+         SRA   7,24(0)
+         AR    6,7
+         BR    4
+ENDIT    WTO   'RIG701I ERROR - REACHED END OF DATA SET'            DAM
+         CLC   COMPCODE,=F'8'                                       DAM
+         BNL   *+10                                                 DAM
+         MVC   COMPCODE,=F'8'                                       DAM
+CLOSEALL WTO   'RIG703I END OF RIGAM FILE SPACE PRINT UTILITY'      DAM
+         L     4,COMPCODE                                           DAM
+         CVD   4,DECMCODE                                           DAM
+         UNPK  UNPKCODE,DECMCODE+6(2)                               DAM
+         MVC   TERMSG1+56(2),UNPKCODE+1                             DAM
+         OI    TERMSG1+57,X'F0'                                     DAM
+TERMSG1  WTO   'RIG704I HIGHEST COMPLETION CODE ENCOUNTERED WAS   ' DAM
+         CLOSE (RIGDSDCB)
+         CLOSE (RIGPTDCB)
+         L     13,SAVEAREA+4
+         L     15,COMPCODE                                          DAM
+        RETURN (14,12),RC=(15)                                      DAM
+         SPACE 1
+********************
+* TEST DEVICE TYPE *
+********************
+         SPACE 1
+TSTYPDEV DEVTYPE RIGDSDCB+40,TYPDEVWA,DEVTAB,RPS
+         LTR   6,15           RETURN CODE = ZERO ?
+         BNZ   DNOK           BRANCH IF NO
+         LA    2,NETAD        ESTABLISH LOOP
+         LA    3,TABDEV       POINT R3 AT FIRST TABLE ELEMENT
+LTSTAD   CLC   TYPDEVWA(4),0(3) TEST IF DEVICE T. IS IN TABLE
+         BE    DOK            BRANCH IF YES
+         LA    3,6(3)         INCREMENT POINTER
+         BCT   2,LTSTAD       PROCESS NEXT TABLE ELEMENT
+DNOK     ABEND 999,DUMP       ERROR - ABEND V0999
+DOK      MVC   BLKNOH,4(3)    MOVE MAX. NO OF BLOCKS PER TRACKS
+         BR    4              RETURN TO CALLER
+         SPACE 1
+TYPDEVWA DC    6F'0'          WORK AREA FOR DEVTYPE MACRO
+BLKNOF   DC    H'0'           MAXIMUM NUMBER OF
+BLKNOH   DC    H'0'                BLOCKS PER TRACK
+TABDEV   DC    X'30002001',H'2'    2 BLOCKS FOR 2311
+         DC    X'30C02008',H'4'    4 BLOCKS FOR 2314
+         DC    X'30502009',H'7'    7 BLOCKS FOR 3330
+         DC    X'3050200D',H'7'    7 BLOCKS FOR 3330-11
+         DC    X'FFFFFFFF',H'0'    FREE
+         DC    X'FFFFFFFF',H'0'    FREE
+         DC    X'FFFFFFFF',H'0'    FREE
+         DC    X'FFFFFFFF',H'0'    FREE
+         DC    X'FFFFFFFF',H'0'    FREE
+         DC    X'FFFFFFFF',H'0'    FREE
+NETAD    EQU   10                  NUMBER OF TABLE ELEMENT
+         EJECT
+PRNTCNTL STM   2,10,REGSAVE1
+PRENSW1  BC    0,PREN2
+PREN1    MVC   PRTAREA,PLINE4
+         MVI   PRTAREA,X'8B'
+         WRITE THISWORD,SF,RIGPTDCB,PRTAREA
+         CHECK THISWORD
+         MVC   PRTAREA,PLINE1
+         MVI   PRTAREA,X'11'
+         WRITE THISONE2,SF,RIGPTDCB,PRTAREA
+         CHECK THISONE2
+         MVC   PRTAREA,PLINE2
+         MVI   PRTAREA,X'09'
+         WRITE AGAIN,SF,RIGPTDCB,PRTAREA
+         CHECK AGAIN
+         MVC   PRTAREA,PLINE3
+         MVI   PRTAREA,X'11'
+         WRITE THISLINE,SF,RIGPTDCB,PRTAREA
+         CHECK THISLINE
+         MVI   PRENSW1+1,X'F0'
+         XR    2,2
+         LA    2,3(2)
+         ST    2,LINECNT
+         MVC   PRTAREA,PLINE4
+PRENSW2  BC    15,PREN4
+PRENSW3  BC    0,PREN3
+PREN2    L     2,LINECNT
+         L     3,=F'23'
+         MVC   PLINESAV,PRTAREA
+         CR    2,3
+         BC    12,PREN3
+         B     PREN1
+PREN3    MVC   PRTAREA,PLINESAV
+         MVI   PRTAREA,X'11'
+         WRITE ALINE,SF,RIGPTDCB,PRTAREA
+         CHECK ALINE
+         AH    2,=H'1'
+         ST    2,LINECNT
+PREN4    MVI   PRENSW2+1,X'00'
+         MVI   PRENSW3+1,X'F0'
+         LM    2,10,REGSAVE1
+         BR    4
+DSKPBLM  WTO   'RIG702I SYNAD ERROR ON RIGAM DATA SET'              DAM
+         MVC   COMPCODE,=F'16'                                      DAM
+         B     CLOSEALL                                             DAM
+REGSAVE1 DS    9F
+LINECNT  DC    F'0'
+RIGDSDCB DCB   BLKSIZE=1693,                                           X
+               BUFNO=1,                                                X
+               DDNAME=TSTRIGAM,                                        X
+               DSORG=DA,                                               X
+               EODAD=ENDIT,                                            X
+               MACRF=(RIC,WIC),                                        X
+               RECFM=F,                                                X
+               SYNAD=DSKPBLM
+RIGPTDCB DCB   BLKSIZE=85,                                             X
+               DDNAME=PRINT,                                           X
+               DEVD=PR,                                                X
+               DSORG=PS,                                               X
+               LRECL=85,                                               X
+               MACRF=W,                                                X
+               NCP=1,                                                  X
+               RECFM=FM
+PLINESAV DS    CL85
+PRTAREA  DS    0CL85
+         DC    CL8' '
+ROW1     DC    CL3' '
+         DC    CL7' '
+ROW2     DC    CL3' '
+         DC    CL5' '
+ROW3     DC    CL7' '
+         DC    CL3' '
+ROW4     DC    CL7' '
+         DC    CL5' '
+ROW5     DC    CL4' '
+         DC    CL5' '
+ROW6     DC    CL7' '
+         DC    CL5' '
+ROW7     DC    CL7' '
+         DC    CL9' '
+PLINE1   DS    0CL84
+         DC    CL18' '
+         DC    CL47'*RIGAM FILE RECORD ADDITIONS AVAILABILITY SPACE'
+         DC    CL19' '
+PLINE2   DS    0CL85
+         DC    CL8' '
+         DC    CL4'FILE'
+         DC    CL6' '
+         DC    CL4'FILE'
+         DC    CL5' '
+         DC    CL5'START'
+         DC    CL5' '
+         DC    CL6'ENDING'
+         DC    CL4' '
+         DC    CL7'REC.PER'
+         DC    CL3' '
+         DC    CL9'LAST BLK.'
+         DC    CL3' '
+         DC    CL9'REC.SPACE'
+         DC    CL7' '
+PLINE3   DS    0CL85
+         DC    CL8' '
+         DC    CL4'I.D.'
+         DC    CL7' '
+         DC    CL3'NO.'
+         DC    CL5' '
+         DC    CL5'BLOCK'
+         DC    CL6' '
+         DC    CL5'BLOCK'
+         DC    CL5' '
+         DC    CL5'BLOCK'
+         DC    CL6' '
+         DC    CL4'USED'
+         DC    CL6' '
+         DC    CL9'AVAILABLE'
+         DC    CL7' '
+PLINE4   DS    0CL85
+         DC    CL85' '
+BLOCK    DS    CL1693
+TTR      DC    F'0'
+ANOTHER  DC    F'0'
+LHLD     DC    F'0'
+HHLD     DC    F'0'
+LBUHLD   DC    F'0'
+MOVEAREA DC    F'0'
+DBLWRD   DS    D
+EDWORD1  DC    XL7'4020206B202021'
+EDWORD2  DC    XL6'40206B202021'
+EDWORD3  DC    XL4'40202021'
+COMPCODE DC    F'0'                                                 DAM
+DECMCODE DC    D'0'                                                 DAM
+UNPKCODE DC    CL3'000'                                             DAM
+         END   FYLIMPRT

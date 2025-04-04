@@ -1,0 +1,258 @@
+         TITLE 'ACCOUNTING SVC - IGC254'
+         MACRO
+&NAME    CSID  &NONAME
+         LCLC  &NAME1
+&NAME1   SETC  '&NAME'
+         AIF   ('&NONAME' EQ 'NONAME').A01
+&NAME1   DC    CL8'&SYSECT'        NAME OF CSECT
+&NAME1   SETC  ' '
+.A01           ANOP
+&NAME1   DC    CL8'&SYSDATE'       DATE OF ASSEMBLY
+         DC    CL8'&SYSTIME'       TIME OF ASSEMBLY
+         MEND
+         EJECT
+* WRITTEN BY D. R. HURTGEN
+         SPACE 1
+* MONSANTO COMPANY - GENERAL OFFICES
+         SPACE 1
+* SEPTEMBER, 1976
+         SPACE 2
+* THE ACCOUNTING SVC ACTUALLY CONSISTS OF A NUMBER OF SOMEWHAT
+* DISPARATE FUNCTIONS LOCATED WITHIN A SINGLE MODULE. THERFORE, IT IS
+* NOT APPROPRIATE TO ATTEMPT TO DESCRIBE THEM HERE BUT RATHER TO
+* DESCRIBE THEM IMMEDIATELY PRIOR TO THE SECTION WHICH PERFORMS THE
+* CALLERS REQUIRED FUNCTION.
+         SPACE 1
+* THE INITIALIZATION PORTION OF THE SVC IS THE ONLY PART OF THIS MODULE
+* THAT IS COMMON TO ALL ENTRIES REGARDLESS OF THE FUNCTION REQUESTED.
+         SPACE 2
+* ENTRY -
+*        FROM THE SYSTEM SVC HANDLER
+         SPACE 2
+* ATTRIBUTES -
+*        TYPE 1 SVC,SUPERVISOR STATE, PROTECT KEY ZERO, REENTRANT,
+*        LOCAL LOCK HELD, ENABLED
+         SPACE 2
+* REGISTER SETTINGS UPON ENTRY -
+*                           0-1    WHATEVER THE CALLER PUT THERE
+*                             3    CVT ADDRESS
+*                             4    TCB ADDRESS
+*                             5    ADDRESS OF THE LAST ACTIVE RB
+*                             6    ENTRY POINT ADDRESS
+*                             7    ASCB ADDRESS
+*                            13    WHAT EVER THE CALLER PUT THERE
+*                            14    RETURN ADDRESS
+*                            15    WHATEVER THE CALLER PUT IN THERE
+         EJECT
+*                             INITIALIZATION
+         SPACE 2
+IGC254   START
+         DC    V(IEA0TI00)         TIMER SECOND LEVEL INTERRUPT HANDLER
+         DC    V(TSLIHEXT)         OUR EXTENSION TO THE ABOVE
+         DC    V(IEASMFEX)         SMF EXCP COUNT ROUTINE
+         DC    V(SMFEXEXT)         OUR EXTENSION TO THE ABOVE
+         DC    CL8'IGC254'         CHCRACTER IDENTIFIER LEST WE DUMP
+         USING *,BASEREG           ESTABLISH ADDRESSABILITY
+         B     *+28                BRANCH OVER IDENTIFIER
+         CSID  ,                   IDENTIFY CSECT LEST DUMP
+         LR    RETSAVE,RETURN      SAVE OVER POSSIBLE SERVICE REQUESTS
+         LA    WA,((ADREND-ADRSTART)/4) SET ENTRY CODE LIMIT
+         CLR   R15,WA              Q.-VALID CODE
+         BL    ENTCODOK            B.-YES
+         LA    WA,ERRORA           INDICATE TYPE OF ERROR
+ABENDIT  L     WB,CVTUSER(,CVT)    GET ADDRESS OF THE MVT TO SET START-
+         USING MVTDSECT,WB         ESTABLISH MVT ADDRESSABILITY
+         OI    MVTFLAG1,MVTFSVCE   FLAG THAT SVC254 HAS FOUND ERROR
+         TM    MVTFLAG1,MVTFDUMP   SHOULD WE DUMP IF ERROR OCCURS
+         BZR   RETURN              FORGET ABOUT IT IF DUMP NOT WANTED
+         DROP  WB                  DROP MVT ADDRESSABILITY
+         ST    WB,ADRLIST            ING AND ENDING ADDRESSES OF THE
+         LA    WB,1024(,WB)          AREA IN SQA WE WANT DUMPED
+         ICM   WB,8,=X'80'         INDICATE END OF ADDRESS LIST
+         ST    WB,ADRLIST+4
+         LR    WB,R0               SAVE REGISTERS 0, 1, AND 15 OVER
+         LR    WC,R1                 BRANCH TO ABEND
+         LR    WD,R15
+         LA    CVT,SNAPLIST        CVT ADDRESS NOW NO LONGER IN THE REG
+         CALLRTM TYPE=ABTERM,COMPCOD=X'7FE',TCB=(4),DUMPOPT=(3)
+         LR    RETURN,RETSAVE      PUT RETURN ADDRESS BACK
+         BR    RETURN              RETURN TO CALLER
+ENTCODOK L     WB,CVTUSER(,CVT)    GET THE ADDRESS OF THE MVT
+         LTR   WB,WB               DOES THE MVT EXIST
+         BZR   RETURN              IF NO MVT THEN IGNORE REQUEST
+         LH    WA,ASCBASID(,ASCB)  SET WA FOR INDEXING INTO IT
+         SLL   WA,2
+         L     AWB,0(,WB)          GET THE ADDRESS OF THE COMMON AREA
+         L     ASA,0(WA,WB)          AND THE ASA FOR THIS ADDRESS SPACE
+         SLL   R15,2
+         L     WC,ADRSTART(R15)    INDEX THE ENTRY LIST
+         LTR   ASA,ASA             Q.-IS THERE AN ASA
+         BR    WC                  GO TO SPECIFIED ROUTINE
+         EJECT
+*                        ENTRY FROM MODULE HASPSSSM
+         SPACE 2
+ENTRYA   BZ    TESTOK              B.-ASA ADDRESS IS NOT PRESENT
+         LA    WA,ERRORB           INDICATE ERROR IN CONNECTION WITH
+         B     ABENDIT               HASPSSSM CALL - END ITS MISERY
+TESTOK   SETLOCK OBTAIN,TYPE=SALLOC,MODE=UNCOND,RELATED=(IGC254)
+         LA    R0,ASAEND-ASADSECT  SET UP LENGTH AND SUP-POOL REQUIRED
+         LA    CVT,245
+         GETMAIN RU,LV=(0),SP=(3),BRANCH=(YES,GLOBAL)
+         XC    0(ASAEND-ASADSECT,R1),0(R1)   CLEAR THE OBTAINED STORAGE
+         L     CVT,FLCCVT          RESTORE CVT ADDRESS AND THE
+         L     WB,CVTUSER(,CVT)      ADDRESS OF OUR VECTOR TABLE
+         ST    R1,0(WA,WB)         PUT IN THE ADDR. OF THE ASA ACQUIRED
+         SETLOCK RELEASE,TYPE=SALLOC,RELATED=(IGC254)  RELEASE THE LOCK
+         LR    RETURN,RETSAVE      RESTORE RETURN REGISTER
+         BR    RETURN              AWDUN
+         EJECT
+*                        ENTRY FROM MODULE IEFSD263
+         SPACE 1
+*                            - START OF TASK -
+         SPACE 2
+         USING CADSECT,AWB         ADDRESSABILITY FOR ACCTG WORK BLOCKS
+         USING ASADSECT,ASA          AND ACCOUNTING SERVICE AREA
+ENTRYB   LA    WA,ERRORC           SET CODE FOR POSSIBLE ERROR
+         BZ    ABENDIT             B.-NO ASA ASSIGNED TO THIS ASCB
+         LR    WB,R1               WB = STEP TIME LIMIT FROM THE LCT
+         M     WA,AWBDECPT         FACTOR DOWN THE TIME LIMIT TO THE
+         A     WB,AWBFACHA           BASE VALUE WHICH WILL STILL BE
+         D     WA,AWBFACTR           IN HUNDREDTHS OF A SECOND
+         M     WA,=F'10000'        CONVERT TO MICRO-SECONDS
+         SLDL  WA,12               NOW PUT THE VALUE IN THE TIME-OF-DAY
+         LTR   WB,WB                 CLOCK FORMAT - ONLY THE FIRST WORD
+         BNM   *+8                   OF THE DOUBLE WORD IS USED AS THE
+         LA    WA,1(,WA)             LIMIT SO HALF-ADJUST IF NECCESSARY
+         ST    WA,ASCBJSTL(,ASCB)  SET THE LIMIT IN THE ASCB
+         XC    ASASRCPU(ASACPUTM-ASASRCPU),ASASRCPU    RESET STEP FLDS.
+         LR    RETURN,RETSAVE      RESTORE THE RETURN REGISTER
+         BR    RETURN              RETURN
+         DROP  AWB,ASA
+         EJECT
+*                        ENTRY FROM MODULE IEFSD263
+         SPACE 1
+*                             - END OF TASK -
+         SPACE 2
+         USING ASADSECT,ASA        ADDRESSABILITY FOR THE ACCOUNTING
+         USING CADSECT,AWB         SERVICE AREA AND THE WORK BLOCKS
+ENTRYC   LA    WA,ERRORD           SET CODE FOR POSSIBLE ERROR
+         BZ    ABENDIT             B.-NO ASA ASSIGNED TO THIS ASCB
+         LR    R15,R0              SAVE THE LCT ADDRESS
+         M     R0,AWBFACTR         FACTOR UP THE TIME LIMIT THAT WAS IN
+         A     R1,AWBDPTHA           THE ASCB
+         D     R0,AWBDECPT
+         ST    R1,LCTTSTL4(,R15)   UPDATE THE LCT
+         LM    WA,WB,ASAIOCHG      GET I/O CHARGES IN TOD CLOCK FORMAT
+         L     WD,ASAIOBET         WD = CHARGES NOT YET CONVERTED INTO
+         LTR   WD,WD                 THAT FORMAT - Q.-ARE THERE ANY
+         BZ    DONTADEM            B.-NO, OTHERWISE -
+         SR    WC,WC                 FACTOR THEM DOWN SO WE DONT LATER
+         AL    WD,AWBFACHA           MIX APPLES WITH ORANGES
+         D     WC,AWBFACTR
+         M     WC,AWBTODC
+         ALR   WA,WC               NOW INCLUDE THEM IN THE TSLIH
+         ALR   WB,WD                 CREATED VALUE
+         BC    12,*+8              B.-IF NO CARRY
+         LA    WA,1(,WA)           REFLECT CARRY OUT
+DONTADEM SRDL  WA,12               GET OUT OF TOD CLOCK FORMAT
+         AL    WB,=F'5000'         CONVERT FROM MICROSECONDS TO
+         BC    12,*+8                HUNDREDTHS OF SECONDS
+         LA    WA,1(,WA)
+         D     WA,=F'10000'
+         M     WA,AWBFACTR         FACTOR THE I/O CHARGE BACK UP TO THE
+         A     WB,AWBDPTHA           COMMON BASE VALUE
+         D     WA,AWBDECPT
+         ST    WB,ASASTPIO         SAVE IT FOR THE ACCOUNTING ROUTINE
+         L     WD,LCTTSTU4(,R15)   GET THE REAL (UNFACTORED) CPU TIME
+         MVC   ASASRCPU,LCTTSTU3(R15)   SAVE IT FOR STEP TERMINATION
+         M     WC,AWBFACTR         FACTOR IT UP
+         A     WD,AWBDPTHA
+         D     WC,AWBDECPT
+         L     WC,CVTUSER(,CVT)    GET ADDRESS OF THE MVT
+         TM    MVTFLAG1-MVTDSECT(WC),MVTFTEXT IS RUN TIME REQUIRED
+         BZ    *+6                 BR IF RUN TIME NOT REQUIRED
+         AR    WD,WB               COMBINE I/O AND CPU TO GET RUN TIME
+         ST    WD,LCTTSTU4(,R15)     AND PUT IT IN THE LCT
+         SR    R1,WD               SUBTRACT RUN TIME FROM TIME LIMIT
+         BNM   *+6                 B.-IF RESULT IS NOT MINUS
+         SR    R1,R1               MAKE TIME LEFT ZERO
+         ST    R1,LCTTSTR4(,R15)   TIME REMAINING (IF ANY) TO THE LCT
+         LR    RETURN,RETSAVE      RESTORE THE RETURN REGISTER
+         BR    RETURN              RETURN
+         DROP  AWB,ASA
+         EJECT
+*                        EQUATES USED IN THIS MODULE
+         SPACE 3
+*                                  REGISTERS
+         SPACE 1
+R0       EQU   0                   WORK AND COMMUNICATIONS WITH CALLER
+R1       EQU   1                   WORK AND COMMUNICATIONS WITH CALLER
+RETSAVE  EQU   2                   FOR SAVING THE RETURN ADDRESS
+CVT      EQU   3                   ADDRESS OF THE CVT
+*              4                   ADDRESS OF THE TCB
+*              5                   ADDRESS OF THE LAST ACTIVE RB
+BASEREG  EQU   6                   BASE REGISTER
+ASCB     EQU   7                   ADDRESS OF THE ASCB
+AWB      EQU   8                   ADDRESS OF ACCOUNTING WORK BLOCKS
+ASA      EQU   9                   ADDRESS OF ACCOUNTING SERVICE AREA
+WA       EQU   10                  WORK
+WB       EQU   11                  WORK
+WC       EQU   12                  WORK
+WD       EQU   13                  WORK
+RETURN   EQU   14                  RETURN ADDRESS
+R15      EQU   15                  WORK AND COMMUNICATIONS WITH CALLER
+         SPACE 3
+*     ERROR CODES RELATED TO A POSSIBLE ABEND ISSUED BY THIS MODULE
+         SPACE 1
+ERRORA   EQU   0                   INVALID ENTRY CODE IN R15
+ERRORB   EQU   1                   HASPSSSM - ALREADY HAS AN ASA
+ERRORC   EQU   2                   IEFSD263 TASK START - NO ASA
+ERRORD   EQU   3                   IEFSD263 TASK END - NO ASA
+         EJECT
+*                        DISPLACEMENTS INTO THE -
+         SPACE 1
+*                                - CVT -
+CVTUSER  EQU   204                 ADDRESS OF MONSANTO VECTOR TABLE
+CVTMAP   EQU   0                   START OF CVT                       *
+CVTPTR   EQU   16                  ADDRESS OF CVT                     *
+CVTBTERM EQU   52                  ADDRESS OF E. P. TO ABTERM         *
+CVTGLMN  EQU   680                 GLOBAL BRANCH ENTRY ADDRESS FOR    *
+*                                    GETMAIN/FREEMAIN                 *
+CVTSPSA  EQU   684                 ADDRESS OF GLOBAL WORK/SAVE AREA   *
+*                                    VECTOR TABLE (WSAG)              *
+         SPACE 1
+*                                - ASCB -
+ASCBASID EQU   36                  ADDRESS SPACE IDENTIFIER
+ASCBJSTL EQU   80                  JOB STEP TIME LIMIT
+         SPACE 1
+*                                - LCT -
+LCTTSTL4 EQU   84                  STEP TIME LIMIT
+LCTTSTR4 EQU   88                  STEP TIME REMAINING
+LCTTSTU4 EQU   92                  STEP TIME USED
+LCTTSTU3 EQU   93                  STEP TIME USED
+         SPACE 1                                                      *
+*                                - PSA -                              *
+FLC      EQU   0                   START OF PSA                       *
+FLCCVT   EQU   16                  ADDRESS OF CVT
+PSALITA  EQU   764                 ADDRESS OF LOCK INTERFACE TABLE    *
+         SPACE 1                                                      *
+*                               - WSAVTG -                            *
+WSAG     EQU   0                   START OF WSAG                      *
+WSAGGMFM EQU   4                   ADDR. OF GETMAIN/FREEMAIN SAVE AREA*
+         EJECT
+*                        CONSTANTS AND WORK AREAS
+         SPACE 1
+         LTORG *
+SNAPLIST SNAP  SDATA=CB,PDATA=(PSW,REGS),LIST=ADRLIST,MF=L  FOR CALLRTM
+ADRLIST  DC    4A(0)               FOR THE SNAP MACRO, ABOVE
+ADRSTART DC    A(ENTRYA,ENTRYB,ENTRYC)  LIST OF ADDRESSES OF FUNCTIONS
+ADREND   DC    0F'0'               END OF FUNCTION LIST
+         EJECT
+        $MCA
+         EJECT
+        $MASA
+         EJECT
+         $MVT
+IGC254   CSECT
+        $MDLENTH
+         END   IGC254

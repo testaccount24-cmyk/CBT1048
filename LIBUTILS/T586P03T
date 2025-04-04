@@ -1,0 +1,1373 @@
+T586P03  CSECT
+***********************************************************************
+*                  PRODUCTION PROGRAM LOAD CONTROL                    *
+***********************************************************************
+         SPACE 5
+HSEKPNG  PGMIN USING=(13,12,11,10)
+         PRINT ON,NOGEN,NODATA
+         EJECT
+***********************************************************************
+*                  LOAD SYSTEM TABLE                                  *
+***********************************************************************
+         SPACE
+         OPEN  (TABLE)
+         LA    R2,TABBASE          GET ADDRESS OF TABLE BASE
+LOADLOOP EQU   *
+         GETMAIN R,LV=TABLNTH
+         ST    R1,0(0,R2)          SAVE ADDRESS OF CORE JUST AQUIRED
+         LR    R2,R1               POINT TO AQUIRED CORE
+         USING TABMASK,R2
+         XC    TABENTRY,TABENTRY   CLEAR IT
+LOADREAD EQU   *
+         GET   TABLE               GET NEXT TABLE RECORD
+         MVC   TABELMNT,0(R1)      MOVE RECORD TO IT
+         CLC   TABCLASS,=C'LT1'    IS TABLE RECORD VALID?
+         BNE   LOADREAD            NO. READ NEXT RECORD
+         B     LOADLOOP            RECORD OK. GET NEXT.
+         SPACE 2
+TABEND   EQU   *
+         CLOSE TABLE
+         SPACE 5
+***********************************************************************
+*                  LOAD PROGRAMMER TABLE                              *
+***********************************************************************
+         SPACE
+         OPEN  (PGMRTAB)
+         LA    R2,PGMRBASE         GET BASE ADDRESS OF TABLE
+         USING PGMRMASK,R2
+PGLDLOOP EQU   *
+         GETMAIN R,LV=PGMRLEN      GET CORE FOR TABLE ENTRY
+         ST    R1,0(0,R2)          SAVE ADDRESS IN PREVIOS ENTRY
+         LR    R2,R1               POINT TO AQUIRED CORE
+         XC    PGMRENTY,PGMRENTY   CLEAR IT
+PGLDREAD EQU   *
+         GET   PGMRTAB             GET NEXT TABLE RECORD
+         MVC   PGMRENTY,0(R1)      MOVE IT TO CORE SPACE
+         CLC   PGMRCLSS,=C'LT2 '   TABLE RECORD VALID?
+         BNE   PGLDREAD            NO. READ NEXT RECORD.
+         CLC   PGMR3DG,SPACES      *
+         BNE   *+10                *
+         MVC   PGMR3DG,ASTERSKS    S
+         CLC   PGMR10DG,SPACES     * ANY FIELD IN THE PROGRAMMER
+         BNE   *+10                * TABLE IS FILLED WITH ASTERISKS
+         MVC   PGMR10DG,ASTERSKS   * IF IT IS BLANK.
+         CLC   PGMR6DG,SPACES      * THIS PREVENTS A BLANK PROGRAMMER
+         BNE   *+10                * NAME BEING ACCEPTED IN THE
+         MVC   PGMR6DG,ASTERSKS    * REQUEST CARD.
+         CLC   PGMRTEAM,SPACES     *
+         BNE   *+10                *
+         MVC   PGMRTEAM,ASTERSKS   *
+         B     PGLDLOOP            RECORD OK. GET NEXT.
+         SPACE
+PGLDEND  EQU   *
+         CLOSE PGMRTAB
+         EJECT
+***********************************************************************
+*                  OPEN FILES REQUIRED FOR PROCESSING.                *
+*                  READ AND CHECK REQUEST COUNTER.                    *
+***********************************************************************
+         SPACE 3
+         OPEN  SYSIN
+         OPEN  (SYSPRINT,OUTPUT)
+         CALL  MASTOPN,(0,FAIRRC),VL OPEN LIB. MASTER
+         CLI   FAIRRC,C'0'         OPEN SUCCESFUL?
+         BNE   ABORT               NO. ABEND.
+         UT458 ,                   CALL UNIVERSAL DATE ROUTINE
+         MVC   H1DATE(9),UTREPORT  MOVE DATE TO HEADING
+         MVC   H2DATE(9),UTREPORT  AND TO UPDATE HEADER
+         PACK  DWORD,UTMM(4)       PACK MONTH AND DAY
+         AP    DWORD,CODE          ADD CODE TO IT
+         UNPK  MCDAREA+4(5),DWORD+5(3)  DISPLAY IT
+         OI    MCDAREA+8,X'F0'     CORRECT LAST DIGIT
+         MVI   MCDAREA+4,C' '      CORRECT FIRST DIGIT
+         MVC   TTMCD1(9),MCDAREA   ** MOVE TO JOBSTREAMS.
+         MVC   TTMCD2(9),MCDAREA   *
+         MVC   LSMCD(9),MCDAREA    *
+         BAL   R4,HEADNGS          PRINT HEADING LINES
+         OPEN  (COUNTED,INPUT)
+         GET   COUNTED,COUNTSTR
+         CLOSE COUNTED
+         CLC   COUNTER,SPACES
+         BE    ZEROISE
+         TM    COUNTER+2,X'0C'
+         BNO   ZEROISE
+         CLI   COUNTER,X'99'
+         BH    ZEROISE
+         CLI   COUNTER+1,X'99'
+         BH    ZEROISE
+         CLI   COUNTER+2,X'9C'
+         BH    ZEROISE
+*              ZEROISE COUNTER ON FIRST RUN OF NEW YEAR
+         CLC   UTYY,COUNTYR        THIS YEAR SAME AS COUNTER?
+         MVC   COUNTYR,UTYY        MOVE THIS YEAR TO COUNTER YEAR
+         BNE   ZEROISE             NO. ZEROISE COUNTER.
+         B     COUNTOK
+         SPACE
+ZEROISE  ZAP   COUNTER,=P'1'       RESET COUNTER TO BASE NUMBER.
+COUNTOK  EQU   *
+*
+*              MOVE DEFAULT BLOCKSIZE OF 'OSJOB' TO JOBSTREAMS
+*
+         MVC   TTSLPSWD,P04PSWD
+         GET   SYSIN,CARDAREA      READ FIRST INPUT CARD
+         EJECT
+***********************************************************************
+*        START OF MAINLINE PROCESSING.                                *
+*                  1. CLEAR ERRLINE TO BLANKS.                        *
+*                  2. INCREMENT REQUEST COUNTER.                      *
+*                  3. PRINT HEADINGS IF REQUIRED.                     *
+*                  4. READ REQUEST CARD AND AS MANY                   *
+*                     -DESC AND -HST CARDS FOUND UNTIL                *
+*                     NEXT REQUEST CARD OR UNRECOGNISED CARD.         *
+*                                                                     *
+*                  NOTE. FIRST CARD IS ALREADY IN CARDAREA            *
+***********************************************************************
+         SPACE 3
+REQACCUM EQU   *
+*              TEST FOR EOF
+         CLI   EOFLAG,C'1'
+         BE    EOJ
+*
+*              CLEAR OUT DESCRIPTION CARD AREA.
+*              GET RID OF CORE USED FOR -HST CARDS, IF ANY
+*
+         MVI   DESCCARD,C' '       * BLANK OUT DESCRIPTION CARD
+         MVC   DESCCARD+1(79),DESCCARD
+         L     R2,HSTBASE
+         LTR   R2,R2               ANY -HST RECORDS STORED?
+         BZ    HSTCLREX            NO. BYPASS CLEAR OPERATION
+         XC    HSTBASE,HSTBASE     YES. ZERO OUT HSTBASE
+HSTCLRLP EQU   *
+         LR    R1,R2               ADDRESS IN R1 FOR FREEMAIN
+         L     R2,0(0,R2)          ADDRESS OF NEXT -HST CARD IN R2
+         FREEMAIN R,LV=88,A=(R1) FREE CORE USED FOR -HST CARD
+         LTR   R2,R2               POINTING AT ANYTHING?
+         BZ    HSTCLREX            NO. GO TO END OF ROUTINE
+         B     HSTCLRLP            GO CLEAR NEXT CARD
+         SPACE
+HSTCLREX EQU *
+         MVC   REQCARD,CARDAREA    MOVE NEXT REQUEST CARD FOR EDIT
+READNEXT EQU   *
+         GET   SYSIN,CARDAREA      READ NEXT INPUT CARD
+         CLC   CARDAREA(15),SPACES
+         BE    READNEXT
+         CLC   CARDAREA(5),=C'-HST '
+         BE    STORHIST
+         CLC   CARDAREA(6),=C'-DESC '
+         BE    STORDESC
+*              END OF CARDS FOR THIS REQUEST
+PROCESS  EQU   *
+         MVI   ERRLINE,BLANK       * CLEAR ERROR FLAGS TO BLANK
+         MVC   ERRLINE+1(79),ERRLINE
+         CP    PRTCTR,=P'56'       WILL NEXT REQUEST GO ON PAGE?
+         LA    R4,*+8              GET HEADINGS RETURN ADDRESS
+         BH    HEADNGS             NO. BRANCH TO HEADINGS ROUTINE
+         MVI   PRTCTL,SPC3
+         BAL   R4,PRINT
+         AP    PRTCTR,=P'3'
+         MVC   H2RQNO,H2PATRN
+         ED    H2RQNO,COUNTER      PUT CURRENT COUNT IN HEADING
+         MVI   PRTCTL,PRTSPC2
+         MVC   PRTAREA,HDR2
+         BAL   R4,PRINT            PRINT MODULE HEADING
+         AP    PRTCTR,=P'2'
+         MVC   DLTITLE,TITLE1
+         MVC   DTLCARD,REQCARD
+         MVC   DTLCARD+75(5),SPACES  BLANK OUT ANY FLAGS IN PRINTLINE
+         MVI   PRTCTL,PRTSPC1
+         MVC   PRTAREA,DTLLINE
+         BAL   R4,PRINT            PRINT REQUEST CARD
+         AP    PRTCTR,=P'3'
+         B     TESTREQ
+         SPACE
+STORHIST EQU   *
+         L     R2,HSTBASE          R2 - POINTS TO NEXT RECORD IF ANY
+         LA    R3,HSTBASE          R3 - POINTS TO CURRENT RECORD.
+SHSTLOOP EQU   *
+         LTR   R2,R2               IS THIS ENTRY POINTING
+         BZ    GETCORE             NO. WE ARE AT END OF CARDS.
+         LR    R3,R2
+         L     R2,0(0,R2)          YES. GO TO NEXT POINTER.
+         B     SHSTLOOP            PROCEED ALONG CHAIN
+         SPACE
+GETCORE  EQU   *
+         GETMAIN R,LV=88           GET CORE FORE HST CARD IN CARDAREA
+         ST    R1,0(0,R3)          STORE CORE ADDR IN PREVIOUS ENTRY
+         MVC   4(80,R1),CARDAREA   STORE CURRENT HISTORY CARD
+         XC    0(4,R1),0(R1)       CLEAR POINTER TO ZERO
+         B     READNEXT            TEAD NEXT CARD FROM SYSTEM
+         SPACE
+STORDESC EQU   *
+         CLC   DESCCARD(15),SPACES -DESC CARD ALREADY PRESENT?
+         BNE   DESCDUP             YES. GO HANDLE DUPLICATE
+         MVC   DESCCARD,CARDAREA   NO. STORE THIS DESCRIPTION.
+         B     READNEXT            READ NEXT RECORD FROM SYSIN
+         SPACE
+DESCDUP  EQU   *
+         MVI   DESCCARD,C'2'       INDICATE DUPLICATE DESCRIPTION
+         B     READNEXT            DROP THIS RECORD. READ NEXT.
+         EJECT
+***********************************************************************
+*                  CARRY OUT VALIDATION TEST ON REQEST CARD           *
+***********************************************************************
+         SPACE 3
+TESTREQ  EQU   *
+*              CHECK FOR SPACES BETWEEN EACH FIELD ON REQUEST
+         CLI   REQSPC1,BLANK
+         BE    *+8
+         MVI   ERRSPC1,C'*'
+         CLI   REQSPC2,BLANK
+         BE    *+8
+         MVI   ERRSPC2,C'*'
+         CLI   REQSPC3,BLANK
+         BE    *+8
+         MVI   ERRSPC3,C'*'
+         CLI   REQSPC4,BLANK
+         BE    *+8
+         MVI   ERRSPC4,C'*'
+         CLI   REQSPC5,BLANK       THIS POSITION MUST BE = TO
+         BE TESTSPC7               A BLANK
+         CLI   REQSPC5,C'N'        OR A 'N'
+         BE    TESTSPC7
+         MVI   ERRSPC5,C'*'        IF NOT , FLAG ERROR
+TESTSPC7 EQU   *
+         CLI   REQSPC7,BLANK
+         BE    *+8
+         MVI   ERRSPC7,C'*'
+*              LOOKUP NAME OF PROGRAMMER IN TABLE
+         LA    R1,REQPGMR          GET ADDRESS OF PROGRAMMER
+         BAL   R4,PGMRLKUP
+         ST    R1,PGMRPTR          STORE RESULT
+         LTR   R1,R1               VALID?
+         BNZ   *+10                YES. SKIP NEXT INSTRUCTION
+         MVC   ERRPGMR,ASTERSKS
+*              TEST FOR BLANK PROGRAM NAME
+         CLC   REQMOD,SPACES
+         BNE   *+10
+         MVC   ERRPROG,ASTERSKS
+*              TEST FOR CORRECT IDENTIFIER
+         CLI   REQID,C'-'
+         BE    *+8
+         MVI   ERRFUNC,C'*'
+*              TEST FOR INCONSISANCES IN ALIAS NAME FIELDS
+         CLC   REQALS1,SPACES      IS ALIAS1 BLANK
+         BNE   COBESUB             YES. THEN ALIAS2 MUST BE BLANK
+         CLC   REQALS2,SPACES      YES.THEN ALIAS2 MUST BE BLANK
+         BE    TESTFUNC            IT IS. OK.
+         MVC   ERRALS2,ASTERSKS    NOT. NOTE ERROR.
+         B     TESTFUNC
+*
+*              ALIAS FOUND. IF REQLANG IS 'COBE' THEN MAKE
+*              REQLANG 'COBES' TO INDICATE THAT IT IS A SUBPROGRAM.
+*              THIS WILL INVOKE THE COMPILER WITH THE 'NOSPIE' OPTION.
+*
+COBESUB  EQU   *
+         CLC   REQLANG,=CL5'COBE'  IS REQLANG COBOL(E)?
+         BNE   TESTFUNC            NO. BRANCH TO NEXT TEST
+         MVI   REQLANG+4,C'S'      TURN INTO 'COBES'.
+*
+*              SEARCH TABLE OF FUNCTIONS FOR VALID OPERATION
+*
+TESTFUNC EQU   *
+         LA    R2,FUNCTAB          GET ADDRESS OF FUNCTION TABLE
+         USING FUNCMASK,R2
+FUNCLOOP EQU   *
+         CLI   FUNCTION,X'FF'      END OF TABLE?
+         BE    FUNCERR             YES. INVALID FUNCTION REQUESTED
+         CLC   REQOP,FUNCTION      COMPARE TABLE ENTRY WITH REQ CARD
+         BE    FUNCFND             IF MATCHED, GO TO FUTHER PROCESSING
+         LA    R2,FUNCLNTH(0,R2)   INCREMENT TO NEXT ENTRY
+         B     FUNCLOOP            IF NOT,GO ROUND LOOP
+         SPACE
+FUNCERR  EQU   *
+         MVC   FUNCPTR,FUNCADDR
+         MVC   ERRFUNC,ASTERSKS
+         B     LANGTEST
+         SPACE
+FUNCFND  EQU   *
+         MVC   FUNCPTR,FUNCADDR
+         B     LANGTEST
+         SPACE
+*
+*              LOOK FOR A VALID LANGUAGE
+*
+LANGTEST EQU   *
+         L     R2,LANGTAB
+         USING LANGMASK,R2
+LANGLOOP EQU   *
+         CLI   LANGUAGE,X'FF'
+         BE    LANGERR
+         CLC   REQLANG,LANGUAGE
+         BE    LANGFND
+         LA    R2,LANGLNTH(0,R2)   INCREMENT TO NEXT ENTRY
+         B     LANGLOOP
+         SPACE
+LANGERR  EQU   *
+         XC    SLANGPTR,SLANGPTR
+         MVC   ERRSLANG,ASTERSKS
+         B     SYSTMTST
+         SPACE
+LANGFND  EQU   *
+         ST    R2,SLANGPTR
+         B     SYSTMTST
+         SPACE
+*
+*              LOOKUP TABLE OF SYSTEM NAMES
+*
+SYSTMTST EQU   *
+         LA    R1,REQSYSTM
+         BAL   R4,TABLKUP
+         ST    R1,SYSTMPTR
+         LTR   R1,R1
+         BNZ   SYST2TST
+         MVC   ERRSYSTM,ASTERSKS
+*
+*              AND AGAIN FOR A SECOND SYSTEM IF SPECIFIED
+*
+SYST2TST EQU   *
+         XC    SYST2PTR,SYST2PTR   ZEROISE POINTER
+         CLC   REQSYST2,SPACES     IS SECOND SYSTEM SPECIFIED?
+         BE    GETMODUL            NO. SKIP THIS TEST
+         LA    R1,REQSYST2         POINT TO SYSTEM2
+         BAL   R4,TABLKUP          SEE IF IT IS ON TABLE
+         ST    R1,SYST2PTR         STORE RESULTANT ADDRESS.
+         LTR   R1,R1               GOOD ADDRESS?
+         BNZ   GETMODUL            YES. JUMP TO NEXT TEST.
+         MVC   ERRSYST2,ASTERSKS   NO. FLAG ERROR.
+*
+*              LOOKUP LIBRARIAN MASTER FILE FOR NAME SUBMITTED
+*
+GETMODUL EQU   *
+         MVC   FAIRNAME,REQMOD
+         CALL  MASTMOD,(FAIRNAME,FAIRRC,FAIRDATA),VL
+         CLI   FAIRRC,C'1'
+         BH    ABORT               ABEND IF RETURN CODE 2 OR 9
+*
+*              ALL TESTS EXCEPT ON MODULE NAME NOW COMPLETED.
+*
+ENDCDTST EQU   *
+*
+*              PRINT LINE OF ERROR FLAGS
+*
+         MVC   DTLCARD,ERRLINE
+         MVI   PRTCTL,PRTSPC1
+         BAL   R4,PRINT
+         AP    PRTCTR,=P'1'
+*
+*              SEARCH FOR ERRORS
+*
+ERRTST   EQU   *
+         MVI   REQIND,BLANK
+         LA    R2,ERRLINE
+         LA    R3,ERRLINE+79
+ERRTLOOP EQU   *
+         CLI   0(R2),C' '          IS ERROR INDICATED IN THIS POSN.
+         BNE   ERRTFND
+         LA    R2,1(0,R2)          INCREMENT ADDRESS
+         CR    R2,R3               END OF ERROR INDS?
+         BL    ERRTLOOP            NO. LOOPBACK
+         B     DESCCHCK
+         SPACE
+ERRTFND  EQU   *
+         MVI   REQIND,C'*'
+DESCCHCK EQU   *
+         MVI   ERRLINE,BLANK
+         MVC   ERRLINE+1(79),ERRLINE
+         MVI   DESCIND,BLANK
+         CLC   DESCCARD(15),SPACES DESCRIPTION AREA BLANK
+         BE    HSTCHCK             YES. NONE SUBMITTED. SKIP TEST.
+         CLI   DESCCARD,C'2'       DUPLICATE DESCRIPTION CARDS FOUND?
+         BE    DESCERR             YES. ERROR.
+         CLC   DESCRIPT(15),SPACES DESCRIPTION BLANK?
+         BE    DESCERR             YES. ERROR.
+         CLC   DESCRIPT+30(15),SPACES REST OF CARD BLANK?
+         BNE   DESCERR             NO. ERROR
+         B     DESCPRNT
+         SPACE
+DESCERR  EQU   *
+         MVI   DESCIND,C'*'
+         MVI   ERRLINE+6,C'*'
+         MVC   ERRLINE+7(29),ERRLINE+6
+DESCPRNT EQU   *
+         MVC   DTLCARD,DESCCARD
+         MVC   DLTITLE,TITLE2
+         MVI   PRTCTL,PRTSPC1
+         BAL   R4,PRINT
+         MVC   DTLCARD,ERRLINE
+         BAL   R4,PRINT
+         AP    PRTCTR,=P'2'
+         SPACE
+HSTCHCK  EQU   *
+         MVI   HSTIND,BLANK
+         MVC   DLTITLE,TITLE3
+         L     R2,HSTBASE
+         LTR   R2,R2
+         BZ    HSTBYPS             BYPASS IF NO HISTORY CARDS
+HSTCLOOP EQU   *
+         MVI   ERRLINE,BLANK
+         MVC   ERRLINE+1(79),ERRLINE
+         LA    R3,4(0,R2)          ADDRESS OF HISTORY CARD
+         CLC   5(15,R3),SPACES     HISTORY CARD BLANK?
+         BNE   HSTPRNT             NO. GO TO PRINT
+         MVI   HSTIND,C'*'
+         MVI   ERRLINE+5,C'*'
+         MVC   ERRLINE+6(14),ERRLINE+5
+HSTPRNT  EQU   *
+         MVC   DTLCARD,0(R3)
+         MVI   PRTCTL,PRTSPC1
+         BAL   R4,PRINT
+         MVC   DTLCARD,ERRLINE
+         BAL   R4,PRINT
+         AP    PRTCTR,=P'2'
+*              TEST FOR FURTHER HISTORY CARDS
+         L     R2,0(0,R2)          CHAIN TO NEXT RECORD
+         LTR   R2,R2
+         BNZ   HSTCLOOP
+HSTBYPS  EQU   *
+*
+*              TEST ERROR INDICATORS
+*
+         CLC   ERRINDS,SPACES
+         BE    WRTOGO
+*              PAST THIS POINT ERRORS HAVE BEEN FOUND
+         MVC   DTLPROGN,ASTERSKS
+         MVC   DTLMSG,MSG3
+         B     COMRTRN2
+         SPACE 8
+***********************************************************************
+*                  FIND OUT WHERE TO GO                               *
+*              DURING THE TESTING OF THE REQUEST CARD, THE ADDRESS    *
+*              OF ONE OF THE VALID FUNCTIONS IS SAVED.                *
+***********************************************************************
+         SPACE 3
+WRTOGO   EQU   *
+         L     R2,FUNCPTR          LOAD ADDRESS OF REQUESTED OPERATION
+         BR    R2                  BRANCH TO REQUESTED OPERATION
+         SPACE 8
+***********************************************************************
+*                  COMMON RETURN TO PROCESS NEXT REQUEST.             *
+***********************************************************************
+         SPACE 3
+COMRTRN1 EQU   *
+         MVC   DTLPROGN,REQMOD     MOVE PROGRAM NAME TO PRINTLINE.
+COMRTRN2 EQU   *
+         MVI   PRTCTL,PRTSPC3      MOVE IN TRIPLE SPACING
+         BAL   R4,PRINT            PRINT MESSAGE SET UP BEFORE BRANCH
+         AP    PRTCTR,=P'3'        INCREMENT PRINT COUNTER.
+         B     REQACCUM            GO TO PROCESS NEXT REQUEST.
+         EJECT
+***********************************************************************
+*                  CREATE JOBSTREAM TO MOVE PROGRAM FROM              *
+*                 PRODUCTION TO TEST ENVIRONMENT                      *
+***********************************************************************
+         SPACE 3
+TSTPGM   EQU   *
+*
+*              FILL HOLES IN PREFORMATTED JOBSTREAM
+*
+         MVC   TTBLKSZE,BLKSIZE    MOVE DEFAULT BLOCKSIZE
+         MVC   TTBLK2,BLKSIZE      TO LIBRARYN STEPS
+         MVC   TTJOBNME,REQMOD
+         MVC   TTCPYNME,REQMOD
+         MVC   TTSELNME,REQMOD
+         LA    R0,8
+         LA    R1,TTSELNME
+         BAL   R4,RJUSTIFY
+         LA    R1,TTCPYNME         *
+         BAL   R4,RJUSTIFY         * RIGHT JUSTIFY COPY NAME.
+         SPACE
+         MVI   TTROUTE,C'*'        DROP ROUTE CARD BY DEFAULT
+         MVC   TTROUTE+21(2),SPACES CLEAR ANY REMOTE ID.
+         CLI   REQRMTID,BLANK      HAS ROUTE BEEN CODED
+         BE    TSTNORMT            NO. BYPASS ROUTE CODING
+         MVI   TTROUTE,C'/'        ENABLE ROUTE CARD
+         MVC   TTROUTE+21(2),REQRMTID MOVE REMOTE NUMBER
+TSTNORMT EQU   *
+         L     R2,PGMRPTR          *
+         USING PGMRMASK,R2         *  INSERT 10-DIGIT NAME IN ALL
+         MVC   TTINFO,REQPGMR      MOVE NAME ON REQUEST TO JOB-CARD
+         MVC   REQPGMR,PGMR10DG    MOVE 10-DIGIT NAME TO ALL OTHERS
+         MVC   TTPGMR(10),REQPGMR
+         MVC   TTHSTPGR,REQPGMR
+         MVC   TTHSTNO,H2RQNO+1    MOVE REQUEST NUMBER TO -HST CARD
+         SPACE
+         L     R2,SYSTMPTR
+         USING TABMASK,R2
+         MVC   TTPROJ,TABPROJ
+         MVC   TTPFILE,TABFILE
+         MVC   TTMFILE,TABFILE     MOVE FILE NAME TO P04 FILE
+         MVC   TTDEFLTS(L'TTOPTNS),TTOPTNS   MOVE DEFAULT OPTS TO -SEL
+*        FIRST BYTE OF TTSEQ BLANKED OUT BY PREVIOUS INSTRUCTION.
+         MVC   TTSEQ+1(39),TTSEQ CLEAR REST OF CARD TO BLANCK
+         MVC   TTPTR1(4),APREOF    MOVE EOF AFTER LIBRN STEP
+         MVC   TTCORE,=C'052'      MOVE DEFAULT CORE SIZE
+         CLI   REQLSTFL,C'N'       SUPPRESSION OF LIST?
+         BNE   *+10
+         MVC   TTLISTOP(2),=C'NO'  COMPLETE NOLIST.
+         L     R2,SLANGPTR
+         USING LANGMASK,R2
+         LTR   R2,R2               VALID SOURCE LANGUAGE CODED?
+         BZ    NOCLRID             NO. SKIP COMPILE,RESEQ AND CLRID.
+         CLI   REQEXCFL,C'Y'       COMPILE REQUIRED?
+         BNE   NOCOMP              NO. JUMP
+         MVC   TTEXECOP(2),SPACES  YES. MAKE -SEL CARD EXEC
+         MVC   TTPTR1(4),ATTCOMP   PULL IN COMPILE STEP
+         MVC   TTPROC1,LANGPROC    MOVE PROCEDURE NAME
+         MVC   TTPROC2,LANGSTEP    MOVE STEP NAME
+         MVC   TTPROC3,LANGOPTS    MOVE EXEC CARD OPTIONS FOR LANGUAGE
+         MVC   TTSYSIN(6),=C'.SYSIN' MOVE STEPNAME
+         LA    R0,10               *
+         LA    R1,TTPROC2          * COMPRESS LANG. SYSIN
+         BAL   R4,LFTSHUFL         *
+         MVC   TTCORE,LANGCORE     MOVE CORE REQD TO JOB CARD
+NOCOMP   EQU   *
+         MVC   TTSEQ(6),=C',SEQ=/' MOVE FIRST PART OF SEQ PATTERN
+         MVI   TTSEQ+16,C'/'       MOVE LAST PART OF SEQ
+         MVC   TTSEQ+6(10),LANGSEQ MOVE SEQUENCE FOR LANGUAGE
+         CLI   REQSEQFL,C'N'       RESEQUENCING TO BE SUPRESSED?
+         BNE   RESEQ               NO. JUMP THIS SECTION
+         MVC   TTSEQOP(2),=C'NO'   COMPLETE 'NORESEQ'
+         MVI   TTSEQ,C' '          CLEAR OUT
+         MVC   TTSEQ+1(16),TTSEQ   SEQUENCE PARAMETERS.
+RESEQ    EQU   *
+         MVI   TTCLROP,C'*'        SET TO DROP CLEARID FROM JOBSTREAM
+         CLI   LANGUAGE,C'C'       IS THE LANGUAGE COBOL?
+         BNE   CLRIDREQ            NO. GO TEST IF CLEARID REQD?
+         CLI   REQCLRFL,C'N'       CLEARID TO BE SUPPRESS FOR COBOL?
+         BE    NOCLRID             YES. JUMP INSERTION OF CLEARID
+         B     CLRID               NO. INSERT CLEARID IN -SEL CATD.
+         SPACE
+CLRIDREQ EQU   *
+         CLI   REQCLRFL,C'Y'     IS CLEARID REQD?
+         BNE   NOCLRID             NO. JUMP
+CLRID    EQU   *
+         MVI   TTCLROP,C'-'        SET CLEARID TO BE INC. IN JOBSTREAM
+NOCLRID  EQU   *
+TSTMVDSC EQU   *
+         MVI   TTDESCCN,C'*'
+         CLC   DESCRIPT(15),SPACES
+         BE    MOVERQCD
+         MVC   TTDESC,DESCRIPT
+         MVI   TTDESCCN,C'-'
+MOVERQCD EQU   *
+         MVC   TTREQEST,REQCARD
+         MVC   TTREQNO,H2RQNO+1
+         MVI   TTREQEST,BLANK      REMOVE DASH FROM REQUEST CARD
+         LA    R1,TTLISTOP         *
+         LA    R0,60               * ELIMINATE SPACES FROM -SEL CARD
+         BAL   R4,LFTSHUFL         *
+*
+*              TEST FAIR RETURN CODE AND MODULE STATUS,IF PRESENT
+*              TO PREVENT OVERWRITING MODULES IN TEST STASTUS
+*
+         MVI   TTCLASS,C'N'        MOVE DEFAULT JOB CLASS.
+         CLI   FAIRRC,C'0'         THIS MODULE ON TESTLIB?
+         BNE   WRTTJOB             NO. GO WRITE JOBSTREAM
+         LA    R1,FPGMR            GET ADDRESS OF PROGRAMMER NAME
+         BAL   R4,TABLKUP          IS IT A PRODUCTION SYSTEM
+         LTR   R1,R1               N. REJECT REQUEST.
+         BNZ   TSTOK               YES. ALTER INPUT MASTER D/S
+         MVC   DTLMSG,MSG4         MOVE ERROR MESSAGE
+         B     COMRTRN1            GO TO NEXT REQUEST.
+         SPACE
+TSTOK    EQU   *
+         MVI   TTCLASS,C'N'        SWITCH JOB CLASSES
+         MVC   TTPFILE,=CL8'TESTLIB' * ALTER INPUT MASTER TO TESTLIB
+         MVC   TTMFILE,=CL8'TESTLIB' *
+WRTTJOB  EQU   *
+         LA    R1,TESTJCL
+         BAL   R4,JOBWRITE          WRITE OUT TEST JOBSTREAM
+         MVC   DTLMSG,MSG2
+         B     COMRTRN1
+         EJECT
+***********************************************************************
+*              CREATE JOBSTREAM TO LIST A PRODUCTION PROGRAM          *
+***********************************************************************
+         SPACE 3
+LSTPGM   EQU   *
+*
+*              FILL HOLES IN PREFORMATTED JOBSTREAM.
+*
+         MVC   LSJOBNME(8),REQMOD
+         MVC   LSSELNME(8),REQMOD
+         LA    R0,8
+         LA    R1,LSSELNME
+         BAL   R4,RJUSTIFY
+         MVI   LSROUTE,C'*'
+         CLI   REQRMTID,BLANK      ROUTE REQUESTED?
+         BE    LSTNORMT
+         MVI   LSROUTE,C'/'
+         MVC   LSRMTNM(2),REQRMTID
+LSTNORMT EQU   *
+         MVC   LSINFO(6),REQPGMR
+         L     R2,SYSTMPTR
+         USING TABMASK,R2
+         MVC   LSPROJ(4),TABPROJ
+         MVC   LSFILE(8),TABFILE
+         MVC   LSPFILE(8),TABFILE
+         MVC   LSDEFLTS(11),LSTONLY MOVE DEFAULT OPTIONS TO SEL CARD.
+         MVC   LSPTR1(4),APREOF    DEFAULT END OF JOB
+         MVC   LSCORE(3),=C'052'   DEFAULT CORE SIZE
+         CLI   REQEXCFL,C'Y'       COMPILE REQUESTED?
+         BNE   LSTNOEXC            NO. BRANCH
+         MVC   LSDEFLTS(11),LSTEXEC  LIST AND EXECUTE
+         CLI   REQLSTFL,C'N'       LIST TO BE SUPPRESSED?
+         BNE   *+10                NO. SKIP NSI
+         MVC   LSDEFLTS(11),LSXONLY YES. EXEC ONLY
+         L     R2,SLANGPTR
+         USING LANGMASK,R2
+         MVC   LSPTR1(4),ALSCOMP
+         MVC   LSPROC1(8),LANGPROC
+         MVC   LSPROC3(44),LANGOPTS
+         MVC   LSCORE(3),LANGCORE
+LSTNOEXC EQU   *
+*
+*              TEST FOR LATEST PRODUCTION VERSION ON LIBRARYN.TESTLIB
+*              SO THE MOST UP TO DATE VERSION MAY BE LISTED
+*
+         CLI   FAIRRC,C'0'         MODULE ON TESTLIB?
+         BNE   WRTLSJOB            NO. LIST FROM PRODN FILE.
+         LA    R1,FPGMR            FAIR PGMR NAME
+         BAL   R4,TABLKUP          SEARCH PRODN SYSTEM TABLE
+         LTR   R1,R1               PRODN. SYSTEM
+         BZ    WRTLSJOB            NO. LIST FROM PRODN FILE
+         MVC   LSFILE(8),=CL8'TESTLIB'  YES. ALTER LIST TO
+         MVC   LSPFILE(8),=CL8'TESTLIB' TESTLIB
+WRTLSJOB EQU   *
+         LA    R1,LISTJCL          POINT TO LIST JOBSTREAM
+         BAL   R4,JOBWRITE         WRITE OUT JOBSTREAM
+         MVC   DTLMSG,MSG10
+         B     COMRTRN1
+         EJECT
+***********************************************************************
+*                  END OF SYSIN AND END OF JOB PROCESSING             *
+***********************************************************************
+         SPACE 3
+ENDSYSIN EQU   *
+         MVI   EOFLAG,C'1'         SETON END OF FILE FLAG
+         B     PROCESS
+         SPACE
+         SPACE
+EOJ      EQU   *
+         OPEN  (COUNTED,OUTPUT)    * UPDATE
+         PUT   COUNTED,COUNTSTR    * REQUEST
+         CLOSE COUNTED             * COUNTER
+         CLOSE (SYSIN,,SYSPRINT)
+         CALL  MASTCLS
+FINAL    PGMOUT
+         EJECT
+***********************************************************************
+*                  JOBSTREAM  ROUTINE                                 *
+***********************************************************************
+         SPACE
+JOBWRITE SUBIN PREFIX=J,SAVE=R4
+         LR    R2,R1               SAVE ADDRESS OF JOBSTART
+         OPEN  (STREAM,OUTPUT)
+JOBLOOP  EQU   *
+         CLI   0(R2),X'FF'         END OF JOBSTREAM?
+         BE    JOBEND              YES. GO TO EXIT
+         CLI   0(R2),C'*'          THIS CARD TO BE DROPPED?
+         BE    JOBDROP             YES. DO IT
+         CLI   0(R2),C'>'          POINTING TO CARD SUBSET?
+         BE    JOBXTRA             YES. GO WRITE THEM OUT
+         CLI   0(R2),C'B'
+         BE    JOBRANCH
+*              ANYTHING REMAINING TO BE WRITTEN OUT AS IS.
+         LR    R0,R2
+         PUT   STREAM,(R0)         WRITE OUT CARD
+JOBDROP  EQU   *
+         LA    R2,80(0,R2)         INCREMENT TO NEXT CARD
+         B     JOBLOOP             GO ROUND AGAIN
+         SPACE
+JOBRANCH EQU   *
+         L     R2,0(0,R2)
+         B     JOBLOOP
+         SPACE
+JOBXTRA  EQU   *
+         LR    R3,R2               SAVE ADDRESS OF THIS CARD
+         LA    R2,4(0,R2)          POINT AT NEXT CARD IN STREAM
+         L     R3,0(0,R3)          LOAD POINTER TO HSTBASE
+         L     R3,0(0,R3)          LOAD ADDRESS OF FIRST HISTORY REC
+         LTR   R3,R3               ANY HST RECORDS PRESENT?
+         BZ    JOBLOOP             NO. GO BACK TO MAINSTREAM.
+XTRALOOP EQU   *
+         LA    R0,4(0,R3)          GET ADDRESS OF HIST DATA
+         PUT   STREAM,(R0)         WRITE THIS -HST CARD OUT
+         L     R3,0(0,R3)          GET ADDRESS OF NEXT HIST CARD
+         LTR   R3,R3               END OF -HST CARDS?
+         BZ    JOBLOOP             YES. GO BACK TO MAIN STREAM.
+         B     XTRALOOP            GO BACK ROUND LOOP.
+         SPACE
+JOBEND   EQU   *
+         LA    R0,EOFCARD
+         PUT   STREAM,(R0)         WRITE /*EOF CARD TO RELEASE JOB
+         CLOSE STREAM              CLOSE INTERNAL READER INTERFACE
+         CP    COUNTER,=PL3'65000' HAS COUNTER REACHED LIMIT FOR SSI?
+         BL    *+10                NO. SKIP NEXT INSTRUCTION.
+         ZAP   COUNTER,=P'0'       YES. ZEROISE COUNTER.
+         AP    COUNTER,=P'1'
+         SUBOUT PREFIX=J,RESTORE=R4  END OF JOBSTREAM WRITE ROUTINE.
+         EJECT
+***********************************************************************
+*                  TRANSLATE FULLWORD OF HEX TO DISPLAY FORMAT        *
+*                  R1 - CONTAINS ADDRESS OF 3-WORD AREA OF CORE       *
+*                       CONTAING WORD TO BE TRANSLATED IN FIRST 4-BYTES
+***********************************************************************
+         SPACE
+HEXTRANS SUBIN PREFIX=X,SAVE=(R2,R3)
+         LA    R2,8                GET COUNTER OF 8
+          LR   R3,R1               GET ADDRESS OF 3-WORD AREA
+HEXLOOP  EQU   *
+         MVO   0(5,R3),0(4,R3)     MOVE 4-BYTES ALONG ONE
+*                                  LEAVE FIRST FOUR BITS WIT ZERO
+         LA    R3,1(0,R3)          JUMP ONE BYTE
+         BCT   R2,HEXLOOP          REDUCE COUNTER BY ONE AND BRANCH
+         TR    0(8,R1),HEXTABLE    COUNTER EXPIRED. TRANSLATE.
+         SUBOUT PREFIX=X,RESTORE=(R2,R3)
+         SPACE
+HEXTABLE DC    XL16'F0F1F2F3F4F5F6F7F8F9C1C2C3C4C5C6'
+         EJECT
+***********************************************************************
+*                  HEADINGS SUROUTINE                                 *
+***********************************************************************
+         SPACE 3
+HEADNGS  SUBIN PREFIX=H,SAVE=R4
+         AP    PGECTR,=P'1'        ADD 1 TO PAGE COUNTER
+         MVC   H1PAGNO,H1PATRN     GET READY FOR EDIT
+         ED    H1PAGNO,PGECTR
+         MVI   PRTCTL,PAGESKIP
+         BAL   R4,PRINT
+         MVC   PRTAREA,HDR1
+         MVI   PRTCTL,PRTSPC3
+         BAL   R4,PRINT
+         ZAP   PRTCTR,=P'3'
+         SUBOUT                    PREFIX=H,RESTORE=R4
+         SPACE
+PGECTR   DC    PL2'0'
+PRTCTR   DC    PL2'0'
+HDR1     DS    0CL132
+         DC    C'T586P03                      '
+         DC    C'            TESTING REQUEST CO'
+         DC    C'NTROL REPORT                  '
+H1DATE   DC    C'COBOLDATE                     '
+         DC    C'     PAGE'
+H1PAGNO  DC    CL4' '
+H1PATRN  DC    XL4'40202021'
+         SPACE
+HDR2     DS    0CL132
+         DC    C'REQUEST NUMBER'
+H2RQNO   DC    CL6' '
+         DC    CL6' '
+H2DATE   DC    CL9' '
+         DC    CL14' '
+         DC    C'FUNCTION PROGRAM  PSWD SLANG SYSTEM'
+         DC    C'   REQUESTOR RT ALIAS1 ALIAS2   SYSTEM2       '
+H2PATRN  DC    XL6'402020202021'
+         EJECT
+***********************************************************************
+*                  PRINT SUBROUTINE                                   *
+***********************************************************************
+         SPACE
+PRINT    SUBIN PREFIX=P,SAVE=R4
+         PUT   SYSPRINT,PRTCTL     WRITE CURRENT PRINTLINE
+         MVC   SAVECTL,PRTCTL      SAVE SPACING CHARACTER
+         MVI   PRTCTL,BLANK
+         MVC   PRTAREA,PRTCTL      CLEAR PRINTLINE
+         MVC   PRTCTL,SAVECTL      RESTORE CONTROL CHARACTER
+         SUBOUT PREFIX=P,RESTORE=R4
+         SPACE
+SAVECTL  DC    X'09'
+BLANK    EQU   X'40'
+PRTSPC1  EQU   X'09'
+PRTSPC2  EQU   X'11'
+PRTSPC3  EQU   X'19'
+SPC1     EQU   X'0B'
+SPC2     EQU   X'13'
+SPC3     EQU   X'1B'
+PRTSKIP  EQU   X'89'
+PAGESKIP EQU   X'8B'
+         DS    0H
+         SPACE 5
+***********************************************************************
+*                  CRITICAL ERROR. ABEND WITH LIBRARYN COMPLETION CODE*
+***********************************************************************
+         SPACE
+ABORT    EQU    *
+         ABEND 2048,DUMP,STEP
+         EJECT
+***********************************************************************
+*                  SEARCH SYSTEM TABLE FOR VALID ENTRY                *
+*                  R1 - ON ENTRY CONTAINS ADDRESS OF AGUEMENT         *
+*                  R1 - AT EXIT CONTAINS ADDRESS OF VALID ENTRY OR ZERO
+***********************************************************************
+         SPACE
+TABLKUP  SUBIN PREFIX=T,SAVE=(R2,R3,R4)
+         LR    R3,R1               R3 = ADDRES OF ARGUEMENT
+         XR    R1,R1               CLEAR R1 TO ZERO
+         LA    R2,TABBASE          GET FIRST ADDRESS OF TABLE
+         USING TABMASK,R2
+TABLOOP  EQU   *
+         L     R2,0(0,R2)          ADVANCE TO NEXT ENTRY
+         LTR   R2,R2               END OF TABLE?
+         BZ    TABEXIT             YES.GO TO EXIT. NO ENTRY FOUND.
+         CLC   TABSYSTM,0(R3)      DOES AGRUEMENT COMPARE WITH ENTRY
+         BNE   TABLOOP             NO. GO TO NEXT ENTRY.
+         LR    R1,R2               YES. R1 = ADDRESS OF ENTRY
+TABEXIT  SUBOUT                    PREFIX=T,RESTORE=(R2,R3,R4)
+         SPACE 5
+***********************************************************************
+*                  RIGHT JUSTIFY SUBROUTINE                           *
+*              R0 - CONTAINS LENGTH OF FIELD.                         *
+*              R1 - CONTAINS ADDRESS OF FIELD.                        *
+***********************************************************************
+         SPACE
+RJUSTIFY SUBIN PREFIX=R,SAVE=(R2,R3,R5)
+         MVC   RJAREA,SPACES
+         LA    R2,RJAREA
+         LA    R3,7
+RJLOOP   EQU   *
+         LA    R5,0(R3,R1)
+         CLI   0(R5),X'40'
+         BNE   RJMOVE
+         LA    R2,1(0,R2)
+         BCT   R3,RJLOOP
+         B     RJEXIT
+         SPACE
+RJMOVE   EQU   *
+         EX    R3,RJMOVE1
+         MVC   0(8,R1),RJAREA
+RJEXIT   SUBOUT PREFIX=R,RESTORE=(R2,R3,R5)
+         SPACE
+RJMOVE1  MVC   0(0,R2),0(R1)       EXECUTED MOVE INSTRUCTION
+         SPACE
+RJAREA   DC    CL8' '
+         EJECT
+***********************************************************************
+*                  LEFT SHUFFLE SUBROUTINE                            *
+*              THIS ROUTINE WILL ELIMINATE EMBEDDED SPACES FROM       *
+*              AN AREA OF CORE SPECFIED BY THE USER. THE RESULT       *
+*              WILL BE LEFT JUSTIFIED WITH TRAILING SPACES.           *
+*                                                                     *
+*              PARAMETERS:  R0 - CONTAINS LENGTH OF FIELD             *
+*                           R1 - CONTAINS ADDRESS OF FIELD            *
+***********************************************************************
+         SPACE 3
+LFTSHUFL SUBIN PREFIX=L,SAVE=(R2,R3,R5,R6)
+         LR    R2,R1
+         LR    R5,R0
+         BCTR  R5,0
+LFTSPC   EQU   *
+         CLI   0(R2),BLANK
+         BE    LFTNOSPC
+         LA    R2,1(0,R2)
+         BCT   R5,LFTSPC
+         B     LFTEXIT
+         SPACE
+LFTNOSPC EQU   *
+         SR    R6,R6
+          LA   R3,1(0,R2)
+         BCT   R5,LFTNOLP
+*              SPECIAL CASE OF BLANK SECOND TO LAST DIGIT.
+         MVC   0(1,R2),0(R3)
+         MVI   0(R3),BLANK
+         B     LFTEXIT
+         SPACE
+LFTNOLP  EQU   *
+         CLI   0(R3),BLANK
+         BNE   LFTMOVE
+         LA    R3,1(0,R3)
+         LA    R6,1(0,R6)
+         BCT   R5,LFTNOLP
+         B     LFTEXIT
+         SPACE
+LFTMOVE  EQU   *
+         EX    R5,LFTMOVE1
+         LA    R3,1(R5,R2)
+         MVI   0(R3),BLANK
+         LTR   R6,R6
+         BZ    LFTSPC
+         BCTR  R6,0
+         EX    R6,LFTMOVE2
+         LA    R2,1(0,R2)
+         BCT   R5,LFTSPC
+         SPACE
+LFTEXIT  SUBOUT PREFIX=L,RESTORE=(R2,R3,R5,R6)
+         SPACE
+LFTMOVE1 MVC   0(0,R2),0(R3)
+LFTMOVE2 MVC   1(0,R3),0(R3)
+         EJECT
+***********************************************************************
+*                  PROGRAMMER NAME LOOKUP ROUTINE                     *
+*                  R1 - ON ENTRY POINTS AT ARGUMENT                   *
+*                  R1 - ON EXIT CONTAINS VALID ADDRESS OR ZERO        *
+***********************************************************************
+         SPACE
+PGMRLKUP SUBIN PREFIX=G,SAVE=(R2,R3)
+         LR    R3,R1               R3 = ADDRESS OF PGMR
+         XR    R1,R1               CLEAR R1 TO ZERO
+         LA    R2,PGMRBASE         GET ADDRESS OF TABLE BASE
+         USING PGMRMASK,R2
+PGLKLOOP EQU   *
+         L     R2,0(0,R2)          JUMP TO NEXT ENTRY.
+         LTR   R2,R2               END OF TABLE?
+         BZ    PGLKEXIT            YES. GO TO EXIT. NO ENTRY FOUND.
+         CLC   PGMR10DG,0(R3)      10-DIGIT NAME CORRECT?
+         BE    PGFOUND             YES. STORE ADDRESS.
+         CLC   PGMR6DG,0(R3)       6-DIGIT NAME CORRECT?
+         BNE   PGCHK3              NO. CHECK 3-DIGIT NAME
+         CLI   6(R3),BLANK         YES. AND FOLLOWED BY A SPACE?
+         BE    PGFOUND             YES. STORE ADDRESS.
+PGCHK3   EQU   *
+         CLC   PGMR3DG,0(R3)       3-DIGIT NAME CORRECT?
+         BNE   PGLKLOOP            NO. GO TO NEXT ENTRY.
+         CLI   3(R3),BLANK         YES. AND FOLLOWED BY A SPACE?
+*        BNE   PGLKLOOP            NO. GO GHECK NEXT ENTRY
+*      ABOVE INSTRUCTION SUPPRESS AT RESUEST OF BXL SYSTEMS GROUP
+*      SO THAT A 3-DIGIT CODE MAY FOLLOX THE PGMR INITIALS ON THE
+*      REQUEST FORM. ZAP THE FOLLOWING INSTN IF TEST REQD. IN FUTURE
+         NOP   PGLKLOOP            NO. OP BRANCH
+PGFOUND  EQU   *
+         LR    R1,R2               YES. PUT ADDRESS IN R1
+PGLKEXIT SUBOUT PREFIX=G,RESTORE=(R2,R3)
+         EJECT
+***********************************************************************
+*                  DATA CONTROL BLOCKS                                *
+***********************************************************************
+         SPACE 3
+SYSPRINT DCB   DDNAME=SYSPRINT,MACRF=PM,DSORG=PS,                      C
+               RECFM=FM,LRECL=133,BLKSIZE=133
+         SPACE
+SYSIN    DCB   DDNAME=SYSIN,MACRF=GM,DSORG=PS,                         C
+               RECFM=F,LRECL=80,BLKSIZE=80,EODAD=ENDSYSIN
+         SPACE
+STREAM   DCB   DDNAME=STREAM,MACRF=PM,DSORG=PS,                        C
+               RECFM=F,LRECL=80,BLKSIZE=80,BUFNO=1
+         SPACE
+TABLE    DCB   DDNAME=TABLE,MACRF=GL,DSORG=PS,                         C
+               RECFM=FB,LRECL=80,EODAD=TABEND
+         SPACE
+PGMRTAB  DCB   DDNAME=PGRTABLE,MACRF=GL,DSORG=PS,                      C
+               RECFM=FB,LRECL=80,EODAD=PGLDEND
+         SPACE
+*MASTER  DCB   IS DEFINED IN    THE LIBRARIAN FILE ACCESS
+*              INTERFACE ROUTINES
+         SPACE
+COUNTED  DCB   DDNAME=COUNTER,MACRF=(GM,PM),EODAD=ABORT,               C
+               DSORG=PS,RECFM=F,LRECL=80,BLKSIZE=80,BUFNO=1
+         SPACE 5
+***********************************************************************
+*                  WORKING STORAGE                                    *
+***********************************************************************
+         SPACE 3
+FAIRRC   DC    C' '                RETURN CODE FROM FILE ACCESS
+FAIRNAME DC    CL8' '              MODULE NAME TO     "    "
+FAIRDATA DS    0CL100              DATA RETURNED BY FILE ACCESS
+FPSWD    DC    CL4' '              PASSWORD
+FADDDTE  DC    CL6' '              DATE ADDED (MMDDYY)
+FUPDATE  DC    CL10' '             LAST UPDATE (MMDDYYHHMM)
+FNOCARD  DC    PL3'0'              NO. OF CARDS IN MODULE
+FPGMR    DC    CL15' '             PROGRAMMERS NAME
+FPROC    DC    CL8' '              8BYTES OF PROC STATEMENT
+FDESC    DC    CL30' '             DESCRIPTION OF MODULE
+         DC    CL25' '
+         ORG   FAIRDATA            REDEFINE FAIRDATA
+FCARD    DC    CL80' '             CARD IMAGE OF DATA CARD
+FSEQND   DC    CL8' '              SEQUENCE NUMBER
+         DC    CL3' '
+FCDATE   DC    CL8' '              DATE CARD ADDED TO MASTER
+         ORG
+         SPACE
+TABBASE  DC    F'0'
+HSTBASE  DC    F'0'
+PGMRBASE DC    F'0'
+FUNCPTR  DC    F'0'
+SLANGPTR DC    F'0'
+SYSTMPTR DC    F'0'
+SYST2PTR DC    F'0'
+PGMRPTR  DC    F'0'
+         DC    V(FAIR)
+LANGTAB  DC    V(T586P03A)
+ATTCOMP  DC    C'B',AL3(TTCOMP)
+APREOF   DC    C'B',AL3(EOJOB)
+ALSCOMP  DC    C'B',AL3(LSCOMP)
+ADDHSTAD DC    F'0'
+         DC    CL80'-HST ADDED TO PRODUCTION'
+ADDHSTNO EQU   *-5
+         CNOP  4,8
+PRSSIYR  DC    H'0'
+PRSSINO  DC    H'0'
+DWORD    DS    D
+YRPACKED DC    PL2'0'
+SVESYSTM DC    CL8' '
+SVESLANG DC    CL5' '
+SVEALS1  DC    CL8' '
+SVEALS2  DC    CL8' '
+EOFLAG   DC    C' '                1 INDICATES EOF ON SYSIN REACHED
+ERRINDS  DS    0CL3
+REQIND   DC    C' '
+DESCIND  DC    C' '
+HSTIND   DC    C' '
+BLKSIZE  DC    CL4'0800'
+         DS    0H
+OKMSG    DC    AL2(OKMSGEND-*),H'0'
+         DC    CL15'MOPPREQ1---JOB '
+OKMNAME  DC    CL8' '
+         DC    CL14' OK TO UPDATE '
+OKMLD1   DC    CL26' '
+OKMAND   DC    CL4'AND'
+OKMLD2   DC    CL26' '
+OKMSGEND EQU   *
+         SPACE
+DESCCARD DS    0CL80
+DESCOP   DC    CL5' '              CONSTANT -DESC
+         DC    C' '
+DESCRIPT DC    CL30' '             DESCRIPTION OF MODULE
+         DC    CL44' '
+         SPACE
+REQCARD  DS    0CL80
+REQID    DC    C' '
+REQOP    DC    CL7' '              REQUESTED OPERATION
+REQSPC1  DC    C' '
+REQMOD   DC    CL8' '              MODULE NAME
+REQSPC2  DC    C' '
+REQPSWD  DC    CL4' '              PASSWORD
+REQLSTFL EQU   REQPSWD
+REQEXCFL EQU   REQPSWD+1
+REQSEQFL EQU   REQPSWD+2
+REQCLRFL EQU   REQPSWD+3
+REQSPC3  DC    C' '
+REQLANG  DC    CL5' '              SOURCE LANGUAGE OF MODULE
+REQSPC4  DC    C' '
+REQSYSTM DC    CL8' '              SYSTEM NAME
+REQSPC5  DC    C' '
+REQPGMR  DC    CL10' '             PROGRAMMER NAME
+REQRMTID DC    CL2' '
+REQALS1  DC    CL8' '              FIRST ALIAS NAME
+REQALS2  DC    CL8' '              SECOND ALIAS NAME
+REQSPC7  DC    C' '
+REQSYST2 DC    CL8' '              SECOND SYSTEM NAME
+REQFLAGS DC    CL5' '              CONTROL FLAGS
+         SPACE
+PRTCTL   DC    X'8B'
+PRTAREA  DS    0CL132
+DTLLINE  DS    0CL132
+         DC    CL8' '
+DTLPROGN DC    CL8' '
+DTLMSG   DS    0CL51
+         DC    CL10' '
+DLTITLE  DC    CL20' '
+         DC    CL3' '
+DTLCARD  DC    CL80' '
+         DC    CL3' '
+         SPACE
+TITLE1   DC    CL20'REQUEST CARD'
+TITLE2   DC    CL20'MODULE DESCRIPTION'
+TITLE3   DC    CL20'UPDATE NARRATIVE'
+         SPACE
+MSG1     DC    CL51' HAS BEEN PASSED TO UPDATE'
+MSG2     DC    CL51' HAS BEEN PASSED FOR TRANSFER TO LIBRARYN.TESTLIB.'
+MSG3     DC    CL51'*** ERRORS IN REQUEST. REJECTED.'
+MSG4     DC    CL51' CURRENTLY ON LIBRARYN.TESTLIB. REQUEST REJECTED.'
+MSG5     DC    CL51' NOT FOUND ON LIBRARYN.TESTLIB. REQUEST REJECTED.'
+MSG6     DC    CL51' PASSWORD INCORRECT. REQUEST REJECTED.'
+MSG7     DC    CL51' DESCRIPTION NOT SUPPLIED. REQUEST REJECTED.'
+MSG8     DC    CL51' CONTAINS JCL STATEMENTS. REQUEST REJECTED.'
+MSG9     DC    CL51' NO UPDATE NARRATIVE SUPPLIED. REQUEST REJECTED'
+MSG10    DC    CL51' PASSED FOR PRODUCTION LIST'
+         SPACE
+CARDAREA DS    CL80
+SECURITY DC    CL75'PSGMODULE'
+SECCOL76 DC    C'*'
+SECCOL77 DC    C'*'
+SECCOL78 DC    C'*'
+SECCOL79 DC    C'*'
+SECCOL80 DC    C'*'
+CODE     DC    PL3'7142'
+MCDAREA  DC    CL9'-MCD'
+P04PSWD  DC    CL4'TEST'
+ERRLINE  DS    0CL80
+ERRFUNC  DC    CL8' '
+ERRSPC1  DC    C' '
+ERRPROG  DC    CL8' '
+ERRSPC2  DC    C' '
+ERRPSWD  DC    CL4' '
+ERRSPC3  DC    C' '
+ERRSLANG DC    CL5' '
+ERRSPC4  DC    C' '
+ERRSYSTM DC    CL8' '
+ERRSPC5  DC    C' '
+ERRPGMR  DC    CL10' '
+ERRSPC5A DC    C' '
+ERRALS1  DC    CL8' '
+ERRSPC6  DC    C' '
+ERRALS2  DC    CL8' '
+ERRSPC7  DC    C' '
+ERRSYST2 DC    CL8' '
+ERRFLAGS DC    CL5' '
+         SPACE
+SPACES   DC    CL15' '
+ASTERSKS DC    15C'*'
+         EJECT
+***********************************************************************
+*                  JOBSTREAMS                                         *
+***********************************************************************
+         SPACE 3
+         DS    0F
+TESTJCL  EQU   *
+TTJOBCD  DS    0CL80
+         DC    C'//'
+TTJOBNME DC    CL8' '
+         DC    C'     JOB  ('
+TTPROJ   DC    CL4' '
+         DC    CL5',1,,,'
+TTCORE   DC    CL3' '
+         DC    C'),'''
+TTINFO   DC    CL10' '
+         DC    C''',CLASS='
+TTCLASS  DC    C'T'
+         DC    CL25','
+         DC    CL80'// MSGLEVEL=(0,0),COND=(16,EQ)'
+         SPACE
+TTROUTE  DC    CL80'/*ROUTE  PRINT REMOTE'
+         SPACE
+         DC    CL80'//STEP00   EXEC     PGM=T586P04'
+         SPACE
+         DC    CL80'//STEPLIB      DD   DSN=OPS.PROGLIB,DISP=SHR'
+         SPACE
+         DC    CL80'//SYSUT2       DD   DSN=&&&&STEP00A,DISP=(,PASS),'
+         DC    CL80'// UNIT=SYSDA,SPACE=(TRK,(1,1)),DCB=BLKSIZE=80'
+         DC    CL80'//SYSPRINT  DD SYSOUT=A'
+         SPACE
+         DC    CL42'//MASTER       DD   DISP=SHR,DSN=LIBRARYN.'
+TTMFILE  DC    CL8' '
+         DC    CL30' '
+         SPACE
+         DC    CL80'//SYSUT1       DD   *,DCB=BLKSIZE=80'
+         SPACE
+         DC    CL80'-OPT UTILITY'
+         SPACE
+TTMCD1   DC    CL80'-MCD'
+         SPACE
+         DC    CL80'-OPT NOPC'
+         SPACE
+TTMCD2   DC    CL80'-MCD'
+TTCPYCD  DS    0CL80
+         DC    C'-COPY '
+TTCPYNME DC    CL8' '
+         DC    CL66',STATUS=TEST'
+         SPACE
+TTSELCD  DS    0CL80
+         DC    CL5'-SEL '
+TTSELNME DC    CL8' '
+         DC    CL1','
+TTSLPSWD DC    CL4' '
+TTDEFLTS EQU   *
+         DC    C','
+TTLISTOP DC    CL6'  LIST'
+         DC    C','
+TTEXECOP DC    CL6'NOEXEC'
+         DC    C','
+TTSEQOP  DC    CL7'  RESEQ'
+TTSEQ    DC    CL17' '
+         DC    CL23' '
+         SPACE
+TTPGMRCD DS    0CL80
+         DC    CL6'-PGMR '
+TTPGMR   DC    CL15' '
+         DC    CL59' '
+         SPACE
+TTDESCCD DS    0CL80
+TTDESCCN DC    CL6'*DESC '
+TTDESC   DC    CL30' '
+         DC    CL44' '
+         SPACE
+TTHISTCD DS    0CL80
+         DC    CL31'-HST TEST VERSION REQUESTED BY '
+TTHSTPGR DC    CL10' '
+         DC    CL34' '
+TTHSTNO  DC    CL5' '
+TTCLROP  DC    CL80'*FILL *        *'
+         SPACE
+         DC    C'>',AL3(HSTBASE)
+         SPACE
+TTAUDIT  DS    0CL80
+         DC    CL80'-SEL AUDITTRL,TMRC,NOLIST,NOEXEC,NORESEQ'
+         SPACE
+         DC    CL80'-INS LAST'
+         SPACE
+TTREQCD  DS    0CL80
+TTREQEST DC    CL75' '
+TTREQNO  DC    CL5' '
+         SPACE
+         SPACE
+         DC    CL80'-END'
+         SPACE
+         SPACE
+         DC    CL34'//STEP01   EXEC     LIBRARYN,FILE='
+TTPFILE  DC    CL8' '
+         DC    CL38' '
+         SPACE
+         DC    CL80'//SYSPRINT     DD   DUMMY'
+         DC    CL44'//OSJOB        DD   DSN=&&&&COPY1,DCB=BLKSIZE='
+TTBLKSZE DC    CL4' '
+         DC    CL32' '
+         SPACE
+         DC    CL80'//SYSIN        DD   DSN=&&&&STEP00A,DISP=(OLD,DELETC
+               E)'
+         SPACE
+TTSTEP02 DS    0CL80
+         DC    CL37'//STEP02   EXEC     LIBRARYN,BLKSIZE='
+TTBLK2   DC    CL4'800 '
+         DC    CL39' '
+         SPACE
+         DC    CL80'//SYSIN        DD   DSN=&&&&COPY1,DISP=(OLD,DELETE)C
+               '
+         SPACE
+TTPTR1   DC    C'B',AL3(TTCOMP)
+         SPACE
+TTCOMP   DC    CL19'//STEP03   EXEC'
+TTPROC1  DC    CL8' '
+TTPROC3  DC    CL44' '
+         DC    CL9' '
+         SPACE
+         DC    CL2'//'
+TTPROC2  DC    CL4' '
+TTSYSIN  DC    CL74'.SYSIN   DD   DSN=&&&&OSJOB,DISP=(OLD,DELETE)'
+         SPACE
+EOJOB    DC    80X'FF'
+         DS    0F
+LISTJCL  EQU   *
+LSJOBCD1 DC    CL80'//         JOB (    ,1,,,   ),''      '',CLASS=N,'
+LSJOBNME EQU   LSJOBCD1+2          LENGTH FOR MOVE  8
+LSPROJ   EQU   LSJOBCD1+16         LENGTH FOR MOVE  4
+LSCORE   EQU   LSJOBCD1+25         LENGTH FOR MOVE  3
+LSINFO   EQU   LSJOBCD1+31         LENGTH FOR MOVE  6
+LSJOBCD2 DC    CL80'//   MSGLEVEL=(0,0),COND=(16,EQ)'
+LSROUTE  DC    CL80'/*ROUTE  PRINT REMOTE'
+LSRMTNM  EQU   LSROUTE+21          LENGTH 2
+         DC    CL80'//STEP00  EXEC PGM=T586P04'
+         DC    CL80'//STEPLIB   DD DSN=OPS.PROGLIB,DISP=SHR'
+         DC    CL80'//SYSPRINT  DD SYSOUT=A'
+         DC    CL80'//SYSUT2    DD DSN=&&&&STEP00A,DISP=(,PASS),'
+         DC    CL80'// UNIT=SYSDA,SPACE=(TRK,(1,1)),DCB=BLKSIZE=80'
+LSMASTER DC    CL80'//MASTER    DD DISP=SHR,DSN=LIBRARYN.'
+LSFILE   EQU   LSMASTER+37         LENGTH 8
+         DC    CL80'//SYSUT1    DD *,DCB=BLKSIZE=80'
+         DC    CL80'-OPT LIST,NOEXEC,NOPC,NORESEQ'
+LSMCD    DC    CL80'-MCD'
+LSMCD1   EQU   LSMCD+5             LENGTH 4
+LSSELCD  DC    CL80'-SEL         ,TEST,LIST'
+LSSELNME EQU   LSSELCD+5           LENGTH 8
+LSDEFLTS EQU   LSSELCD+18          LENGTH 11
+         DC    CL80'-END'
+LSLIBCD  DC    CL80'//STEP01  EXEC LIBRARYN,BLKSIZE=800,FILE='
+LSPFILE  EQU   LSLIBCD+41          LENGTH 8
+         DC    CL80'//SYSIN     DD DSN=&&&&STEP00A,DISP=(OLD,DELETE)'
+LSPTR1   DC    C'B',AL3(LSCOMP)
+LSCOMP   DC    CL80'//STEP02  EXEC '
+LSPROC1  EQU   LSCOMP+15           LENGTH  8
+LSPROC3  EQU   LSCOMP+23           LENGTH 44
+         DC    CL80'//SYSIN     DD DSN=&&&&OSJOB,DISP=(OLD,DELETE)'
+         DC    C'B',AL3(EOJOB)
+         SPACE 1
+LSTONLY  DC    CL11',LIST'
+LSXONLY  DC    CL11',LISTH,EXEC'
+LSTEXEC  DC    CL11',LIST,EXEC'
+         SPACE 2
+TTOPTNS  DC    CL23',  LIST,NOEXEC,  RESEQ '
+EOFCARD DC     CL80'/*EOF'
+         SPACE 5
+         EJECT
+***********************************************************************
+*                  TABLES                                             *
+***********************************************************************
+         SPACE 3
+COUNTSTR DS    0CL80
+COUNTER  DC    PL3'0'
+COUNTYR  DC    CL2'74'
+         DC    CL75' '
+         CNOP  0,4
+FUNCTAB  EQU   *
+         DC    A(TSTPGM),C'TSTPROG',C' '  MOVE PROGRAM TO TEST LIBRARY
+         DC    A(LSTPGM),C'LSTPROG',C' '
+         DC    A(0),8X'FF'                END OF TABLE
+         LTORG
+TABMASK  DSECT
+TABENTRY DS    0CL56
+TABPNTR  DS    F
+TABELMNT DS    0CL52
+TABCLASS DS    CL3
+TABFILL1 DS    CL1
+TABSYSTM DS    CL8
+TABDSN1  DS    CL8
+TABDSN2  DS    CL8
+TABDSN3  DS    CL8
+TABFILE  DS    CL8
+TABPROJ  DS    CL4
+TABFILL2 DS    CL4
+TABLNTH  EQU   *-TABMASK
+FUNCMASK DSECT
+FUNCENTY DS    0CL12
+FUNCADDR DS    F
+FUNCTION DS    CL7
+FUNCFLLR DS    CL1
+FUNCLNTH EQU   *-FUNCMASK
+LANGMASK DSECT
+LANGENTY DS    0CL74
+LANGUAGE DS    CL5
+LANGCORE DS    CL3
+LANGSTEP DS    CL4
+LANGSEQ  DS    CL10
+LANGPROC DS    CL8
+LANGOPTS DS    CL44
+LANGLNTH EQU   *-LANGMASK
+         SPACE
+PGMRMASK DSECT
+PGMRENTY DS    0CL26
+PGMRCLSS DS    F
+PGMR6DG  DS    CL6
+PGMR10DG DS    CL10
+PGMR3DG  DS    CL3
+PGMRTEAM DS    CL3
+PGMRLEN  EQU   *-PGMRMASK
+T586P03A CSECT
+         DC    CL22'COBE 052COB 1,6,10,10 '
+         DC    CL52'COBECL,COND=(7,LT)'
+         DC    CL22'COBES052COB 1,6,10,10 '
+         DC  CL52'COBECL,COND=(7,LT),PARM.COBX=''NOLIST,MAPS,NOSPIE'''
+         DC    CL22'CBESP052COB 1,6,10,10 '
+         DC  CL52'COBECL,COND=(7,LT)'
+         DC    CL22'CBE15052COB 1,6,10,10 '
+         DC    CL52'COBECL,COND=(7,LT)'
+         DC    CL22'CBE35052COB 1,6,10,10 '
+         DC    CL52'COBECL,COND=(7,LT)'
+         DC    CL22'COBF 104COB 1,6,10,10 '
+         DC    CL52'COBFCL,COND=(7,LT)'
+         DC    CL22'COBU 104COB 1,6,10,10 '
+         DC    CL52'COBUCL,COND=(7,LT),LIB=LIB'
+         DC    CL22'COBUB156COB 1,6,10,10 '
+         DC    CL52'COBUCL,COND=(7,LT),PARM.COB=''LIB,SIZE=150K'''
+         DC    CL22'FORTE052FORT73,8,10,10'
+         DC    CL52'FORTECL,COND=(7,LT)'
+         DC    CL22'FORTG104FORT73,8,10,10'
+         DC    CL52'FORTGCL,COND=(7,LT)'
+         DC    CL22'FORTH208FORT73,8,10,10'
+         DC    CL52'FORTHCL,COND=(7,LT)'
+         DC    CL22'PL1F 104PL1L76,5,10,10'
+         DC  CL52'PL1LFCL,COND.PL1L=(7,LT),PARM.PL1L=(ATR,NODECK,LOAD)'
+         DC    CL22'PL1  104PL1L76,5,10,10'
+         DC  CL52'PL1LFCL,COND.PL1L=(7,LT),PARM.PL1L=(ATR,NODECK,LOAD)'
+         DC    CL22'RPG  052RPG 1,5,10,0  '
+         DC    CL52'RPGECL,COND=(7,LT)'
+         DC    CL22'RPGE 052RPG 1,5,10,0  '
+         DC    CL52'RPGECL,COND=(7,LT)'
+         DC    CL22'ASM  052ASM 73,8,10,10'
+         DC  CL52'ASMFCL,COND=(7,LT),PARM.LKED=(SYSLMOD,IEWL,XREF,LET)'
+         DC    CL22'ASMF 052ASM 73,8,10,10'
+         DC  CL52'ASMFCL,COND=(7,LT),PARM.LKED=(SYSLMOD,IEWL,XREF,LET)'
+         DC    CL22'LKED 052LKED81,6,10,10'
+         DC    CL52'LKED'
+         DC    CL22'ALGOL104ALGO 75,6,10,10'
+         DC    CL52'ALGOL,COND=(7,LT)'
+         DC    74X'FF'                 END OF LANGUAGE TABLE
+         END   T586P03

@@ -1,0 +1,394 @@
+SCREEN   ZCSECT 12,10,GETMAIN=1,WKLEN=WALENTH
+         USING WORKAREA,REG13      ADDRESSABILITY FOR WORK AREA
+         XC    RETCODE,RETCODE     CLEAR THE RETURN CODE
+         ST    REG0,PASSDATA       SAVE LIST OF SUBSTITUTE ADDRESSES
+         ST    REG1,PARMADDR       AND SCREEN DEFINITION AREA
+         LTR   REG1,REG1           ADDRESS OF DEFINITION IS NEGATIVE ?
+         BP    NRMLNTRY            NORMAL ENTRY. GO PROCESS
+         LPR   REG1,REG1           OTHERWISE MAKE IT POSITIVE
+         ST    REG1,PARMADDR       SAVE IT
+         B     READNTRY            AND GO PROCESS READ ONLY ENTRY
+         EJECT
+***********************************************************************
+*        INITIALSE THE WORK AREAS
+***********************************************************************
+         SPACE 2
+NRMLNTRY DS    0H
+         LR    REG3,REG1           SAVE ADDRESS OF PARM STRING
+         L     REG8,0(REG3)        LOAD ADDRESS OF SCREEN ATTRIB
+         USING SCRNDETS,REG8       ADDRESSABILITY FOR SCREEN ATTRIBUTES
+         LA    REG1,SCREENBF       START ADDRESS OF SCREEN BUILD AREA
+         MVC   0(L'SCRNINIT,REG1),SCRNINIT INITIALISE THE SCREEN CTL
+         LA    REG1,L'SCRNINIT(REG1) ADD THE LENGTH OF THAT DATA
+         ST    REG1,SCRNADDR       INITIALISE THE WORK POINTER
+         EJECT
+***********************************************************************
+*        DECIDE WETHER TO CLEAR THE SCREEN FIRST OR NOT
+***********************************************************************
+         SPACE 2
+         TM    SCRNATTR,ON         IS THE CLEAR REQUEST ON ?
+         BZ    NOCLEAR             NO. LEAVE SCREEN AS IT IS
+         L     REG1,SCRNADDR       LOAD CURRENT END OF SCREEN ADDRESS
+         MVC   0(L'CLEARHEX,REG1),CLEARHEX MOVE THE CLEAR DATA TO SCREE
+         LA    REG1,L'CLEARHEX(REG1) INCREMENT END SCREEN ADDRESS
+         ST    REG1,SCRNADDR       AND STORE AGAIN IN SAVE AREA
+NOCLEAR  EQU   *
+         EJECT
+***********************************************************************
+*        LOAD EACH REQUESTED LINE TO THE SCREEN BUFFER
+***********************************************************************
+         SPACE 2
+         L     REG3,PARMADDR       ADDRESS OF INPUT PARM FIELD
+LOADLOOP EQU   *
+         LA    REG3,4(REG3)        STEP OVER SCREEN CONTROL PARMS
+         TM    0(REG3),X'80'       HAS HE FORGOTTEN THE 'F'
+         BO    CHKCURS             YES. GO OUTPUT THE DATA
+         L     REG4,0(REG3)        ADDRESS OF THE DATA
+         USING FLDPARM,REG4        ADDRESSABILITY FOR FIELD DEFINITION
+         CLI   0(REG4),LASTLINE    IS THIS THE END OF HIS DATA
+         BE    CHKCURS             YES. GO ISSUE THE TPUT
+         BAL   REG11,GETBUFF       GO EXTRACT A SCREEN BUFFER ADDRESS
+         BAL   REG11,GETFLD        GO BUILD THE SCREEN AREA DATA
+         BAL   REG11,MOVEFLD       GO LOAD UP THE SCREEN AREA
+         B     LOADLOOP            AND PROCESS EACH INPUT PARAMETER
+         DROP  REG4
+         EJECT
+***********************************************************************
+*        IF SPECIFIC CURSOR LOCATION WANTED. PROCESSIT
+***********************************************************************
+         SPACE 2
+CHKCURS  DS    0H
+         TM    SCRNATTR,SETCURS    DOES HE WANT SPECIFIC CURSOR
+         BZ    OUTREADY            NO. LEAVE DATA AS IS
+         LH    REG14,SCCURLIN      LOAD UP THE LINE NUMBER
+         BCTR  REG14,0             SUBTRACT 1 FOR AN OFFSET
+         MH    REG14,=H'80'        GET THAT AS AN OFFSET
+         AH    REG14,SCCURCOL      AND GET TOTAL OFFSET
+         BCTR  REG14,0             SUBTRACT 1 FOR AN OFFSET
+         SRDL  REG14,6             MOVE LAST SIX BITS OUT
+         SLL   REG14,2             GET TWO EXTRA BITS IN THERE
+         SLDL  REG14,6             GET THOSE OTHER SIX BITS BACK
+         L     REG1,SCRNADDR       LOAD CURRENT BUFFER ADDRESS
+         MVI   0(REG1),X'11'       SET BUFFER ADDRESS
+         STCM  REG14,3,1(REG1)     STORE THE BUFFER ADDRESS
+         TR    1(2,REG1),BUFFTAB   CONVERT TO VALID CODES
+         MVI   3(REG1),X'13'       AND INSERT THE CURSOR AT THIS POINT
+         LA    REG1,4(REG1)        ADD LENGTH OF THAT DATA
+         ST    REG1,SCRNADDR       AND UPDATE THE WORK AREA
+         EJECT
+***********************************************************************
+*        WRITE OUT THE PREPARED SCREEN
+***********************************************************************
+         SPACE 2
+OUTREADY DS    0H
+         LA    REG3,SCREENBF       LOAD THE START ADDRESS OF DATA
+         L     REG4,SCRNADDR       LOAD THE END ADDRESS OF DATA
+         SR    REG4,REG3           GET THE LENGTH OF THAT DATA
+         TPUT  (3),(4),FULLSCR,WAIT WRITE OUT THE DATA
+         TM    SCRNATTR,GETREPLY   IS A REPLY TO THIS EXPECTED
+         BZ    SCRNEXIT            NO. RETURN TO CALLER
+READNTRY DS    0H                  ENTRY FROM WRITE=NO ON PUTSCRN
+         LA    REG3,REPLY          LOAD ADDRESS OF REPLY AREA
+         LA    REG4,2000           MAXIMUM LENGTH EXPECTED
+         TGET  (3),(4),ASIS,WAIT   OTHERWISE ISSUE A READ TO SCREEN
+         EJECT
+***********************************************************************
+*        EXAMINE THE AID AND SET RET CODE IF NECCESSARY
+***********************************************************************
+         SPACE 2
+         TM    REPLY,X'F0'         WAS THAT A PFK HE HIT ?
+         BNO   NOTAPFK             NO. IT WAS NORMAL KEY (PROBABLY)
+         NI    REPLY,X'0F'         TURN OFF THE TOP HALF OF BYTE
+         XR    REG15,REG15         CLEAR A WORK REGISTER
+         IC    REG15,REPLY         AND LOAD THE PFK NUMBER
+         LNR   REG15,REG15         MAKE NEGATIVE TO SIGNAL PFK
+         STH   REG15,RETCODE       AND SAVE FOR RETURN CODE
+NOTAPFK  EQU   *
+         EJECT
+***********************************************************************
+*        DELIMIT EACH RETURNED FIELD AND MAP BACK TO ORIGINAL DATA
+***********************************************************************
+         SPACE 2
+         LA    REG3,REPLY-1(REG1)  ADDRESS OF LAST RETURNED BYTE
+         LA    REG2,1              INCREMENT FOR LOOP
+         LA    REG4,REPLY          START OF RETURNED DATA
+LOOP1    EQU   *
+         CLI   0(REG4),X'11'       START OF FIRST FIELD ?
+         BE    CONTINU             YES. STATR TO DELIMIT FIELDS
+         BXLE  REG4,REG2,LOOP1     NO. JUMP ALONG TO FIND IT
+         LA    REG15,4             LOAD A RETURN CODE
+         NC    RETCODE,RETCODE     RETURN CODE ALREADY SET ?
+         BNZ   *+8                 YES. DO NOT STORE THIS ONE
+         STH   REG15,RETCODE       OTHERWISE SET INDICATION OF..
+         B     SCREXIT2            NO REAL DATA WAS RETURNED
+CONTINU  EQU   *
+         LR    REG5,REG4           SAVE START ADDRESS OF THE FIELD
+         LA    REG4,1(REG4)        STEP OVER FIRST SBA
+LOOP2    EQU   *
+         CLI   0(REG4),X'11'       START OF A NEW FIELD
+         BE    SETFIELD            YES. GO PROCESS IT
+         BXLE  REG4,REG2,LOOP2     OTHERWISE KEEP LOOKING
+SETFIELD EQU   *
+         BAL   REG11,GETOFFST      GO GET LINE AND COL NO
+         BAL   REG11,GETPARM       GO MATCH UP WITH INPUT PARMS
+         BAL   REG11,REPLACE       GO REPLACE DATA IN INPUT AREA
+NOTHERE  EQU   *
+         LR    REG5,REG4           SAVE NEW FIELD START ADDRESS
+         BXLE  REG4,REG2,LOOP2     GO FIND THE NEXT FIELD
+         B     SCRNEXIT            RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        CONVERT A SCREEN ADDRESS BACK TO A BUFFER OFFSET
+***********************************************************************
+         SPACE 2
+GETOFFST DS    0H
+         ICM   REG15,12,1(REG5)    LOAD THE BUFFER ADDRESS
+         XR    REG14,REG14         CLEAR A WORK REGISTER
+         SLL   REG15,2             LOSE FIRST TWO BITS
+         SLDL  REG14,6             LOAD UP THE NEXT 6
+         SLL   REG15,2             LOSE THE NEXT TWO
+         SLDL  REG14,6             AND AGAIN PICK UP THE NEXT SIX
+         LR    REG15,REG14         PUT THAT NUMBER IN REG15
+         XR    REG14,REG14         CLEAR TOP REGISTER
+         D     REG14,=F'80'        AND CONVERT TO LINE/COL
+         LA    REG15,1(REG15)      ADD 1    FOR OFFSET EFFECT
+         SLL   REG15,16            MOVE LINE NUMBER
+         OR    REG14,REG15         AND COMBINE WITH COL NUMBER
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        LOCATE THE MATCHING INPUT PARM FIELD
+***********************************************************************
+         SPACE 2
+GETPARM  DS    0H
+         L     REG6,PARMADDR       ADDRESS OF ORIGINAL PARM FIELD
+LOOP3    EQU   *
+         LA    REG6,4(REG6)        ADDRESS OF FIRST REAL LINE PARM
+         TM    0(REG6),X'80'       IS THAT THE LAST FIELD
+         BO    NOTHERE             YES. MATCH IS NOT FOUND
+         L     REG7,0(REG6)        LOAD ADDRESS OF THE DATA
+         CLI   0(REG7),LASTLINE    IS THAT END OF INPUT DATA ?
+         BE    NOTHERE             YES. MATCH IS NOT FOUND
+         USING FLDPARM,REG7        ADDRESSABILITY FOR FIELD DEFINITION
+         C     REG14,FLDLINE       DOES THIS LINE MATCH THAT ONE
+         BNE   LOOP3               NO. GO TRY NEXT PARM FIELD
+         BR    REG11               RETURN TO CALLER
+         DROP  REG7
+         EJECT
+***********************************************************************
+*        MOVE THE RETURNED DATA BACK
+***********************************************************************
+         SPACE 2
+REPLACE  DS    0H
+         USING FLDPARM,REG7        ADDRESSABILITY FOR FIELD DEFINE AREA
+         LR    REG15,REG4          LOAD ADDRESS OF END OF DATA
+         LA    REG14,3(REG5)       ADDRESS OF START OF DATA
+         LR    REG1,REG15          GET ADDRESS OF END OF DATA
+         B     OCLSTART            BRANCH TO START OF OCLOOP
+OCLOOP   EQU   *
+         BCTR  REG1,0              ADDRESS OF LAST/PREVIOUS BYTE
+         OI    0(REG1),C' '        CONVERT IT TO UPPER CASE
+OCLSTART EQU   *
+         CR    REG1,REG14          ARE WE BACK DOWN TO FIRST BYTE ?
+         BH    OCLOOP              NO. KEEP GOING
+         SR    REG15,REG14         LENGTH OF RETURNED DATA
+         L     REG0,FLDADDR        LOAD ADDRESS FIELD
+         TM    FLDFLAG,PMINDEX     IS THIS AN INDEX TYPE FIELD
+         BZ    NOTINDEX            NO. CARRY ON AS NORMAL
+         LH    REG0,FLDINDEX       RETRIEVE ASSOCIATED LINKAGE INDEX NO
+         SLL   REG0,2              MULTIPLY BY FOUR
+         L     REG1,PASSDATA       LOAD ADDRESS OF ADDRESS LIST
+         AR    REG1,REG0           ADDRESS OF ADDRESS REQUIRED
+         L     REG0,0(REG1)        LOAD ADDRESS OF RECEIVING FIELD
+         AH    REG0,FLDDISP        ADD DISP OF FLD IN LINKAGE AREA
+NOTINDEX EQU   *
+         LH    REG1,FLDLENHW       GET RECEIVING LENGTH
+         ICM   REG15,8,=C' '       LOAD A BLANK PADDING CHARACTER
+         MVCL  REG0,REG14          MOVE THE DATA TO RECEIVING FIELD
+         TM    FLDFLAG,PMRJUST     SHOULD THAT HAVE BEEN RIGHT JUST'D
+         BO    JUSTIFY             YES. GO DO IT THEN
+         BR    REG11               RETURN TO CALLER
+         DROP  REG7
+         EJECT
+***********************************************************************
+*        RIGHT JUSTIFY THE CONTENTS OF A USER FIELD
+***********************************************************************
+         SPACE 2
+JUSTIFY  DS    0H           NOTE: REG0 ASSUMED TO ADDRESS END OF FIELD
+         USING FLDPARM,REG7        ADDRESSABILITY FOR FIELD DEFINITION
+         LR    REG14,REG0          LOAD A USABLE REGISTER
+         LR    REG15,REG14         AND LOAD A SECOND WORK REGISTER
+         BCTR  REG14,0             ADDRESS OF LAST BYTE
+         LR    REG1,REG14          PREPARE BXH 'STOP' REGISTER
+         SH    REG1,FLDLENHW       BY CALCULATING BYTE IN FRONT ADDR
+         LA    REG0,1              LOAD UP A LOOP INCREMENT
+         LCR   REG0,REG0           AND MAKE IT NEGATIVE
+JRLOOP   EQU   *
+         CLI   0(REG14),C' '       THIS BYTE OF FIELD IS BLANK
+         BNE   STRTCOPY            NO. START MOVING DATA ABOUT
+         BXH   REG14,REG0,JRLOOP   PROCESS THE ENTIRE FIELD
+         B     JREXIT              ENTIRE FIELD IS BLANK
+STRTCOPY EQU   *
+         BCTR  REG15,0             SUBTRACT 1 FROM RESULT ADDRESS
+         MVC   0(1,REG15),0(REG14) MOVE THAT BYTE TO END OF FIELD
+         BXH   REG14,REG0,STRTCOPY AND PROCESS REST OF FIELD
+         LA    REG14,1(REG14)      GO BACK TO START OF FIELD
+         SR    REG15,REG14         LENGTH OF DATA AT START
+         XR    REG0,REG0           PREPARE TO CLEAR
+         XR    REG1,REG1           PREPARE TO CLEAR
+         ICM   REG1,8,=C' '        SET UP THE FILLING CHARACTER
+         MVCL  REG14,REG0          AND CLEAR START OF FIELD
+JREXIT   EQU   *
+         BR    REG11               RETURN TO CALLER
+         DROP  REG7                RELEASE OLD ADDRESSABILITY
+         EJECT
+***********************************************************************
+*        RETURN TO CALLER
+***********************************************************************
+         SPACE 2
+SCRNEXIT DS    0H                  FIRST EXIT POINT
+SCREXIT2 EQU   *                   SECOND EXIT POINT
+         LH    REG15,RETCODE       SET RETURN CODE
+         ZRETURN RC=(15)
+         EJECT
+***********************************************************************
+*        PREPARE THE SET BUFFER ADDRESS FOR THE DATA
+***********************************************************************
+         SPACE 2
+GETBUFF  DS    0H
+         USING FLDPARM,REG4        ADDRESSABILITY FOR FIELD PARMS
+         LH    REG14,FLDLINE       LOAD UP THE LINE NUMBER
+         BCTR  REG14,0             SUBTRACT 1 FOR AN OFFSET
+         MH    REG14,=H'80'        GET THAT AS AN OFFSET
+         AH    REG14,FLDCOL        AND GET TOTAL OFFSET
+         BCTR  REG14,0             SUBTRACT 1 FOR AN OFFSET
+         SRDL  REG14,6             MOVE LAST SIX BITS OUT
+         SLL   REG14,2             GET TWO EXTRA BITS IN THERE
+         SLDL  REG14,6             GET THOSE OTHER SIX BITS BACK
+         L     REG1,SCRNADDR       LOAD CURRENT BUFFER ADDRESS
+         MVI   0(REG1),X'11'       SET BUFFER ADDRESS
+         STCM  REG14,3,1(REG1)     STORE THE BUFFER ADDRESS
+         TR    1(2,REG1),BUFFTAB   CONVERT TO VALID CODES
+         LA    REG1,3(REG1)        UPDATE BUFFER ADDRESS
+         ST    REG1,SCRNADDR       AND STORE IN WORK AREA
+         BR    REG11               RETURN TO CALLER
+         DROP  REG4
+         EJECT
+***********************************************************************
+*        DETERMINE THE FIELD ATTRIBUTE
+***********************************************************************
+         SPACE 2
+GETFLD   DS    0H
+         USING FLDPARM,REG4        ADDRESSABILITY FOR FIELD PARM AREA
+         MVI   FLDATTR,PROTECT     INITIALISE ATTRIBUTE TO NON-CNAHGE
+         TM    FLDFLAG,PMBRIGHT    DOES HE WANT BRIGHT DISPLAY ?
+         BZ    *+8                 NO. NO BIT SETTING
+         OI    FLDATTR,BRIGHT      TURN ON THE 'BRIGHT' BIT
+         TM    FLDFLAG,PMCHANGE    SHOULD FIELD BE CHANGABLE
+         BZ    *+8                 NO. LEAVE DEFAULT SETTING
+         NI    FLDATTR,255-PROTECT RESET THE PROTECT FLAG
+         TM    FLDFLAG,PMSECRET    SHOULD FIELD BE NON-DISPLAY ?
+         BZ    *+8                 NO. JUMP OVER BIT SETTING
+         OI    FLDATTR,SECRET      TURN ON APPROPRIATE BITS
+         L     REG1,SCRNADDR       LOAD CURRENT BUFFER ADDRESS
+         MVI   0(REG1),X'1D'       DEFINE FIELD ORDER CODE
+         MVC   1(1,REG1),FLDATTR   SET UP THE FIELD ATTRIBUTE
+         TR    1(1,REG1),BUFFTAB   CONVERT IT TO A VALID CODE
+         LA    REG1,2(REG1)        UPDATE TO INCLUDE THIS LENGTH
+         TM    FLDFLAG,PMCURSOR    SHOULD CURSOR GO HERE
+         BZ    NOCURSOR            NO. LEAVE IT AS IT IS
+         MVI   0(REG1),X'13'       INSERT CURSOR
+         LA    REG1,1(REG1)        INCREMENT TO INCLUDE THAT
+NOCURSOR EQU   *
+         ST    REG1,SCRNADDR       UPDATE THE WORK AREA
+         BR    REG11               RETURN TO CALLER
+         DROP  REG4
+         EJECT
+***********************************************************************
+*        MOVE THE SPECIFIED DATA TO SCREEN AREA
+***********************************************************************
+         SPACE 2
+MOVEFLD  DS    0H
+         USING FLDPARM,REG4        ADDRESSABILITY FOR FIELD PARM AREA
+         L     REG0,SCRNADDR       LOAD ADDRESS NEXT SLOT IN BUFFER
+         LH    REG15,FLDLENHW      LOAD THE LENGTH OF THE FIELD
+         L     REG14,FLDADDR       LOAD ADDRESS IFELD
+         TM    FLDFLAG,PMINDEX     IS THIS AN INDEXED FIELD
+         BZ    NOITSNOT            NOITSNOT
+         LH    REG14,FLDINDEX      RETRIEVE INDEX NO OF ASSOCIATED LINK
+         SLL   REG14,2             THEN MULTIPLY BY FOUR
+         L     REG1,PASSDATA       LOAD ADDRESS OF ADDRESS LIST
+         AR    REG1,REG14          INDEX TO ADDRESS
+         L     REG14,0(REG1)       AND LOAD REAL ADDRESS OF THE FIELD
+         AH    REG14,FLDDISP       ADDD DISP OF FLD IN LINKAGE AREA
+NOITSNOT EQU   *
+         LR    REG1,REG15          GET SECOND LENGTH REGISTER
+         MVCL  REG0,REG14          MOVE SUPPLIED DATA IN
+         LR    REG1,REG0           GET A USABLE REGISTER
+         MVC   0(2,REG1),=X'1DF0'  MAKE FOLLOWING DATA NON-CHANGEABLE
+         LA    REG1,2(REG1)        INCREMENT TO ALLOW FOR IT
+         ST    REG1,SCRNADDR       UPDATE THE SCREEN ADDR
+         BR    REG11               RETURN TO CALLER
+         DROP  REG4
+         EJECT
+***********************************************************************
+*        CONSTANTS NOT CHANGED BY THE PROGRAM
+***********************************************************************
+         SPACE 2
+BUFFTAB  DC    X'40C1C2C3C4C5C6C7C8C9'
+         DC    X'4A4B4C4D4E4F50D1D2D3D4D5D6D7D8D9'
+         DC    X'5A5B5C5D5E5F6061E2E3E4E5E6E7E8E9'
+         DC    X'6A6B6C6D6E6FF0F1F2F3F4F5F6F7F8F9'
+         DC    X'7A7B7C7D7E7F'
+LASTLINE EQU   C'F'                END OF INPUT PARAMETER LINES
+SCRNINIT DC    X'40115D7F114040'   INTIIALISE SCREEN WRITE
+CLEARHEX DC    X'3C404040'         REPEAT TO BUFFER ADDRESS
+NONCHNGE DC    X'1DF0'             DEFINE FIELD NON-CHANGEABLE
+         LTORG
+         EJECT
+***********************************************************************
+*        WORK AREAS USED BY THE PROGRAM
+***********************************************************************
+         SPACE 2
+WORKAREA DSECT
+         DS    18A                 REGISTER SAVE AREA
+WASTART  EQU   *
+PASSDATA DS    F                   LIST OF SUBSTITUTE FIELD ADDRESSES
+PARMADDR DS    F                   SAVE AREA FOR INPUT PARM ADDRESS
+SCRNADDR DS    F                   START OF SCREEN BUILD AREA
+RETCODE  DS    H                   RETURN CODE TO CALLER
+FLDATTR  DS    X                   AREA TO BUILD FIELD ATTRIBUTE
+PROTECT  EQU   X'30'               BIT SETTING OF ABOVE TO PROTECT FLD
+BRIGHT   EQU   X'08'               BIT SETTING TO GIVE BRIGHT DISPLAY
+SECRET   EQU   X'0C'               BIT SETTING TO GIVE BRIGHT DISPLAY
+SCREENBF DS    0C                  START OF REAL SCREEN DATA
+         DS    CL2200              WORK AREA TO BUILD OUTPUT SCREEN
+REPLY    DS    CL2200              SAVE AREA FOR INPUT RESPONSE
+WALENTH  EQU   *-WASTART           LENGTH FOR ZCSECT GETMAIN
+         SPACE 2
+FLDPARM  DSECT
+FLDLINE  DS    H                   LINE NUMBER
+FLDCOL   DS    H                   COL NUMBER
+FLDFLAG  DS    X                   PROCESSING OPTIONS
+PMBRIGHT EQU   X'80'               REQUEST IS FOR BRIGHT DISPLAY
+PMCHANGE EQU   X'40'               REQUEST IS FOR CHANGEABLE FIELD
+PMCURSOR EQU   X'20'               REQUEST IS FOR CURSOR INSERTION
+PMINDEX  EQU   X'10'               NO REAL ADDRESS IS PRESENT HERE
+PMSECRET EQU   X'08'               FIELD IS TO BE NON-DISPLAY
+PMRJUST  EQU   X'04'               RIGHT JUSTIFY SOURCE INTO DEST'N
+FLDLENTH DS    0AL3                LENGTH OF THE DATA FIELD
+FLDUFLAG DS    X                   BYTE OF USER-DEFINED FLAG BITS
+FLDLENHW DS    H                   HALFWORD LENGTH OF FIELD
+FLDADDR  DS    0A                  ADDRESS OF THE DATA FIELD
+FLDDISP  DS    H                   DISPLACEMENT OF FLD IN LINKAGE AREA
+FLDINDEX DS    H                   INDEX NO OF ASSOCIATED LINK ADDRESS
+         SPACE 2
+SCRNDETS DSECT
+SCRNATTR DS    X                   SCREEN PROCESSING ATTRIBUTES
+ON       EQU   X'80'               CLEAR SCREEN BEFORE WRITE
+GETREPLY EQU   X'40'               A REPLY IS EXPECTED
+SETCURS  EQU   X'20'               A SPECIFIC CURSOR ADDRESS SPECIFIED
+         DS    XL3                 UNUSED
+SCCURLIN DS    H                   LINE FOR CURSOR
+SCCURCOL DS    H                   COLUMN FOR CURSOR
+         END

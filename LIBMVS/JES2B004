@@ -1,0 +1,327 @@
+JES2B004 CSECT                     MODIFICATION LOADING PROGRAM         MM400130
+         SPACE 2                                                        MM400140
+*******************************************************************     MM400150
+*                                                                 *     MM400160
+*        PROGRAM ID. :             JES2B004                       *     MM400170
+*                                                                 *     MM400180
+*        DATE WRITTEN :            MARCH 1977                     *     MM400190
+*                                                                 *     MM400200
+*        AUTHOR :                  D.H.CARTWRIGHT.                *     MM400210
+*                                                                 *     MM400220
+*        LOCATION :                MONSANTO MISD/TSG BRUSSELS     *     MM400230
+*                                                                 *     MM400240
+*******************************************************************     MM400250
+         SPACE 3                                                        MM400260
+*******************************************************************     MM400270
+*                                                                 *     MM400280
+*        PURPOSE                                                  *     MM400290
+*       ---------                                                 *     MM400300
+*                                                                 *     MM400310
+*        THIS PROGRAM IS PART OF THE JES2B001 JES2 MODIFICATION   *     MM400320
+*        TO PERFORM ADDITIONAL JES2 INITIALISATION.               *     MM400330
+*        IT RECIEVES CONTROL VIA A PSEUDO 'CALL' TO PROCESS       *     MM400340
+*        'EXIT=' INITIALISATION STATEMENTS BY PERFORMING A        *     MM400350
+*        BLDL TO LOCATE THE MODULE THEN LOADING IT INTO THE JES2  *     MM400360
+*        ADDRESS SPACE AND UPDATING THE MRCB FOR THE MODIFICATION *     MM400370
+*        TO REFLECT ITS STATUS AND ENTRY ADDRESS.                 *     MM400380
+*                                                                 *     MM400390
+*******************************************************************     MM400400
+         EJECT                                                          MM400410
+         COPY  $HASPGEN            HASP OPTIONS                         MM400420
+         EJECT                                                          MM400430
+         $SYSPARM (OFF,GEN,NODATA,NO,NO) SET DOCUMENTATION OPTIONS      MM400440
+         SPACE 3                                                        MM400450
+JES2B004 $RTIN DOC=&DOC            MODULE INITIALISATION                MM400460
+         BAL   R4,VMONLY           TEST FOR VM ENVIRONMENT              MM400470
+         BNE   B004EXIT            SYSTEM FAILED THE MEDICAL            MM400480
+         BAL   R4,LOADCHEK         GO CHECK FOR NOLOAD                  MM400490
+         BE    B004EXIT            MODULE NOT LOADED,END                MM400500
+         BAL   R4,B004BLDL         LOCATE MODULE                        MM400510
+         BNE   B004EXIT            EXIT IF MODULE NOT FOUND             MM400520
+         BAL   R4,B004LOAD         GO RETRIEVE MODULE                   MM400530
+         BNE   B004EXIT            SKIP INITIALISATION ON ERROR         MM400540
+         BAL   R4,B004INIT         INITIALISE MODULE IF REQUIRED        MM400550
+         SPACE 2                                                        MM400560
+B004EXIT PGMOUT RC=COMPCODE        RETURN TO JES2B001                   MM400570
+         TITLE 'JES2B004 - VM ONLY MODULES CHECK'                       MM400580
+*********************************************************************** MM400590
+*        THIS ROUTINE CHECKS THAT AN EXIT REQUESTED AS 'VMONLY'       * MM400600
+*        IS IN FACT RUNNING UNDER VM (AS DETERMINED BY JES2B001).     * MM400610
+*        IF VM IS NOT IN CONTROL RETURN IS MADE TO JES2B001           * MM400620
+*        WITH A DIAGNOSTIC WARNING MESSAGE,THE MODULE IS NOT LOADED.  * MM400630
+*********************************************************************** MM400640
+         SPACE 2                                                        MM400650
+VMONLY   SUBIN SAVE=(R4)           SUB-ROUTINE ENTRY                    MM400660
+         MVC   COMPCODE,GOOD       ASSUME EVERYTHING IS OK              MM400670
+         TM    RECVFND+1,VRB1VM    WAS REQUEST FOR VM?                  MM400680
+         BO    *+4+4+4             YES,TEST IF VM PRESENT               MM400690
+VMOK     CLI   *,$$X               NO,SET EQUAL CONDITION               MM400700
+         B     VMONLYX             RETURN TO MAIN LINE                  MM400710
+         L     R4,HCT$AHCT         PICK UP AHCT ADDRESS                 MM400720
+         TM    AHCTFLAG-AHCTDSCT(R4),AHCTVM ARE WE RUNNING UNDER VM?    MM400730
+         BO    VMOK                YES,EVERYTHING'S OK                  MM400740
+         LA    R4,B004ERR8         ELSE POINT TO ERROR MESSAGE          MM400750
+         ST    R4,AMESSAGE         RETURN IT TO JES2B001                MM400760
+         MVC   COMPCODE,WARNING    SET ERROR RETURN CODE                MM400770
+         CLI   *,$$W               SET UNEQUAL CONDITION CODE           MM400780
+         SPACE 1                                                        MM400790
+VMONLYX  SUBOUT RESTORE=(R4)       RETURN TO CALLER                     MM400800
+         TITLE 'JES2B004 - NOLOAD PROCESSING'                           MM400810
+*********************************************************************** MM400820
+*        THIS ROUTINE CHECKS THE CONTROL CARD VERB FLAGS FOR THE      * MM400830
+*        'NOLOAD' OPTION.IF NOT PRESENT CONTROL IS RETURNED TO        * MM400840
+*        THE MAIN LINE TO CONTINUE PROCESSING BY CALLING THE          * MM400850
+*        B004LOAD ROUTINE.                                            * MM400860
+*        IF THE 'NOLOAD' OPTION IS IN EFFECT THIS ROUTINE PROCESSES   * MM400870
+*        THE 'SLOT' OPERAND FOR THIS MODIFICATION NUMBER.             * MM400880
+*********************************************************************** MM400890
+         SPACE 3                                                        MM400900
+LOADCHEK SUBIN SAVE=(R4,R5,R6,R7,R10) SUBROUTINE ENTRY                  MM400910
+         TM    RECVFND+0,VRB0NOLD  IS THIS EXIT NOT LOADED?             MM400920
+         BO    B004NLOD            NOT LOADED,GO LOOK AT ITS SLOT       MM400930
+         CLI   *,$$W               SET COND CODE LOW                    MM400940
+         SPACE 2                                                        MM400950
+LOADCHEX SUBOUT RESTORE=(R4,R5,R6,R7,R10) RETURN TO MAIN LINE           MM400960
+         SPACE 2                                                        MM400970
+B004NLOD DS    0H                  'NOLOAD' OPTION IS PRESENT           MM400980
+         L     R5,RECVERBS         START AT TOP OF KEYWORD CHAIN        MM400990
+         SPACE 1                                                        MM401000
+B004NLUP DS    0H                  SEARCH FOR 'SLOT' OPERAND            MM401010
+         ICM   R7,7,KEYVERB+1      GET VERB DESCRIPTOR                  MM401020
+         BZ    B004NVRB            ERROR IF NONE                        MM401030
+         CLI   VERBFLAG+0,VRB0SLOT IS THIS 'SLOT'?                      MM401040
+         BE    B004SLOT            YES,GO PROCESS IT                    MM401050
+         ICM   R5,7,KEYNEXT+1      NO,TRY NEXT KEYWORD                  MM401060
+         BNZ   B004NLUP            IF THERE IS ONE                      MM401070
+         SPACE 1                                                        MM401080
+B004NVRB DS    0H                  NO 'SLOT' VERB PRESENT               MM401090
+         LA    R5,B004ERR1         IF NONE,PICK UP ERROR MESSAGE        MM401100
+         ST    R5,AMESSAGE         PUT IN PARAMETER BLOCK               MM401110
+         MVC   COMPCODE,SEVERE     TELL JES2B001 OF SEVERE ERROR        MM401120
+         B     B004NLOX            RETURN TO MAINLINE                   MM401130
+         SPACE 1                                                        MM401140
+B004NLOX DS    0H                  'NOLOAD' RETURN TO MAIN LINE         MM401150
+         CLI   *,$$X               SET COND CODE EQUAL TO END PROGRAM   MM401160
+         B     LOADCHEX            RETURN TO MAIN LINE                  MM401170
+         EJECT                                                          MM401180
+*********************************************************************** MM401190
+*        'NOLOAD' CHECKING (CONTD.)                                   * MM401200
+*        PROCESS 'SLOT' OPERAND                                       * MM401210
+*********************************************************************** MM401220
+         SPACE 3                                                        MM401230
+B004SLOT DS    0H                  'SLOT(' FOUND                        MM401240
+         LR    R0,R11              SAVE JES2 ADDRESSABILITY             MM401250
+         SR    R10,R10             CLEAR WORK REGISTER                  MM401260
+         SR    R11,R11             AND ANOTHER                          MM401270
+         SR    R2,R2               AND ANOTHER                          MM401280
+         IC    R10,KEYLNGTH        GET LENGTH OF OPERAND                MM401290
+         IC    R11,VERBLEN         GET LENGTH OF VERB                   MM401300
+         L     R4,KEYLCTN          POINT TO OPERAND                     MM401310
+         LA    R4,1(R11,R4)        POINT TO DATA PORTION                MM401320
+         LA    R11,2(,R11)         CORRECT LENGTH FOR CALCULATION       MM401330
+*        NOTE  THAT THE END BRACKET ')' IS NOT COUNTED IN THE LENGTH    MM401340
+         SR    R10,R11             CALCULATE DATA LENGTH                MM401350
+         BCTR  R10,0               REDUCE FOR EXECUTE                   MM401360
+         EX    R10,PACKSLOT        PACK SLOT NUMBER                     MM401370
+         CVB   R11,DWORK           CONVERT IT TO BINARY                 MM401380
+         LA    R2,MRCBLGTH         GET LENGTH OF EACH MRCB              MM401390
+         MR    R10,R2              GET OFFSET INTO MRCB'S FOR THIS SLOT MM401400
+         LR    R4,R11              SAVE CALCULATED SLOT OFFSET          MM401410
+         LR    R11,R0              RESTORE JES2 ADDRESSABILITY          MM401420
+         L     R10,HCT$AHCT        GET ADDRESS OF AUX. HCT              MM401430
+         LA    R10,AHCTLGTH(R10,R4) POINT TO REQUESTED SLOT             MM401440
+         USING MRCBDSCT,R10        ESTABLISH MRCB ADDRESSABILITY        MM401450
+         MVC   MRCBNAME,4(R6)      COPY NAME FROM EXIT= CARD            MM401460
+         TM    RECVFND+1,VRB1FLGX  WAS THIS A FLAG REQUEST?             MM401470
+         BO    B004FLGX            YES,GO SET NOT EXEC AND FLAG         MM401480
+         OI    MRCBFLAG,MRFEXEC    FLAG MOD. AS EXECUTABLE              MM401490
+         B     B004NLOX            THEN RETURN TO MAIN LINE             MM401500
+         SPACE 1                                                        MM401510
+B004FLGX DS    0H                  PROCESS 'FLAG(X)' REQUESTS           MM401520
+         MVI   MRCBAV,C'X'         SET MRCB FLAG                        MM401530
+         B     B004NLOX            THEN RETURN TO MAIN LINE             MM401540
+         SPACE 2                                                        MM401550
+PACKSLOT PACK  DWORK,0(0,R4)       PACK SLOT NUMBER *EXECUTED*          MM401560
+         SPACE 1                                                        MM401570
+         DROP  R10                 END MRCB ADDRESSABILITY              MM401580
+         USING PARAMS,R10          RESTORE PARAMETER ADDRESSABILITY     MM401590
+         TITLE 'JES2B004 - MODULE LOCATE PROCESSING'                    MM401600
+*********************************************************************** MM401610
+*        THIS ROUTINE ATTEMPS TO LOCATE THE REQUIRED MODULE ON        * MM401620
+*        THE STEPLIB / LINKLIST DATA SET BY ISSUING A BLDL CALL       * MM401630
+*        FOR THE MODULE.IF THE BLDL IS SUCCESSFULL CONTROL RETURNS    * MM401640
+*        TO THE MAIN LINE WITH THE CONDITION CODE SET EQUAL.          * MM401650
+*        IF THE MODULE CANNOT BE LOCATED FURTHER ANALYSIS IS          * MM401660
+*        PERFORMED,AN ERROR MESSAGE POINTER IS PLACED IN THE CALL     * MM401670
+*        PARAMETER LIST AND CONTROL RETURNED VIA THE MAIN LINE TO     * MM401680
+*        JES2B001,WHICH ISSUES ERROR WARNINGS TO THE OPERATOR.        * MM401690
+*********************************************************************** MM401700
+         SPACE 3                                                        MM401710
+B004BLDL SUBIN SAVE=(R4,R6)        SUBROUTINE ENTRY                     MM401720
+         SR    R2,R2               CLEAR WORK REGISTER                  MM401730
+         SR    R15,R15             SET DEFAULT ERR0R CODE (0=B004ERR2)  MM401740
+         ICM   R2,1,LVERBDAT       PICK UP LENGTH OF DATA               MM401750
+         BZ    B004LERR            ERROR IF ZERO                        MM401760
+         BALR  R2,0                REDUCE FOR EXECUTE                   MM401770
+         CH    R2,=H'7'            TEST FOR MAXIMUM                     MM401780
+         BNH   *+4+4               SIZE IS ALLOWABLE                    MM401790
+         LA    R2,7                TOO LARGE,RESET SIZE                 MM401800
+         ICM   R6,7,AVERBDAT+1     PICK UP KEYWORD DATA                 MM401810
+         BZ    B004LERR            ERROR IF NONE                        MM401820
+         MVC   BLDLNAME,BLANKS     NULLIFY BLDL LIST                    MM401830
+         EX    R2,MOVEBLDL         CREATE BLDL LIST                     MM401840
+         SPACE 1                                                        MM401850
+         BLDL  0,BLDLLIST          LOCATE MODULE IN STEPLIB             MM401860
+         LTR   R15,R15             TEST RETURN                          MM401870
+         BNZ   B004LERR            GO PROCESS ERRORS                    MM401880
+         CLI   *,$$X               SET COND CODE FOR NO ERROR           MM401890
+         SPACE 1                                                        MM401900
+B004BLDX SUBOUT RESTORE=(R4,R6)    RETURN TO MAIN LINE                  MM401910
+         EJECT                                                          MM401920
+*********************************************************************** MM401930
+*        MODULE LOCATE PROCESSING (CONTD.)                            * MM401940
+*        ERROR HANDLING FOR MODULE NOT FOUND.                         * MM401950
+*********************************************************************** MM401960
+         SPACE 2                                                        MM401970
+B004LERR DS    0H                  BLDL ERROR                           MM401980
+         STH   R15,DWORK           SAVE COMPLETION CODE                 MM401990
+         LA    R2,ERRLNGTH         GET LENGTH OF ERROR MESSAGES         MM402000
+         MH    R2,DWORK            GET OFFSET OF SPECIFIC MESSAGE       MM402010
+         LA    R2,B004ERR2(R2)     FROM START OF MESSAGES               MM402020
+         AR    R2,R0               ADD REASON CODE                      MM402030
+         ST    R2,AMESSAGE         LEAVE THIS MESSAGE FOR JES2B001      MM402040
+         MVC   COMPCODE,SEVERE     TELL JESB001 WE COULDN'T COMPLETE    MM402050
+         CLI   *,$$W               SET COND CODE UNEQUAL                MM402060
+         B     B004BLDX            RETURN TO MAIN LINE                  MM402070
+         TITLE 'JES2B004 - MODULE LOAD'                                 MM402080
+*********************************************************************** MM402090
+*        THIS ROUTINE LOADS THE REQUIRED MODULE INTO THE JES2         * MM402100
+*        ADDRESS SPACE AND PUTS THE ENTRY POINT INTO THE MRCB LIST    * MM402110
+*        IN THE AHCT.                                                 * MM402120
+*        IF AN ERROR IS ENCOUNTERED THE CONDITION CODE IS SET         * MM402130
+*        UNEQUAL BEFORE RETURNING TO THE MAIN LINE.                   * MM402140
+*********************************************************************** MM402150
+         SPACE 3                                                        MM402160
+B004LOAD SUBIN SAVE=(R4)           SUBROUTINE ENTRY                     MM402170
+         LOAD  DE=BLDLNAME         LOAD IT IF IT EXISTS                 MM402180
+         LR    R1,R0               GET ENTRY POINT ADDRESS              MM402190
+         SR    R2,R2               CLEAR WORK REGISTER                  MM402200
+         ICM   R2,1,$MODCODE(R1)   PICK UP CODE VALUE OF MODULE         MM402210
+         MH    R2,MRCBLENT         CALCULATE MRCB OFFSET FOR MODULE     MM402220
+         L     R4,HCT$AHCT         GET ADDRESS OF AHCT                  MM402230
+         LA    R2,AHCT1RTN-AHCTDSCT(R4,R2) POINT TO MRCB SLOT           MM402240
+         ST    R2,MRCBADDR         SAVE THIS ADDRESS                    MM402250
+         USING MRCBDSCT,R2         ESTABLISH MRCB ADDRESSABILITY        MM402260
+         CLI   MRCBAV,C'Z'         IS THIS SLOT AVAILABLE?              MM402270
+         BNE   B004NOSL            NO,WARN USER                         MM402280
+         SPACE 1                                                        MM402290
+         ST    R0,MRCBRADR         SAVE MODULE ADDRESS                  MM402300
+         MVC   MRCBNAME,$MODNAME+4(R1) SHOW NAME OF MRCB'S OWNER        MM402310
+         MVI   MRCBAV,C'Y'         SHOW ROUTINE IS AVAILABLE            MM402320
+         OI    MRCBFLAG,MRFLOAD    AND LOADED                           MM402330
+         CLI   *,$$X               SET COND CODE EQUAL                  MM402340
+         SPACE 1                                                        MM402350
+B004LOAX SUBOUT RESTORE=(R4)       RETURN TO MAIN LINE                  MM402360
+         DROP  R2                  END MRCB ADDRESSABILITY              MM402370
+         SPACE 1                                                        MM402380
+B004NOSL DS    0H                  MRCB ALREADY IN USE                  MM402390
+         LA    R2,B004ERR7         POINT AT ERROR MESSAGE               MM402400
+         ST    R2,AMESSAGE         GIVE MESSAGE TO JES2B001             MM402410
+         MVC   COMPCODE,WARNING    TELL JES2B001 OF ERROR               MM402420
+         CLI   *,$$W               SET CONDITION CODE NOT EQUAL         MM402430
+         B     B004LOAX            RETURN TO MAIN LINE                  MM402440
+         TITLE 'JES2B004 - MODULE INITIALISATION PROCESSING'            MM402450
+*********************************************************************** MM402460
+*        THIS SUBROUTINE TESTS FOR THE 'INIT' OPTION ON THE           * MM402470
+*        INITIALISATION CONTROL CARD.IF PRESENT CONTROL IS PASSED     * MM402480
+*        TO THE MODULE'S ENTRY POINT WITH REG.1 POINTING              * MM402490
+*        AT THE PARAMETER LIST PASSED FROM JES2B001 IN ORDER          * MM402500
+*        TO ALLOW THE MODIFICATION MODULE TO EXAMINE THE MODIFICATION * MM402510
+*        CONTROL CARD(S).                                             * MM402520
+*        ON RETURN REG.15 CONTAINS A ONE BYTE RETURN CODE IN THE      * MM402530
+*        HIGH-ORDER BYTE AND A THREE BYTE ENTRY ADDRESS FOR           * MM402540
+*        SUBSEQUENT ENTRIES TO THE MODULE.THE RETURN CODE             * MM402550
+*        CORRESPONDS TO THE 'MRCBFLAG' FIELD OF THE MRCB FOR THIS     * MM402560
+*        MODULE AND SO MAY DISABLE THE MODULE ON SEVERE ERROR.        * MM402570
+*********************************************************************** MM402580
+         SPACE 3                                                        MM402590
+B004INIT SUBIN SAVE=(R4)           SUBROUTINE ENTRY                     MM402600
+         TM    RECVFND+0,VRB0INIT  DOES HE WANT TO INITIALISE?          MM402610
+         BNO   B004INIX            NO,RETURN TO MAIN LINE               MM402620
+         SPACE 1                                                        MM402630
+         L     R2,MRCBADDR         GET MRCB ADDRESS WE FOUND BEFORE     MM402640
+         USING MRCBDSCT,R2         ESTABLISH MRCB ADDRESSABILITY        MM402650
+         L     R15,MRCBRADR        GET ENTRY POINT OF ROUTINE           MM402660
+         L     R1,PARAMETR         POINT TO PARAMETER LIST              MM402670
+         BALR  R14,R15             GO ENTER MODULE                      MM402680
+         SPACE 1                                                        MM402690
+         ST    R15,MRCBRADR        SAVE NEW ENTRY POINT AND FLAGS       MM402700
+         TM    MRCBFLAG,MRFERROR   DID INITIALISATION FAIL?             MM402710
+         BNO   B004INIX            NO,RETURN TO MAIN LINE               MM402720
+         MVC   COMPCODE,SEVERE     YES,TELL JES2B001 A MSG AWAITS       MM402730
+         SPACE 1                                                        MM402740
+B004INIX SUBOUT RESTORE=(R4)       RETURN TO MAIN LINE                  MM402750
+         DROP  R2                  END MRCB ADDRESSABILITY              MM402760
+         TITLE 'JES2B004 - DATA AREAS'                                  MM402770
+*********************************************************************** MM402780
+*        BLDL LIST TO VERIFY MODULE'S EXISTENCE                       * MM402790
+*********************************************************************** MM402800
+         SPACE 2                                                        MM402810
+BLDLLIST DS    0H                  ALIGNED ON HALFWORD BOUNDARY         MM402820
+         DC    AL2(1),AL2(60)      ONE ENTRY OF SIXTY BYTES             MM402830
+BLDLNAME DC    CL8' '              MODULE NAME                          MM402840
+BLDLTTR  DC    AL3(0)              DISK ADDRESS OF MODULE               MM402850
+BLDLK    DC    X'00'               CONCATENATION NUMBER                 MM402860
+BLDLDATA DC    48X'00'             USER DATA FROM DIRECTORY             MM402870
+         SPACE 3                                                        MM402880
+MOVEBLDL MVC   BLDLNAME(0),0(R6)   MOVE IN MODULE NAME *EXECUTED*       MM402890
+         EJECT                                                          MM402900
+*********************************************************************** MM402910
+*        ERROR MESSAGES FOR JES2B001                                  * MM402920
+*********************************************************************** MM402930
+         SPACE 3                                                        MM402940
+B004ERR1 DC    CL30'B004ERR1 NO ''SLOT'' OPERAND'                       MM402950
+B004ERR2 DC    CL30'B004ERR2 NO EXIT NAME'                              MM402960
+*                                                                       MM402970
+*        THE NEXT FOUR MESSAGES ARE INDEXED FROM B004ERR2               MM402980
+*        BY THE RETURN CODE FROM BLDL.                                  MM402990
+*                                                                       MM403000
+         DC    CL30'B004ERR3 BLDL LIST INVALID'                         MM403010
+         DC    CL30'B004ERR4 BLDL I/O ERROR'                            MM403020
+         DC    CL30'B004ERR5 BLDL STORAGE LACK'                         MM403030
+         DC    CL30'B004ERR6 BLDL DCB NOT OPEN'                         MM403040
+         SPACE 1                                                        MM403050
+B004ERR7 DC    CL30'B004ERR7 MRCB SLOT IN USE'                          MM403060
+         SPACE 1                                                        MM403070
+B004ERR8 DC    CL30'B004ERR8 VM/370 NOT PRESENT'                        MM403080
+         SPACE 1                                                        MM403090
+ERRLNGTH EQU   30                  LENGTH OF AN ERROR MESSAGE           MM403100
+         EJECT                                                          MM403110
+*********************************************************************** MM403120
+*        WORK AREAS                                                   * MM403130
+*********************************************************************** MM403140
+         SPACE 3                                                        MM403150
+DWORK    DC    D'0'                A DOUBLEWORD WORK AREA               MM403160
+         SPACE 1                                                        MM403170
+COMPCODE DC    H'0'                PROGRAM COMPLETION CODE              MM403180
+GOOD     DC    H'0'                NO ERROR COMPLETION CODE             MM403190
+WARNING  DC    H'4'                SLIGHT ERROR COMPLETION CODE         MM403200
+SEVERE   DC    H'16'               SEVERE ERROR COMLETION CODE          MM403210
+         SPACE 2                                                        MM403220
+MRCBADDR DC    F'0'                ADDRESS OF MRCB FOR MODULE           MM403230
+MRCBLENT DC    AL2(MRCBLGTH)       LENGTH OF AN MRCB                    MM403240
+BLANKS   DC    CL8' '              BLANKS FOR CLEARING MODULE NAME      MM403250
+         TITLE 'JES2B004 - LITERAL POOL'                                MM403260
+*********************************************************************** MM403270
+*        LITERAL POOL                                                 * MM403280
+*********************************************************************** MM403290
+         SPACE 3                                                        MM403300
+         LTORG                                                          MM403310
+         TITLE 'JES2B004 - MODEL $MODNTRY EXPANSION'                    MM403320
+*********************************************************************** MM403330
+*        MODEL MODIFICATION ENTRY CODING                              * MM403340
+*********************************************************************** MM403350
+         SPACE 3                                                        MM403360
+JES2B999 $MODNTRY DOC=YES,ENTRY=NO,EXIT=B004EXIT SAMPLE DUMMY MODULE    MM403370
+         SPACE 3                                                        MM403380
+         END                                                            MM403390

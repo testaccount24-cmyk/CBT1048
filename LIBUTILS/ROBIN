@@ -1,0 +1,2722 @@
+//ROBIN JOB (1580,5),'0203 J.NOLS',CLASS=A
+//COMPILE EXEC ASMFCL
+//ASM.SYSIN DD *
+         TITLE 'ROBIN - ROUTE BATCH INPUT'
+ROBIN    CSECT
+         PRINT ON,GEN,NODATA
+         SPACE 1
+***********************************************************************
+*                                                                     *
+*        PROGRAM ID.:              ROBIN                              *
+*                                                                     *
+*        DATE WRITTEN :            MARCH, 1975                        *
+*                                                                     *
+*        AUTHOR :                  J. NOLS                            *
+*                                                                     *
+*        LOCATION :                EUROPEAN COMPUTER CENTER           *
+*                                                                     *
+***********************************************************************
+         SPACE 3
+***********************************************************************
+*        REGISTER EQUATES AND USAGE                                   *
+***********************************************************************
+         SPACE 1
+R0       EQU   0                   WORK REGISTER
+R1       EQU   1                   WORK REGISTER
+R2       EQU   2                   SUB-ROUTINE CONTROL INFORMATION
+R3       EQU   3                   PTR TO SUB-FIELD OFFSET AND LENGTH
+R4       EQU   4                   BAL RETURN ADDRESS
+R5       EQU   5                   ADDRESS OF SYSPRINT BUFFER
+R6       EQU   6                   ADDRESS OF SYSUT1 / SYSIN  BUFFER
+R7       EQU   7                   ADDRESS OF RECORD FROM / TO SORT
+R8       EQU   8                   POINTER TO ST01 & ST02 TABLE ELEMENT
+R9       EQU   9                   WORK REGISTER
+R10      EQU   10                  WORK REGISTER UNALTERED BY SUB RTNS
+R11      EQU   11                  BASE REGISTER 3
+R12      EQU   12                  BASE REGISTER 2
+R13      EQU   13                  SAVE AREA POINTER / BASE REGISTER 1
+R14      EQU   14                  BALR RETURN ADDRESS
+R15      EQU   15                  BALR ROUTINE ADDRESS / WORK REGISTER
+         EJECT
+***********************************************************************
+*                                                                     *
+*                                                                     *
+*        PURPOSE - THE MAIN PURPOSE OF ROBIN IS TO GIVE TO THE USER   *
+*         THE POSSIBILITY OF GENERATE THE JOBS STREAM (JCL + DATA)    *
+*         TO THE HASP INTERNAL READER, WITHOUT MANUAL INTERVENTION.   *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         SPACE 3
+***********************************************************************
+*                                                                     *
+*        LIMITATION - ROBIN IMPOSES A NUMBER OF RESTRICTIONS          *
+*         AND LIMITATIONS, BUT MOST ARE LESS RIGOROUS THAN THOSE      *
+*         IMPOSED BY OTHER PROGRAMS IN THE SUITE :-                   *
+*                                                                     *
+*          1. MAXIMUN RECORD LENGTH 80 BYTES.                         *
+*          2. MAXIMUN LENGTH OF CARD IDENTIFIER IS 8 BYTES.           *
+*          3. MAXIMUN LENGTH OF SORT FIELDS IS 16 BYTES.              *
+*          4. MAXIMUN NUMBER OF COMPONENT FIELDS FOR THE SORT         *
+*             OF DATA IS 5.                                           *
+*          5. A MAXIMUN OF 99 INDICATORS ( 01 TO 99 ), MAY BE         *
+*             USED BY SYSTEM. ( 00 IS RESERVED FOR ROBIN ).           *
+*                                                                     *
+***********************************************************************
+         SPACE 3
+***********************************************************************
+*                                                                     *
+*        DEFAULTS - CERTAIN DEFAULTS ARE ASSUMED BY ROBIN IN          *
+*         THE ABSENCE OF NECESSARY CONTROL INFORMATION :-             *
+*                                                                     *
+*            1. INPUT & OUTPUT RECORD LENGTH DEFAULTS TO 80.          *
+*            2. BLKSIZE DEFAULTS TO LRECL.                            *
+*            3. NON-NUMERIC OR ABSENT NUMERIC FIELDS DEFAULT TO 0.    *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*                                                                     *
+*        PARM OF EXEC CARD.                                           *
+*       --------------------                                          *
+*                                                                     *
+*         THE KEYWORDS ARE :                                          *
+*                                                                     *
+*          FOR NORMAL OPERATION ;                                     *
+*                                                                     *
+*              1. NOLISTCC - SUPPRESS CONTROL CARDS LISTING           *
+*                 OF SYSPRINT DATA SET.                               *
+*              2. RESERVE=..K - RESERVE CORE FOR ROBIN INTERNAL       *
+*                 TABLES. .. IS ONE OR TWO DIGITS THAT INDICATED      *
+*                 THE NUMBER OF 'K' TO BE RESERVED.                   *
+*              3. DATE=IPL OR DATE=YYMMDD - THIS KEYWORD MUST BE      *
+*                 SUPPLIED IF A ST02 FORMAT 3 CONTROL CARD IS USED.   *
+*                 WITH THIS KEYWORD WE INDICATED TO ROBIN , WHICH IS  *
+*                 THE DATE TO COMPARE WITH THE RELATIVE DATE          *
+*                 SPECIFIED IN THE ST02 FORMAT 3 CARDS.               *
+*                   IPL -  DATE OF SYSTEM .                           *
+*                   YYMMDD - DATE SUPPLIED BY USER.                   *
+*                                  YY - LAST TWO DIGITS OF YEAR NO.   *
+*                                  MM - NUMBER OF THE MONTH.          *
+*                                  DD - NUMBER OF THE DAY.            *
+*              4. SETON=SSSSSSSS(I1,I2,I3,I4, ...I30)                 *
+*                 SET INDICATORS ON, FOR A PARTICULAR SYSTEM NAME.    *
+*                       SSSSSSSS - SYSTEM NAME FOR WHICH THE          *
+*                                  INDICATORS MUST BE SET ON.         *
+*                       IN - IS TWO NUMERIC DIGITS DEFINING THE       *
+*                            INDICATORS TO BE SET ON.                 *
+*                            A MAXIMUN OF 30 INDICATORS MAY BE        *
+*                            SPECIFIED.                               *
+*                                                                     *
+*          FOR RESTART OPERATION ;                                    *
+*                                                                     *
+*              RESTART=JJJJJJJJ                                       *
+*                       JJJJJJJJ - JOB NAME .                         *
+*                                                                     *
+*          FOR RELOAD OPERATION ;                                     *
+*                                                                     *
+*              RELOAD=DDDDDDTTTT(JJJJJJJJ)                            *
+*                            DDDDDD - DATE FORMAT YYMMDD WHEN ROBIN   *
+*                                     WAS INVOKED DURING THE NORMAL   *
+*                                     OPERATION.                      *
+*                            TTTT - TIME FORMAT HHMM.                 *
+*                            JJJJJJJJ - JOB NAME TO BE RELOADED       *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*                                                                     *
+*        PARM OF EXEC CARD   (CONT'D)                                 *
+*                                                                     *
+*          FOR PUNCH OPERATION ;                                      *
+*                                                                     *
+*              PUNCH=DDDDDDTTTT(JJJJJJJJ,SSSSS,LLLLL)                 *
+*                            DDDDDD - DATE FORMAT YYMMDD WHEN ROBIN   *
+*                                     WAS INVOKED DURING THE NORMAL   *
+*                                     OPERATION.                      *
+*                            TTTT - TIME FORMAT HHMM.                 *
+*                            JJJJJJJJ - JOB NAME TO BE PUNCHED.       *
+*                            SSSSS - FIRST RECORD NUMBER TO BE        *
+*                                    PUNCHED, IF OMITTED ALL THE      *
+*                                    RECORDS ARE PUNCHED FROM THE     *
+*                                    BEGINNING.                       *
+*                            LLLLL - LAST RECORD NUMBER TO BE         *
+*                                    PUNCHED, IF OMITTED ALL THE      *
+*                                    RECORDS ARE PUNCHED UNTIL        *
+*                                    THE END.                         *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*                                                                     *
+*    FOR NORMAL OPERATION -                                           *
+*                                                                     *
+*        MANDATORY DD STATEMENTS                                      *
+*       -------------------------                                     *
+*                                                                     *
+*        SYSIN    - ROBIN CONTROL CARDS                               *
+*        SORTLIB  - LIBRARY FOR THE SORT MODULES                      *
+*        SORTLIST - MESSAGE DATA SET FOR THE SORT                     *
+*        SORTWK01 - WORK DATA SET FOR THE SORT                        *
+*        SORTWK02 - WORK DATA SET FOR THE SORT                        *
+*        SORTWK03 - WORK DATA SET FOR THE SORT                        *
+*        SYSUT2   - WORK DATA SET FOR ROBIN AND SECURITY DATA SET     *
+*                   FOR THE USER                                      *
+*                                                                     *
+*                                                                     *
+*        OPTIONAL DATA SETS                                           *
+*       --------------------                                          *
+*                                                                     *
+*        SYSPRINT - MESSAGE DATA SET FOR ROBIN                        *
+*        SYSPUNCH - OUTPUT DATA SET, NORMALLY FOR PUNCH               *
+*        SYSUT1   - INPUT BATCHES                                     *
+*        SYSUT3   - OUTPUT DATA SET, NORMALLY FOR HASP INTERNAL RDR   *
+*                                                                     *
+*    FOR RESTART, RELOAD AND PUNCH OPERATIONS -                       *
+*                                                                     *
+*        OPTIONAL DATA SET                                            *
+*       -------------------                                           *
+*                                                                     *
+*        SYSPRINT - MESSAGE DATA SET FOR ROBIN                        *
+*                                                                     *
+*                                                                     *
+*        MANDATORY DD STATEMENTS                                      *
+*       -------------------------                                     *
+*                                                                     *
+*        SYSUT2   - INPUT DATA SET. (SECURITY OF NORMAL RUN).         *
+*                                                                     *
+*        FOR RESTART AND RELOAD OPERATIONS -                          *
+*                                                                     *
+*        SYSUT3   - OUTPUT DATA SET, NORMALLY FOR HASP INTERNAL RDR   *
+*                                                                     *
+*        FOR RESTART AND PUNCH OPERATIONS -                           *
+*                                                                     *
+*        SYSPUNCH - OUTPUT DATA SET, NORMALLY FOR PUNCH               *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        FORMAT OF ST01, ST02 AND ST03 CARDS                          *
+***********************************************************************
+         SPACE 1
+STCARD   DSECT
+ST01ID   DS    CL4                 CARD ID.
+ST01SYSN DS    CL8                 SYSTEM NAME
+         DS    CL68                UNUSED
+         SPACE 3
+         ORG   *-80
+ST02ID   DS    CL4                 CARD ID
+ST02PBCI DS    CL2                 POS'N OF CARD IDENTIFIER
+ST02LBCI DS    CL1                 LENGTH OF CARD IDENTIFIER
+ST02BCI  DS    CL8                 LITERAL CARD IDENTIFIER
+ST02TYPE DS    C                   TYPE CODE
+ST02SEQ  DS    C                   SEQUENCE NO INSIDE BATCH NO
+ST02IND1 DS    CL2                 INDICATOR 1
+ST02IND2 DS    CL2                 INDICATOR 2
+ST02IND3 DS    CL2                 INDICATOR 3
+ST02IND4 DS    CL2                 INDICATOR 4
+ST02IND5 DS    CL2                 INDICATOR 5
+         DS    CL14                UNUSED
+ST02PBN1 DS    CL2                 POSN OF 1ST FIELD FOR THE SORT
+ST02LBN1 DS    CL1                 LGTH OF 1ST FIELD FOR THE SORT
+ST02PBN2 DS    CL2                 POSN OF 2ND FIELD FOR THE SORT
+ST02LBN2 DS    CL1                 LGTH OF 2ND FIELD FOR THE SORT
+ST02PBN3 DS    CL2                 POSN OF 3RD FIELD FOR THE SORT
+ST02LBN3 DS    CL1                 LGTH OF 3RD FIELD FOR THE SORT
+ST02PBN4 DS    CL2                 POSN OF 4TH FIELD FOR THE SORT
+ST02LBN4 DS    CL1                 LGTH OF 4TH FIELD FOR THE SORT
+ST02PBN5 DS    CL2                 POSN OF 5TH FIELD FOR THE SORT
+ST02LBN5 DS    CL1                 LGTH OF 5TH FIELD FOR THE SORT
+         DS    CL24                UNUSED
+         SPACE 3
+         ORG   *-80
+ST03ID   DS    CL4                 CARD ID
+ST03DATA DS    CL68                DATA PORTION
+         DS    CL8                 UNUSED
+         SPACE 1
+STLENGTH EQU   *-STCARD            LENGTH OF DSECT
+         SPACE 1
+         EJECT
+***********************************************************************
+*        FORMAT OF TABLE ENTRIES CREATED FROM ST01 CARDS              *
+***********************************************************************
+         SPACE 1
+ST1NTRY  DSECT
+NTRYST1  DS    F                   ADDRESS OF NEXT CHAIN ELEMENT
+NTRYNSYS DS    CL8                 SYSTEM NAME
+NTRY100I DS    CL13                WORK AREA FOR 100 INDICATORS (00-99)
+*                                  1ST BIT = INDICATOR 00, 2ND BIT = 01
+*                                  3TH BIT = 02  ETC.....
+         DS    CL7                 FILLER (AUTOMATIC DW ALIGNMENT WITH
+*                                   GETMAIN)
+NTRYLST1 EQU   *-ST1NTRY           LENGTH OF DSECT
+         SPACE 3
+***********************************************************************
+*        FORMAT OF TABLE ENTRIES CREATED FROM ST02 FORMAT 1 CARDS     *
+***********************************************************************
+         SPACE 1
+ST2NTRY  DSECT
+NTRYST2  DS    F                   ADDRESS OF NEXT CHAIN ELEMENT
+NTRYPBCI DS    C                   POSN OF CARD IDENTIFIER       (BIN)
+NTRYLBCI DS    C                   LGTH OF CARD IDENTIFIER       (BIN)
+NTRYBCI  DS    CL8                 LITERAL CARD IDENTIFIER
+NTRYPSYS DS    CL2                 PREFIX NUMBER OF SYSTEM NAME
+NTRYSYSN DS    CL8                 SYSTEM NAME
+NTRYTYPE DS    C                   TYPE CODE
+NTRYSEQ  DS    C                   SEQ. NO INSIDE BATCH NO.
+NTRYIND1 DS    C                   INDICATOR 1
+NTRYIND2 DS    C                   INDICATOR 2
+NTRYIND3 DS    C                   INDICATOR 3
+NTRYIND4 DS    C                   INDICATOR 4
+NTRYIND5 DS    C                   INDICATOR 5
+NTRYPBN1 DS    C                   POSN OF 1ST FIELD FOR THE SORT
+NTRYLBN1 DS    C                   LGTH OF 1ST FIELD FOR THE SORT
+NTRYPBN2 DS    C                   POSN OF 2ND FIELD FOR THE SORT
+NTRYLBN2 DS    C                   LGTH OF 2ND FIELD FOR THE SORT
+NTRYPBN3 DS    C                   POSN OF 3RD FIELD FOR THE SORT
+NTRYLBN3 DS    C                   LGTH OF 3RD FIELD FOR THE SORT
+NTRYPBN4 DS    C                   POSN OF 4TH FIELD FOR THE SORT
+NTRYLBN4 DS    C                   LGTH OF 4TH FIELD FOR THE SORT
+NTRYPBN5 DS    C                   POSN OF 5TH FIELD FOR THE SORT
+NTRYLBN5 DS    C                   LGTH OF 5TH FIELD FOR THE SORT
+NTRYPREF DS    CL2                 PREFIX ASSIGNED TO THIS ST02
+NTRYSW   DS    C                   SWITCH - IF X'00' RECD WITH FLAG
+*                                            X'00' IS NOT TO BE CREATED
+*                                           IF X'FF' RECD WITH FLAG
+*                                            X'00' IS TO BE CREATED
+         DS    CL4                 FILLER (AUTOMATIC DW ALIGNMENT WITH
+*                                   GETMAIN)
+NTRYLST2 EQU   *-ST2NTRY           LENGTH OF DSECT
+         EJECT
+***********************************************************************
+*        FORMAT OF INTERMEDIATE RECORD PASSED TO SORT                 *
+***********************************************************************
+         SPACE 1
+SORTRECD DSECT
+SRECPSYS DS    CL2                 PREFIX NUMBER OF SYSTEM NAME
+SRECSYSN DS    CL8                 SYSTEM NAME
+SRECPREF DS    CL2                 PREFIX CODE (BINARY)
+SRECFLAG DS    C                   X'00' FOR RECD GENERATE INTERNALLY
+*                                   WITH INFO'S FROM ST02 TABLE
+*                                  X'01' FOR ST03'S AFTER ST02
+*                                  C'?' TYPE CODE FROM
+*                                   '+ DATA TYPE=?'
+SRECBNO  DS    CL16                BATCH NUMBER (LEFT ADJUSTED)
+SRECSEQ  DS    C                   IF DATA - SEQ.NO INSIDE BATCH NO.
+*                                  IF JCL  - X'FF'
+SRECRNO  DS    CL6                 RECORD NUMBER
+SRECDATA DS    CL80                INPUT RECORD IMAGE (VARIABLE LGTH)
+SRECLGTH EQU   *-SORTRECD          LENGTH OF DSECT
+ROBIN    CSECT
+         SPACE 5
+*    NOTES :-
+         SPACE 1
+*        0.    SRECPSYS, ONE IS ADDED TO THE LAST SRECPSYS, EACH TIME
+*              A ST01 CARD IS READ.
+*        1.    SRECPREF, ONE IS ADDED TO THE LAST SRECPREF, EACH TIME
+*              FOR THE FIRST ST02 CARD READ AFTER A ST01 OR ST03 CARD.
+*        2.    SRECBNO CATERS FOR A COMPOSITE BATCH NUMBER LENGTH OF
+*              16 BYTES, A LIMITATION IMPOSED ELSEWHERE BY ROBIN.
+         TITLE 'ROBIN INITIATION PROCESSING'
+***********************************************************************
+*        HOUSEKEEPING                                                 *
+***********************************************************************
+         SPACE 1
+         PGMIN EQUATES=NO,USING=(R13,R12,R11) ESTABLISH ADDRESSABILITY
+         PRINT NOGEN               SUPPRESS MACRO EXPANSION
+         EJECT
+***********************************************************************
+*        SAVE PARM OF EXEC CARD INFO'S, EXECUTE UT458 PROGRAM,        *
+*         INITIALIZE HEAD LINE AND ESTABLISH A RUN NO.                *
+***********************************************************************
+         SPACE 1
+         L     R1,0(R1)            LOAD ADDRESS OF PARM AREA
+         MVC   PARMLGTH,0(R1)      STORE LENGTH OF PARM AREA
+         CLC   PARMLGTH,ZEROWORD   TEST IF L' OF PARM = ZERO
+         BNE   *+10                BRANCH IF NO
+         SR    R1,R1               ZEROISE R1
+         B     *+8                 SKIP NEXT INSTRUCTION
+         LA    R1,2(R1)            GET ADDRESS OF PARM AREA
+         ST    R1,PARMPNTR         STORE ADDRESS OF PARM OF EXEC CARD
+         UT458 UTDS=NO             REQUIRE IPL DATE AND TIME
+         MVC   LINE01+31(9),UTREPORT    MOVE DATE TO HEADLINE
+         MVC   LINE01+48(2),UTHHMMSS    MOVE TIME(HOUR) TO HEADLINE
+         MVI   LINE01+50,C'.'           MOVE '.' BETWEEN HOUR AND MIN.
+         MVC   LINE01+51(2),UTHHMMSS+2  MOVE TIME(MINUTE) TO HEADLINE
+         MVC   DATETIME(6),UTYYMMDD    STORE START DATE
+         MVC   DATETIME+6(4),UTHHMMSS     AND TIME
+         MVI   PAGENO+3,C'1'            INDICATE FIRST PAGE
+         LOCATE RUNNO                   EXTRACT PRECEDING RUN NO
+         PACK  WORKPACK,NOFRUN(4)       PACK RUN NO
+         AP    WORKPACK,ONE             ADD ONE
+         MVC   LINE01+17(6),EDITRUNO    SET UP EDIT PATTERN
+         ED    LINE01+17(6),WORKPACK+5  EDIT RUN NO.
+         UNPK  WORKPACK(5),WORKPACK+5(3) UNPACK NEW RUN NO
+         OI    WORKPACK+4,SIGN          FORCE SIGN TO 'F'
+         MVC   NOFRUN(4),WORKPACK+1     MOVE NEW RUN NO
+         CATALOG NEWRUNNO               CATALOG NEW RUN NO
+         B     TESTDDS
+         SPACE 1
+RUNNO    CAMLST NAME,DSNAME,,LOCAREA
+NEWRUNNO CAMLST CAT,DSNAME,,LOCAREA
+DSNAME   DC    CL44'ROBIN.RUNNO(0)'
+NOFRUN   EQU   DSNAME+13
+         SPACE 2
+***********************************************************************
+***********************************************************************
+*****    TO ESTABLISH THE RUN NO, ROBIN USES THE SYSTEM CATALOG.  *****
+*****    A GDG INDEX IS CREATED IN THE CATALOG, THE INDEX NAME    *****
+*****    USED IS 'ROBIN.RUNNO'. ROBIN USES 'LOCATE' MACRO TO READ *****
+*****    THE LAST GENERATION NUMBER CATALOGED, ADDS ONE TO THIS   *****
+*****    NUMBER AND USES 'CATALOG' MACRO TO CATALOG THIS NEW      *****
+*****    NUMBER. THE NEW NUMBER IS USED AS RUN NO.                *****
+***********************************************************************
+***********************************************************************
+         EJECT
+***********************************************************************
+*        TEST WHICH ARE THE DD'S SUPPLIED, AND OPEN SYSPRINT          *
+*          IF PRESENT                                                 *
+***********************************************************************
+         SPACE 1
+TESTDDS  LA    R10,MAXDS           ESTABLISH LOOP
+         LA    R2,DCBTABLE         POINT AT AD-CON TABLE
+LOOP0    OI    0(R2),DDINT         INDICATE DD INTEREST
+         BAL   R4,TESTIOT          GO TEST IF DD STATEMENT PRESENT
+         LA    R2,DCBNTRY(R2)      POINT AT NEXT TABLE ENTRY
+         BCT   R10,LOOP0           PROCESS NEXT DATA SET
+         LA    R2,PRINTSW          POINT AT SYSPRINT TABLE ENTRY
+         BAL   R4,OPEN             GO OPEN SYSPRINT IF PRESENT
+         LA    R5,SAFETY           POINT BUFFER POINTER AT PSEUDO-BUF,
+*                                  LEST NO DD STATEMENT IS PRESENT
+         BAL   R4,PRINT            GET ADDRESS OF 1ST PRINT BUFFER
+         AP    LINECOUN,LINEMAX    ADD MAX.OF LINE PER PAGE TO LINECOUN
+         BAL   R4,PRINT             AND FORCE A SKIP OF PAGE
+         EJECT
+***********************************************************************
+*        PROCESS PARM FIELDS                                          *
+***********************************************************************
+         SPACE 1
+TESTPARM L     R1,PARMPNTR          LOAD ADDRESS OF PARM AREA
+         LTR   R10,R1              TEST IF PARM SUPPLIED
+         BZ    ENDPARM             BRANCH IF NO
+         MVC   5(L'LINE14,R5),LINE14    MOVE SUB-HEADING TO PRINT LINE
+         MVI   0(R5),SPCE2AFT           ESTABLISH DOUBLE SPACE
+         BAL   R4,PRINT                  AND WRITE
+         LH    R9,PARMLGTH              LOAD LENGTH OF PARM INTO R9
+         BCTR  R9,0                     DECREMENT FOR EXECUTE INST.
+         EX    R9,MOVEPARM              EXECUTE MOVE INSTRUCTION
+         LA    R9,1(R9)                 GET ORIGINAL LENGTH
+         B     *+10                     SKIP NEXT INSTRUCTION
+MOVEPARM MVC   10(0,R5),0(R10)          MOVE PARM TO PRINT LINE
+         MVI   0(R5),SPCE2AFT           ESTABLISH DOUBLE SPACES
+         BAL   R4,PRINT                  AND WRITE
+TESTKW   EQU   *
+         CLC   0(8,R10),=C'NOLISTCC'    TEST FOR 'NOLISTCC'
+         BE    NOLISTCC            BRANCH IF YES
+         CLC   0(8,R10),=C'RESERVE='    TEST FOR 'RESERVE='
+         BE    RESERVE             BRANCH IF YES
+         CLC   0(5,R10),=C'DATE='  TEST IF KEYWORD 'DATE='
+         BE    KWDATE              BRANCH IF YES
+         CLC   0(6,R10),=C'SETON=' TEST IF KEYWORD 'SETON='
+         BE    KWSETON             BRANCH IF YES
+         CLC   0(6,R10),=C'PUNCH=' TEST IF KEYWORD 'PUNCH='
+         BE    KWPUNCH             BRANCH IF YES
+         CLC   0(8,R10),=C'RESTART='   TEST IF KEYWORD 'RESTART='
+         BE    KWRSTART            BRANCH IF YES
+         CLC   0(7,R10),=C'RELOAD='    TEST IF KEYWORD 'RELOAD='
+         BE    KWRELOAD            BRANCH IF YES
+         B     ERINPARM            ERROR IN PARM
+         EJECT
+***********************************************************************
+*        PROCESS PARM FIELDS  (CONT'D)                                *
+*                                                                     *
+*        KEYWORDS - 'RESERVE=' AND 'NOLISTCC'                         *
+***********************************************************************
+         SPACE 1
+RESERVE  LA    R10,8(R10)          INCREMENT POINTER PAST 'RESERVE='
+         SH    R9,=H'8'            DECREMENT PARM LENGTH
+         BZ    ERINPARM            ERROR IF REST OF LENGTH = ZERO
+         LR    R1,R10              LOAD ADDRESS OF NO OF K (START POS).
+         CLI   1(R10),C'K'         TEST IF ONLY 1 DIGIT FOR NO OF K
+         BNE   K2POS               BRANCH IF NO
+         LA    R15,1               LOAD LENGTH OF NO OK K
+         BAL   R4,NUMERIC          TEST IF NUMERIC
+         BL    ERINPARM            NO OF K IS BLANK - ERROR
+         BE    *+8                 NUMERIC
+         BH    ERINPARM            NO OF K IS NOT NUMERIC - ERROR
+         PACK  WORKPACK,0(1,R10)   PACK NO OF K
+         LA    R10,2(R10)          INCREMENT POINTER PAST 'NK'
+         SH    R9,=H'2'            DECREMENT PARM LENGTH
+         B     RESVCOMM
+K2POS    CLI   2(R10),C'K'         TEST IF 2 DIGITS FOR NO OF K
+         BNE   ERINPARM            ERROR IF NO
+         LA    R15,2               LOAD LENGTH OF NO OF K
+         BAL   R4,NUMERIC          TEST IF NUMERIC
+         BL    ERINPARM            BLANK
+         BE    *+8                 NUMERIC
+         BH    ERINPARM            NON-NUMERIC
+         PACK  WORKPACK,0(2,R10)   PACK NO OF K
+         LA    R10,3(R10)          INCREMENT POINTER PAST 'NNK'
+         SH    R9,=H'3'            DECREMENT PARM LENGTH
+RESVCOMM CVB   R1,WORKPACK         CONVERT TO BINARY NO OF K
+         MH    R1,=H'1024'         GET NO OF BYTES TO BE RESERVED
+         ST    R1,NOKTORES         STORE VALUE IN SORT WA CONCERNED
+         MVI   NOKTORES,X'01'      SET X'01' IN FIRST BYTE
+         LTR   R9,R9               TEST IF REST OF PARM LENGTH = ZERO
+         BZ    ENDPARM             BRANCH IF YES
+         CLI   0(R10),C','         NO - TEST IF NEXT POS. IS COMMA
+         BNE   ERINPARM            ERROR IF NO
+         LA    R10,1(R10)          INCREMENT POINTER PAST COMMA
+         BCTR  R9,0                DECREMENT PARM LENGTH
+         B     TESTKW              GO TEST NEXT KEYWORD
+NOLISTCC EQU   *
+         MVI   NOLISTSW,ON         INDICATE LIST CONTROL C. NOT NEED
+         LA    R10,8(R10)          INCREMENT POINTER PAST 'NOLISTCC'
+         SH    R9,=H'8'            DECREMENT PARM LENGTH
+         BZ    ENDPARM             BRANCH IF REST OF PARM L' = ZERO
+         CLI   0(R10),C','         TEST FOR COMMA
+         BNE   ERINPARM            ERROR IF NO COMMA
+         LA    R10,1(R10)          INCREMENT POINTER PAST ','
+         BCTR  R9,0                DECREMENT REST OF PARM L' OF ONE
+         B     TESTKW              GO TEST NEXT KEYWORD
+         EJECT
+***********************************************************************
+*        PROCESS PARM FIELDS  (CONT'D)    FOR KEYWORD 'DATE='         *
+***********************************************************************
+         SPACE 1
+KWDATE   LA    R10,5(10)           INCREMENT POINTER PAST 'DATE='
+         SH    R9,=H'5'            DECREMENT LENGTH FOR 'DATE='
+         BZ    ERINPARM            ERROR IF REST OF LENGTH = ZERO
+         CH    R9,=H'6'            TEST IF REST OF LENGTH = SIX
+         BE    *+32                BRANCH IF YES
+         CLC   0(3,R10),=C'IPL'    TEST IF IPL DATE REQUEST
+         BNE   ERINPARM            BRANCH IF NO
+         SH    R9,=H'3'            DECREMENT LENGTH FOR 'IPL'
+         BNZ   ERINPARM            ERROR IF REST OF LENGTH NOT = ZERO
+         MVC   PARMDATE,UTYYMMDD   MOVE IPL DATE TO PARM DATE WORK AREA
+         B     *+10                SKIP NEXT INSTRUCTION
+         MVC   PARMDATE,0(R10)     MOVE DATE FROM PARM TO WORK AREA
+         UT458 METHOD=LADE,OPCODE=3,DATE=PARMDATE  GO TEST IF THE -
+* ('LADE'= LOAD AND EXECUTE MODULE UT458         / DATE IS VALID
+         CLI   UTRTCODE,C'0'       TEST IF DATE VALID
+         BNE   ERINPARM            BRANCH IF NO
+         MVC   RELDATE+1(2),=C'AY'       'DAY'
+         MVC   TWO1STLT+1(2),UTDAYNAM MOVE TWO FIRST POSITION OF DAY N.
+         MVC   FIXEDAY+1(2),UTDD      MOVE DAY NUMBER
+         PACK  WORKPACK,UTDDD      PACK DAY NUMBER OF THE YEAR
+         CLC   UTDAYNAM(2),=C'FR'  TEST IF FRIDAY
+         BE    A1DDD               BRANCH IF YES
+         CLC   UTDAYNAM(2),=C'MO'  TEST IF MONDAY
+         BNE   KWD2                BRANCH IF NO
+         SP    WORKPACK,ONE        -1 TO DAY NUMBER OF THE YEAR
+         B     *+10                SKIP NEXT INSTRUCTION
+A1DDD    AP    WORKPACK,ONE        +1 TO DAY NUMBER OF THE YEAR
+         UNPK  WORKAREA+2(3),WORKPACK+6(2)  UNPACK
+         OI    WORKAREA+4,SIGN     FORCE SIGN TO 'F'
+         MVC   WORKAREA(2),UTYY    MOVE YEAR BEFORE DDD
+         BAL   R4,TESTYEAR         GO TEST YYDDD VALUE
+         UT458 METHOD=EXEC,OPCODE=6,DATE=WORKAREA
+         CLI   UTRTCODE,C'0'       TEST IF DATE VALID
+         BNE   ABEND               PROGRAM LOGIC ERROR IF NO
+         MVC   FXFRORMO+1(2),UTDD  MOVE DAY NUMBER
+KWD2     MVC   WORKAREA(4),PARMDATE MOVE YYMM TO WORK AREA
+         MVC   WORKAREA+4(2),=C'01' MOVE '01' (DD) TO WORK AREA
+         ZAP   WORKAREA+8(2),ONE   ZERO AND ADD ONE TO WORK PACK AREA
+         UT458 METHOD=EXEC,OPCODE=3,DATE=WORKAREA
+KWDL1    CLI   UTRTCODE,C'0'       TEST IF DATE VALID
+         BNE   ABEND               PROGRAM LOGIC ERROR IF NO
+         CLC   PARMDATE(4),UTYYMMDD TEST IF YEAR-MONTH IS THE SAME
+         BNE   ABEND               PROGRAM LOGIC ERROR IF NO
+         CLC   PARMDATE,UTYYMMDD   TEST IF FARM DATE = CURRENT VT458 D.
+         BE    KWD4                BRANCH IF YES
+         EJECT
+***********************************************************************
+*        PROCESS PARM FIELDS  (CONT'D)    FOR KEYWORD 'DATE='         *
+***********************************************************************
+         SPACE 1
+         CLC   UTDAYNAM(2),=C'SA'     TEST IF SATURDAY
+         BE    KWD3                BRANCH IF YES
+         CLC   UTDAYNAM(2),=C'SU'     TEST IF SATURDAY
+         BE    KWD3                BRANCH IF YES
+         AP    WORKAREA+8(2),ONE   ADD ONE TO WORKING DAY COUNT
+KWD3     PACK  WORKAREA+5(3),UTYYDDD  PACK YYDDD
+         AP    WORKAREA+5(3),ONE      ADD ONE TO YYDDD
+         UNPK  WORKAREA(5),WORKAREA+5(3)     UNPACK NEW YYDDD
+         OI    WORKAREA+4,SIGN     FORCE SIGN TO 'F'
+         BAL   R4,TESTYEAR         GO TEST YYDDD VALUE
+         UT458 METHOD=EXEC,OPCODE=6,DATE=WORKAREA
+KSFT1    NOP   KWD5
+         B     KWDL1               PROCESS NEXT DAY
+KWD4     MVI   KSFT1+1,X'F0'       CHANGE SWITCH FIRST TIME
+         UNPK  WORKAREA(3),WORKAREA+8(2) UNPACK WORKING DAY NUMBER
+         OI    WORKAREA+2,SIGN           FORCE SIGN TO 'F'
+         MVC   WORKDAY+1(2),WORKAREA+1   STORE WORKING DAY NUMBER
+         B     KWD3                PROCESS NEXT DAY
+KWD5     CLI   UTRTCODE,C'0'       TEST IF DATE VALIB
+         BNE   ABEND               PROGRAM LOGIC ERROR IF NO
+         CLC   PARMDATE(4),UTYYMMDD TEST IF YEAR-MONTH IS THE SAME
+         BE    KWD3                PROCESS NEXT DAY IF YES
+KWD6     PACK  WORKAREA+5(3),UTYYDDD      PACK YYDDD
+         SP    WORKAREA+5(3),ONE          SUBS ONE TO YYDDD
+         UNPK  WORKAREA(5),WORKAREA+5(3)  UNPACK NEW YYDDD
+         OI    WORKAREA+4,SIGN            FORCE SIGN TO 'F'
+         BAL   R4,TESTYEAR         GO TEST YYDDD VALUE
+         UT458 METHOD=EXEC,OPCODE=6,DATE=WORKAREA
+         CLI   UTRTCODE,C'0'       TEST IF DATE VALID
+         BNE   ABEND               PROGRAM LOGIC ERROR IF NO
+         CLC   UTDAYNAM(2),=C'SA'     TEST IF SATURDAY
+         BE    KWD6                BRANCH IF YES
+         CLC   UTDAYNAM(2),=C'SU'     TEST IF SATURDAY
+         BE    KWD6                BRANCH IF YES
+         CLC   PARMDATE,UTYYMMDD   TEST IF THE DATE SUPPLIED IS THE -
+         BNE   *+10                NO - SKIP N.I./ LAST WORKING DAY -
+         MVC   LASTWD+1(2),=C'00'  YES           / OF THE MONTH
+         UT458 METHOD=DELETE       DELETE MODULE UT458
+         B     ENDPARM
+         EJECT
+***********************************************************************
+*        PROCESS PARM FIELDS  (CONT'D)    FOR KEYWORD 'DATE='         *
+***********************************************************************
+         SPACE 1
+TESTYEAR PACK  WORKPACK(3),WORKAREA(2)  PACK YEAR
+         DP    WORKPACK(3),=P'4'        DIVIDE YEAR BY FOUR
+         CLC   WORKAREA+2(3),=C'000'    TEST IF DDD = 000
+         BNE   TY2                      BRANCH IF NO
+         PACK  WORKPACK(3),WORKAREA(2)  PACK YEAR
+         SP    WORKPACK(3),ONE          -1 TO YEAR
+         UNPK  WORKAREA(5),WORKPACK(3)  UNPACK YEAR
+         OI    WORKAREA+4,SIGN          FORCE SIGN TO 'F'
+         MVC   WORKAREA(2),WORKAREA+3
+         DP    WORKPACK(3),=P'4'        DIVIDE YEAR BY FOUR
+         MVC   WORKAREA+2(3),=C'366'    MOVE 366 TO DDD (LEAP YEAR)
+         CP    WORKPACK+2(1),=P'0'      TEST IF LEAP YEAR
+         BE    ENDTESY                  BRANCH IF YES
+         MVC   WORKAREA+2(3),=C'365'    MOVE 365 TO DDD (NORMAL YEAR)
+         B     ENDTESY
+TY2      CLC   WORKAREA+2(3),=C'366'    TEST DDD > 366
+         BL    ENDTESY                  BRANCH IF NO
+         BH    TY3                      BRANCH IF YES
+         CP    WORKPACK+2(1),=P'0'      TEST IF LEAP YEAR
+         BE    ENDTESY                  BRANCH IF YES
+TY3      MVC   WORKAREA+2(3),=C'001'    MOVE 001 TO DDD
+         PACK  WORKPACK(3),WORKAREA(2)  PACK YEAR
+         AP    WORKPACK(3),ONE          ADD ONE
+         UNPK  WORKPACK+3(5),WORKPACK(3) UNPACK NEW YEAR
+         OI    WORKPACK+7,SIGN          FORCE SIGN TO 'F'
+         MVC   WORKAREA(2),WORKPACK+6   MOVE NEW YY TO WORK AREA
+ENDTESY  BR    R4                       RETURN TO CALLER
+         SPACE 2
+PARMDATE DC    CL6' '              DATE FROM PARM (YYMMDD)
+RELDATE  DC    C'D*#'              RELATIVE DATE TABLE    DAY=DAILY
+TWO1STLT DC    C'W  '              W=WEEKLY : WMO=MONDAY, WTU=TUESDAY,
+*                                  WWE=WEDNESDAY, WTH=THURSDAY,
+*                                  WFR=FRIDAY, WSA=SATURDAY, WSU=SUNDAY
+FIXEDAY  DC    C'F  '              DAY NUMBER
+FXFRORMO DC    C'F*#'
+WORKDAY  DC    C'O  '              WORKING DAY NUMBER
+LASTWD   DC    C'O*#'              LAST WORKING DAY OF THE MONTH
+NORD     EQU   6                   NUMBER OF ELEMENTS IN THE TABLE
+         EJECT
+***********************************************************************
+*        PROCESS PARM FIELDS  (CONT'D)    FOR KEYWORD 'SETON='        *
+***********************************************************************
+         SPACE 1
+KWSETON  LA    R10,6(R10)          INCREMENT POINTER PAST 'SETON='
+         SH    R9,=H'6'            DECREMENT LENGTH FOR 'SETON='
+         BZ    ERINPARM            ERROR IF REST OF LENGTH = ZERO
+         MVI   PROCSW,C'I'         TELL IS SETON KEYWORD
+         SR    R1,R1               ZEROISE R1
+         LA    R2,L'SETONSYN       LOAD LENGTH MAXIMUN OF SYSTEM NAME
+         LR    R3,R10              POINT R3 AT START OF SYSTEM NAME
+LSON1    CLI   0(R3),C'('          TEST FOR '('
+         BE    *+20                BRANCH IF YES
+         LA    R1,1(R1)            INCREMENT LENGTH OF SYSTEM NAME
+         LA    R3,1(R3)            INCREMENT POINTER
+         BCT   R2,LSON1            PROCESS NEXT POSITION
+         B     ERINPARM            ERROR IN PARM
+         LTR   R1,R1               TEST FOR ZERO
+         BZ    ERINPARM            BRANCH IF YES
+         BCTR  R1,0                DECREMENT LENGTH FOR EXECUTE INST.
+         EX    R1,MVCSYSN          EXECUTE MOVE INSTRUCTION
+         B     *+10                SKIP NEXT INSTRUCTION
+MVCSYSN  MVC   SETONSYN(0),0(R10)  STORE SYSTEM NAME
+         LA    R10,2(R1,R10)       GET ADDRESS OF FIRST INDICATOR
+         SR    R9,R1               DECREMENT REST OF LENGTH
+         SH    R9,=H'2'            DECREMENT REST OF LENGTH
+         BZ    ERINPARM            ERROR IF ZERO
+LSON2    LA    R15,2               ZERO AND ADD 2
+         LR    R1,R10              POINT R1 AT START OF NEXT FIELD
+         BAL   R4,NUMERIC          VERIFY FIELD NUMERIC
+         BL    ERINPARM            BLANK
+         BE    *+8                 NUMERIC
+         BH    ERINPARM            NON-NUMERIC
+         PACK  WORKPACK,0(2,R10)   PACK CURRENT INDICATOR
+         CVB   R1,WORKPACK         CONVERT TO BINARY
+         LH    R2,SETONBIN         LOAD NUMBER OF IND.ALREADY STORED
+         LA    R3,SETON30I(R2)     GET ADDRESS FOR NEXT STORE IND.
+         STC   R1,0(R3)            STORE CURRENT INDICATOR
+         AH    R2,=H'1'            ADD ONE TO NUMBER OF IND.ALREADY ST.
+         STH   R2,SETONBIN         SAVE THAT NUMBER
+         SH    R9,=H'2'            SUBTRACT TWO TO REST OF LENGTH
+         BCT   R9,*+16             TEST IF LAST POSITION
+         CLI   2(R10),C')'         YES - TEST IF LAST POS. CONTAIN ')'
+         BE    ENDPARM                   BRANCH IF YES
+         B     ERINPARM                  ERROR IF NO
+         CLI   2(R10),C','         NO  - TEST FOR COMMA
+         BNE   ERINPARM                  ERROR IF NO
+         LA    R10,3(R10)          INCREMENT POINTER
+         B     LSON2               PROCESS NEXT INDICATOR
+SETONBIN DC    H'0'                FOR SETON KEYWORD IN PARM NO.OF IND.
+SETONSYN DC    CL8' '               SYSTEM NAME
+SETON30I DC    30X'00'              WORK AREA FOR 30 INDICATORS
+         EJECT
+***********************************************************************
+*        PROCESS PARM FIELDS  (CONT'D)    FOR KEYWORD 'PUNCH='        *
+***********************************************************************
+         SPACE 1
+KWPUNCH  LA    R10,6(R10)          INCREMENT POINTER PAST 'PUNCH='
+         SH    R9,=H'6'            DECREMENT LENGTH FOR 'PUNCH='
+         BZ    ERINPARM            ERROR IF REST OF LENGTH = ZERO
+         CLI   10(R10),C'('        TEST IF '(' AFTER DATE-TIME
+         BNE   ERINPARM            BRANCH IF NO
+         MVC   DATETIME,0(R10)     STORE DATE-TIME RE-LOAD KEY
+         LA    R10,11(R10)         INCREMENT POINTER
+         SH    R9,=H'11'           DECREMENT LENGTH
+         BZ    ERINPARM            ERROR IF LENGTH = ZERO
+         CH    R9,=H'21'           TEST IF LENGTH > 21
+         BH    ERINPARM            BRANCH IF YES
+         BCTR  R9,0                DECREMENT LENGTH
+         LA    R1,0(R9,R10)        TEST IF LAST POSITION
+         CLI   0(R1),C')'                OF PARM = ')'
+         BNE   ERINPARM            BRANCH IF NO
+         SR    R1,R1               ZEROISE R1
+         LA    R2,L'JOBNAME+1      LOAD LENGTH MAXIMUN OF JOB NAME +1
+         LR    R3,R10              LOAD VALUE R10 INTO R3
+LPUN1    CLI   0(R3),C','          TEST FOR COMMA
+         BE    MJNP                BRANCH IF YES
+         CLI   0(R3),C')'          TEST FOR ')'
+         BNE   *+12                BRANCH IF NO
+         AH    R9,=H'1'            ADD ONE TO REST OF LENGTH
+         B     MJNP                BRANCH IF YES
+         LA    R1,1(R1)            INCREMENT POINTER
+         LA    R3,1(R3)            INCREMENT LENGTH
+         BCT   R2,LPUN1            PROCESS NEXT POSITION
+         B     ERINPARM            ERROR IN PARM
+MJNP     LTR   R1,R1               TEST IF LENGTH = ZERO
+         BZ    ERINPARM            BRANCH IF YES
+         BCTR  R1,0                DECREMENT LENGTH FOR EXECUTE INST.
+         EX    R1,MOVEJOBN         EXECUTE MOVE INSTRUCTION
+         LA    R10,2(R1,R10)       POINT AF FIRST RECORD NUMBER
+         SR    R9,R1               DECREMENT LENGTH
+         SH    R9,=H'2'            DECREMENT LENGTH
+         BZ    TPP                 BRANCH IF ZERO
+         LA    R2,6                ZERO AND ADD 6
+         SR    R15,R15             ZEROISE R15
+         LR    R1,R10              POINT R1 AT START OF NEXT FIELD
+LPUN2    CLI   0(R1),C','          TEST FOR COMMA
+         BE    TILZ                BRANCH IF YES
+         CLI   0(R1),C')'          TEST FOR ')'
+         BNE   *+12                BRANCH IF NO
+         EJECT
+***********************************************************************
+*        PROCESS PARM FIELDS  (CONT'D)    FOR KEYWORD 'PUNCH='        *
+***********************************************************************
+         SPACE 1
+         AH    R9,=H'1'            ADD ONE TO REST OF LENGTH
+         B     TILZ                BRANCH IF YES
+         LA    R15,1(R15)          INCREMENT LENGTH
+         LA    R1,1(R1)            INCREMENT POINTER
+         BCT   R2,LPUN2            PROCESS NEXT POSITION
+         B     ERINPARM            ERROR IN PARM
+TILZ     LTR   R15,R15             TEST IF LENGTH OF THIS FIELD = 0
+         BZ    ERINPARM            BRANCH IF YES
+         LR    R1,R10              POINT R1 AT START OF FIELD
+         BAL   R4,NUMERIC          VERIFY FIELD NUMERIC
+         BL    ERINPARM            BLANK
+         BE    *+8                 NUMERIC
+         BH    ERINPARM            NO-NUMERIC
+         BCTR  R15,0               DECREMENT LENGTH FOR PACK INSTR.
+         STC   R15,PACKPN1+1       STORE LENGTH FOR PACK INSTRUCTION
+         OI    PACKPN1+1,X'70'     FORCE LENGTH 1 OF NEXT INSTR. TO '7'
+PACKPN1  PACK  WORKPACK,0(0,R10)   PACK START RECORD NUMBER
+         CVB   R1,WORKPACK         CONVERT BINARY
+         STH   R1,PUNFROM           AND STORE
+         LA    R10,2(R15,R10)      GET ADDRESS OF NEXT FIELD
+         LR    R1,R10              POINT R1 AT START OF FIELD
+         SR    R9,R15              DECREMENT LENGTH
+         SH    R9,=H'2'            DECREMENT LENGTH
+         BZ    TPP                 BRANCH IF REST OF LENGTH = ZERO
+         CH    R9,=H'5'            TEST IF REST OF LENGTH > 5
+         BH    ERINPARM            BRANCH IF YES
+         LR    R15,R9              LOAD REST OF LENGTH INTO R15
+         BAL   R4,NUMERIC          VERIFY FIELD NUMERIC
+         BL    ERINPARM            BLANK
+         BE    *+8                 NUMERIC
+         BH    ERINPARM            NO-NUMERIC
+         BCTR  R15,0               DECREMENT LENGTH FOR PACK INSTR.
+         STC   R15,PACKPN2+1       STORE LENGTH FOR PACK INSTRUCTION
+         OI    PACKPN2+1,X'70'     FORCE LENGTH 1 OF NEXT INSTR. TO '7'
+PACKPN2  PACK  WORKPACK,0(0,R10)   PACK LAST  RECORD NUMBER
+         CVB   R1,WORKPACK         CONVERT BINARY
+         STH   R1,PUNTO             AND STORE
+TPP      TM    PUNCHSW,DDPRES      TEST IF SYSPUNCH DD PRESENT
+         BNO   *+16                BRANCH IF NO
+         NI    SYSUT3SW,FF-DDINT   SET OFF 'INTEREST' SWITCH FOR SYSUT3
+         MVI   PROCSW,C'P'         TELL IS PUNCH PROCEDURE
+         B     RESAREL
+         MVC   5(L'LINE36,R5),LINE36    MOVE ERROR MESSAGE TO PRINT L.
+         BAL   R4,PRINT                  AND WRITE
+         WTO   'ROBIN    ***** NO SYSPUNCH STATEMENT *****'
+         WTO   'ROBIN    ***** PROCESSING BYPASSED   *****'
+         MVC   COMPCODE,COND16          SET CONDITION CODE TO 16
+         B     PROCBYP
+         EJECT
+***********************************************************************
+*        PROCESS PARM FIELDS   ( CONT'D )                             *
+*                                                                     *
+*        FOR KEYWORDS 'RESTART=' AND 'RELOAD='                        *
+***********************************************************************
+         SPACE 1
+KWRSTART LA    R10,8(R10)          INCREMENT POINTER PAST 'RESTART='
+         SH    R9,=H'8'            DECREMENT LENGTH FOR 'RESTART='
+         BZ    ERINPARM            ERROR IF REST OF LENGTH = ZERO
+         CH    R9,=H'8'            TEST IF REST OF LENGTH > 8
+         BH    ERINPARM            BRANCH IF YES
+         BCTR  R9,0                DECREMENT ONE FOR EXECUTE INSTRUCT
+         EX    R9,MOVEJOBN         EXECUTE MOVE INSTRUCTION
+         B     *+10                SKIP NEXT INSTRUCTION
+MOVEJOBN MVC   JOBNAME(0),0(R10)   MOVE JOBNAME
+         MVI   PROCSW,C'S'         TELL IS A RESTART PROCEDURE
+         B     RESAREL
+         SPACE 2
+KWRELOAD LA    R10,7(R10)          INCREMENT POINTER PAST 'RELOAD='
+         SH    R9,=H'7'            DECREMENT LENGTH FOR 'RELOAD='
+         BZ    ERINPARM            ERROR IF REST OF LENGTH = ZERO
+         CLI   10(R10),C'('        TEST IF '(' AFTER DATE TIME
+         BNE   ERINPARM            BRANCH IF NO
+         MVC   DATETIME,0(R10)     STORE DATE-TIME RE-LOAD KEY
+         LA    R10,11(R10)         INCREMENT POINTER
+         SH    R9,=H'11'           DECREMENT LENGTH
+         BZ    ERINPARM            ERROR IF LENGTH = ZERO
+         CH    R9,=H'9'            TEST IF LENGTH > 9
+         BH    ERINPARM            BRANCH IF YES
+         BCTR  R9,0                DECREMENT LENGTH
+         LA    R1,0(R9,R10)        TEST IF LAST POSITION OF PARM = ')'
+         CLI   0(R1),C')'               OF PARM =')'
+         BNE   ERINPARM            BRANCH IF NO
+         BCTR  R9,0                DECREMENT LENGTH FOR EXECUTE INST.
+         EX    R9,MOVEJOBN         EXECUTE MOVE INSTRUCTION
+         MVI   PROCSW,C'R'         TELL IS A RESTART PROCEDURE
+         NI    PUNCHSW,FF-DDINT    SET OFF 'INTEREST' SWITCH FOR SYSPUN
+         B     RESAREL
+         EJECT
+***********************************************************************
+*        PROCESS PARM FIELDS   ( CONT'D )                             *
+***********************************************************************
+         SPACE 1
+RESAREL  NI    SYSINSW,FF-DDINT    SET OFF 'INTEREST' SWITCH FOR SYSIN
+         NI    SYSUT1SW,FF-DDINT   SET OFF 'INTEREST' SWITCH FOR SYSUT1
+         MVC   SYSUT2SW+12(8),=C'INPUT   '   TELL SYSUT2 IS A INPUT FIL
+         LA    R2,SYSUT2SW         POINT AT SYSUT2 TABLE ENTRY
+         BAL   R4,READJFCB         GO READ JFCB
+         BAL   R4,OPENDS           GO OPEN DATA SETS
+         BAL   R4,PRINIT           GO WRITE TO SYSPRINT DD'S SUPPLIED
+         BAL   R4,TESTUT2          GO TEST IF SYSUT2 PRESENT
+         B     READUT2             GO READ SYSUT2
+ERINPARM MVC   5(L'LINE29,R5),LINE29    MOVE ERROR MESSAGE TO PRINT L.
+         BAL   R4,PRINT                  AND WRITE
+         WTO   'ROBIN    **** ERROR(S) IN PARM OF EXEC CARD *****'
+         WTO   'ROBIN    **** PROCESSING BYPASSED           *****'
+         MVC   COMPCODE,COND16     SET CONDITION CODE TO 16
+         B     PROCBYP
+ENDPARM  EQU   *
+         SPACE 3
+***********************************************************************
+*        OPEN DATA SETS                                               *
+***********************************************************************
+         SPACE 1
+         LA    R4,OPEND            FOR GOOD CONTINUATION
+OPENDS   SUBIN SAVE=(R4)
+         LA    R10,MAXDS           ESTABLISH LOOP
+         LA    R2,DCBTABLE         POINT AT AD-CON TABLE
+LOOP1    BAL   R4,OPEN             OPEN DATA SETS
+         LA    R2,DCBNTRY(R2)      POINT AT NEXT TABLE ENTRY
+         BCT   R10,LOOP1           PROCESS NEXT DATA SET
+         SUBOUT RESTORE=(R4)       RETURN TO CALLER
+OPEND    EQU   *
+         SPACE 2
+***********************************************************************
+*        RESERVE CORE FOR ROBIN TABLES BEFORE CALL THE SORT           *
+***********************************************************************
+         SPACE 1
+*JNOLS*  MVI   NOKTORES,X'00'      SET FIRST BYTE TO ZERO
+*JNOLS*  L     R0,NOKTORES         LOAD LENGTH TO BE RESERVED
+*JNOLS*  ST    R0,LHCORES          STORE THIS LENGTH
+*JNOLS*GETMAIN R,LV=(0)            RESERVE SPACE CORE
+*JNOLS*  ST    R1,ADCORES          SAVE ADDRESS
+*JNOLS*  XC    NOKTORES(4),NOKTORES ZEROISE NO K TO RES. OF SORT WA
+         EJECT
+***********************************************************************
+*        PRINT INITIATION MESSAGES IF SYSPRINT DD PRESENT.            *
+***********************************************************************
+         SPACE 1
+         LA    R4,TESTIN           FOR GOOD CONTINUATION
+PRINIT   SUBIN SAVE=(R4)
+         MVI   0(R5),SPCE2AFT      ESTABLISH DOUBLE SPACE
+         MVC   5(L'LINE15,R5),LINE15 ADD SUB-HEADING
+         BAL   R4,PRINT            WRITE SUB-HEADING LINE
+         LA    R10,MAXDS           ESTABLISH DETAIL LOOP
+         LA    R2,DCBTABLE         POINT AT AD-CON TABLE
+LOOP2    TM    0(R2),DDPRES        TEST IF DD STATEMENT PRESENT
+         BZ    *+14                BRANCH IF NO
+         MVC   10(8,R5),4(R2)      ADD DD NAME TO PRINT LINE
+         BAL   R4,PRINT            PRINT DETAIL LINE
+         LA    R2,DCBNTRY(R2)      POINT TO NEXT TABLE ENTRY
+         BCT   R10,LOOP2           PROCESS NEXT ENTRY
+         MVI   0(R5),SPCE2AFT      ESTABLISH DOUBLE BLANK LINES
+         BAL   R4,PRINT             AND WRITE THEM
+         SUBOUT RESTORE=(R4)       RETURN TO CALLER
+         SPACE 3
+***********************************************************************
+*        VERIFY THAT SYSIN DD STATEMENT EXISTS                        *
+***********************************************************************
+         SPACE 1
+TESTIN   TM    SYSINSW,DDPRES      TEST IF SYSIN DD STATEMENT PRESENT
+         BO    TESTUT1             BRANCH IF YES
+         MVC   COMPCODE,COND16     SET CONDITION CODE TO 16
+         WTO   'ROBIN    ***** NO SYSIN STATEMENT  *****'
+         WTO   'ROBIN    ***** PROCESSING BYPASSED *****'
+         MVC   5(L'LINE16,R5),LINE16 ADD ERROR MESSAGE
+         BAL   R4,PRINT            WRITE ERROR MESSAGE
+PROCBYP  MVI   0(R5),SPCE2AFT      ESTABLISH DOUBLE SPACE
+         MVC   5(L'LINE17,R5),LINE17 TELL OF INACTION
+         BAL   R4,PRINT            WRITE MESSAGE
+         B     PRINTCD3            PRINT CONDITION CODE
+         EJECT
+***********************************************************************
+*        VERIFY THAT SYSUT1 DD STATEMENT EXISTS,                      *
+*         IF NO VERIFY THAT PARM OF EXEC CARD EXISTS.                 *
+***********************************************************************
+         SPACE 1
+TESTUT1  TM    SYSUT1SW,DDPRES     TEST IF SYSUT1 DD STATEMENT PRESENT
+         BO    TESTUT1E            BRANCH IF YES
+         CLC   PARMLGTH,ZEROWORD   TEST IF PARM OF EXEC CARD PRESENT
+         BNE   TESTUT1E            BRANCH IF YES
+         MVC   COMPCODE,COND16     SET CONDITION CODE TO 16
+         WTO   'ROBIN    ***** NO SYSUT1 STATEMENT      *****'
+         WTO   'ROBIN    ***** AND NO PARM OF EXEC CARD *****'
+         WTO   'ROBIN    ***** PROCESSING BYPASSED      *****'
+         MVC   5(L'LINE18,R5),LINE18 MOVE ERROR MESSAGE
+         BAL   R4,PRINT             WRITE ERROR MESSAGE
+         MVC   5(L'LINE19,R5),LINE19 MOVE ERROR MESSAGE
+         BAL   R4,PRINT             WRITE ERROR MESSAGE
+         B     PROCBYP
+TESTUT1E EQU   *
+         SPACE 3
+***********************************************************************
+*        VERIFY THAT SYSUT2 DD STATEMENT EXISTS                       *
+***********************************************************************
+         SPACE 1
+         LA    R4,TESTSORT         FOR GOOD CONTINUATION
+TESTUT2  SUBIN SAVE=(R4)
+         TM    SYSUT2SW,DDPRES     TEST IF SYSUT2 DD STATEMENT PRESENT
+         BO    TESTUT2X            BRANCH IF NO
+         MVC   COMPCODE,COND16     SET CONDITION CODE TO 16
+         WTO   'ROBIN    ***** NO SYSUT2 STATEMENT      *****'
+         WTO   'ROBIN    ***** PROCESSING BYPASSED      *****'
+         MVC   5(L'LINE13,R5),LINE13 MOVE ERROR MESSAGE
+         BAL   R4,PRINT               AND WRITE
+         B     PROCBYP
+TESTUT2X SUBOUT RESTORE=(R4)       RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        VERIFY THAT MANDATORY SORT DD STATEMENTS ARE PRESENT.        *
+***********************************************************************
+         SPACE 1
+TESTSORT LA    R10,SORTDS          ESTABLISH LOOP
+         SR    R3,R3               ZEROISE COUNTER
+         LA    R2,SORTABLE         POINT AT SORT DD TABLE
+         BAL   R4,TESTIOT          GO TEST IF DD STATEMENT PRESENT
+         LA    R3,1(R3)            INCREMENT 'FOUND' COUNT
+         LA    R2,NTRYSIZS(R2)     POINT AT NEXT TABLE ENTRY
+         BCT   R10,*-12            VERIFY NEXT DD STATEMENT
+         LA    R10,SORTDS          SET UP VALUE FOR COMPARE
+         CR    R10,R3              TEST IF ALL STATEMENTS SUPPLIED
+         BE    TSTSRTND            BRANCH IF YES
+         MVC   5(L'LINE20,R5),LINE20 TELL OF INSUFFICIENT DD
+         BAL   R4,PRINT            WRITE THE MESSAGE
+         MVC   5(L'LINE21,R5),LINE21 ADD 'MISSING' MESSAGE
+         BAL   R4,PRINT            WRITE THE MESSAGE
+         LA    R2,SORTABLE         POINT AT START OF TABLE
+LOOP3    TM    0(R2),DDPRES        TEST IF DD STATEMENT PRESENT
+         BO    *+14                BRANCH IF YES
+         MVC   10(8,R5),4(R2)      MOVE DD-NAME TO SYSPRINT
+         BAL   R4,PRINT            PRINT THE NAME
+         LA    R2,NTRYSIZS(R2)     POINT TO NEXT TABLE ENTRY
+         BCT   R10,LOOP3           PROCESS NEXT ENTRY
+         WTO   'ROBIN    ***** SORT DD STATEMENT(S) MISSING *****'
+         MVC   COMPCODE,COND16     SET CONDITION CODE TO 16
+         B     PROCBYP
+         SPACE 1
+TSTSRTND EQU   *
+         TITLE 'INITIALISE SORT CONTROL INFORMATION'
+***********************************************************************
+*        SET INPUT RECORD LENGTH IN CONTROL FIELDS                    *
+***********************************************************************
+         SPACE 1
+         TM    SYSUT1SW,DDPRES     TEST IF SYSUT1 DD IS PRESENT
+         BZ    MDL80               BRANCH IF NO
+         LA    R2,SYSUT1           POINT R2 AT SYSUT1 DCB
+         USING IHADCB,R2           ESTABLISH DCB ADDRESSABILITY
+         LH    R10,DCBLRECL        RETRIEVE INPUT RECORD LENGTH
+         DROP  R2                  DROP DCB ADDRESSABILITY
+         LA    R9,L'SRECDATA       LOAD LENGTH OF SRECDATA
+         CR    R10,R9              TEST IF LRECL > L' OF SRECDATA
+         BNH   *+6                 BRANCH IF NO
+         LR    R10,R9              YES - LOAD LENGTH MAXIMUN
+         B     *+8                 SKIP NEXT INSTRUCTION
+MDL80    LA    R10,80              LOAD DEFAULT LRECL
+         LA    R9,80               LOAD DEFAULT LENGTH
+         CR    R10,R9              TEST IF LRECL < L' OF ST03DATA
+         BNL   *+6                 BRANCH IF NO
+         LR    R10,R9              YES - LOAD LENGTH MINIMUN
+         BCTR  R10,0               DECREMENT FOR INSTRUCTION LONGTH
+         STC   R10,MOVEDATA+1      SET LGTH FOR MOVE TO INTERMEDIATE
+         LA    R10,1(,R10)         RESTORE TO ORIGINAL LENGTH
+         CVD   R10,WORKPACK        CONVERT LENGTH TO PACKED DECIMAL
+         MVC   WORKEDIT,EDITPATN   SET UP 999 EDIT PATTERN
+         ED    WORKEDIT,WORKPACK+6 EDIT INPUT RECORD LENGTH
+         OI    WORKEDIT+1,X'F0'    ZEROISE LRADING BLANK
+         MVC   RECL1(3),WORKEDIT+1 SET UP LENGTH IN RECORD STATEMENT
+         MVC   RECL3(3),WORKEDIT+1  IN INPUT & OUTPUT LENGTH FIELDS
+         LA    R10,SRECDATA-SORTRECD(,R10) ADD LGTH OF PREFIX
+         CVD   R10,WORKPACK        PACK LENGTH OF INTERMEDIATE AREA
+         MVC   WORKEDIT,EDITPATN   SET UP 999 EDIT PATTERN
+         ED    WORKEDIT,WORKPACK+6 EDIT INTERMEDIATE RECORD LENGTH
+         OI    WORKEDIT+1,X'F0'    ZEROISE LRADING BLANK
+         MVC   RECL2(3),WORKEDIT+1 SET INT LGTH IN RECORD STATEMENT
+         ST    R10,LENGSREC        STORE LENGTH FOR FREEMAIN
+         LR    R0,R10              SET INTERMEDIATE LENGTH IN R0
+       GETMAIN R,LV=(0)            ACQUIRE CORE FOR INTERMEDIATE AREA
+         LR    R7,R1               PRESERVE AREA ADDRESS
+         XC    0(SRECDATA-SORTRECD,R7),0(R7) ZEROISE KEY AREA
+         ZAP   SRECRNO-SORTRECD(L'SRECRNO,R7),ZERO ZEROISE RECORD NO
+         CLI   NOLISTSW,ON         TEST IF IS NEED TO PRINT CONTROL C.
+         BE    *+14                BRANCH IF NO
+         MVI   0(R5),SPCE2AFT      ESTABLISH DOUBLE SPACE
+         MVC   5(L'LINE07,R5),LINE07 SUB-HEADING TO PRINT LINE
+         TITLE 'INVOKE THE SORT'
+***********************************************************************
+*        INVOKE THE SORT                                              *
+***********************************************************************
+         SPACE 1
+         STM   R5,R12,40(R13)      PRESERVE  ROBIN'S REGISTERS
+*                                   (SOME VERSIONS OF THE SORT DO NOT)
+         LA    R1,SORTPARM         ESTABLISH PARAMETER LINKAGE
+         LINK  EP=SORT             DYNAMICALLY INVOKE THE SORT
+         LTR   R15,R15             TEST FOR 0 COMPLETION CODE
+         BZ    ENDSORT             BRANCH IF ZERO
+         CH    R15,COMPCODE        TEST IF SORT'S CC >  ROBIN'S
+         BNH   *+8                 BRANCH IF NOT
+         STH   R15,COMPCODE        SAVE THE SORT'S COMPETION CODE
+         MVC   5(L'LINE06,R5),LINE06 SET UP ERROR MESSAGE
+         BAL   R4,PRINT            TELL OF BAD SORT
+         B     PRINTCD3            GO PRINT THE COMPLETION CODE
+ENDSORT  LA    R2,SYSUT2SW         POINT AT SYSUT2 DCB TABLE ENTRY
+         BAL   R4,CLOSE            CLOSE SYSUT2
+OPENUT2  LA    R2,SYSUT2SW         POINT AT SYSUT2 DCB TABLE ENTRY
+         MVC   12(8,R2),=C'INPUT   ' INDICATE IS AN INPUT FILE NOW
+         BAL   R4,READJFCB         GO READ JFCB
+         MVC   MSGRES+22(10),DATETIME MOVE DATA AND TIME TO OPER CONSOL
+MSGRES   WTO   'ROBIN    ****            ****'
+         BAL   R4,OPEN             OPEN SYSUT2
+         B     READUT2             GO READ SYSUT2 RECORD
+         TITLE 'E15 SORT EXIT'
+***********************************************************************
+*        SORT EXIT E15                                                *
+***********************************************************************
+         SPACE 1
+         USING *,R15               ESTABLISH TEMPORATY ADDRESSABILITY
+E15      SUBIN ,                   ENTER E15 SORT EXIT
+         STM   R14,R12,12(R13)     SAVE SORT'S REGISTERS
+         ST    R13,E15R13S2        SAVE SORT'S SAVE AREA ADDRESS
+         L     R13,E15R13S1        RETRIEVE  ROBIN'S SAVE AREA ADDRESS
+         MVC   E15REGSV(64),12(R13) SAVE REGS FOR RET. FROM SORT
+         LM    R5,R12,40(R13)      RETRIEVE  ROBIN'S REGISTERS
+         B     E15CONT             BRANCH AROUND SAVE AREAS
+E15R13S1 DC    A(SAVEFLD)          SAVE AREA FOR  ROBIN'S R13
+E15R13S2 DS    F                   SAVE AREA FOR SORT'S R13
+E15REGSV DS    16F                 REGS SAVE AREA FOR RET. FROM SORT
+E15CONT  EQU   *                   CONTINUE
+         DROP  R15                 DROP TEMPORARY ADDRESSABILITY
+         USING SORTRECD,R7         INTERMEDIATE AREA ADDRESSABILITY
+         MVI   SRECDATA,BLANK      CLEAR SRECDATA
+         MVC   SRECDATA+1(L'SRECDATA-1),SRECDATA
+*JNOLS*  NOP   RIN                 SWITCH FIRST
+*JNOLS*  MVI   *-3,X'F0'                   TIME
+*JNOLS*  L     R0,LHCORES          LOAD LENGTH  OF SPACE CORE RESERVED
+*JNOLS*  L     R1,ADCORES          LOAD ADDRESS OF SPACE CORE RESERVED
+*JNOLS*REEMAIN R,LV=(0),A=(1)      FREE SPACE CORE RESERVED
+         SPACE 5
+         EJECT
+***********************************************************************
+*        SORT EXIT E15   ( CONT'D )                                   *
+*                                                                     *
+*        READ ROBIN CONTROL CARDS FROM SYSIN,.                        *
+***********************************************************************
+         SPACE 1
+RIN      NOP   RUT1
+READCC   CLI   NOLISTSW,ON         TEST IF IS NEED TO PRINT CONTROL C.
+         BE    *+8                 BRANCH IF NO
+         BAL   R4,PRINT            PRINT SUB-HEADING / CONTROL CARDS
+         BAL   R4,GET              READ AND PRINT CONTROL CARDS
+         USING STCARD,R6           ESTABLISH ADDRESSABILITY
+         CLC   STCARD(4),=C'ST99'  TEST FOR CARD COMMENTS
+         BE    READCC              BRANCH IF YES
+         CLC   ST01ID,=C'ST01'     TEST FOR ST01 CARD
+         BE    CCST01              BRANCH IF YES
+         CLC   ST02ID,=C'ST02'     TEST FOR ST02 CARD
+         BE    CCST02              BRANCH IF YES
+         CLC   ST03ID,=C'ST03'     TEST FOR ST03 CARD
+         BE    CCST03              BRANCH IF YES
+         MVC   91(L'LINE22,R5),LINE22 MOVE ERROR MESSAGE
+         CLC   COMPCODE,COND8      TEST IF CONDITION CODE > 8
+         BH    *+10                BRANCH IF YES
+         MVC   COMPCODE,COND8      SET CONDITION CODE TO 8
+         B     READCC              READ NEXT CONTROL CARD
+         EJECT
+***********************************************************************
+*        SORT EXIT E15   (CONT'D)                                     *
+*                                                                     *
+*        CREATE A TABLE ELEMENT EACH TIME THAT A ST01 CARD IS READ.   *
+*        THE ARGUMENT OF THIS TABLE IS THE SYSTEM NAME.               *
+***********************************************************************
+         SPACE 1
+CCST01   NOP   *+16
+         LA    R8,TABLEST1         POINT AT 1ST POINTER SAVE AREA ST01
+         MVI   CCST01+1,X'F0'      CHANGE SWITCH FIRST TIME
+         B     *+12                SKIP NEXT INSTRUCTION
+         BAL   R4,TST1ALRE         GO TEST IF THIS SYSTEM NAME IS
+*                                   ALREADY IN TABLE ST01
+         L     R8,BATCHST1         POINT AT START OF LAST ELEMENT -
+         MVC   SRECSYSN,ST01SYSN   STORE CURRENT SYSTEM N. /GETMAINED
+         MVC   1(8,R5),ST01SYSN    MOVE SYSTEM NAME TO PRINT LINE
+         MVI   SWPREF,OFF          SET OFF SWITCH FOR PREFIX ADD ONE
+         LA    R0,NTRYLST1         GET LENGTH OF REQUIRED ELEMENT
+         L     R1,TBSSIZE          LOAD LAST TABSIZE VALUE
+         LA    R1,NTRYLST1(R1)     ADD LENGTH OF NEXT GETMAIN REQUEST
+         ST    R1,TBSSIZE          STORE NEW TABSIZE VALUE
+         GETMAIN R,LV=(0)          GET CORE TO BUILD ELEMENT
+         USING ST1NTRY,R8          ESTABLISH TABLE ADDRESSABILITY
+         ST    R1,NTRYST1          POINT PREVIOUS ELEMENT AT THIS ONE
+         ST    R1,BATCHST1         INITIALISE 'LAST ST01 POINTER'
+         LR    R8,R1               MAKE NEW ELEMENT ADDRESSABLE
+         XC    0(NTRYLST1,R8),0(R8) ZEROISE NEW ELEMENT
+         MVC   NTRYNSYS,ST01SYSN   MOVE SYSTEM NAME TO TABLE ST01
+         LH    R10,SRECPSYS        LOAD CURRENT PREF.OF-SYSNA
+         LA    R10,1(R10)          ADD ONE
+         STH   R10,SRECPSYS        STORE NEW PREF.OF-SYSNA
+         OI    NTRY100I,X'80'      SET ON INDICATOR 00
+         B     READCC              READ NEXT CONTROL CARD
+         DROP  R8
+         EJECT
+***********************************************************************
+*        SORT EXIT E15   ( CONT'D )                                   *
+*                                                                     *
+*        TEST IF SYSTEM NAME ALREADY IN THE TABLE ST01                *
+***********************************************************************
+         SPACE 1
+TST1ALRE SUBIN SAVE=(R4)
+         LA    R8,TABLEST1         POINT AT 1ST POINTER SAVE AREA ST01
+LOOP4    LTR   R8,R8               TEST IF NO MORE ELEMENT
+         BZ    EST1ALRE            BRANCH IF YES
+         CLC   ST01SYSN,4(R8)      TEST IF THIS SYSTEM NAME IS ALREADY-
+         BE    *+12                BRANCH IF YES        / IN THE TABLE
+         L     R8,0(R8)            LOAD POINTER OF NEXT ELEMENT
+         B     LOOP4               PROCESS NEXT ELEMENT
+         CLC   COMPCODE,COND8      TEST IF CONDITION CODE > 8
+         BH    *+10                BRANCH IF YES
+         MVC   COMPCODE,COND8      SET CONDITION CODE TO 8
+LOOP5    MVC   91(L'LINE23,R5),LINE23 MOVE ERROR MESSAGE
+         BAL   R4,PRINT            PRINT CONTROL CARD + ERROR MESSAGE
+         BAL   R4,GET              READ AND PRINT CONTROL CARD
+         CLC   ST01ID,=C'ST01'     TEST FOR ST01 CARD
+         BE    CCST01              BRANCH IF YES
+         B     LOOP5               READ NEXT CONTROL CARD
+EST1ALRE SUBOUT RESTORE=(R4)       RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        SORT EXIT E15  ( CONT'D )                                    *
+*                                                                     *
+*        CREATE AN INTERNAL RECORD FOR EACH ST02 FORMAT 2 OR 3        *
+*        CARD READ.                                                   *
+***********************************************************************
+         SPACE 1
+CCST02   NOP   *+20
+         LA    R8,TABLEST2         POINT AT 1ST POINTER SAVE AREA ST02
+         ST    R8,BATCHST2
+         MVI   CCST02+1,X'F0'      CHANGE SWITCH FIRST TIME
+         B     *+8                 SKIP NEXT INSTRUCTION
+         L     R8,BATCHST2         POINT AT START OF LAST ELEMENT
+         MVI   SRECFLAG,X'00'      ZEROISE SRECFLAG
+         CLI   SWPREF,ON           TEST IF PREFIX SWITCH IS ON
+         BE    *+20                BRANCH IF NO
+         LH    R10,SRECPREF        LOAD CURRENT PREFIX NUMBER
+         LA    R10,1(R10)          ADD ONE
+         STH   R10,SRECPREF        STORE NEW PREFIX NUMBER
+         MVI   SWPREF,ON           SET ON PREFIX SWITCH
+         CLC   ST02PBCI(10),=C'+ IF DATE=' TEST FOR 'ST02+ IF DATE='
+         BNE   *+18                BRANCH IF NOT FOUND
+         MVI   SRECDATA,X'64'      TELL DEPEND OF THE DATE
+         MVC   SRECDATA+1(3),ST02PBCI+10     MOVE RELATIVE DATE
+         B     CMS
+         CLC   ST02PBCI(15),=C'+ IF INDICATOR=' TEST FOR 'ST02+ IF IND'
+         BNE   NSCC                BRANCH IF NOT FOUND
+         LA    R1,ST02PBCI+15      POINT R1 AT INDICATOR
+         LA    R15,2               SET R15 TO LENGTH OF A INDICATOR N.
+         BAL   R4,NUMERIC          VERIFY FIELD NUMERIC
+         BL    *+18                BLANK
+         BE    *+14                NUMERIC
+         MVC   91(L'LINE28,R5),LINE28   TELL IS NON-NUMERIC
+         B     STCT8               GO SET CC TO 8
+         PACK  WORKPACK,ST02PBCI+15(2)  PACK INDICATOR N.
+         CVB   R1,WORKPACK         CONVERT TO BINARY
+         STC   R1,SRECDATA         STORE IND.N.
+         CLC   ST02PBCI+18(5),=C'IS ON' TEST IF REQUEST IND. FOR 'ON'
+         BE    CMS                 BRANCH IF YES
+         CLC   ST02PBCI+18(5),=C'IS OFF' TEST IF REQUEST IND. FOR 'OFF'
+         BNE   *+12
+         MVI   SRECDATA+1,C'N'     TELL REQUEST FOR OFF
+         B     CMS
+         MVC   91(L'LINE40,R5),LINE40 MOVE MSG ERROR TO PRINT LINE
+         MVI   119(R5),C'2'   MODIFY MSG
+STCT8    CLC   COMPCODE,COND8      TEST IF CONDITION CODE +8
+         BH    *+10                BRANCH IF YES
+         MVC   COMPCODE,COND8      SET CONDITION CODE TO 8
+         B     READCC              GO READ NEXT CONTROL CARD
+         EJECT
+***********************************************************************
+*        SORT EXIT E15 (CONT'D)     ST02                              *
+*                                                                     *
+*        CREATE A TABLE ELEMENT EACH TIME A ST02 FORMAT 1 CARD IS     *
+*         READ. THE ARGUMENTS OF THIS TABLE ARE -                     *
+*                                                                     *
+*              1. THE SYSTEM OF THE LAST ST01 CARD.                   *
+*              2. THE CARD IDENTIFIER SPECIFIED IN THIS ST02 CARD.    *
+***********************************************************************
+         SPACE 1
+CMS      MVI   SRECSEQ,X'FF'
+         AP    SRECRNO,ONE         ADD ONE TO SRECRNO
+         MVI   SRECBNO,X'FF'       MOVE HIGH VALUE AT 1ST POS. OF
+         MVC   SRECBNO+1(L'SRECBNO-1),SRECBNO AND PROPAGANTE THROUGH
+         B     E15EXIT
+NSCC     EQU   *
+         LA    R0,NTRYLST2         GET LENGTH OF REQUIRED ELEMENT
+         L     R1,TBSSIZE          LOAD LAST TABSIZE VALUE
+         LA    R1,NTRYLST2(R1)     ADD LENGTH OF NEXT GETMAIN REQUEST
+         ST    R1,TBSSIZE          STORE NEW TABSIZE VALUE
+         GETMAIN R,LV=(0)          GET CORE TO BUILD ELEMENT
+         USING ST2NTRY,R8          ESTABLISH TABLE ADDRESSBILITY
+         ST    R1,NTRYST2          POINT PREVIOUS ELEMENT AT THIS ONE
+         ST    R1,BATCHST2         INITIALISE 'LAST POINTER ST02'
+         LR    R8,R1               MAKE NEW ELEMENT ADDRESSABLE
+         XC    0(NTRYLST2,R8),0(R8) ZEROISE NEW ELEMENT
+         MVC   NTRYBCI,ST02BCI     MOVE CARD IDENTIFIER
+         MVC   NTRYPSYS,SRECPSYS   MOVE PREFIX NUMBER OF SYSTEM NAME
+         MVC   NTRYSYSN,SRECSYSN   MOVE SYSTEM NAME
+         MVC   NTRYTYPE,ST02TYPE   MOVE TYPE CODE
+         MVC   NTRYSEQ,ST02SEQ     MOVE SEQ NO. INSIDE BATCH NO
+         MVC   NTRYPREF,SRECPREF   MOVE PREFIX NUMBER
+         CLC   ST02PBCI(6),=C'+  ALL'   TEST IF '+  ALL' KEYWORD
+         BNE   *+14                     BRANCH IF NO
+         MVC   NTRYPBCI(2),=C'++'
+         B     NPPL
+         LA    R2,ST02PBCI         POINT AT BACH CARD ID PPL
+         LA    R3,NTRYPBCI         POINT AT ELEMENT BATCH CARD ID PL
+         BAL   R4,ST02PPL          CONVERT EBCDIC PPL TO BINARY PL
+NPPL     CLC   ST02PBN1(3),=C'PBN' TEST IF THREE FIRST POS. ='PBN'
+         BE    PBN1                BRANCH IF YES
+         LA    R10,5               ESTABLISH LOOP
+         LA    R2,ST02PBN1         POINT AT BATCH NO PART 1 PPL
+         LA    R3,NTRYPBN1         POINT AT BATCH NO PART 1 PL
+INITLOOP BAL   R4,ST02PPL          CONVERT EBCDIC PPL TO BINARY PL
+         LA    R2,3(,R2)           POINT AT NEXT BATCH NO PART # PPL
+         LA    R3,2(,R3)           POINT AT NEXT BATCH NO PART # PL
+         BCT   R10,INITLOOP        PERFORM CONVERSION FIVE TIMES
+         B     *+14
+PBN1     MVC   NTRYPBN1(3),=C'PBN' TELL NEED TAKE PRECEDING BATCH NO
+         B     INDI
+         EJECT
+***********************************************************************
+*        SORT EXIT E15   ( CONT'D )                                   *
+***********************************************************************
+         SPACE 1
+         SR    R1,R1               ZEROISE R1
+         SR    R9,R9               ZEROISE R9
+         LA    R10,5               ESTABLISH LOOP
+         LA    R2,NTRYLBN1         ADDRESS OF BATCH NO PART 1 L
+LOOPL    IC    R9,0(R2)            LOAD LENGTH TO R9
+         LA    R1,0(R9,R1)         ADD THE FIVE LENGTH
+         LA    R2,2(R2)            POINT TO NEXT L
+         BCT   R10,LOOPL           PROCESS NEXT L
+         LA    R2,16               LOAD LENGTH OF SRECBNO IN R2
+         CR    R1,R2               COMPARE THE TWO LENGTH
+         BNH   *+32                BRANCH IF L'SRECBNO NOT >
+         CLC   COMPCODE,COND8      TEST IF CONDITION CODE > 8
+         BH    *+10                BRANCH IF YES
+         MVC   COMPCODE,COND8      SET CONDITION CODE TO 8
+         MVC   91(L'LINE09,R5),LINE09   MOVE ERROR MESSAGE
+         MVC   NTRYBCI,=C'''L''>16''''' CHANGE BATCH CARD ID.
+INDI     LA    R2,ST02IND1         POINT R1 AT FIRST INDICATOR
+         LA    R3,NTRYIND1         POINT R3 AT 1ST INDICATOR IN TABLE
+         LA    R9,5                ESTABLISH LOOP
+LOOP6    LA    R15,2               SET R15 TO LENGTH OF A INDICATOR
+         LR    R1,R2               ADDRESS OF CURRENT INDICATOR
+         BAL   R4,NUMERIC          VERIFY FIELD NUMERIC
+         BL    ANI                 BLANK
+         BE    *+8                 NUMERIC
+         BH    NNI                 NON-NUMERIC
+         PACK  WORKPACK,0(2,R2)    PACK-INDICATOR
+         CVB   R1,WORKPACK         CONVERT INDICATOR TO BINARY
+         STC   R1,0(R3)            STORE BENARY INDICATOR
+ANI      LA    R2,2(R2)            POINT TO NEXT INDICATOR FROM ST02
+         LA    R3,1(R3)            POINT TO NEXT INDIC. IN TABLE ST02
+         BCT   R9,LOOP6            PROCESS NEXT INDICATOR
+         B     READCC              READ NEXT CONTROL CARD
+NNI      MVC   91(L'LINE28,R5),LINE28   MOVE ERROR MESSAGE
+         MVC   NTRYBCI-ST2NTRY(8,R8),=C'''IND-ER''' CHANGE BATCH CARD I
+         CLC   COMPCODE,COND8      TEST IF CONDITION CODE > 8
+         BH    *+10                BRANCH IF YES
+         MVC   COMPCODE,COND8      SET CONDITION CODE TO 8
+         B     ANI                 VERIFY NEXT INDICATOR
+         DROP  R8
+         EJECT
+***********************************************************************
+*        SORT EXIT E15   ( CONT'D )                                   *
+*                                                                     *
+*         PASS TO THE SORT THE DATA PORTION FROM ST03 CARDS.          *
+***********************************************************************
+         SPACE 1
+CCST03   MVI   SRECSEQ,X'FF'       INDICATE DATA FROM ST03
+         AP    SRECRNO,ONE         ONE TO SRECRNO
+         MVI   SWPREF,OFF          SET OFF SWITCH FOR PREFIX ADD ONE
+         MVI   SRECBNO,X'FF'       MOVE HIGH VALUE AT 1ST POSITION
+         MVC   SRECBNO+1(L'SRECBNO-1),SRECBNO AND PROPAGANTE THROUGH
+         CLC   ST03DATA(2),=C'+ '  TEST IF SPECIAL CONTROL CARD
+         BNE   NINDIC              BRANCH IF NO
+         CLC   ST03DATA(12),=C'+ DATA TYPE='      TEST FOR ST03+ DATA
+         BNE   TOFE                BRANCH IF NOT FOUND
+         MVC   SRECFLAG,ST03DATA+12 MOVE TYPE CODE TO SRECFLAG
+         B     READCC              READ NEXT CONTROL CARD
+TOFE     MVC   91(L'LINE40,R5),LINE40 MOVE MESSAGE ERROR TO PRINT LINE
+         CLC   COMPCODE,COND8      TEST IF CONDITION CODE > 8
+         BH    *+10                BRANCH IF YES
+         MVC   COMPCODE,COND8      SET CONDITION CODE TO 8
+         B     READCC              GO READ NEXT CONTROL CARD
+NINDIC   CLI   SRECFLAG,X'00'      TEST IF SRECFLAG = X'00'
+         BNE   *+8                 BRANCH IF NO
+         MVI   SRECFLAG,X'01'      MOVE X'01' TO SRECFLAG
+         MVC   SRECDATA(L'ST03DATA-1),ST03DATA    MOVE DATA PORTION
+         MVC   SRECDATA+71(1),ST03DATA+L'ST03DATA-1 MOVE CONT'D CHAR.
+         B     E15EXIT
+         DROP  R6                  DROP CONTROL CARD ADDRESSABILITY
+         EJECT
+***********************************************************************
+*        SORT EXIT E15   ( CONT'D )                                   *
+*        EOD ON SYSIN                                                 *
+***********************************************************************
+         SPACE 1
+EODIN    MVI   RIN+1,X'F0'         CHANGE SWITCH READ SYSIN
+         LA    R2,SYSINSW          POINT AT SYSIN DCB TABLE ENTRY
+         BAL   R4,CLOSE            CLOSE SYSIN
+         CLI   NOLISTSW,ON         TEST IF IS NEED TO PRINT CONTROL C.
+         BNE   *+18                BRANCH IF NO
+         MVI   0(R5),BLANK         CLEAR PRINT
+         MVC   1(132,R5),0(R5)            LINE
+         B     RUT1
+         MVI   0(R5),SPCE2AFT      ESTABLISH FOLLOWING BLNAK LINE
+         MVC   5(L'LINE08,R5),LINE08 ADD EOD MASSAGE
+         BAL   R4,PRINT            AND GO TO PRONT IT
+         EJECT
+***********************************************************************
+*        SORT EXIT E15    ( CONT'D )                                  *
+*                                                                     *
+*        ACQUIRE NEXT SYSUT1 RECORD (IF DD PRESENT)                   *
+***********************************************************************
+         SPACE 1
+RUT1     NOP   GENINREC
+         TM    SYSUT1SW,DDPRES     TEST IF SYSUT1 DD STATEMENT IS PRES.
+         BNO   GETPARM             BRANCH IF NO
+         CLC   0(8,R6),=C'LOADDATA' TEST IF PRECEDING SYSUT1 RECORD IS-
+         BNE   *+24                BRANCH IF NO / A CMC CONTROL REC.
+         CLC   15(8,R6),=C'LIBCONT ' TEST IF CONTINUATION FOR LIBRARYN
+         BE    *+14                BRANCH IF YES
+         MVC   CURRSYSN,15(R6)     MOVE SYSTEM NAME FOR LOOK-UP TABLE
+         BAL   R4,LIBRATST         GO TEST FOR LIBRARIAN
+         NOP   NRUT1
+         MVI   *-3,X'F0'           CHANGE SWITCH FIRST TIME
+         BAL   R4,READ             READ FIRST SYSUT1 RECORD
+         CLC   0(8,R6),=C'LOADDATA' TEST IF CMC CONTROL RECORD
+         BE    CMCCC               BRANCH IF YES
+         MVC   5(L'LINE38,R5),LINE38 MOVE ERROR MESSAGE
+         MVI   0(R5),SPCE2AFT      ESTABLISH DOUBLE SPACES
+         BAL   R4,PRINT              AND WRITE
+         MVC   CURRSYSN,=C'????????'  INDICATE SYSTEM NAME UNKNOWN
+         B     E15TST              SKIP NEXT TWO INSTRUCTIONS
+NRUT1    EQU   *
+         BAL   R4,READ             READ NEXT SYSUT1 RECORD
+RTFLIBRA EQU   *
+         CLC   0(8,R6),=C'LOADDATA' TEST IF CMC CONTROL CARD
+         BNE   E15TST              BRANCH IF NO
+CMCCC    MVC   SRECSYSN,=C'LOADDATA'    TELL IS CMC CONTROL CARD
+         MVI   SWLD,ON             SET ON 'LOADDATA' CONTROL CARD SWITC
+         XC    SRECPSYS,SRECPSYS   ZEROISE PREFIX NUMBER OF SYSTEM NAME
+         XC    SRECBNO,SRECBNO     ZEROISE BATCH NO
+         XC    SRECFLAG,SRECFLAG   ZEROISE FLAG BYTE
+         MVC   SRECBNO(3),10(R6)   MOVE LOT NO
+         MVC   SRECBNO+3(8),15(R6) MOVE SYSTEM NAME
+         ZAP   SRECRNO,CNTUT1      MOVE RECORD NUMBER
+         B     E15EXIT
+         EJECT
+***********************************************************************
+*        SORT EXIT E15   ( CONT'D )                                   *
+*                                                                     *
+*        TESTS FOR LIBRARIAN                                          *
+***********************************************************************
+         SPACE 1
+LIBRATST CLC   15(5,R6),=C'LIBRA'  TEST IF THE 5 FIST POS. = 'LIBRA'
+         BNE   0(R4)               BRANCH IF NO
+         MVC   CURRSYSN,=C'LIBRAPUN' MOVE 'LIBRAPUN' TO CURRSYSN
+         BAL   R4,READ             READ NEXT SYSUT1 RECORD
+         CLC   0(5,R6),=C'-SEL '   TEST IF FIRST CARD IS A LIBRARIAN-
+         BNE   *+14                BRANCH IF NO   / CONTROL CARD
+         MVC   CURRSYSN,=C'LIBRARYN' YES - MOVE 'LIBRARYN' TO CURRSYSN
+         B     E15TST
+         CLC   0(5,R6),=C'-ADD '   TEST IF FIRST CARD IS A LIBRARIAN-
+         BNE   RTFLIBRA            BRANCH IF NO  / CONTROL CARD
+         MVC   CURRSYSN,=C'LIBRARYN' YES - MOVE 'LIBRARYN' TO CURRSYSN
+         B     E15TST
+         EJECT
+***********************************************************************
+*        SORT EXIT E15   ( CONT'D )                                   *
+*                                                                     *
+*        PROCESS DATA CARDS FROM SYSUT1                               *
+***********************************************************************
+         SPACE 1
+         USING ST2NTRY,R8          ESTABLISH ADDRESSABILITY
+*E15TST  NOP   *+16                SWITCH
+*        MVI   *-3,X'F0'             FIRST TIME
+*        L     R8,TABLEST2         F.T. LOAD ADDRESS OF 1ST ST02 TAB.E.
+*        B     *+8                 SKIP NEXT INSTR. F.T. ONLY
+*        L     R8,BATCHST2         LOAD ADDRESS OF LAST TAB.E. USED
+*        LTR   R8,R8               TEST IF ZERO
+*        BZ    *+8                 BRANCH IF YES
+*        BAL   R10,E15FASTA        TEST IF LAST RECORD HAS THE SAME-
+E15TST   LA    R10,E15TST3A         BATCH ID. THAT THE CURRENT ONE
+         L     R8,TABLEST2         POINT R8 AT 1ST ST02 TABLE ELEMENT
+         B     *+8                 BYPASS LOAD 1ST TIME
+E15TST3A L     R8,NTRYST2          POINT AT NEXT ST02 TABLE ELEMENT
+         ST    R8,BATCHST2         STORE ADDRESS OF CURRENT ST02 ELEM.
+         LTR   R8,R8               TEST FOR END OF CHAIN
+         BZ    BCWOST02            BRANCH IF YES
+E15FASTA CLI   SWLD,ON             TEST IF 'LOADDATA' CONTROL CARD S.ON
+         BNE   *+14                BRANCH IF NO
+         CLC   CURRSYSN,NTRYSYSN   TEST SYSN = SYSN OF CURRENT TAB.ENT.
+         BNE   0(R10)              BRANCH IF NO
+         CLC   NTRYPBCI(5),=C'++ALL'    TEST IF NEED TO TAKE ALL
+         BNE   *+14                BRANCH IF NO
+         MVC   BATCHST2,TABLEST2
+         B     E15TST3B
+         CLC   NTRYPBCI(2),=C'++'
+         BE    0(R10)
+         LA    R2,WORKAREA         POINT R2 AT WORK AREA
+         LA    R3,NTRYPBCI         POINT R3 AT BATCH CARD ID PL
+         BAL   R4,EXTRACT          MOVE BATCH CARD ID TO WORK AREA
+         SR    R15,R15             ZEROISE WORK REGISTER
+         IC    R15,NTRYLBCI        LENGTH OF ID     INTO R15
+         LTR   R15,R15             VERIFY LENGTH SUPPLIED
+         BZ    E15TST3A            BRANCH IF NO
+         BCTR  R15,0               DECREMENT LENGTH FOR EXECUTE
+         EX    R15,CLCBCI          TEST IF FIELD IS BATCH CARD ID
+         BE    E15TST3B            BRANCH IF YES
+         BR    R10                 BRANCH IF NO
+E15TST3B ZAP   SRECRNO,CNTUT1      SET TO PLACE AFTER PRECEDING SPECIAL
+         MVC   SRECPSYS,NTRYPSYS   MOVE PREFIX NUMBER OF SYSTEM NAME
+         MVC   SRECSYSN,NTRYSYSN   MOVE SYSTEM NAME
+         MVC   SRECPREF,NTRYPREF   MOVE PREFIK NUMBER
+         MVC   SRECFLAG,NTRYTYPE   MOVE TYPE CODE
+         MVC   SRECSEQ,NTRYSEQ     MOVE SEQ.NO INSIDE BATCH NO
+         CLC   NTRYPBN1(3),=C'PBN' TEST IF TAKE BATCH NO FROM LAST -
+         BE    PBN2                BRANCH IF YES   /   BATCH CARD
+         EJECT
+***********************************************************************
+*        SORT EXIT E15   ( CONT'D )                                   *
+***********************************************************************
+         SPACE 1
+         MVI   SRECBNO,BLANK       MOVE BLANK AT 1ST POSITION OF SRECNO
+         MVC   SRECBNO+1(L'SRECBNO-1),SRECBNO  AND PROPAGANTE THROUGH
+         LA    R2,SRECBNO          POINT R2 AT SRECNO
+         LA    R3,NTRYPBN1         POINT AT 1ST FIELD BATCH NO
+         LA    R9,5                ESTABLISH LOOP FOR 5 COMPONENTS
+E15TST3C BAL   R4,EXTRACT          MOVE BATCH NO. COMPONENT TO INTER.
+         LA    R3,2(,R3)           POINT AT NEXT COMPONENT PL
+         BCT   R9,E15TST3C         PROCESS NEXT PL
+PBN2     EQU   *
+         LA    R15,NTRYIND1-ST2NTRY(R8) POINT AT 1ST INDICATOR
+         MVI   NTRYSW,ON           MOVE HIGH VALUE
+         B     *+10                SKIP NEXT INSTRUCTION
+CLCBCI   CLC   WORKAREA(0),NTRYBCI  TEST FOR BATCH CARD ID.
+         DROP  R8                  DROP TABLE ST02 ADDRESSABILITY
+         SPACE 1
+         USING ST1NTRY,R8          ESTABLISH ST01 TABLE ADDRESSABILITY
+         L     R8,BATCHST1
+         LTR   R8,R8               TEST IF ZERO
+         BZ    *+8                 BRANCH IF YES
+         BAL   R10,E15FASTB        TEST IF LAST RECORD HAS THE SAME-
+         LA    R10,LOOP7            SYSTEM NAME THAT THE CURRENT ONE
+         L     R8,TABLEST1         POINT AT 1ST ST01 TABLE ELEMENT
+         B     *+8                 BYPASS LOAD FIRST TIME
+LOOP7    L     R8,NTRYST1          POINT AT NEXT ST01 TABLE ELEMENT
+         ST    R8,BATCHST1         STORE ADDRESS OF CURRENT ST01 ELEM.
+         LTR   R8,R8               TEST FOR END OF CHAIN
+         BZ    ABEND               LOGIC ERROR IF YES
+E15FASTB CLC   NTRYNSYS,SRECSYSN   TEST IF SRECSYSN = SYSTEM N.OF CUR.E
+         BNE   0(R10)              BRANCH IF NO
+         LA    R9,5                ESTABLISH LOOP
+LOOP8    BAL   R4,INDICAT          GET DISPL. FOR 100I + CONSTANT F'OR'
+         LA    R1,NTRY100I(R1)     ADD ADDRESS OF 100I TO DISPL.
+         OC    0(1,R1),WAIND       SET ON INDICATOR IN ST01 TABLE
+         LA    R15,1(R15)          POINT TO NEXT INDICATOR
+         BCT   R9,LOOP8            PROCESS NEXT INDICATOR
+         CLI   SRECFLAG,BLANK      TEST IF TYPE CODE BLANK
+         BNE   E15EXIT             NO - GO PASS RECORD TO THE SORT
+         MVI   SRECDATA,BLANK      CLEAR SRECDATA
+         MVC   SRECDATA+1(L'SRECDATA-1),SRECDATA
+         B     RUT1                GO READ NEXT SYSUT1 RECORD
+         EJECT
+***********************************************************************
+*        SORT EXIT E15  ( CONT'D )                                    *
+*                                                                     *
+*        PRINT DATA CARDS WITHOUT ST02 FORMAT 1 CARD                  *
+***********************************************************************
+         SPACE 1
+BCWOST02 NOP   HELINS
+         MVI   *-3,X'F0'                CHANGE SWITCH FIRST TIME
+         AP    LINECOUN,LINEMAX    ADD MAX.OF LINE PER PAGE TO LINECOUN
+         BAL   R4,PRINT             FORCE A SKIP OF PAGE
+         MVI   0(R5),SPCE2AFT           ESTABLISH DOUBLE SPACE
+         MVC   5(L'LINE27,R5),LINE27    MOVE ERROR MESSAGE
+         TM    PUNCHSW,DDPRES      TEST IF SYSPUNCH DD PRESENT
+         BNO   *+10                BRANCH IF NO
+         MVC   5+L'LINE27-7(7,R5),=C'PUNCHED' TELL CARD IS PUNCHED
+         BAL   R4,PRINT                  AND WRITE
+         MVC   6(L'SL27A,R5),SL27A      ---------------
+         MVC   15(80,R5),LINE25         MOVE SUB-HEADING
+         BAL   R4,PRINT                  AND WRITE
+         MVI   0(R5),SPCE2AFT           ESTABLISH DOUBLE SPACE
+         MVC   15(80,R5),LINE26         MOVE SUB-HEADING
+         MVC   6(L'SL27B,R5),SL27B      ---------------
+         BAL   R4,PRINT                  AND WRITE
+HELINS   CLI   PROCSW,C'S'         TEST IF PROCEDURE SWITCH = 'S'
+         BE    BCWST2S             BRANCH IF YES
+         MVC   5(8,R5),CURRSYSN    MOVE SYSTEM NAME
+MOVEDP   MVC   15(0,R5),0(R6)           MOVE RECORD TO PRINT LINE
+         BAL   R4,PRINT                  AND WRITE
+         MVI   SPHLSW,ON           SET ON SPECIAL HEAD LINES SWITCH
+         LA    R9,SRECDATA         LOAD ADDRESS OF SRECDATA
+         BAL   R4,PUNCH            GO PUNCH THIS CARD
+         XC    SRECPSYS,SRECPSYS   ZEROISE SUB.PREFIX NO.OF SYSTEM N.
+         XC    SRECFLAG,SRECFLAG   ZEROISE FLAG BYTE
+         XC    SRECBNO,SRECBNO     ZEROISE BATCH NO
+         MVC   SRECBNO(8),CURRSYSN  MOVE SYSTEM NAME
+         MVC   SRECSYSN,=C'ERROR   '    TELL IS ERROR
+         ZAP   SRECRNO,CNTUT1      MOVE RECORD NUMBER
+         B     E15EXIT
+BCWST2S  EQU   *
+         MVC   15(80,R5),WAUT2     MOVE RECORD TO PRINT LINE
+         BAL   R4,PRINT             AND WRITE
+         MVI   SPHLSW,ON           SET ON SPECIAL HEAD LINES SWITCH
+         LA    R9,WAUT2            LOAD ADDRESS OF RECORD INTO R9
+         BAL   R4,PUNCH            GO PUNCH
+         B     READUT2             GO READ NEXT RECORD
+         EJECT
+***********************************************************************
+*        SORT EXIT E15   ( CONT'D)                                    *
+*                                                                     *
+*        EOD ON SYSUT1                                                *
+***********************************************************************
+         SPACE 1
+EODUT1   EQU   *                   EOD ON SYSUT1
+         MVI   SPHLSW,OFF          SET OFF SPECIAL HEAD LINES SWITCH
+         LA    R2,SYSUT1SW         POINT AT SYSUT1 DCB TABLE ENTRY
+         BAL   R4,CLOSE            CLOSE SYSUT1
+         MVI   RUT1+1,X'F0'
+         SPACE 2
+***********************************************************************
+*        SET ON INDICATORS SPECIFIED IN PARM OF EXEC STATEMENT        *
+*        WITH KEYWORD 'SETON='                                        *
+***********************************************************************
+         SPACE 1
+GETPARM  CLC   PARMPNTR,ZEROWORD   TEST IF PARM SUPPLIED
+         BE    ENDSOIN             BRANCH IF NO
+         CLI   PROCSW,C'I'         TEST IF SETON KEYWORD SUPPLIED
+         BNE   ENDSOIN             BRANCH IF NO
+         MVI   PROCSW,C'A'         FOR NORMAL CONTINUATION
+         L     R8,TABLEST1         POINT R8 AT 1ST ST01 TABLE ELEMENT
+         USING ST1NTRY,R8          ESTABLISH ADDRESSABILITY
+LOOPSOIN LTR   R8,R8               VERIFY TABLE EXISTS OR NOT FINISHED
+         BZ    ERRSOIN             ERROR IF NOT
+         CLC   NTRYNSYS,SETONSYN   TEST IF SYSTEM FROM PARM IS IN TABLE
+         BE    *+12                BRANCH IF YES
+         L     R8,0(R8)            POINT R8 AT NEXT ST01 ELEMENT
+         B     LOOPSOIN            PROCESS NEXT ELEMENT
+         LA    R15,SETON30I        POINT R15 AT 1ST INDIC. FROM PARM
+         LH    R2,SETONBIN         LOAD NUMBER OF INDICATORS FOUND IN P
+LPSOIN   BAL   R4,INDICAT          GET DISPL. FOR 100I + CONSTANT F'OR'
+         LA    R1,NTRY100I(R1)     ADD ADDRESS OF 100I TO DISPL.
+         OC    0(1,R1),WAIND       SET ON INDICATOR IN TABLE ST01
+         LA    R15,1(R15)          POINT TO NEXT INDICATOR
+         BCT   R2,LPSOIN           PROCESS NEXT INDICATOR
+         B     ENDSOIN
+ERRSOIN  MVC   5(L'LINE12,R5),LINE12 MOVE ERROR MESSAGE
+         BAL   R4,PRINT               AND WRITE
+         WTO   'ROBIN    ***** SYSTEM NAME SPECIFIED IN PARM NOT FOUND *
+               *****'
+         CLC   COMPCODE,COND12     TEST IF CONDITION CODE > 12
+         BH    *+10                BRANCH IF YES
+         MVC   COMPCODE,COND12     SET CONDITION CODE TO 12
+ENDSOIN  EQU   *
+         SPACE 1
+         DROP  R8                  DROP TABLE ADDRESSABILITY
+         EJECT
+***********************************************************************
+*        SORT EXIT E15    ( CONT'D )                                  *
+*                                                                     *
+*        TEST FOR EACH ELEMENT IN TABLE ST02, IF 'NTRYSW' IS 'FF'     *
+*         IF YES : PASS TO THE SORT A RECORD WITH THE INFO'S FROM     *
+*         THIS ST02 TABLE ELEMENT AND MOVE '00' TO THE 1ST POSITION   *
+*         OF SRECDATA.                                                *
+***********************************************************************
+         SPACE 1
+         L     R8,TABLEST2         POINT R8 AT 1ST ST02 TABLE ELEMENT
+GENINREC EQU   *
+         USING ST2NTRY,R8          ESTABLISH ADDRESSABILITY
+FREELOOP LTR   R8,R8               VERIFY TABLE EXISTS OR NOT FINISHED
+         BZ    FREESTOP            BYPASS FREEMAIN IF NOT
+         CLI   NTRYSW,ON           TEST IF NTRYSW IS ON
+         BNE   FREEM               BRANCH IF NO
+         MVC   SRECPSYS,NTRYPSYS   MOVE PREFIX OF SYSTEM NAME
+         MVC   SRECSYSN,NTRYSYSN   MOVE SYSTEM NAME
+         MVC   SRECPREF,NTRYPREF   MOVE PREFIX OF ST02
+         MVI   SRECFLAG,X'00'      MOVE FLAG
+         MVI   SRECBNO,X'FF'       MOVE HIGH VALUE TO SRECBNO
+         MVC   SRECBNO+1(L'SRECBNO-1),SRECBNO
+         MVI   SRECSEQ,X'FF'       MOVE HIGH VALUE TO SRECSEQ
+         AP    SRECRNO,ONE         ADD ONE TO SRECRNO
+         MVI   SRECDATA,X'00'      MOVE LOW VALUE TO 1ST POS.OF SRECDAT
+FREEM    EQU   *
+         LR    R1,R8               POINT R1 AT TABLE ELEMENT
+         LA    R0,NTRYLST2         PLACE ELEMENT LENGTH IN R0
+         L     R8,0(R8)            POINT R8 AT NEXT ELEMENT
+      FREEMAIN R,LV=(0),A=(1)      FREE THIS ELEMENT
+         CLI   SRECDATA,X'00'
+         BE    E15EXIT
+         B     FREELOOP
+FREESTOP L     R0,LENGSREC         LENGTH OF INTERMEDIATE AREA TO R0
+         LR    R1,R7               ADDRESS OF INTERMEDIATE AREA TO R1
+      FREEMAIN R,LV=(0),A=(1)      FREE ACQUIRED INTERMEDIATE AREA
+         XC    WORKAREA,WORKAREA   ZEROISE WORKAREA
+         XC    WAUT2(100),WAUT2    ZEROISE SYSUT2 WORK AREA
+         LA    R15,NORETURN        TELL SORT NOT TO RETURN TO E15
+         B     *+8                 AVOID ALTERING RETURN CODE
+         EJECT
+***********************************************************************
+*        SORT EXIT E15   ( CONT'D )                                   *
+*                                                                     *
+*        RETURN CONTROL TO THE SORT                                   *
+***********************************************************************
+         SPACE 1
+E15EXIT  LA    R15,INSERT          TELL SORT TO INSERT RECORD
+E15EXIT2 LR    R1,R7               POINT R1 AT INTERMEDIATE RECORD
+         MVC   12(64,R13),E15REGSV RESTORE REGS FOR RET. FROM SORT
+         STM   R5,R12,40(R13)      PRESERVE  ROBIN'S REGISTERS
+         L     R13,E15R13S2        RETRIEVE SORT'S SAVE AREA POINTER
+         LM    R2,R12,28(R13)      RESTORE THE
+         L     R0,20(R13)           SORT'S GENERAL
+         L     R14,12(R13)          PURPOSE REGISTERS
+         BR    R14                 RETURN TO THE SORT
+         SPACE 1
+         DROP  R7,R8               DROP TABLE & INT. AREA ADDRESSAB'Y
+         TITLE 'E35 SORT EXIT'
+***********************************************************************
+*        SORT EXIT E35                                                *
+***********************************************************************
+         SPACE 1
+         USING *,R15               ESTABLISH TEMPORARY ADDRESSABILITY
+E35      SUBIN ,                   ENTER E35 SORT EXIT
+         STM   R14,R12,12(R13)     SAVE SORT'S REGISTERS
+         ST    R13,E35R13S2        SAVE SORT'S SAVE AREA ADDRESS
+         L     R13,E35R13S1        RETRIEVE  ROBIN'S SAVE AREA ADDRESS
+         MVC   E35REGSV(64),12(R13) SAVE REGS FOR RET. FROM SORT
+         LM    R5,R12,40(R13)      RETRIEVE  ROBIN'S REGISTERS
+         B     E35CONT             BRANCH AROUND SAVE AREAS
+E35R13S1 DC    A(SAVEFLD)          ADDRESS OF  ROBIN'S SAVE AREA
+E35R13S2 DS    F                   ADDRESS OF SORT'S SAVE AREA
+E35REGSV DS    16F                 REGS SAVE AREA FOR RET. FROM SORT
+E35CONT  EQU   *                   CONTINUE
+         DROP  R15                 DROP TEMPORARY ADDRESSABILITY
+         EJECT
+***********************************************************************
+*        SORT EXIT E35   ( CONT'D )                                   *
+*                                                                     *
+*        WRITE THE JOB STREAMS TO SYSUT2 DATA SET, THE LOADDATA       *
+*        CONTROL CARDS AND DATA WITHOUT STS02 FORMAT 1 FOR            *
+*        THE SELECTION ARE ALSO WRITTEN ON SYSUT2 DATA SET.           *
+***********************************************************************
+         SPACE 1
+         L     R7,0(,R1)           GET ADDRESS OF RECORD FROM SORT
+         LA    R7,0(,R7)           PURIFY HIGH ORDER BYTE
+         LTR   R7,R7               TEST FOR END OF DATA
+         BZ    TESTINDA            BRANCH IF YES
+         USING SORTRECD,R7         ESTABLISH ADDRESSABILITY
+         CLC   SRECPSYS,ZEROWORD   TEST IF CMC CONTROL RECORD
+         BE    PREC                BRANCH IF YES
+         CLI   SRECFLAG,X'00'      TEST IF SRECFLAG = X'00'
+         BNE   TESKEY              BRANCH IF NO
+         USING ST1NTRY,R8          ESTABLISH ADDRESSABILITY
+         NOP   *+12
+         MVI   *-3,X'F0'           CHANGE SWITCH FIRST TIME
+         L     R8,TABLEST1         POINT R8 AT 1ST ST01 TABLE ELEMENT
+TESTINDA LTR   R8,R8               TEST IF ZERO
+         BZ    E35EXIT             BRANCH IF YES
+         CLC   SRECSYSN,NTRYNSYS   TEST IF SYSTEM NAME OF SORTREC=ST1TB
+         BE    TESTINDB            BRANCH IF YES
+         LR    R1,R8               POINT R1 AT TABLE ELEMENT
+         LA    R0,NTRYLST1         PLACE LENGTH OF ELEMENT IN R0
+         L     R8,NTRYST1          LOAD ADDRESS OF NEXT ELEMENT ST01
+      FREEMAIN R,LV=(0),A=(1)      FREE THIS ELEMENT
+         B     TESTINDA            GO TEST FOR NEXT ELEMENT
+TESTINDB SR    R9,R9               ZEROISE R9
+         CLI   SRECDATA,X'64'      TEST IF 1ST POS. CONTAIN X'64'
+         BE    TESTRLDT            BRANCH IF YES
+         LA    R15,SRECDATA        POINT AT 1ST POSITION OF SRECDATA
+         BAL   R4,INDICAT          GET DISPL. FOR 100I + CONSTANT F'TM'
+         LA    R1,NTRY100I(R1)     ADD ADDRESS OF 100I TO DISPL.
+         MVC   TMI+1(1),WAIND      MOVE CONSTANT FOR TEST UNDER MASK I.
+TMI      TM    0(R1),0             TEST IF THIS INDICATOR IS ON
+         BNO   *+16                BRANCH IF NO
+         CLI   SRECDATA+1,BLANK    TEST IF REQUEST FOR 'ON'
+         BNE   DONTW               BRANCH IF NO
+         B     *+12                SKIP NEXT TWO INSTR.
+         CLI   SRECDATA+1,C'N'     TEST IF REQUEST FOR 'OFF'
+         BNE   DONTW               BRANCH IF NO
+         MVC   WORKAREA(12),SORTRECD MOVE 12 FISRT BYTES OF SORTRECD TO
+         B     DONTW                  WORKAREA
+TESTRLDT LA    R1,RELDATE          LOAD ADDRESS TABLE RELATIVE DAY PARM
+         LA    R2,NORD             LOAD NUMBER OF ELEMENTS
+LOOP12   CLC   SRECDATA+1(3),0(R1) TEST IF THE RELATIVE DAY IS FOUND -
+         BNE   *+14                B.IF NO / IN THE TABLE OF R.DAY PARM
+         MVC   WORKAREA(12),SORTRECD MOVE 12 FIRST BYTES OF SORTRECD TO
+         B     DONTW                  WORKAREA
+         EJECT
+***********************************************************************
+*        SORT EXIT E35    ( CONT'D )                                  *
+***********************************************************************
+         SPACE 1
+         LA    R1,3(R1)            INCREMENT POINTER TO NEXT TABLE EL.
+         BCT   R2,LOOP12           PROCESS NEXT TABLE ELEMENT
+         B     DONTW
+TESKEY   CLC   SORTRECD(12),WORKAREA
+         BNE   DONTW
+         B     PRECD
+PREC     MVC   CURRSYSN,SRECSYSN   STORE SYSTEM NAME
+         CLC   SRECSYSN,=C'LOADDATA'    TEST FOR 'LOADDATA'
+         BNE   *+14                  BRANCH IF NO
+         MVC   JOBNAME,=C'ROBIN-LD'  CONSTANT FOR JOB NAME
+         B     PRECDX                GO WRITE
+         CLC   SRECSYSN,=C'ERROR   ' TEST FOR 'ERROR   '
+         BNE   ABEND               LOGIC ERROR IF NO
+         MVC   JOBNAME,=C'ROBIN-ER'  CONSTANT FOR JOB NAME
+         B     PRECDX                GO WRITE
+PRECD    CLC   SRECDATA(2),=C'//'  TEST IF JCL RECORD
+         BNE   PRECDX              BRANCH IF NO
+         LA    R1,SRECDATA+2       POINT AT 3TH POSITION OF THE RECORD
+         LA    R2,65               ZERO AND ADD 65
+LOOP9    CLC   0(5,R1),=C' JOB '   TEST IF JOB CARD
+         BE    MJN                 BRANCH IF YES
+         LA    R1,1(R1)            POINT AT NEXT POSITION OF THE RECORD
+         BCT   R2,LOOP9            PROCESS NEXT POSITION
+         B     PRECDX
+MJN      MVC   JOBNAME,SRECDATA+2  STORE JOB NAME
+         MVC   CURRSYSN,SRECSYSN   STORE SYSTEM NAME
+         XC    WAUT2+98(2),WAUT2+98 ZEROISE JOB RECORDS COUNT
+         LA    R1,6                ZERO AND ADD 6
+         LA    R2,JOBNAME+1        LOAD ADDRESS OF JOB NAME WA +1
+LOOP10   CLI   0(R2),BLANK         TEST FOR BLANK
+         BE    *+16                BRANCH IF YES
+         LA    R2,1(R2)            INCREMENT POINTER FOR TEST NEXT POS.
+         BCT   R1,LOOP10           PROCESS NEXT POSITION
+         B     PRECDX
+         BCTR  R1,0                DECREMENT LENGTH FOR EXECUTE INSTRUC
+         EX    R1,MBL              EXECUTE MOVE INSTRUCTION
+         B     PRECDX              SKIP NEXT INSTRUCTION
+MBL      MVC   1(0,R2),0(R2)
+         EJECT
+***********************************************************************
+*        SORT EXIT E35    ( CONT'D )                                  *
+***********************************************************************
+         SPACE 1
+PRECDX   MVC   WAUT2(80),SRECDATA  MOVE DATA AREA TO SYSUT2 RECORD
+         MVC   WAUT2+80(10),DATETIME     MOVE START DATE AND TIME
+         CLC   CURRSYSN,SRECSYSN   TEST FOR JOB NAME
+         BNE   *+14
+         MVC   WAUT2+90(8),JOBNAME MOVE JOB NAME
+         B     *+10                     SKIP NEXT INSTRUCTION
+         MVC   WAUT2+90(8),=C'????????' INDICATE JOB CARD MISSING
+         LH    R10,WAUT2+98        LOAD PRECEDING JOB RECORD NUMBER
+         LA    R10,1(R10)          ADD ONE
+         STH   R10,WAUT2+98        STORE NEW JOB RECORD NUMBER
+         BAL   R4,WRITE            WRITE OUTPUT RECORD
+DONTW    EQU   *
+         LA    R15,DELETE          TELL SORT TO DELETE THE RECORD
+         B     *+8                 BYPASS REG 15 LOAD
+         EJECT
+***********************************************************************
+*        SORT EXIT E35   ( CONT'D )                                   *
+*                                                                     *
+*        RETURN CONTROL TO THE SORT                                   *
+***********************************************************************
+         SPACE 1
+E35EXIT  LA    R15,NORETURN        TELL SORT NOT TO RETURN
+         MVC   12(64,R13),E35REGSV RESTORE REGS FOR RET. FROM SORT
+         STM   R5,R12,40(R13)      PRESERVE  ROBIN'S REGISTERS
+         L     R13,E35R13S2        RETRIEVE SORTS SAVE AREA ADDRESS
+         LM    R0,R12,20(R13)      RETRIEVE THE
+         L     R14,12(R13)          SORT'S REGISTERS
+         BR    R14                 RETURN TO THE SORT
+         SPACE 1
+         DROP  R7,R8               DROP TABLE & INT. AREA ADDRESSBI'Y
+         TITLE 'SYSUT3'
+***********************************************************************
+*        READ SYSUT2 RECORDS AND PASS TO THE SYSUT3 DATA SET          *
+***********************************************************************
+         SPACE 1
+READUT2  BAL   R4,RDUT2            ACQUIRE NEXT SYSUT2 RECORD
+         CLI   PROCSW,C'A'
+         BE    ALL
+         CLI   PROCSW,C'S'
+         BE    ALL                 BRANCH IF YES
+         CLI   PROCSW,C'R'
+         BE    RLOAD
+         CLI   PROCSW,C'P'         TEST IF PROCEDURE SWITCH = 'P'
+         BE    RPUNCH              BRANCH IF YES
+         B     ABEND               PROGRAM LOGIC ERROR
+ALL      CLI   PROCSW,C'S'         TEST IF PROCEDURE SWITCH = 'S'
+         BNE   *+18                BRANCH IF NO
+         CLC   WAUT2+90(8),=C'ROBIN-ER' TEST IF JOB NAME= ' ROBIN-ER'
+         BE    BCWOST02            BRANCH IF YES
+         MVI   SPHLSW,OFF          SET OFF SPECIAL HEAD LINES SWITCH
+         CLC   WAUT2+90(8),=C'ROBIN-ER' TEST IF JOB NAME = 'ROBIN-ER'
+         BE    READUT2             BRANCH IF YES
+         CLC   WAUT2+90(8),=C'ROBIN-LD' TEST IF JOB NAME = 'ROBIN-LD'
+         BNE   FINTRDR             BRANCH IF NO
+         NOP   LOL
+         MVI   *-3,X'F0'           CHANGE SWITCH FIRST TIME
+         AP    LINECOUN,LINEMAX    ADD MAX.OF LINE PER PAGE TO LINECOUN
+         BAL   R4,PRINT             FORCE A SKIP OF PAGE
+         MVC   5(L'LINE10,R5),LINE10 MOVE SUBHEADING
+         MVI   0(R5),SPCE2AFT      ESTABLISH DOUBLE SPACES
+         BAL   R4,PRINT             AND WRITE IT
+LOL      MVC   10(70,R5),WAUT2+10  MOVE LOT NUMBER & SYSTEM NAME
+         BAL   R4,PRINT             AND WRITE TO SYSPRINT
+         B     READUT2             GO READ NEXT SYSUT2 RECORD
+FINTRDR  NOP   LJS
+         MVI   *-3,X'F0'           CHANGE SWITCH FIRST TIME
+         AP    LINECOUN,LINEMAX    ADD MAX.OF LINE PER PAGE TO LINECOUN
+         BAL   R4,PRINT             FORCE A SKIP OF PAGE
+         EJECT
+***********************************************************************
+*        READ SYSUT2 RECORDS AND PASS TO SYSUT3 D/S,    (CONT'D)      *
+*         AND WRITE ALSO THESE RECORDS ON SYSPRINT.                   *
+***********************************************************************
+         SPACE 1
+         CLI   PROCSW,C'P'         TEST IF PROCEDURE SWITCH = 'P'
+         BNE   *+14                BRANCH IF NO
+         MVC   5(L'LINE37,R5),LINE37   MOVE SUB-HEADING
+         B     *+10                SKIP NEXT INSTRUCTION
+         MVC   5(L'LINE11,R5),LINE11 MOVE SUBHEADING
+         MVI   0(R5),SPCE2AFT      ESTABLISH DOUBLE SPACES
+         BAL   R4,PRINT             AND WRITE IT
+         MVC   8(L'SL25A,R5),SL25A      ---------------
+         MVC   15(80,R5),LINE25    MOVE SUBHEADING
+         MVC   98(L'SL25B,R5),SL25B     ---------------
+         BAL   R4,PRINT             AND WRITE
+         MVC   8(L'SL26A,R5),SL26A      ---------------
+         MVC   15(80,R5),LINE26    MOVE SUBHEADING
+         MVC   98(L'SL26B,R5),SL26B     ---------------
+         MVI   0(R5),SPCE2AFT      ESTABLISH DOUBLE SPACES
+         BAL   R4,PRINT             AND WRITE
+         MVI   SPHLSW,ON           SET ON SPECIAL HEAD LINES SWITCH
+         MVI   SWSL1+1,X'F0'       CHANGE SWITCH PRINT SUBR
+         MVI   SWSL2+1,X'F0'       CHANGE SWITCH PRINT SUBR
+LJS      MVC   15(80,R5),WAUT2     MOVE DATA TO PRINT LINE
+         LH    R9,WAUT2+98         LOAD JOB RECORD NUMBER
+         CVD   R9,WORKPACK         CONVERT TO DECIMAL
+         UNPK  9(5,R5),WORKPACK+5(3) UNPACK
+         OI    13(R5),SIGN         FORCE SIGN TO 'F'
+         CH    R9,=H'1'            TEST IF JOB CARD
+         BNE   *+16                BRANCH IF NO
+         MVC   98(10,R5),WAUT2+80   MOVE DATE AND TIME TO PRINT LINE
+         MVC   109(8,R5),WAUT2+90  MOVE JOB NAME TO PRINT LINE
+         BAL   R4,PRINT             AND WRITE
+         CLI   PROCSW,C'P'         TEST IF PROCEDURE SWITCH = 'P'
+         BE    READUT2             BRANCH IF YES
+         CLI   PROCSW,C'S'         TEST IF PROCEDURE SWITCH = 'S'
+         BE    RSTART              BRANCH IF YES
+WTOUT3   BAL   R4,WUT3             GO WRITE TO SYSUT3
+         B     READUT2             GO READ NEXT SYSUT2 RECORD
+         EJECT
+***********************************************************************
+*        READ SYSUT2 RECORDS AND PASS TO THE SYSUT3  ( CONT'D )       *
+***********************************************************************
+         SPACE 1
+RSTART   CLC   WAUT2+90(8),JOBNAME
+         BNE   READUT2             BRANCH IF NO
+         MVI   RLDRSTSW,ON         TELL JOBS FOUND
+         MVI   PROCSW,C'A'         MOVE 'A' TO PROCEDURE SWITCH
+         B     WTOUT3              GO WRITE
+RLOAD    CLC   WAUT2+80(18),DATETIME
+         BNE   TFC                 BRANCH IF NO
+         MVI   RLDRSTSW,ON         TELL JOB FOUND
+         B     FINTRDR             GO WRITE SYSUT2 RECD TO SYSUT3
+RPUNCH   CLC   WAUT2+80(18),DATETIME
+         BNE   TFC                 BRANCH IF NO
+         LH    R9,PUNFROM          LOAD START RECORD NUMBER INTO R9
+         LTR   R9,R9               TEST FOR ZERO
+         BZ    WTOPUN              BRANCH IF YES
+         CH    R9,WAUT2+98         TEST IF CURRENT REC. MUST BE PUN
+         BH    READUT2             BRANCH IF NO
+         LH    R9,PUNTO            LOAD LAST RECORD NUMBER INTO R9
+         LTR   R9,R9               TEST FOR ZERO
+         BZ    WTOPUN              BRANCH IF YES
+         CH    R9,WAUT2+98         TEST IF THE CURRENT REC. MUST BE PUN
+         BL    READUT2             BRANCH IF NO
+WTOPUN   LA    R9,WAUT2            POINT R9 AT START OF THE RECORD
+         BAL   R4,PUNCH            GO WRITE TO SYSPUNCH
+         MVI   RLDRSTSW,ON         TELL JOB FOUND
+         B     FINTRDR
+TFC      CLI   RLDRSTSW,ON         TEST IF JOB FOUND
+         BE    EODUT2              BRANCH IF YES
+         B     READUT2             NO - GO READ NEXT SYSUT2 RECORD
+         EJECT
+***********************************************************************
+*        EOD ON SYSUT2                                                *
+***********************************************************************
+         SPACE 1
+EODUT2   LA    R2,SYSUT2SW         POINT AT SYSUT2 DCB TABLE ENTRY
+         BAL   R4,CLOSE            CLOSE SYSUT2
+         MVC   WAUT2(6),=C'/*EOF ' MANDATORY FOR INTRDR
+         MVC   WAUT2+6(74),WAUT2+5 MOVE SPACES TO THE REST OF RECORD
+         BAL   R4,WUT3             WRITE SYSUT3 RECORD
+         LA    R2,SYSUT3SW         POINT AT SYSUT3 DCB TABLE ENTRY
+         BAL   R4,CLOSE            CLOSE SYSUT3
+         MVI   SPHLSW,OFF          SET OFF SPECIAL HEAD LINES SWITCH
+         CLI   PROCSW,C'P'         TEST IF PROCEDURE SWITCH = 'P'
+         BE    *+20                BRANCH IF YES
+         CLI   PROCSW,C'R'         TEST IF PROCEDURE SWITCH = 'R'
+         BE    *+12                BRANCH IF YES
+         CLI   PROCSW,C'S'         TEST IF PROCEDURE SWITCH = 'S'
+         BNE   WEOF                BRANCH IF NO
+         CLI   RLDRSTSW,ON         TEST IF JOBS FOUND FOR RELOAD -
+         BE    WEOF                BRANCH IF YES / OR RESTART OPERATION
+         MVI   0(R5),SPCE3AFT      ESTABLISH TRIPLE SPACES
+         MVC   5(L'LINE39,R5),LINE39 MOVE ERROR MESSAGE
+         BAL   R4,PRINT               AND WRITE
+         CLC   COMPCODE,COND12     TEST IF CONDITION CODE > 12
+         BH    *+10                BRANCH IF YES
+         MVC   COMPCODE,COND12     SET CONDITION CODE TO 12
+         B     PRINTCDE
+WEOF     MVC   15(6,R5),=C'/*EOF ' INDICATE END OF LIST FOR SYSUT3 RECD
+         TITLE 'JOB TERMINATION ROUTINES'
+***********************************************************************
+*        PRINT NUMBER OF RECORDS READ/WRITTEN FOR ALL THE DD'S        *
+*        PRESENT, PRINT NUMBER OF BYTES DYNAMICALLY ACQUIRED FOR      *
+*        THE INTERNAL TABLES AND PRINT CONDITION CODE.                *
+***********************************************************************
+         SPACE 1
+PRINTCDE EQU   *
+         AP    LINECOUN,LINEMAX    FORCE SKIP OF PAGE
+         BAL   R4,PRINT             AND WRITE
+         B     PRINTCD2
+PRECOUNT SUBIN SAVE=(R4)
+         MVC   5(L'LINE30,R5),0(R1)      MOVE MESSAGE
+         MVC   5+L'LINE30(8,R5),EDRECOUN SET UP EDIT PATTERM
+         ED    5+L'LINE30(8,R5),0(R2)    EDIT RECORDS COUNT
+         BAL   R4,PRINT                   AND WRITE IT
+         SUBOUT RESTORE=(R4)             RETURN TO CALLER
+PRINTCD2 LA    R1,LINE30           LOAD ADDRESS OF MESSAGE 30
+         LA    R2,CNTIN            LOAD ADDRESS OF SYSIN RECORDS COUNT
+         BAL   R4,PRECOUNT          AND GO PRINT
+         LA    R1,LINE31           LOAD ADDRESS OF MESSAGE 31
+         LA    R2,CNTUT1           LOAD ADDRESS OF SYSUT1 RECORDS COUNT
+         BAL   R4,PRECOUNT          AND GO PRINT
+         LA    R1,LINE32           LOAD ADDRESS OF MESSAGE 32
+         LA    R2,CNTPUN           LOAD ADDRESS OF SYSPUNCH RECORDS C.
+         BAL   R4,PRECOUNT          AND GO PRINT
+         LA    R1,LINE33           LOAD ADDRESS OF MESSAGE 33
+         LA    R2,CNTUT2W          LOAD ADDRESS OF SYSUT2 (W) RECORDS C
+         BAL   R4,PRECOUNT          AND GO PRINT
+         LA    R1,LINE34           LOAD ADDRESS OF MESSAGE 34
+         LA    R2,CNTUT2R          LOAD ADDRESS OF SYSUT2 (R) RECORDS C
+         BAL   R4,PRECOUNT          AND GO PRINT
+         LA    R1,LINE35           LOAD ADDRESS OF MESSAGE 35
+         LA    R2,CNTUT3           LOAD ADDRESS OF SYSUT3 RECORDS COUNT
+         BAL   R4,PRECOUNT          AND GO PRINT
+         MVI   0(R5),SPCE2AFT      ESTABLISH DOUBLE SPACES
+         BAL   R4,PRINT             AND WRITE
+         MVC   5(L'LINE41,R5),LINE41    MOVE MESSAGE
+         MVC   5+L'LINE41(8,R5),EDRECOUN    SET UP EDIT PATTERN
+         L     R1,TBSSIZE          LOAD TABLES SIZE VALUE
+         CVD   R1,WORKPACK         CONVERT IT TO DECIMAL
+         ED    5+L'LINE41(8,R5),WORKPACK+4  AND EDIT
+         MVI   0(R5),SPCE2AFT      ESTABLISH DOUBLE SPACE
+         BAL   R4,PRINT             AND WRITE
+PRINTCD3 MVI   0(R5),SPCE2AFT      ESTABLISH DOUBLE SPACE
+         MVC   5(L'LINE02,R5),LINE02 ADD MESSAGE
+         LH    R2,COMPCODE         GET CONDITION CODE
+         CVD   R2,WORKPACK         CONVERT IT TO DECIMAL
+         MVC   WORKEDIT,EDITCOND   SET UP EDIT PATTERN
+         ED    WORKEDIT,WORKPACK+6 EDIT CONDITION CODE
+         MVC   L'LINE02+6(2,R5),WORKEDIT+2 ADD CODE TO MESSAGE
+         BAL   R4,PRINT            PRINT CONDITION CODE
+         MVC   5(L'LINE03,R5),LINE03 MOVE TERM'N MESSAGE TO LINE
+         EJECT
+***********************************************************************
+*        JOB TERMINATION ROUTINE - CLOSE ANY OPEN DATA SETS,          *
+*         SET A COMPLETION CODE IN REGISTER 15, AND RETURN.           *
+***********************************************************************
+         SPACE 1
+JOBEND   LA    R10,MAXDS           ESTABLISH LOOP
+         LA    R2,DCBTABLE         POINT AT AD-CON TABLE
+         BAL   R4,CLOSE            CLOSE DATA SET IF OPEN
+         LA    R2,DCBNTRY(R2)      POINT AT NEXT TABLE ENTRY
+         BCT   R10,*-8             CLOSE NEXT DATA SET
+        PGMOUT RC=COMPCODE         SET COND CODE AND RETURN
+         TITLE 'VERIFY THAT A FIELD IS NUMERIC'
+***********************************************************************
+*        THIS SUBROUTINE VERIFIES THAT AN EBCDIC SUB-FIELD            *
+*         IS NUMERIC - LEADING BLANKS AND ALL BLANK FIELDS            *
+*         ARE CONSIDERED VALID, BUT SIGN OVER-PUNCHES ARE             *
+*         NOT.  ON ENTRY, R1 POINTS AT THE START OF THE               *
+*         FIELD, AND R15 CONTAINS THE LENGTH OF THE FIELD.            *
+*         ON EXIT, THE CONDITION CODE IS SET SVCH THAT THE            *
+*         CALLER CAN MAKE THE FOLLOWING TESTS -                       *
+*                                                                     *
+*              BL   -    FIELD IS ALL BLANK                           *
+*              BE   -    FIELD IS NUMERIC                             *
+*              BH   -    FIELD IS NON-NUMERIC                         *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+NUMERIC  SUBIN PREFIX=N,SAVE=(R1,R15)  ?FIELD FOR NUMERIC
+         NI    NUMERICB+1,0        SET OFF EMBEDDED BLANK TEST
+         MVI   NUMERICT+1,C'Z'     ASSUME FIELD ALL BLANK
+NUMERIC1 CLI   0(R1),C' '          TEST FOR BLANK
+NUMERICB BC    0,NUMERIC2          BRANCH IF EMBEDDED BLANK
+         BE    NUMERIC3            BRANCH IF BLANK TO INCREMENT
+         CLI   0(R1),C'0'          TEST FOR LESS THAN ZERO
+         BL    NUMERIC2            BRANCH IF LESS THAN ZERO
+         CLI   0(R1),C'9'          TEST IF GREATER THAN 9
+         BH    NUMERIC2            BRANCH IF GREATER THAN 9
+         OI    NUMERICB+1,X'80'    SET ON EMBEDDED BLANK TEST
+         MVI   NUMERICT+1,C'Y'     ASSUME FIELD VALID
+NUMERIC3 LA    R1,1(,R1)           INCERMENT POINTER TO NEXT CHARACTER
+         BCT   R15,NUMERIC1        TEST CHARACTER IF IN SUB-FIELD
+         B     NUMERICT            GO SET COND CODE
+NUMERIC2 MVI NUMERICT+1,C'X'       SHOW FIELD NON-NUMERIC
+NUMERICT CLI   NUMERICY,C' '       SET CONDITION CODE
+        SUBOUT PREFIX=N,RESTORE=(R1,R15) RETURN TO CALLER
+         SPACE 1
+NUMERICY DC    C'Y'                TEST FIELD TO SET COBD CODE
+         EJECT
+***********************************************************************
+*        THIS SUBROUTINE DIVIDE  A INDICATOR NUMBER BY 8 .            *
+*          THE QUOTIENT = DISPLACEMENT FOR THE GETMAINED              *
+*                         WORK AREA OF 100 INDICATORS .               *
+*          THE REMAIDER = BIT NUMBER  (0-7)                           *
+*         ON ENTRY R15 POINTS AT THE INPUT INDICATOR NUMBER           *
+*         (ONE-BYTE). ON EXIT R1 CONTAINS THE QUOTIENT AND            *
+*         THE ONE-BYTE 'WAIND' CONTAINS CONSTANT FOR THE              *
+*         'OR' INSTRUCTIONS                                           *
+***********************************************************************
+         SPACE 1
+INDICAT  SUBIN SAVE=R2
+         SR    R0,R0               ZEROISE R0
+         IC    R0,0(R15)           LOAD INDICATOR NUMBER INTO R0
+         SRDA  R0,32               SHIFT TO RIGHT 32 BITS FOR DIVIDE OP
+         D     R0,=F'8'            DIVIDE INDICATOR NUMBER BY 8 (8 IN-
+         LA    R2,128              SET ON 1ST BIT / DICATORS PER BYTE)
+LOOP13   LTR   R0,R0               TEST FOR ZERO
+         BZ    *+14                BRANCH IF YES
+         BCTR  R0,0                DECREMENT ONE
+         SRL   R2,1                SHIFT TO RIGHT 1 BIT
+         B     LOOP13              PROCESS NEXT BIT
+         STC   R2,WAIND            STORE CONSTANT FOR 'OR' OPERATION
+         SUBOUT RESTORE=R2         RETURN TO CALLER
+         TITLE 'CONVERT CONTROL CARD DATA TO BINARY'
+***********************************************************************
+*        THIS SUBROUTINE CONVERTS A TWO-BYTE POSITION AND             *
+*         ONE-BYTE LENGTH INTO TWO ONE-BYTE BINARY FIELDS.            *
+*         IF AN INPUT FIELD IS NON-NUMERIC - LEADING BLANKS           *
+*         AND ALL BLANK FIELDS ARE VALID - AN ERROR MESSAGE           *
+*         IS WRITTEN AND THE JOB TERMINATED.  ON ENTRY R2             *
+*         POINTS AT THE INPUT 'PPL' AND R3 POINTS AT THE              *
+*         OUTPUT 'PL'.                                                *
+***********************************************************************
+         SPACE 1
+ST02PPL  SUBIN PREFIX=M,SAVE=R4    CONVERT EBDDIC PPL TO BINARY PL
+         XC    0(2,R3),0(R3)       SET TO ZERO LEST BLANK
+         LA    R1,0(,R2)           POINT R1 AT PP
+         LA    R15,2               SET R15 TO LENGTH OF PP
+         BAL   R4,NUMERIC          VERIFY FIELD NUMERIC
+         BH    ST02PPLE            BRANCH IF NON-NUMERIC
+         BL    *+18                BYPASS MATHS IF BLANK
+         PACK  WORKPACK,0(2,R2)    PACK PP
+         CVB   R1,WORKPACK         CONVERT PP TO BINARY
+         STC   R1,0(R3)            STORE BINARY P
+         LA    R1,2(,R2)           POINT R1 AT L
+         LA    R15,1               SET R15 TO LENGTH OF L
+         BAL   R4,NUMERIC          VERIFY FIELD NUMERIC
+         BH    ST02PPLE            BRANCH IF NON-NUMERIC
+         BL    *+18                BYPASS MATHS IF BLANK
+         PACK  WORKPACK,2(1,R2)    PACK L
+         CVB   R1,WORKPACK         CONVERT L TO BINARY
+         STC   R1,1(R3)            STORE BINARY L
+        SUBOUT PREFIX=M,RESTORE=R4 RETURN TO CALLER
+         SPACE 1
+ST02PPLE MVC   91(L'LINE24,R5),LINE24 MOVE ERROR MESSAGE
+         MVC   NTRYBCI-ST2NTRY(8,R8),=C'''PPL-ER''' CHANGE BATCH CARD I
+         CLC   COMPCODE,COND8      TEST IF CONDITION CODE > 8
+         BH    *+10                BRANCH IF YES
+         MVC   COMPCODE,COND8      SET CONDITION CODE TO 8
+         B     READCC              READ NEXT CONTROL CARD
+         TITLE 'ROUTINE TO EXTRACT AND MOVE SUBFIELD'
+***********************************************************************
+*        THIS SUBROUTINE EXTRACTS A SUB-FIELD FROM THE INPUT          *
+*         RECORD AND MOVES IT TO THE REQUESTED DESTINATION            *
+*         FIELD.  ON INPUT, R2 POINTS AT THE DESTINATION              *
+*         FIELD, RJ POINTS AT TWO 1-BYTE BINARY FIELDS                *
+*         CONTAINING THE POSITION AND LENGTH OF THE SUB-FIELD         *
+*         TO BE EXTRACTED, AND R6 POINTS AT THE RECORD THAT           *
+*         CONTAINS THE SUB-FIELD.  ON EXIT, R2 POINTS AT THE          *
+*         BYTE FOLLOWING THE EXTRACTED AND MOVED SUB-FIELD.           *
+***********************************************************************
+         SPACE 1
+EXTRACT  SUBIN ,                   EXTRACT SUB-FIELD
+         SR    R1,R1               ZEROISE WORK REGISTER
+         IC    R1,0(,R3)           OBTAIN SUB-FIELD OFFSET
+         LTR   R1,R1               VERIFY OFFSET SUPPLIED
+         BZ    EXTRACTX            EXIT IF NOT
+         BCTR  R1,0                DECREMENT (OFFSET - 1 = DISPLACEMNT)
+         AR    R1,R6               POINT R1 AT SUB-FIELD
+         SR    R15,R15             ZEROISE WORK REGISTER
+         IC    R15,1(,R3)          OBTAIN SUB-FIELD LENGTH
+         LTR   R15,R15             VERIFY LENGTH SUPPLIED
+         BZ    EXTRACTX            EXIT IF NOT
+         BCTR  R15,0               DECREMENT FOR EXECUTE
+         EX    R15,EXTRACTM        MOVE SUB-FIELD TO DESTINATION
+         AR    R2,R15              ADD LGTH TO DESTINATION ADDRESS
+         LA    R2,1(,R2)           POINT AT BYTE AFTER SUB-FIELD
+EXTRACTX SUBOUT ,                  RETURN TO CALLER
+         SPACE 1
+EXTRACTM MVC   0(0,R2),0(R1)       EXECUTED MOVE INSTRUCTION
+         TITLE 'I/O SUB-ROUTINES'
+***********************************************************************
+*        READ SUBROUTINE FOR SYSIN                                    *
+***********************************************************************
+         SPACE 1
+GET      SUBIN SAVE=R4,PREFIX=G    READ ROBIN CONTROL CARDS
+         GET   SYSIN               GET NEXT RECORD
+         LR    R6,R1               SAVE BUFFER ADDRESS
+         MVC   10(80,R5),0(R6)     MOVE CONTROL CARD TO PRINTLINE
+         AP    CNTIN,ONE           INCREMENT RECORD COUNTER
+        SUBOUT RESTORE=R4,PREFIX=G RETURN TO CALLER
+         SPACE 4
+***********************************************************************
+*        READ SUBROUTINE FOR SYSUT1                                   *
+***********************************************************************
+         SPACE 1
+READ     SUBIN SAVE=(R4)           READ INPUT DATA
+         GET   SYSUT1              GET NEXT INPUT RECORD
+         LR    R6,R1               SAVE BUFFER ADDRESS
+MOVEDATA MVC SRECDATA-SORTRECD(0,R7),0(R6) MOVE TO INTERMED AREA
+         AP    CNTUT1,ONE          INCREMENT RECORD COUNTER
+         NOP   *+14
+         MVI   *-3,X'F0'           CHANGE SWITCH FIRST TIME
+         MVC   MOVEDP+1(1),MOVEDATA+1   LENGTH FOR MOVE
+         SUBOUT RESTORE=(R4)       RETURN TO CALLER
+         SPACE 4
+***********************************************************************
+*        WRITE SUBROUTINE FOR SYSPUNCH                                *
+***********************************************************************
+         SPACE 1
+PUNCH    SUBIN ,
+         TM    PUNCHSW,DDPRES+DDOPEN TEST IF SYSPUNCH PRESENT AND OPEN
+         BNO   PUNCHX              BRANCH IF NO
+         PUT   SYSPUNCH,0(R9)
+         AP    CNTPUN,ONE          INCREMENT RECORD COUNTER
+PUNCHX   SUBOUT ,                  RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        PRINT SUBROUTINE FOR SYSPRINT                                *
+***********************************************************************
+         SPACE 1
+PRINT    SUBIN ,                   PRINT MESSAGE
+         TM   PRINTSW,DDPRES+DDOPEN TEST IF SYSPRINT PRESENT AND OPEN
+         BNO   PRINTX               BRANCH IF NO
+         AP    LINECOUN,ONE        ADD ONE TO LINE COUNT
+         CLI   0(R5),SPCE1AFT      TEST FOR SPACE 1
+         BE    ALC                 BRANCH IF YES
+         AP    LINECOUN,ONE        ADD ONE TO LINE COUNT
+         CLI   0(R5),SPCE2AFT      TEST FOR SPACE 2
+         BE    ALC                 BRANCH IF YES
+         AP    LINECOUN,ONE        ADD ONE TO LINE COUNT
+         CLI   0(R5),SPCE3AFT      TEST FOR SPACE 3
+         BE    ALC                 BRANCH IF YES
+ALC      CP    LINECOUN,LINEMAX    TEST IF A SKIP OF PAGE IS NEED
+         BL    *+8                 BRANCH IF NO
+         MVI   0(R5),PAGESKIP      ESTABLISH PAGE SKIP
+         PUT   SYSPRINT            PRINT LINE
+         LR    R5,R1               SAVE BUFFER ADDRESS
+         MVI   0(R5),SPCE1AFT      INSERT DEFAULT SINGLE SPACE
+         MVI   1(R5),C' '          MOVE SPACE TO START OF LINE
+         MVC   2(131,R5),1(R5)      AND PROPACATE THROUGH
+         CP    LINECOUN,LINEMAX    TEST IF A SKIP OF PAGE HAS BEEN MADE
+         BL    PRINTX              BRANCH IF NO
+         AP    PAGECOUN,ONE        ADD ONE TO PAGE COUNT
+         MVC   PAGENO(4),EDITCOND  SET UP EDIT PATTERN
+         ED    PAGENO(4),PAGECOUN  EDIT PAGE NO
+         MVC   1(L'LINE01,R5),LINE01     MOVE HEAD LINE
+         MVI   0(R5),SPCE3AFT      ESTABLISH TRIPLE SPACE
+         ZAP   LINECOUN,THREE      ZERO AND ADD THREE TO LINE COUNT
+         CLI   SPHLSW,ON           TEST IF SPECIAL HEAD LINES SWITCH ON
+         BNE   ALC                 BRANCH IF NO
+         PUT   SYSPRINT            PRINT LINE
+         MVI   1(R1),BLANK         MOVE SPACE TO START OF LINE
+         MVC   2(131,R1),1(R1)      AND PROPAGANTE THROUGH
+         MVI   0(R1),SPCE1AFT      SINGLE SPACE
+         EJECT
+***********************************************************************
+*        PRINT SUBROUTINE FOR SYSPRINT    (CONT'D)                    *
+***********************************************************************
+         SPACE 1
+SWSL1    NOP   *+14
+         MVC   6(L'SL27A,R1),SL27A      ---------------
+         B     *+16
+         MVC   8(L'SL25A,R1),SL25A      ---------------
+         MVC   98(L'SL25B,R1),SL25B     ---------------
+         MVC   15(80,R1),LINE25    MOVE SUB-HEADING
+         PUT   SYSPRINT            PRINT LINE
+         MVI   1(R1),BLANK         MOVE SPACE TO START OF LINE
+         MVC   2(131,R1),1(R1)      AND PROPAGANTE THROUGH
+         AP    LINECOUN,THREE      ADD THREE TO LINE COUNT
+         MVI   0(R1),SPCE2AFT      DOUBLE SPACES
+SWSL2    NOP   *+14
+         MVC   6(L'SL27B,R1),SL27B      ---------------
+         B     *+16
+         MVC   8(L'SL26A,R1),SL26A      ---------------
+         MVC   98(L'SL26B,R1),SL26B     ---------------
+         MVC   15(80,R1),LINE26    MOVE SUB-HEADING
+         B     ALC
+PRINTX   SUBOUT ,                  RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        WRITE SUBROUTINE FOR SYSUT2                                  *
+***********************************************************************
+         SPACE 1
+WRITE    SUBIN ,                   WRITE SORTED OUTPUT
+         PUT   SYSUT2,WAUT2        WRITE OUTPUT RECORD
+         AP    CNTUT2W,ONE         INCREMENT RECORD COUNTER
+        SUBOUT ,                   RETURN TO CALLER
+         SPACE 2
+***********************************************************************
+*        READ  SUBROUTINE FOR SYSUT2                                  *
+***********************************************************************
+         SPACE 1
+RDUT2    SUBIN ,                   READ SECURITY DATA SET
+         GET   SYSUT2,WAUT2        READ WERT INPUT RECORD
+         AP    CNTUT2R,ONE         INCREMENT RECORD COUNTER
+         SUBOUT ,                  RETURN TO CALLER
+         SPACE 2
+***********************************************************************
+*        WRITE SUBROUTINE FOR SYSUT3                                  *
+***********************************************************************
+         SPACE 1
+WUT3     SUBIN ,
+         TM    SYSUT3SW,DDPRES+DDOPEN TEST IF SYSUT3 PRESENT AND OPEN
+         BNO   WUT3X               BRANCH IF NO
+         PUT   SYSUT3,WAUT2        WRITE OUTPUT RECORD
+         AP    CNTUT3,ONE          INCREMENT RECORD COUNTER
+WUT3X    SUBOUT ,                  RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        READ JOB FILE CONTROL BLOCK                                  *
+***********************************************************************
+         SPACE 1
+READJFCB SUBIN
+         TM    0(R2),DDPRES        TEST IF DD PRESENT
+         BNO   RDJFCBX             BRANCH IF NO
+         MVC   WORKAREA(4),EXITLIST     SAVE CURRENT DCB EXIT ADDRESS
+         MVC   EXITLIST(4),STRJFCB      MOVE JFCB WORK AREA ADDRESS
+         L     R3,0(R2)            GET DCB ADDRESS
+         RDJFCB ((R3))             READ JOB FILE CONTROL BLOCK
+         MVC   EXITLIST(4),WORKAREA     RESTORE DCB EXIT ADDRESS
+         LA    R1,LINE01+56        LOAD ADDRESS OF LINE01 +70
+         MVC   0(11,R1),=C'   SEC. ON '
+         LA    R1,11(R1)           INCREMENT POINTER
+         CLI   JFCBNVOL,X'01'           TEST IF ONLY ONE VOLUME
+         BNE   *+24                     BRANCH IF NO
+         MVC   0(4,R1),=C'VOL='         MOVE CONSTANT 'VOL=SER='
+         MVC   4(6,R1),JFCBVOLS         MOVE VOLUME SERIAL NUMBER
+         MVI   10(R1),C','              MOVE COMMA
+         LA    R1,11(R1)           INCREMENT POINTER
+         MVC   0(4,R1),=C'DSN='         MOVE CONSTANT 'DSN='
+         MVC   4(40,R1),JFCBDSNM        MOVE DATA SET NAME
+RDJFCBX  SUBOUT ,                  RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        SUPPLY DEFAULT BLOCK SIZE IF NOT CODED                       *
+***********************************************************************
+         SPACE 1
+BLKSZRTN SUBIN ,                   SUPPLY DEFAULT BLOCK SIZE
+         USING IHADCB,R1           ESTABLISH DCB ADDRESSABILITY
+         CLC   DCBLRECL,ZEROWORD   TEST IF LRECL SUPPLIED
+         BNE   *+8                 BYPASS DEFAULT IF YES
+         MVI   DCBLRECL+1,80       FORCE LRECL TO 80
+         CLC   DCBBLKSI,ZEROWORD   TEST IF BLKSIZE SUPPLIED
+         BNE   0(R14)              RETURN TO OPEN IF YES
+         MVC   DCBBLKSI,DCBLRECL   FORCE SINGLE BLOCKING
+         DROP  R1                  DROP DCB ADDRESSABILITY
+        SUBOUT RETURN=(R14)        RETURN TO OPEN ROUTINES
+         SPACE 5
+***********************************************************************
+*        I/O ERROR ROUTINE                                            *
+***********************************************************************
+         SPACE 1
+IOERROR  SUBIN ,                   ANALYSE I/O ERROR
+         MVC   COMPCODE,COND16     SET COMPLETION CODE
+        SYNADAF ACSMETH=QSAM       CALL ANALYSIS ROUTINE
+         MVC   LINE05+12(86),50(R1) ADD RESULT OF ANALYSIS TO LINE
+        SYNADRLS ,                 RELEASE OS BUFFER
+         WTO   MF=(E,LINE04)       TELL OPERATOR OF ERROR
+         MVI   0(R5),SPCE2AFT      ESTABLISH DOUBLE BLANK LINE
+         BAL   R4,PRINT             AND WRITE THEM
+         MVI   0(R5),SPCE3AFT      ESTABLISH DOUBLE SPACE FOLLOWING
+         MVC   5(L'LINE05,R5),LINE05 MOVE IN ERROR MESSAGE
+         BAL   R4,PRINT            WRITE ERROR MESSAGE
+        SUBOUT RETURN=PRINTCD3     TERMINATE JOB
+         SPACE 2
+ABEND    EQU   *
+         ABEND 3333,DUMP,STEP
+         EJECT
+***********************************************************************
+*        THIS ROUTINE TEST IF A DD STATEMENT IS PRESENT BEFORE OPEN   *
+***********************************************************************
+         SPACE 1
+TESTIOT  SUBIN ,                   TEST TASK INPUT/OUTPUT TABLE
+         TESTIOT DDNAME=4(R2)      TEST IF DDNAME FOUND IN TIOT
+         B     *+4(R15)            TEST CONDITION CODE
+         OI    0(R2),DDPRES        TELL THAT DD STATEMENT PRESENT
+         SUBOUT ,                  RETURN TO CALLER
+         SPACE 3
+***********************************************************************
+*        OPEN ROUTINE                                                 *
+***********************************************************************
+         SPACE 1
+OPEN     SUBIN ,                   OPEN DATA SET
+         TM    0(R2),DDINT         TEST IF DD INTERESTING
+         BNO   OPENX               BRANCH IF NO
+         TM    0(R2),DDPRES        TEST IF DD STATEMENT PRESENT
+         BNO   OPENX               BRANCH IF NO
+         L     R3,0(,R2)           GET DCB ADDRESS
+         CLC   12(L'INPUT,R2),INPUT TEST FOR INPUT DATA SET
+         BE    OPEN2               BRANCH IF INPUT
+         OPEN  ((R3),(OUTPUT))     OPEN OUTPUT DATA SET
+         B     OPEN3               GO SET SWITCH
+OPEN2    OPEN  ((R3),(INPUT))      OPEN INPUT DATA SET
+OPEN3    OI    0(R2),DDOPEN        INDICATE DATA SET OPEN
+OPENX    SUBOUT ,                  RETURN TO CALLER
+         SPACE 5
+***********************************************************************
+*        CLOSE ROUTINE                                                *
+***********************************************************************
+         SPACE 1
+CLOSE    SUBIN ,                   CLOSE DATA SET
+         TM    0(R2),DDOPEN        TEST IF DATA SET OPEN
+         BZ    CLOSEX              EXIT IF NOT
+         L     R3,0(,R2)           GET DCB ADDRESS FROM TABLE ENTRY
+         CLOSE ((R3))              CLOSE DATA SET
+         NI    0(R2),FF-DDOPEN     SET OFF 'OPEN' SWITCH
+CLOSEX  SUBOUT ,                   RETURN TO CALLER
+         TITLE 'MISCELLANEOUS EQUATES, CONSTANTS AND WORK AREAS'
+***********************************************************************
+*        EQUATES
+***********************************************************************
+         SPACE 1
+SPCE1AFT EQU   X'09'               SPACE 1 AFTER PRINTING
+SPCE2AFT EQU   X'11'               SPACE 2 AFTER PRINTING
+SPCE3AFT EQU   X'19'               SPACE 3 AFTER PRINTING
+PAGESKIP EQU   X'89'               SKIP TO NEW PAGE
+DELETE   EQU   4                   TELL SORT TO DELETE RECORD
+NORETURN EQU   8                   TELL SORT NOT TO RETURN
+INSERT   EQU   12                  TELL SORT TO INSERT RECORD
+DDOPEN   EQU   1                   DATA SET IS OPEN
+DDPRES   EQU   8                   DD STATEMENT PRESENT
+DDINT    EQU   16
+FF       EQU   255
+BLANK    EQU   X'40'               BLANK
+ON       EQU   X'FF'               ON
+OFF      EQU   X'00'               OFF
+SIGN     EQU   X'F0'
+         TITLE 'MISCELLANEOUS CONSTANTS AND WORK AREAS'
+***********************************************************************
+*        MESSAGES                                                     *
+***********************************************************************
+         SPACE 1
+LINE01   DC    C'ROBIN  -  RUN NO.        DATE              TIME       *
+                                                                       *
+                             PAGE    '
+PAGENO   EQU   *-4
+LINE02   DC    C'CONDITION CODE = '
+LINE03   DC    C'END OF ROBIN '
+LINE04   DS    0F
+         DC    AL2(WTOEND-*),H'0',C'ROBIN   - '
+LINE05   DC    CL98'I/O ERROR -'
+WTOEND   EQU   *
+LINE06   DC    C'BAD END OF THE SORT'
+LINE07   DC    C'ROBIN  CONTROL CARDS ARE -'
+LINE08   DC    C'END OF ROBIN CONTROL CARDS '
+LINE09   DC    C'*** TOTAL LENGTH OF BATCH NO > 16 - IGNORED'
+LINE10   DC    C'LIST OF THE ''LOADDATA'' CONTROL CARDS SUPPLIED'
+LINE11   DC    C'LIST OF THE RECORDS WRITTEN TO SYSUT3 DATA SET'
+LINE12   DC    C'***** SYSTEM NAME SPECIFIED IN PARM NOT FOUND *****'
+LINE13   DC    C'***** NO SYSUT2 STATEMENT      *****'
+LINE14   DC    C'PARM OF EXEC CARD IS -'
+LINE15   DC    C'THE FOLLOWING DD STATEMENTS WERE ENCOUNTERED -'
+LINE16   DC    C'***** NO SYSIN STATEMENT       *****'
+LINE17   DC    C'***** PROCESSING BYPASSED      *****'
+LINE18   DC    C'***** NO SYSUT1 STATEMENT      *****'
+LINE19   DC    C'***** AND NO PARM OF EXEC CARD *****'
+LINE20   DC    C'INSUFFICIENT SORT DD STATEMENT FOUND'
+LINE21   DC    C'THE FOLLOWING MANDATORY DD STATEMENTS WERE MISSING -'
+LINE22   DC    C'*** CARD CODE NOT ST01,2,3. - IGNORED'
+LINE23   DC    C'*** SYSTEM NAME ALREADY EXISTING - IGNORED'
+LINE24   DC    C'*** ONE OF PPL''S IS NOT NUMERIC - IGNORED'
+LINE25   DC    CL9'0',CL10'1',CL10'2',CL10'3',CL10'4',CL10'5',CL10'6',C*
+               L10'7',C'8'
+SL25A    DC    C'RECORD'
+SL25B    DC    C' DATE TIME  JOB'
+LINE26   DC    8CL10'1234567890'
+SL26A    DC    C'NUMBER'
+SL26B    DC    C'YYMMDDHHMM   NAME'
+LINE27   DC    C'THE FOLLOWING CARDS ARE WITHOUT ST02 CONTROL CARDS - I*
+               GNORED'
+SL27A    DC    C'SYSTEM'
+SL27B    DC    C' NAME'
+LINE28   DC    C'*** INDICATOR(S) NOT NUMERIC - IGNORED'
+LINE29   DC    C'***** ERROR(S) IN PARM OF EXEC CARD *****'
+         EJECT
+***********************************************************************
+*        MESSAGES     (CONT'D)                                        *
+***********************************************************************
+         SPACE 1
+LINE30   DC    C'NUMBER OF RECORDS READ FROM SYSIN     ='
+LINE31   DC    C'NUMBER OF RECORDS READ FROM SYSUT1    ='
+LINE32   DC    C'NUMBER OF RECORDS WRITTEN TO SYSPUNCH ='
+LINE33   DC    C'NUMBER OF RECORDS WRITTEN TO SYSUT2   ='
+LINE34   DC    C'NUMBER OF RECORDS READ FROM SYSUT2    ='
+LINE35   DC    C'NUMBER OF RECORDS WRITTEN TO SYSUT3   ='
+LINE36   DC    C'***** NO SYSPUNCH STATEMENT    *****'
+LINE37   DC    C'LIST OF THE CARDS PUNCHED'
+LINE38   DC    C'THE FIRST SYSUT1 RECORD IS NOT A ''LOADDATA'' RECORD'
+LINE39   DC    C'JOB(S) NOT FOUND FOR ''RESTART'', ''RELOAD'' OR ''PUNC*
+               H'' OPERATION'
+LINE40   DC    C'*** SYNTAX ERROR(S) FOR ''ST03+ '' - IGNORED'
+LINE41   DC    C'NUMBER OF BYTES DYNAMICALLY ACQUIRED FOR INTERNAL TABL*
+               ES ='
+         EJECT
+***********************************************************************
+*        WORK AREAS FOR THE SORT                                      *
+***********************************************************************
+         SPACE 1
+SORTPARM DS    0F                  ADDRESS OF SORT PARAMETERS
+         DC    X'80',AL3(SORTLIST) ADDRESS OF SORT PARAMETERS
+         DC    X'0000'             FILLER
+SORTLIST DC    X'0028'             LENGTH OF PARAMETER AREA
+         DC    A(SORTSTRT)         START OF SORT STATEMENT
+         DC    A(SORTEND)          END   OF SORT STATEMENT
+         DC    A(RECSTART)         START OF RECORD STATEMENT
+         DC    A(RECEND)           END   OF RECORD STATEMENT
+         DC    A(E15)              ADDRESS OF E15 SORT EXIT
+         DC    A(E35)              ADDRESS OF E35 SORT EXIT
+         DC    X'00',C'MAX'        REQUEST CORE OPTIMISATION
+NOKTORES DC    X'01',AL3(6144)     RESERVE FOR ROBIN TABLES , 6K IS
+*                                  THE VALUE BY DEFAULT. KEYWORD
+*                                  'RESERVE=' IN PARM OF EXEC CARD
+*                                  MUST BE USED IF MORE 'K' IS NEED
+         DC    X'03',AL3(LISTSW+4) SPECIFY MESSAGE DD-NAME
+         DC    X'FF',X'00',C'AP'   SPECIFY ALL MESSAGES TO PRINTER
+         SPACE 1
+SORTABLE DS    0F
+LISTSW   DC    X'00',AL3(0),CL8'SORTLIST'
+         DC    X'00',AL3(0),CL8'SORTLIB'
+         DC    X'00',AL3(0),CL8'SORTWK01'
+         DC    X'00',AL3(0),CL8'SORTWK02'
+         DC    X'00',AL3(0),CL8'SORTWK03'
+TABSIZE  EQU   *-SORTABLE          LENGTH OF TABLE
+SORTDS   EQU   5                   NUMBER OF MANDATORY SORT DD'S
+NTRYSIZS EQU   TABSIZE/SORTDS      NUMBER OF MANDATORY SORT DD'S
+LENGSREC DS    F                   LENGTH OF INTER. SORT REC. GETMAINED
+         SPACE 1
+SORTSTRT DC    C' SORT FIELDS=(1,30,CH,A,31,6,PD,A)'
+SORTEND  DC    C' '                          END OF SORT STATEMENT
+         SPACE 1
+RECSTART DC    C' RECORD LENGTH=(' RECORD STATEMENT
+RECL1    DC    C'   ,'             INPUT RECORD LENGTH
+RECL2    DC    C'   ,'             INTERMEDIATE RECORD LENGTH
+RECL3    DC    C'   ),TYPE=F'      OUTPUT RECORD LENGTH
+RECEND   DC    C' '                END OF RECORD STATEMENT
+         SPACE 1
+LHCORES  DC    F'0'                LENGTH OF  SPACE CORE RESERVED
+ADCORES  DC    F'0'                ADDRESS OF SPACE CORE RESERVED
+         EJECT
+***********************************************************************
+*        WORK AREAS                                                   *
+***********************************************************************
+         SPACE 1
+NOLISTSW DC    X'00'
+WORKPACK DS    D                   WORK AREA FOR DECIMAL MATHS
+ZERO     DC    PL1'0'              PACKED CONSTANT OF ZERO
+ONE      DC    PL1'1'              PACKED CONSTANT OF 1
+PROCSW   DC    C'A'                PROCEDURE SWITCH
+RLDRSTSW DC    X'00'               RELOAD/RESTART SWITCH
+SPHLSW   DC    X'00'               SPECIAL HEAD LINE SWITCH
+DATETIME DC    CL10' '             YYMMDDHHMM FOR RELOAD OPERATION
+JOBNAME  DC    CL8' '              JOB NAME WORK AREA
+PAGECOUN DC    PL2'0'
+LINECOUN DC    PL2'0'
+LINEMAX  DC    PL2'55'
+THREE    DC    P'3'
+TBSSIZE  DC    F'0'                LENGTH O6 && &5   0  &   &G5-D&REE4
+CNTIN    DC    PL4'0'              COUNT OF CONTROL CARDS
+CNTPUN   DC    PL4'0'              COUNT OF CARD PUNCHED
+CNTUT1   DC    PL4'0'              COUNT OF INPUT RECORDS
+CNTUT2W  DC    PL4'0'              COUNT OF OUTPUT RECORDS
+CNTUT2R  DC    PL4'0'              COUNT OF INPUT RECORDS FROM SECUR.
+CNTUT3   DC    PL4'0'              COUNT OF OUTPUT RECORDS TO INTRDR
+ZEROWORD DC    F'0'                BINARY ZERO FULLWORD FOR TESTS
+COMPCODE DC    H'0'                CONDITION CODE
+COND4    DC    H'4'                COMPLETION CODE OF 4
+COND8    DC    H'8'                COMPLETION CODE OF 8
+COND12   DC    H'12'               COMPLETION CODE OF 12
+COND16   DC    H'16'               COMPLETION CODE OF 16
+INPUT    DC    CL8'INPUT'          USED BY OPEN ROUTINE
+WORKEDIT DS    CL4                 WORK AREA FOR EDITING
+EDITPATN DC    X'40212020'         EDIT PATTERN FOR 999
+EDITCOND DC    X'40202120'         EDIT PATTERN FOR ZZ9
+EDITRUNO DC    X'402020202120'     EDIT PATTERN FOR 99999
+EDRECOUN DC    X'4020202020202120' EDIT PATTERN FOR 9999999
+TABLEST1 DC    A(0)                ADDRESS OF 1ST ST01-TABLE ENTRY
+TABLEST2 DC    A(0)                ADDRESS OF 1ST ST02-TABLE ENTRY
+BATCHST1 DC    A(0)                ADDRESS OF LAST MATCHED TABLE E.ST01
+BATCHST2 DC    A(0)                ADDRESS OF LAST MATCHED TABLE E.ST02
+WORKAREA DS    CL16
+SPACES   DC    CL16' '
+SWPREF   DC    X'00'               IF X'FF' ADD ONE TO SRECPREF IS REQ.
+SWLD     DC    X'00'               SWITCH 'LOADDATA' CONTROL CARD
+WAIND    DC    X'00'               CONSTANT FOR 'OR' INSTRUCTION
+CURRSYSN DC    CL8' '              CURRENT SYSTEM NAME
+         SPACE 1
+PARMPNTR DS    F                   ADDRESS OF PARAMETER AREA
+PARMLGTH DS    H                   LENGTH OF PARAMETER AREA
+PUNFROM  DC    H'0'                START NUMBER FOR PUNCH
+PUNTO    DC    H'0'                END NUMBER FOR PUNCH
+         TITLE 'DCB''S AND I/O CONTROL TABLES'
+***********************************************************************
+*        DCB'S TABLE                                                  *
+***********************************************************************
+         SPACE 1
+DCBTABLE DS    0F
+PRINTSW  DC    X'00',AL3(SYSPRINT),CL8'SYSPRINT',CL8'OUTPUT'
+PUNCHSW  DC    X'00',AL3(SYSPUNCH),CL8'SYSPUNCH',CL8'OUTPUT'
+SYSINSW  DC    X'00',AL3(SYSIN),CL8'SYSIN',CL8'INPUT'
+SYSUT1SW DC    X'00',AL3(SYSUT1),CL8'SYSUT1',CL8'INPUT'
+SYSUT2SW DC    X'00',AL3(SYSUT2),CL8'SYSUT2',CL8'OUTPUT'
+SYSUT3SW DC    X'00',AL3(SYSUT3),CL8'SYSUT3',CL8'OUTPUT'
+TABLESIZ EQU   *-DCBTABLE
+MAXDS    EQU   6                   NUMBER OF DCB'S USED BY ROBIN
+DCBNTRY  EQU   TABLESIZ/MAXDS
+         SPACE 1
+EXITLIST DC    X'85',AL3(BLKSZRTN) ENTRY FOR DCB MODIFICATION
+         SPACE 3
+LOCAREA  DS    0D                  WORK AREA FOR LOCATE MACRO 265 BYTES
+WAUT2    DS    CL132
+SAFETY   DS    CL133               PSEUDO-BUFFER
+         EJECT
+***********************************************************************
+*        DATA CONTROL BLOCKS                                          *
+***********************************************************************
+         SPACE 2
+SYSPRINT DCB   DDNAME=SYSPRINT,                                        *
+               DSORG=PS,                                               *
+               MACRF=PL,                                               *
+               RECFM=FBM,                                              *
+               LRECL=133,                                              *
+               SYNAD=IOERROR,                                          *
+               EXLST=EXITLIST
+         SPACE 3
+SYSIN    DCB   DDNAME=SYSIN,                                           *
+               DSORG=PS,                                               *
+               MACRF=GL,                                               *
+               RECFM=FB,                                               *
+               LRECL=80,                                               *
+               EODAD=EODIN,                                            *
+               SYNAD=IOERROR,                                          *
+               EXLST=EXITLIST
+         SPACE 3
+SYSUT1   DCB   DDNAME=SYSUT1,                                          *
+               DSORG=PS,                                               *
+               MACRF=GL,                                               *
+               RECFM=FB,                                               *
+               EODAD=EODUT1,                                           *
+               SYNAD=IOERROR,                                          *
+               EXLST=EXITLIST
+         SPACE 3
+SYSUT2   DCB   DDNAME=SYSUT2,                                          *
+               DSORG=PS,                                               *
+               MACRF=(PM,GM),                                          *
+               LRECL=100,                                              *
+               RECFM=FB,                                               *
+               EODAD=EODUT2,                                           *
+               SYNAD=IOERROR,                                          *
+               EXLST=EXITLIST
+         EJECT
+***********************************************************************
+*        DATA CONTROL BLOCKS  ( CONT'D )                              *
+***********************************************************************
+         SPACE 1
+SYSUT3   DCB   DDNAME=SYSUT3,                                          *
+               DSORG=PS,                                               *
+               MACRF=PM,                                               *
+               RECFM=FB,                                               *
+               LRECL=80,                                               *
+               BUFNO=1,                                                *
+               SYNAD=IOERROR,                                          *
+               EXLST=EXITLIST
+         SPACE 3
+SYSPUNCH DCB   DDNAME=SYSPUNCH,                                        *
+               DSORG=PS,                                               *
+               MACRF=PM,                                               *
+               RECFM=FB,                                               *
+               LRECL=80,                                               *
+               SYNAD=IOERROR,                                          *
+               EXLST=EXITLIST
+         EJECT
+***********************************************************************
+*        JOB FILE CONTROL BLOCK                                       *
+***********************************************************************
+         SPACE 1
+         DS    0D
+STRJFCB  DC    X'87'
+         DC    AL3(INFMJFCB)
+         PRINT GEN
+         IEFJFCBN
+         PRINT NOGEN
+         EJECT
+***********************************************************************
+*        LITERAL POOL                                                 *
+***********************************************************************
+         SPACE 1
+         LTORG
+         EJECT
+         PRINT NOGEN               ***********     TEMPO *************
+         DCBD  DSORG=PS            GENERATE DCB DSECT
+ROBIN    CSECT
+         PRINT NOGEN               SUPPRESS MACRO EXPANSION
+         SPACE 1
+         LTORG
+         SPACE 1
+$L       EQU   *-ROBIN
+$L1      EQU   $L/100000*100000
+$L2      EQU   ($L-$L1)/10000*10000
+$L3      EQU   ($L-$L1-$L2)/1000*1000
+$L4      EQU   ($L-$L1-$L2-$L3)/100*100
+$L5      EQU   ($L-$L1-$L2-$L3-$L4)/10*10
+$L6      EQU   ($L-$L1-$L2-$L3-$L4-$L5)
+         SPACE 1
+$LENGTH  EQU   $L1/100000*1048576+$L2/10000*65536+$L3/1000*4096+$L4/100*
+               256+$L5/10*16+$L6
+         SPACE 1
+         END
+/*
+//LKED.SYSLMOD DD DSN=SYS1.LINKLIB2(ROBIN),DISP=SHR
+//TEST EXEC PGM=ROBIN
+//STEPLIB DD DSN=SYS2.SYNCSORT,DISP=SHR
+//SORTLIB DD DSN=SYS2.SYNCSORT,DISP=SHR
+//SORTLIST DD SYSOUT=A
+//SYSPRINT DD SYSOUT=A
+//SORTWK01 DD UNIT=SYSDA,SPACE=(TRK,38)
+//SORTWK02 DD UNIT=SYSDA,SPACE=(TRK,38)
+//SORTWK03 DD UNIT=SYSDA,SPACE=(TRK,38)
+//SORTWK04 DD UNIT=SYSDA,SPACE=(TRK,38)
+//SYSUT1 DD *
+LOADDATA       TEST
+ABC
+AB
+A
+/*
+//SYSIN DD *
+ST01TEST
+ST02013ABC     A
+ST02012AB      B
+ST02011A       C
+ST03//TEST JOB
+ST03//*     NEXT CARD MUST BE 'ABC'
+ST03+ DATA TYPE=A
+ST03//*     NEXT CARD MUST BE 'AB'
+ST03+ DATA TYPE=B
+ST03//*     NEXT CARD MUST BE 'A'
+ST03+ DATA TYPE=C
+//ROBIN EXEC PGM=ROBIN,COND=EVEN
+//STEPLIB DD DSN=SYS2.TESTLIB,DISP=SHR
+//       DD DSN=SYS2.SYNCSORT,DISP=SHR
+//SORTLIB DD DSN=SYS2.SYNCSORT,DISP=SHR
+//SORTLIST DD SYSOUT=A
+//SYSUDUMP DD SYSOUT=A
+//SYSPRINT DD SYSOUT=A
+//SORTWK01 DD UNIT=SYSDA,SPACE=(TRK,38)
+//SORTWK02 DD UNIT=SYSDA,SPACE=(TRK,38)
+//SORTWK03 DD UNIT=SYSDA,SPACE=(TRK,38)
+//SORTWK04 DD UNIT=SYSDA,SPACE=(TRK,38)
+//SYSUT1 DD *
+LOADDATA       TEST
+ABC
+AB
+A
+/*
+//SYSIN DD *
+ST01TEST
+ST02013ABC     A
+ST02012AB      B
+ST02011A       C
+ST03//TEST JOB
+ST03//*     NEXT CARD MUST BE 'ABC'
+ST03+ DATA TYPE=A
+ST03//*     NEXT CARD MUST BE 'AB'
+ST03+ DATA TYPE=B
+ST03//*     NEXT CARD MUST BE 'A'
+ST03+ DATA TYPE=C
+/*
+//SYSUT2 DD UNIT=SYSDA,SPACE=(TRK,38),
+// DCB=(RECFM=FB,LRECL=100,BLKSIZE=1600)
+/*

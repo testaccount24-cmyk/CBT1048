@@ -1,0 +1,405 @@
+OCLP     TITLE 'O S C L I P - OS/360 UTILITY PROGRAM'
+****     PRINT NOGEN
+OSCLIP   CSECT
+         SPACE 3
+***********************************************************************
+*                                                                     *
+*    O S C L I P - OS/360          LEVEL = 03/17/70                   *
+*                                                                     *
+*          BY SHINTARO KOBAYASHI                                      *
+*             EDUCATION CENTER                                        *
+*             IBM JAPAN,LTD.                                          *
+*             33-1,CHIDORI 2 CHOME,                                   *
+*             OHTA-KU,TOKYO 145,JAPAN.                                *
+*             PHONE  03-750-1111.                                     *
+*                                                                     *
+***********************************************************************
+         SPACE 5
+         SAVE  (14,12)
+         BALR  BASEREG,0
+         USING *,BASEREG
+         LA    14,SAVEAREA
+         ST    13,SAVEAREA+4
+         ST    14,8(13)
+         LR    13,14
+         SPACE 2
+CVTREG   EQU   2   CVT ADDRESS
+TCBPREG  EQU   2   TCB POINTER
+TCBREG   EQU   2   TCB ADDRESS
+UCBREG   EQU   2   UCB ADDRESS
+WKREG    EQU   3
+ILK1REG  EQU   4
+ILK2REG  EQU   4
+KREG     EQU   5
+LREG     EQU   5
+R7       EQU   7   CVT ADDRESS
+BASEREG  EQU   10
+LNKREG   EQU   11
+         SPACE 2
+         L     CVTREG,16           GET CVT POINTER
+         LR    R7,CVTREG           SAVE CVT ADDRESS
+         L     TCBPREG,0(CVTREG)   GET POINTER TO TCB
+         L     TCBREG,4(TCBPREG)   GET TCB ADDRESS
+         ST    TCBREG,OUTDEB       PUT TCB ADDR IN DEB
+         OC    OUTDEB+24(1),28(TCBREG) GET PRTCT KEY IN DEB
+         TM    116(R7),X'10'       TEST IF UNDER MVS
+         BZ    MFT                 BRANCH IF UNDER MFT
+         MODESET KEY=ZERO,MODE=SUP
+         L     WKREG,8(TCBREG)     GET TCB DEB PTR
+         ST    WKREG,OUTDEB+4      STORE DEB PTR IN DEB
+         LA    WKREG,OUTDEB        GET DEB ADDR
+         ST    WKREG,8(TCBREG)     STORE DEB PTR IN TCB
+         MODESET KEY=NZERO,MODE=PROB
+         DEBCHK OUTDCB,TYPE=ADD    INSERT DEB IN DEB CHAIN & DEB LIST
+         B     COM                 BRANCH TO COMMON PROCESSING
+MFT      EQU   *
+COM      EQU   *
+         EJECT
+         WTO   'REPLY ''E'' TO END OSCLIP'
+         WTO   'ENTER VOL ID WITH FOLLOWING FORM'
+         WTO   '''DDD,SSSSSS'' FOR DISK && DRUM'
+         WTO   '''DDD/B,SSSSSS'' FOR DATA CELL'
+         WTO   '''MMDDD,SSSSSS'' OR ''MMDDD,NL'' FOR TAPE'
+         SPACE 2
+*  CLIP MAIN ROUTINE
+         SPACE 2
+         DS    0H
+SKCLIP   EQU   *
+         XC    XBB(2),XBB
+         XC    ODBBN(2),ODBBN
+         MVI   VOLID,X'40'
+         MVC   VOLID+1(11),VOLID
+         XC    REPLYECB,REPLYECB
+         WTOR  'ENTER NEW VOL ID',VOLID,12,REPLYECB
+         WAIT  ECB=REPLYECB
+         OC    VOLID(12),=X'404040404040404040404040'
+         CLC   VOLID(3),=C'E  '
+         BE    EOJ
+         CLC   VOLID(3),=C'EOJ'
+         BE    EOJ
+         CLI   VOLID+3,C','
+         BE    DKID1
+         CLI   VOLID+3,C'/'
+         BE    DCID1
+         CLI   VOLID+5,C','
+         BE    TPID1
+KYINAGN  EQU   *
+         WTO   '**OSCLIP ERROR, KEY IN AGAIN'
+         B     SKCLIP
+EOJ      EQU   *
+         L     13,4(13)
+         RETURN (14,12),RC=0
+         SPACE 2
+*  ROUTINE TO ASK FOR THE DASD
+         SPACE 2
+DCID1    EQU   *
+         WTO   '**OSCLIP - DATA CELL ?'
+         B     KYINAGN
+         MVC   XBB+1(1),VOLID+4
+         TM    XBB+1,X'F0'
+         BM    KYINAGN
+         NC    XBB(2),=X'000F'
+         MVC   ODBBN(2),XBB
+         MVC   VOLID+4(6),VOLID+6
+DKID1    EQU   *
+         MVC   D1(3),VOLID
+         BAL   LNKREG,UCBLKUP
+         CLI   18(UCBREG),X'20'  IS IT A DASD
+         BNE   NODASD
+         ST    UCBREG,OUTDEBMD   STORE UCB ADDR IN DEB
+         MVI   XCCW3,X'06'     R CODE IN CCW3
+         MVI   XCCW3+4,X'00'   R FLAG IN CCW3
+         BAL   LNKREG,XDAP    READ OLD ID
+         MVC   DKMSG(3),=C'OLD'
+         MVC   DKMSG+9(6),IOAREA+4
+         BAL   LNKREG,DKWTO
+         MVI   XCCW3,X'05'     W CODE IN CCW3
+         MVC   IOAREA+4(6),VOLID+4
+         BAL   LNKREG,XDAP     WRITE NEW ID
+         MVI   XCCW3,X'06'     V CODE IN CCW3
+         MVI   XCCW3+4,X'10'   V FLAG IN CCW3
+         BAL   LNKREG,XDAP    VERIFY NEW ID
+         MVC   DKMSG(3),=C'NEW'
+         MVC   DKMSG+9(6),IOAREA+4
+         BAL   LNKREG,DKWTO
+         B     SKCLIP
+         SPACE 2
+NODASD   WTO   '**OSCLIP NOT A DASD'
+         B     SKCLIP
+         SPACE 2
+*   EXCP FOR DASD
+         SPACE 1
+XDAP     EQU   *
+         MVC   IOBCCW(3),XCCWA
+         XC    ECBX(4),ECBX
+         EXCP  IOBX
+         WAIT  ECB=ECBX
+         CLI   ECBX,X'7F'
+         BNE   DKERR
+         BR    LNKREG
+         SPACE 2
+DKERR    EQU   *
+         WTO   '**OSCLIP DASD I/O ERROR'
+         B     SKCLIP
+         SPACE 2
+         CNOP  0,4
+DKWTO    EQU   *
+         BAL   1,SVC35
+         DC    AL2(19)
+         DC    AL2(0)
+DKMSG    DC    CL15'OLD ID = XXXXXX'
+         DS    0H
+SVC35    SVC   35
+         BR    LNKREG
+         SPACE 2
+TPID1    EQU   *
+         MVC   MM(2),VOLID
+         BAL   LNKREG,SETMM
+         OI    MM,X'03'   MODE NOW IN MM
+         MVC   D1(3),VOLID+2
+         BAL   LNKREG,UCBLKUP
+         MVC   OUTTRTCH(1),MM
+         MVI   OUTDEVT,X'81'
+         CLI   18(UCBREG),X'80'     IS IT A TAPE
+         BNE   NOTAPE
+         ST    UCBREG,OUTDEBMD    STORE UCB ADDR IN DEB
+         MVC   OUTDEBMD(1),MM
+         MVC   OUTCCW(1),MM      BUILD SET MODE COMMAND
+         MVC   OUTCCW+1(7),=X'00000060000001'
+         MVC   OUTCCW+8(8),WTLCCW  SET UP WRITE CCW
+         MVI   IOAREA,X'40'
+         MVC   IOAREA+1(79),IOAREA
+         CLC   VOLID+6(3),=C'NL '
+         BE    TPNL1
+         MVC   IOAREA(4),=C'VOL1'
+         MVC   IOAREA+4(6),VOLID+6
+         MVI   IOAREA+10,C'0'
+         MVC   IOAREA+41(10),=C'OS-CLIP/SK'
+         BAL   LNKREG,IOOUT   WRITE A TAPE LABEL
+TPHD1    EQU   *
+         MVI   IOAREA,X'F0'
+         MVC   IOAREA+1(79),IOAREA
+         MVC   IOAREA(4),=C'HDR1'
+         BAL   LNKREG,IOOUT   WRITE A HDR1
+TPNL1    EQU   *
+         BAL   LNKREG,WTPMK
+         MVC   DKMSG(3),=C'NEW'
+         MVC   DKMSG+9(6),VOLID+6
+         BAL   LNKREG,DKWTO
+         B     SKCLIP
+         SPACE 2
+NOTAPE   EQU   *
+         WTO   '**OSCLIP NOT A TAPE'
+         B     SKCLIP
+         SPACE 2
+OTERR    EQU   *
+         WTO   '**OSCLIP OUTPUT TAPE ERROR'
+         B     SKCLIP
+         SPACE 3
+*   WRITE A TAPE MARK
+         SPACE 1
+WTPMK    EQU   *
+         MVC   OUTCCW+8(8),WTMCCW      SET UP WTM CCW
+         OI    OUTCCW+12,X'60'     CHAIN IT TO A NOP
+         MVC   OUTCCW+16(8),=X'0300000020000001'
+         SPACE 2
+*    EXCP FOR TAPE
+         SPACE 1
+IOOUT    EQU   *
+         MVC   IOBCCW(3),OCCWA
+         XC    ECBX(4),ECBX
+         EXCP  IOBX
+         WAIT  ECB=ECBX
+         CLI   ECBX,X'7F'    NORMAL COMPLETION
+         BNE   OTERR
+         BR    11
+         SPACE 3
+*    CONVERT MM TO HEX TAPE MODE
+         SPACE 1
+SETMM    EQU   *
+         IC    WKREG,MM   GET FIRST BYTE OF MM
+         TM    MM,X'F0'   IS IT NUMERIC
+         BO    MM1        YES
+         AH    WKREG,=H'9' CONVERT ALPHA TO NUMERIC
+MM1      SLL   WKREG,4
+         STC   WKREG,MM
+         IC    WKREG,MM+1
+         TM    MM+1,X'F0'
+         BO    MM2
+         AH    WKREG,=H'9'
+MM2      STC   WKREG,MM+1
+         NI    MM+1,X'0F'
+         OC    MM(1),MM+1   MM NOW IN HEX
+         BR LNKREG
+         EJECT
+*   GET UCB ADDRESS
+         SPACE 1
+UCBLKUP  EQU   *
+         SPACE 1
+*  UCB LOOK UP ALGORITHM
+*
+*    IECILK1 + CHNL ADDR = ADDRESS OF K
+*    IECILK1 + CNTL UNIT + K = ADDRESS OF L          (MFT)
+*    IECILK1 + 2 CNTL UNIT + 2 K = ADDRESS OF L      (MVS)
+*    IECILK2 + 2 (DEV ADDR) + 2 L = ADDRESS OF UCB ADDRESS
+         SPACE 1
+         L     CVTREG,16
+         L     ILK1REG,36(CVTREG) GET IECILK1
+         IC    WKREG,D1   GET CHANNEL ADDR
+         TM    D1,X'F0'  IS IT NUMERIC
+         BO    *+8       YES
+         AH    WKREG,=H'9' CONVERT ALPHA TO NUMERIC
+         N     WKREG,=F'15' CONVERT ZONE TO ZERO
+         AR    WKREG,ILK1REG GET ADDR OF K
+         SR    KREG,KREG
+         IC    KREG,0(WKREG)   GET K VALUE
+         IC    WKREG,D2  GET CTL UNIT ADDR
+         TM    D2,X'F0'
+         BO    *+8
+         AH    WKREG,=H'9'
+         N     WKREG,=F'15'
+         TM    116(R7),X'10'       TEST IF UNDER MVS
+         BZ    MFT20               BRANCH IF UNDER MFT
+         AR    WKREG,WKREG         GET 2 'D2'
+         AR    WKREG,KREG          GET 2 'D2' + K
+MFT20    EQU   *
+         AR    WKREG,ILK1REG       GET IECILK1 +   'D2'       (MFT)
+*                                  GET IECILK1 + 2 'D2' + K   (MVS)
+         AR    WKREG,KREG GET ADDR OF L (IECILK1 +   'D2' +   K) (MFT)
+*                         GET ADDR OF L (IECILK1 + 2 'D2' + 2 K) (MVS)
+         SR    LREG,LREG
+         TM    116(R7),X'10'       TEST IF UNDER MVS
+         BZ    MFT22               BRANCH IF UNDER MFT
+         LH    LREG,0(WKREG)  GET L VALUE                   (MVS)
+         B     COM22               BRANCH TO COMMON PROCESSING
+MFT22    EQU   *
+         IC    LREG,0(WKREG)  GET L VALUE                   (MFT)
+COM22    EQU   *
+         IC    WKREG,D3  GET DEVICE ADDR
+         TM    D3,X'F0'
+         BO    *+8
+         AH    WKREG,=H'9'
+         N     WKREG,=F'15'
+         AR    WKREG,WKREG
+         L     ILK2REG,40(CVTREG) GET IECILK2
+         AR    WKREG,ILK2REG
+         AR    WKREG,LREG
+         AR    WKREG,LREG  ADDR OF UCB ADDR (IECILK2 + 2 'D3' + 2 L)
+         LH    UCBREG,0(WKREG)  GET UCB ADDR
+         CLI   2(UCBREG),X'FF'  IS IT A UCB
+         BNE   BADDEV           NO
+         TM    3(UCBREG),X'08'  IS IT ALLOCATED
+         BO    ALLOCDV          YES
+         BR    LNKREG
+         SPACE 2
+BADDEV   EQU   *
+         WTO   '**OSCLIP INVALID DEVICE'
+         B     SKCLIP
+         SPACE 1
+ALLOCDV  EQU   *
+         WTO   '**OSCLIP IT IS ALLOCATED'
+         B     SKCLIP
+         EJECT
+APPEND   BR    14
+         SPACE 2
+*    ECB FOR DASD AND TAPE
+         SPACE 1
+         CNOP  4,8
+ECBX     DC    1F'0'
+         SPACE 2
+*    IOB FOR DASD AND TAPE
+         SPACE 1
+IOBX     DC    X'42' FLAG IN IOB
+         DC    X'000000'
+         DC    X'00'
+         DC    AL3(ECBX)
+         DC    2F'0'
+         DC    X'00'
+IOBCCW   DC    AL3(XCCW1)  CCW ADDR IN IOB
+         DC    X'00'
+         DC    AL3(OUTDCB) DCB ADDR IN IOB
+         DC    2F'0'
+IOBSEEK  DS    0CL8
+XM       DC    X'00'
+XBB      DC    X'0000'
+XCC      DC    X'0000'
+XHH      DC    X'0000'
+XR       DC    X'03'
+         SPACE 2
+*    CCW FOR DASD
+         SPACE 1
+XCCW1    DC    X'31'  OP CODE IN CCW1
+         DC    AL3(IOBSEEK+3)  IOBSEEK+3 IN CCW1
+         DC    X'40'  FLAG IN CCW1
+         DC    X'00'
+         DC    H'05'  COUNT FIELD IN CCW1
+XCCW2    DC    X'08'  OP CODE IN CCW2
+         DC    AL3(XCCW1)  CCW1 ADDR IN CCW2
+         DC    F'0'
+XCCW3    DC    X'06'   R CODE IN CCW3
+         DC    AL3(IOAREA)
+         DC    X'00'  FLAG IN CCW3
+         DC    X'00'
+XLENG    DC    AL2(80)  LENGTH IN CCW3
+         SPACE 2
+*  DCB FOR OUTPUT DATA SET
+         SPACE 1
+OUTDCB   DS    0F
+         DC    4F'0'
+OUTTRTCH EQU   *
+         DC    X'00'
+OUTDEVT  DC    X'00'
+OUTDENS  DC    X'00'
+         DC    X'00'
+         DC    5F'0'
+         DC    H'0'
+         DC    X'D008'
+         DC    A(OUTDEB)
+         DC    X'10000000'
+         DC    5F'0'
+         SPACE 1
+*  DEB FOR OUTPUT DATA SET
+         SPACE 1
+OUTIOAVT DS    0F
+         DC    A(APPEND)
+         DC    A(APPEND)
+         DC    A(APPEND)
+         DC    A(APPEND)
+         DC    A(APPEND)
+         DC    3F'0'
+         DC    X'06000000'
+OUTDEB   EQU   *
+         DC    F'0'
+         DC    X'00'
+         DC    AL3(0)
+         DC    X'C0000000'
+         DC    X'30000000'
+         DC    2F'0'
+         DC    X'0F'
+         DC    AL3(OUTDCB)
+         DC    X'04'
+         DC    AL3(OUTIOAVT)
+OUTDEBMD DC    X'00'
+OUTDBUCB DC    X'000000'
+ODBBN    DC    H'0'
+         DC    H'0'
+         DC    F'0'
+         DC    F'1'
+         SPACE 2
+*  CCW'S FOR OUTPUT TAPE
+         SPACE 1
+OUTCCW   DS    3D
+WTLCCW   CCW   1,IOAREA,X'20',80
+WTMCCW   CCW   31,IOAREA,X'20',1
+         SPACE 1
+SAVEAREA DC    18F'0'
+REPLYECB DC    F'0'
+VOLID    DC    CL12' '
+IOAREA   DS    CL80
+D1       DC    C'0'
+D2       DC    C'0'
+D3       DC    C'0'
+MM       DC    C'00'
+XCCWA    DC    AL3(XCCW1)
+OCCWA    DC    AL3(OUTCCW)
+         END   OSCLIP

@@ -1,0 +1,403 @@
+//AUXCMM05 JOB (1586,5),'** FOR J. NOLS **',CLASS=N
+//STEP01       EXEC GENASMOD
+***********************************************************************
+*                    A U X C M M 0 5                                  *
+*                                                                     *
+*        THIS ROUTINE HANDLES THE OPERATOR COMMAND DD A               *
+*        IT IS INVOKED DIRECTLY BY THE COMMAND PROCESSOR AUXCMM01     *
+*        TO WHICH IT RETURNS CONTROL WITH A CODE IN REG15 TO          *
+*        INDICATE WHETHER PROCESSING PROCEEDED NORMALLY OR NOT.       *
+*                                                                     *
+*          THE ROUTINE SCANS THE CSCB CHAIN FOR JOBS WHICH ARE NOT    *
+*        INITIATORS AND FORMATS AND OUTPUTS THE JOBNAME, STEPNAME,    *
+*        PROCSTEPNAME, STATUS, WORKING SET, ACCUMULATED CPU TIME,     *
+*        AND NUMBER OF READY TCBS FOR EACH.                           *
+*                                                                     *
+*        ATTRIBUTES. REENTRANT, REUSABLE, SUPERVISOR MODE.            *
+*                                                                     *
+*        REGISTER USAGE                                               *
+*        REG0  PARAMETER REGISTER, WORK REGISTER                      *
+*        REG1  PARAMETER REGISTER, WORK REGISTER                      *
+*        REG2  WORK REGISTER                                          *
+*        REG3  ADDRESS INTERNAL WORK AREA                             *
+*        REG4  ADDRESS OF THE CSCB                                    *
+*        REG5  ADDRESS OF THE ASCB                                    *
+*        REG6  ADDRESS OF EXTENDED SAVE AREA OF SVRB                  *
+*        REG7-REG8  NOT USED BY THIS ROUTINE                          *
+*        REG9  ADDRESS OF CURRENT OUTPUT ELEMENT                      *
+*        REG10 NOT USED BY THIS ROUTINE                               *
+*        REG11 INTERNAL LINK REGISTER                                 *
+*        REG12 BASE ADDRESS REGISTER FOR THE WHOLE ROUTINE            *
+*        REG13 ADDRESS OF DYNAMICALLY OBTAINED REGISTER SAVE AREA     *
+*        REG14 PROGRAM LINK REGISTER                                  *
+*        REG15 PROGRAM LINK REGISTER                                  *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        DSECTS USED IN THIS MODULE                                   *
+***********************************************************************
+         SPACE 2
+WKAREA   DSECT ,                   INTERNAL WORK AREA
+GETMNLEN DS    F                   SAVED DETAILS FOR FREEMAIN
+CHAINHDR DS    F                   START OF OUTPUT CHAIN
+DBLWORD  DS    D                   WORK AREA FOR UNPACK
+FLAG     DS    X                   INTERNAL LOGIC FLAG
+MSGAREA  DS    0CL70               OUTPUT AREA FOR MESSAGES
+CLRLINE DS     0CL70               REFERENCE FOR BUFFER CLEARING
+JOBNAME  DS    CL8                 NAME OF THE JOB
+         DS    C                   PADDING
+STEPNAME DS    CL8                 NAME OF THE STEP
+         DS    C                   PADDING
+PROCNAME DS    CL8                 NAME OF THE PROCSTEP
+         DS    C                   PADDING
+ASID     DS    CL3                 ADDRESS SPACE ID
+         DS    C                   PADDING
+WORKSET  DS    CL4                 SIZE OF THE WORKING SET
+TOTCPU   DS    CL7                 TOTAL CPU TIME
+TOTSRB   DS    CL7                 TOTAL SRB TIME
+READYTCB DS    CL4                 NO OF READY TCBS
+         DS    C                   PADDING
+ASTYPE   DS    CL3                 ADDRESS SPACE TYPE
+         DS    C                   PADDING
+STATUS   DS    CL10                STATUS OF THE JOB
+         DS    CL2                 PADDING
+WKARELEN EQU   *-WKAREA            LENGTH FOR GETMAIN
+         SPACE 2
+XSA      DSECT ,                   FORMAT OF EXTENDED SAVE AREA
+XSAP     DS    F                   PTR TO XCTL NAME
+XSAD     DS    F                   DCB POINTER
+XSAX     DS    D                   XCTL NAME
+XSAE     DS    0C                  ERROR CODE FOR IEE0503D
+XSAR     DS    F                   ADDRESS OF PARM LIST
+XSAN     DS    0C                  VERB INDEX
+XSAL     DS    F                   PTR TO LIST POSITION
+XSAVERB  DS    D                   VERB ENTERED BY OPERATOR
+XSAS     DS    D                   TEMPORARY SAVE AREA
+XSAU     DS    C                   UCM ENTRYINDICATOR
+         DS    C                   RESERVED
+XSAJ     DS    H                   TJID ENTRY INDICATOR
+         SPACE 2
+         PRINT NOGEN
+         IHAASCB
+         SPACE 2
+CSCB     DSECT
+         IEECHAIN
+         PRINT GEN
+         EJECT
+***********************************************************************
+*        EQUATES USED IN THE MODULE                                   *
+***********************************************************************
+         SPACE 2
+CVTASVT  EQU   X'22C'              OFFSET TO ASVT ADDRESS IN CVT
+ASVTENTY EQU   X'210'              OFFSET TO ASID ENTRIES IN ASVT
+ASVTMAXU EQU   X'204'              OFFSET TO MAX USERS FIELD IN ASVT
+MSGLEN   EQU   L'MSGAREA           LENGTH FOR LOADMSG MACROS
+CVTMSER  EQU   X'94'               ADDRESS OF MASTER SCH. DATA AREA
+MINLEN   EQU   4                   LENGTH OF MINUTE PART OUTPUT TIME
+SECLEN   EQU   2                   LENGTH SECONDS PART OF OUTPUT TIME
+*
+*        THE FOLLOWING EQUATES RELATE TO 'FLAG'
+*
+JOBFOUND EQU   X'80'               ACTIVE WORK HAS BEEN FOUND
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING                                   *
+***********************************************************************
+         SPACE 2
+AUXCMM05 ZCSECT GETMAIN=1
+         LR    REG4,REG1           LOAD ADDRESS OF SCAN DESCR BLKS
+         LR    REG6,REG2           LOAD ADDRESS OF EXTENDED SAVE AREA
+         EJECT
+***********************************************************************
+*        GETMAIN CORE FOR WORK AREA                                   *
+***********************************************************************
+         SPACE 2
+         USING WKAREA,REG3
+         USING XSA,REG6            ADDRESSABILITY FOR EXTENDED SVE AREA
+         LA    REG0,WKARELEN       LOAD LENGTH FOR GETMAIN
+         O     REG0,SUBPOOL        LOAD SUBPOOL ID
+         GETMAIN R,LV=(0)          GETMAIN THE CORE
+         LR    REG3,REG1           LOAD BASE ADDRESS
+         ST    REG0,GETMNLEN       SAVE DETAILS FOR FREEMAIN
+         EJECT
+***********************************************************************
+*        ANALYSE INPUT PARMS & TEST VALIDITY                          *
+***********************************************************************
+         SPACE 2
+         LTR   REG4,REG4           TEST FOR PRESCENCE OF OPERANDS
+         BZ    HEADER              NO OPERANDS. START PROCESSING
+         CLI   4(REG4),X'01'       IS OPERAND 1 BYTE LONG ?
+         BNE   ERROR               NO. CANNOT BE VALID
+         L     REG4,4(REG4)        LOAD ITS ADDRESS
+         CLI   0(REG4),C'?'        REQUEST FOR INFORMATION ?
+         BNE   ERROR               NO. OPERAND NOT KNOWN
+         B     AUXCMMZZ            BRANCH TO QUERY ROUTINE
+         EJECT
+***********************************************************************
+*        PREPARE & INITIALISE THE HEADING LINE FOR OUTPUT             *
+***********************************************************************
+         SPACE 2
+HEADER   DS    0H
+         LOADMSG DATA=TITLE,LENGTH=TITLLEN,TYPE=C
+         ST    REG1,CHAINHDR       INITIALISE START OF OUTPUT CHAIN
+         LR    REG9,REG1           LOAD NEXT ELEMENT ADDRESS
+         B     LEGEND              BRANCH TO NEXT ROUTINE
+         SPACE 2
+TITLE    DC    C'JOB STATUS REPORT'
+TITLLEN  EQU   L'TITLE
+         EJECT
+***********************************************************************
+*        THE LEGEND LINE FOR THE DISPLAY IS PREPARED HERE             *
+***********************************************************************
+         SPACE 2
+LEGEND   DS    0H
+         XC    CLRLINE,CLRLINE     CLEAR THE OUTPUT AREA
+         MVC   JOBNAME,JOBLIT      MOVE IN JOBNAME LITERAL
+         MVC   STEPNAME,STEPLIT    MOVE IN STEP NAME LITERAL
+         MVC   PROCNAME,PROCLIT    MOVE IN PROCSTEP NAME LITERAL
+         MVC   ASID,ASIDLIT        MOVE IN ADDRESS SPACE ID LITERAL
+         MVC   STATUS,STATLIT      MOVE IN JOB STATUS LITERAL
+         MVC   WORKSET,WORKSLIT    MOVE IN WORKING SET LITERAL
+         MVC   TOTCPU,CPULIT       MOVE IN TOTAL CPU LITERAL
+         MVC   TOTSRB,SRBLIT       MOVE IN TOTAL SRB LITERAL
+         MVC   READYTCB,READYLIT   MOVE IN TOTAL READY TCB LITERAL
+         MVC   ASTYPE,TYPELIT      MOVE IN ADDRESS SPACE TYPE LITERAL
+         LOADMSG DATA=MSGAREA,LENGTH=MSGLEN,TYPE=L
+         ST    REG1,0(REG9)        CHAIN THIS ELEMENT TO LAST
+         LR    REG9,REG1           SAVE ADDRESS OF LAST ELEMENT
+         B     CSCBSRCH            GO EXAMINE CSCB CHAIN
+         SPACE 2
+JOBLIT   DC    CL(L'JOBNAME)'JOBNAME'
+STEPLIT  DC    CL(L'STEPNAME)'STEPNAME'
+PROCLIT  DC    CL(L'PROCNAME)'PROCNAME'
+ASIDLIT  DC    CL(L'ASID)'ID'
+STATLIT  DC    CL(L'STATUS)' STATUS'
+WORKSLIT DC    CL(L'WORKSET)'PGES'
+CPULIT   DC    CL(L'TOTCPU)'   CPU'
+SRBLIT   DC    CL(L'TOTSRB)'   SRB'
+READYLIT DC    CL(L'READYTCB)' RDY'
+TYPELIT  DC    CL(L'ASTYPE)'TYPE'
+         EJECT
+***********************************************************************
+*        LOOK AT EXECUTING JOB      & FIND OUT THE STATUS OF IT       *
+***********************************************************************
+         SPACE 2
+CSCBSRCH DS    0H
+         USING CSCB,REG4           ADDRESSABILITY FOR CSCB
+         USING ASCB,REG5           ADDRESSABILITY FOR ASCB
+         L     REG1,16             LOAD ADDRESS OF CVT
+         L     REG4,CVTMSER(REG1)  LOAD ADDRESS OF MSRDA
+CSCBLOOP L     REG4,CHPTR          LOAD ADDRESS FIRST/NEXT CSCB
+         LTR   REG4,REG4           TEST FOR FIRST/NEXT CSCB
+         BZ    CSCBEXIT            END OF CHAIN. EXIT FROM LOOP
+         TM    CHTRKID,CHINITID    IS THIS AN INITIATOR ?
+         BO    CSCBLOOP            YES. IGNORE IT
+         XC    CLRLINE,CLRLINE     CLEAR THE OUTPUT AREA
+         OI    FLAG,JOBFOUND       SIGNAL THAT WORK HAS BEEN FOUND
+         BAL   REG11,DONAMES       GO PREPARE JOBNAME, ASID ETC.
+         BAL   REG11,DOSTATUS      GO PREPARE JOB STATUS INFO
+         BAL   REG11,DOASCB        GO PREPARE ASCB INFORMATION
+         BAL   REG11,OUTLOADR      GO LOAD UP THIS OUTPUT LINE
+         B     CSCBLOOP            LOOP FOR ALL CSCBS ON THE CHAIN
+CSCBEXIT B     DOENDING            BRANCH TO NEXT ROUTINE
+         EJECT
+***********************************************************************
+*        PREPARE THE JOBNAME, STEPNAME, PROCSTEPNAME, AND ASID        *
+***********************************************************************
+         SPACE 2
+DONAMES  DS    0H
+         MVC   JOBNAME,CHCLS       MOVE JOBNAME TO OUT AREA
+         MVC   STEPNAME,CHSTEP     MOVE STEP NAME TO OUT AREA
+         MVC   PROCNAME,CHPROCSN   MOVE PROCEDURE STEP NAME TO OUTPUT
+         LH    REG2,CHASID         LOAD ADDRESS SPACE ID
+         CVD   REG2,DBLWORD        CONVERT IT TO DECIMAL
+         UNPK  ASID(L'ASID),DBLWORD+6(2) UNPACK IT TO PRINT LINE
+         OI    ASID+L'ASID-1,X'F0' MAKE LAST BYTE PRINTABLE
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        PREPARE THE STATUS INFORMATION FOR THE JOB                   *
+***********************************************************************
+         SPACE 2
+DOSTATUS DS    0H
+         LH    REG2,CHASID         LOAD ADDRESS SPACE ID
+         BCTR  REG2,0              SUBTRACT 1 FOR OFFSET
+         SLL   REG2,2              MULTIPLY BY FOUR FOR INDEXING
+         L     REG1,16             LOAD ADDRESS OF CVT
+         L     REG1,CVTASVT(REG1)  LOAD ADDRESS A.S. VECTOR TABLE
+         L     REG5,ASVTENTY(REG2,REG1) LOAD ADDRESS OF ASCB
+         LA    REG1,SWAPOUT        ASSUME JOB IS SWAPPED OUT
+         TM    ASCBRCTF,ASCBOUT    TEST FOR SWAP OUT
+         BO    MOVEITIN            MOVE DATA TO OUTPUT AREA
+         LA    REG1,LONGWAIT       ASSUME JOB IS IN LONG WAIT
+         TM    ASCBRCTF,ASCBTMLW   TEST FOR LONG WAIT STATUS
+         BO    MOVEITIN            MOVE DATA TO OUTPUT AREA
+         LA    REG1,QUIESCE        ASSUME JOB IS QUIESCED
+         TM    ASCBRCTF,ASCBTMNO   TEST FOR JOB QUIESCED
+         BO    MOVEITIN            MOVE DATA TO OUTPUT AREA
+         LA    REG1,NONDISP        ASSUME JOB IS NON DISPATCHABLE
+         TM    ASCBFLG1,ASCBSTND   TEST FOR NON-DISPATCHABLE TCBS
+         BO    MOVEITIN            MOVE DATA TO OUTPUT AREA
+         LA    REG1,NORMTERM       ASSUME JOB IS TERM. NORMALLY
+         TM    ASCBFLG1,ASCBTERM   TEST FOR NORMAL TERMINATION
+         BO    MOVEITIN            MOVE DATA TO OUTPUT AREA
+         LA    REG1,ABNTERM        ASSUME JOB IS ABENDING
+         TM    ASCBFLG1,ASCBABNT   TEST FOR ABENDING
+         BO    MOVEITIN            MOVE DATA TO OUTPUT AREA
+         LA    REG1,RUNNING        ASSUME EVERYTHING OK
+MOVEITIN MVC   STATUS,0(REG1)      MOVE RIGHT TEXT TO OUTPUT
+         MVC   ASTYPE,VVID         ASSUME V=V ADDRESS SPACE
+         TM    ASCBFLG1,ASCBNSWP   NON-SWAP OR V=R JOB ?
+         BZ    NAMEEXIT            NO. STEP OVER MOVE IN OF 'R'
+         NC    CHRGNAD,CHRGNAD     DOES A REGION ADDRESS EXIST
+         MVC   ASTYPE,VRID         MOVE IN V=R STATUS ID
+         BNZ   NAMEEXIT            YES. IT REALLY IS V=R
+         MVC   ASTYPE,NONSWAP      SHOW NON-SWAPPABLE ADDRESS SPACE
+NAMEEXIT BR    REG11               RETURN TO CALLER
+         SPACE 2
+QUIESCE  DC    CL10'QUIESCED'
+LONGWAIT DC    CL10'LONG WAIT'
+SWAPOUT  DC    CL10'SWAP OUT'
+NONDISP  DC    CL10'NONDISP''BLE'
+NORMTERM DC    CL10'TERMIN''ING'
+ABNTERM  DC    CL10'ABENDING'
+RUNNING  DC    CL10'EXECUTING'
+VVID     DC    CL(L'ASTYPE)'V=V'   IDENTIFIES VIRTUAL CORE JOB
+VRID     DC    CL(L'ASTYPE)'V=R'   IDENTIFIES REAL CORE JOB
+NONSWAP  DC    CL(L'ASTYPE)'NSW'   IDENTIFIES NON-SWAPPABLE JOB
+         EJECT
+***********************************************************************
+*        PREPARE THE DETAILS FROM THE ADDRESS SPACE CONTROL BLOCK     *
+***********************************************************************
+         SPACE 2
+DOASCB   DS    0H
+         LH    REG2,ASCBFMCT       LOAD ALLOCATED PAGE FRAME COUNT
+         CVD   REG2,DBLWORD        CONVERT NUMBER TO DECIMAL
+         MVC   WORKSET(L'WORKMASK),WORKMASK MOVE EDIT MASK TO OUTPUT
+         ED    WORKSET(L'WORKMASK),DBLWORD+6 UNPACK NUMBER TO OUTPUT
+         SPACE 2
+         LM    REG0,REG1,ASCBEJST  LOAD ELAPSED JOB STEP TIMING
+         LA    REG2,TOTCPU         LOAD ADDRESS OF OUTPUT AREA
+         BAL   REG14,TODCNVRT      GO CONVERT TO SUITABLE UNITS
+         SPACE 2
+         LM    REG0,REG1,ASCBSRBT  LOAD ACCUMULATED SRB TIME
+         LA    REG2,TOTSRB         LOAD ADDRESS OF OUTPUT AREA
+         BAL   REG14,TODCNVRT      GO CONVERT TO SUITABLE UNITS
+         SPACE 2
+         L     REG2,ASCBTCBS       LOAD NUMBER OF READY TCBS
+         CVD   REG2,DBLWORD        CONVERT NUMBER TO DECIMAL
+         MVC   READYTCB(L'READMASK),READMASK MOVE EDIT MASK TO OUTPUT
+         ED    READYTCB(L'READMASK),DBLWORD+6 UNPACK TO OUTPUT
+         SPACE 2
+         BR    REG11               RETURN TO CALLER
+         SPACE 2
+WORKMASK DC    X'40212020'         EDIT MASK FOR WORKING SET
+READMASK DC    X'40212020'         EDITMASK FOR READY TCBS
+         EJECT
+***********************************************************************
+*        CONVERT THE ACCUMULATED CPU TIMES TO MINS & SECONDS          *
+***********************************************************************
+         SPACE 2
+TODCNVRT DS    0H
+         SRDL  REG0,12             SHIFT TO GIVE MICRO-SECONDS
+         L     REG15,TIMECONS      LOAD DIVISOR CONSTANT
+         DR    REG0,REG15          DIVIDE TO GIVE SECONDS
+         XR    REG0,REG0           CLEAR REMAINDER
+         L     REG15,MINCONST      LOAD DIVISOR CONSTANT
+         DR    REG0,REG15          DIVIDE TO GIVE MINS AND SECONDS
+         CVD   REG0,DBLWORD        CONVERT SECONDS TO DECIMAL
+         UNPK  MINLEN(SECLEN+1,REG2),DBLWORD+6(2) UNPACK TO OUT AREA
+         OI    MINLEN+SECLEN(REG2),X'F0' MAKE LAST BYTE PRINTABLE
+         CVD   REG1,DBLWORD        CONVERT MINUTES TO DECIMAL
+         MVC   0(L'MINMASK,REG2),MINMASK MOVE EDIT MASK TO OUTPUT
+         ED    0(L'MINMASK,REG2),DBLWORD+6 EDIT MINUTES TO OUTPUT
+         MVI   MINLEN(REG2),C'.'   INSERT DECIMAL POINT
+         BR    REG14               RETURN TO CALLER
+         SPACE 2
+TIMECONS DC    F'1000000'          10**6 MICRO-SECOND - SECOND
+MINCONST DC    F'60'               SECONDS - MINUTES
+MINMASK  DC    X'40202120'         EDIT MASK FOR MINUTES
+         EJECT
+***********************************************************************
+*        LOAD UP THE PREPARED DATA INTO AN OUTPUT ELEMENT             *
+***********************************************************************
+         SPACE 2
+OUTLOADR DS    0H
+         LOADMSG DATA=MSGAREA,LENGTH=MSGLEN,TYPE=D
+         ST    REG1,0(REG9)        CHAIN THIS ELEMENT TO LAST ONE
+         LR    REG9,REG1           SAVE ADDRESS OF THIS ONE
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        MESSAGES ARE PREPARED. INVOKE OUTPUT PROCESSOR               *
+***********************************************************************
+         SPACE 2
+DOENDING DS    0H
+         LA    REG7,LASTLINE       ASSUME NORMAL LAST LINE REQUIRED
+         LA    REG8,L'LASTLINE     LOAD LENGTH NORMAL LAST MESSAGE
+         TM    FLAG,JOBFOUND       WAS ANY WORK FOUND IN THE SYSTEM
+         BO    NORMALND            YES. CARRY ON AS NORMAL.
+         LR    REG1,REG9           LOAD FREEMAIN ADDRESS REGISTER
+         LA    REG9,CHAINHDR       LOAD ADDRESS FIRST ELEMENT ADDRESS
+MSGLOOP  L     REG9,0(REG9)        LOAD ADDRESS NEXT/FIRST ELEMENT
+         C     REG1,0(REG9)        LOOK FOR POINTER TO THIS ELEMENT
+         BNE   MSGLOOP             LOOP DOWN ELEMENT CHAIN
+         L     REG0,4(REG1)        LOAD FREEMAIN LENGTH AND SUBPOOL
+         FREEMAIN R,LV=(0),A=(1)   FREE UP THE LAST (UNNEEDED) ELEMENT
+         LA    REG7,NONELINE       LOAD ADDRESS OF NULL REPORT LINE
+         LA    REG8,L'NONELINE     LOAD LENGTH OF NULL REPORT LINE
+NORMALND LOADMSG DATA=(7),LENGTH=(8),TYPE=E
+         ST    REG1,0(REG9)        CHAIN THIS ONTO OTHER ENTRIES
+MSGOUT   OUTPUT CHAINHDR,UCMID=XSAU HAVE ALL READY MESSAGES OUTPUT
+         B     EXITPGM             RETURN TO CALLER
+         SPACE 2
+LASTLINE DC    C'  END OF ANALYSIS'
+NONELINE DC    C'  NO ACTIVE WORK IN THE SYSTEM'
+         EJECT
+***********************************************************************
+*        COMMON PROGRAM EXIT ROUTINES                                 *
+***********************************************************************
+         SPACE 2
+ERROR    DS    0H
+         LA    REG15,4             SIGNAL INVALID OPERAND
+         B     ZRETURN
+         SPACE 2
+EXITPGM  DS    0H
+         LA    REG15,0             SIGNAL GOOD RETURN
+         SPACE 2
+ZRETURN  LR    REG11,REG15         SAVE RETURN CODE
+         L     REG0,GETMNLEN       LOAD FREEMAIN DETAILS
+         LR    REG1,REG3           LOAD ADDRESS OF WORK AREA
+         FREEMAIN R,LV=(0),A=(1)   FREE UP THE WORK AREA
+         LR    REG15,REG11         RESTORE RETURN CODE
+         ZRETURN RC=(15)
+         EJECT
+***********************************************************************
+*        COMMAND QUERY RESPONSE ROUTINE                               *
+***********************************************************************
+         SPACE 2
+AUXCMMZZ DS    0H
+         LOADMSG DATA=LINE1,LENGTH=LINE1LEN,TYPE=E
+         ST    REG1,CHAINHDR       IDENTIFY START CHAIN
+         B     MSGOUT              BRANCH TO OUTPUT ROUTINE
+         SPACE 2
+LINE1    DC    C'DD A    - NO FURTHER OPERANDS ARE REQUIRED'
+LINE1LEN EQU   L'LINE1             LENGTH FOR GETMAIN
+         EJECT
+SUBPOOL  DS    0F                  USED TO LOAD SUBPOOL ID
+         DC    AL1(0)
+         DC    AL3(0)              PADDING
+         END
+//LKED.SYSIN   DD   *
+ SETCODE AC(1)
+ NAME AUXCMM05(R)
+ INCLUDE MLPALIB(AUXCOMM)
+ INCLUDE MLPALIB(AUXCMM05)
+ ENTRY AUXCOMM
+ ALIAS AUXCMM06
+ ALIAS AUXCMM10
+ SETCODE AC(1)
+ NAME AUXCOMM(R)
+/*

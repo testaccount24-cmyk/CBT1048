@@ -1,0 +1,765 @@
+*
+*                  HOUSEKEEPING
+*
+         SPACE 2
+TAPEWTR  CSECT
+         PGMIN USING=R12
+PARMADDR EQU   SAVEFLD+24
+         WTO   MF=(E,PTRWARN)      ISSUE DRAIN PRINTER MESSGAE
+         PRINT ON,NOGEN,NODATA
+         EJECT
+***********************************************************************
+*        PRINT TO CONSOLE VOLSER OF TAPES AVAILABLES                  *
+***********************************************************************
+         SPACE 1
+         LA    R4,ENDLISC          LOAD ADDRESS OF END OF LIST CONSOLE
+LISTCON  SUBIN SAVE=(R1,R2)
+         LOAD  EP=UT492            LOAD MODULE UT492 INTO CORE
+         ST    R0,ADRUT492         STORE ENTRY POINT ADDRESS OF UT492
+         WTO   '* TAPEWTR - FOLLOWING TAPES ARE AVAILABLES TO BE PRINTE*
+               D *'
+         MVI   DSNINX,X'40'        MOVE BLANK AT START OF DSNINX
+         MVC   DSNINX+1(49),DSNINX  AND PROPAGANTE 49 POSITIONS AFTER
+         MVC   DSNINX(7),=C'OFFLINE' MOVE INDEX NAME 'OFFLINE'
+         MVI   OPCODE,C'S'         MOVE OPERATION CODE 'S'
+READCAT  LA    R1,ADRWA492         LOAD ADDRESS OF PARAMETERS LIST
+         L     R15,ADRUT492        LOAD UT492 ENTRY POINT ADDRESS
+         BALR  R14,R15             EXECUTE UT492
+         SR    R1,R1               ZEROISE V-R1
+         IC    R1,RTCODE           LOAD RETURN CODE INTO R1
+         B     *+4(R1)               TEST RETURN CODE
+         B     SUCCESS             SUCCSSFUL
+         B     BADEND              NOT CATALOGUED (LOGIC ERROR)
+         B     ENDOFINX            END OF 'OFFLINE' INDEX
+         B     BADEND              (LOGIC ERROR IN THE PROGRAM)
+SUCCESS  CLI   FLAG,X'40'          TEST IF DATA SET ENTRY
+         BNE   RDNXENT             BRANCH IF NO
+         SR    R8,R8               ZEROISE V-R8
+         LH    R9,NUMBVOL          LOAD NUMBER OF VOLUMES
+         CH    R9,=H'6'            TEST IF MORE THAN FIVE VOLUMES
+         BL    *+8                 BRANCH IF NO
+         LH    R9,=H'5'            YES - LOAD FIVE
+         LA    R2,VOLIST           POINT R2 AT START OF VOLUMES LIST
+LPLISCON CLI   2(R2),X'20'         TEST IF DASD
+         BE    RDNXENT             BRANCH IF YES
+         MVC   MSGCON+20(25),DSNINX MOVE DSN
+         MVC   MSGCON+50(6),4(R2)   MOVE VOL.SER.
+         MVC   MSGCON+56(2),=C'  ' MOVE BLANK TO MULTI VOL. NO
+         CLC   NUMBVOL,=H'1'       TEST IF ONLY ONE VOLUME FOR THIS DSN
+         BE    MSGCON              BRANCH IF YES
+         AH    R8,=H'1'            ADD ONE TO MULTI VOL. COUNT
+         STH   R8,MSGCON+56        STORE NUMBER TO WTO AREA
+         OC    MSGCON+56(2),=X'60F0' FORCE DISPLAY FORMAT
+         CH    R8,=H'1'            TEST IF FIRST VOL. FOR A MULTI-VOL-L
+         BE    MSGCON              BRANCH IF YES
+         MVI   MSGCON+20,X'40'     NO - MOVE BLANK AT START OF DSNAME
+         MVC   MSGCON+21(24),MSGCON+20 AND PROPAGANTE 24 POS. AFTER
+MSGCON   WTO   '*                                                      *
+                 *'
+         LA    R2,12(R2)           INCREMENT POINTER FOR NEXT VOLUME
+         BCT   R9,LPLISCON         REPEAT IF MULTI-VOL
+RDNXENT  MVI   OPCODE,C'R'         MOVE OPERATION CODE 'R'
+         B     READCAT             GO READ NEXT ENTRY
+ENDOFINX WTO   '* TAPEWTR - END OF LIST ********************************
+               ***'
+         DELETE EP=UT492           DELETE MODULE UT492
+         SUBOUT RESTORE=(R1,R2)    RETURN TO CALLER
+         SPACE 3
+***********************************************************************
+*        WORK AREA FOR UT492                                          *
+***********************************************************************
+         SPACE 1
+ADRUT492 DS    F
+ADRWA492 DC    A(WAUT492)
+WAUT492  DS    0D
+DSNINX   DS    CL44                DATA SET NAME OR INDEX NAME
+CVOLNO   DS    CL6                 SERIAL NUMBER OF DISK ON WHICH THE -
+DEVICECD DS    XL4 (NOT USED) X'40404040'        / CATALOG RESIDES.
+OPCODE   DS    C                   OPERATION CODE
+         ORG   *-1
+RTCODE   DS    C                   RETURN CODE
+FLAG     DS    X                   FLAG BYTE
+NUMBVOL  DS    BL2                 NUMBER OF VOLUME ****
+VOLIST   DS    CL60                FIRST FIVE VOL-INFO *> IF DATA SET
+         DS    CL2                 FILLER              *   ENTRY
+ADVOLIST DS    F                   ADDRESS OF REST V-L *
+         ORG   *-68
+CURGENC  DS    BL2                 CURRENT GEN.COUNT ***
+GDGFLAG  DS    X                   GDG-FLAG            *> IF GENERATION
+MAXGDG   DS    B                   MAXIMUN OF VERSION  *   INDEX ENTRY
+         DS    CL64                FILLER            ***
+         ORG   *-68
+CVPVOLS  DS    CL6                 VOLUME SERIAL NUMBER **> IF CONTROL
+CVPDEVCD DS    XL4                 DEVICE CODE           *   VOLUME
+         DS    CL58                FILLER                *   POINTER E.
+ADRDVTAB DS    F                   ADDRESS OF DEVICE CODE-NAME TABLE
+         EJECT
+ENDLISC  EQU   *
+*
+*                        READ TAPE JFCB INTO MAIN STORAGE
+*
+         RDJFCB MF=(E,TAPELIST)    READ TAPE JFCB
+         OI    TAPJFCB+52,X'0E'    INHIBIT REWRITE AND DCB MERGE
+         LTR   R15,R15             SUCESSFUL COMPLETION?
+         BNZ    BADEND             NO. ABORT JOB
+         SPACE 5
+*
+*                  ISSUE TAPEWTR CONTROL WTOR FOR FIRST TIME
+*
+         SPACE 2
+         OI    WTORECB,X'40'       COMPLETE ECB TO FORCE WTOR
+         BAL   R4,WTORCTL          LINK TO CONTROL RTN.
+         EJECT
+*
+*                  START POINT FOR EACH INPUT TAPE
+*                  MOUNT MESSAGE IS ISSUED BY THE SYSTEM
+*
+         SPACE 2
+NEXTTAPE EQU   *
+         NI    SWS,X'0F'           TURN OFF FIRST FOUR SWITCHES
+         SPACE 5
+*
+*                  INIT TAPE DCB AND READ LABEL RECORDS
+*
+         SPACE 2
+         LA    R6,TAPE             GET ADDRESSABILITY FOR TAPE DCB
+         USING IHADCB,R6
+         MVI   DCBRECFM,X'80'      INIT FOR FIXED
+         MVC   DCBLRECL,=X'0050'   AND 80 BYTE
+         MVC   DCBBLKSI,=X'0050'   RECORDS
+         MVI   DCBBUFNO,X'02'
+         MVC   DCBBUFL,=X'0050'
+         MVI   TAPJFCB+69,X'01'    INIT TO READ FIRST FILE (LABELS)
+         MVC   TETYPE,=CL8'LABEL'  INSERT ERR TYPE IN MSG.
+         MVC   DCBEODA,=AL3(TAPEERR) CHANGE END OF TAPE ADDRESS
+         BAL   R4,TAPEOPEN         OPEN FOR LABELS
+         BAL   R4,WTORCTL          CHECK FOR REPLY
+         BAL   R4,TAPEREAD         READ VOL1
+         MVC   TAPEVOL,4(R1)       SAVE VOLUME SERIAL
+         MVC   SEPDSTBN,41(R1)     SAVE OWNERID INFO FOR DISTRIBUTION
+         BAL   R4,TAPEREAD         READ HDR1
+         CLC   0(4,R1),=C'HDR1'    IS THIS THE'FIRST HEADER RECORD?
+         BNE   TAPEERR             NO. ERROR
+         MVC   TAPEDSN,4(R1)       GET TAPE DATASET NAME
+         MVC   SEPCDATE,42(R1)     SAVE TAPE CREATION DATE
+         BAL   R4,TAPEREAD         READ HDR2
+         MVC   TAPERCFM,4(R1)      SAVE RECORD FORMAT
+         MVC   TAPEBLKS,5(R1)      SAVE BLOCKSIZE
+         MVC   TAPERECL,10(R1)     SAVE RECORD LENGTH
+         MVC   TAPECTL,36(R1)      SAVE CONTROL CHAR
+         MVC   TAPEBAT,38(R1)      SAVE BLOCK ATTRIBUTE
+         MVC    SEPJOB,17(R1)      SAVE CREATION JOBNAME
+         MVC    SEPSTEP,26(R1)     SAVE CREATION STEPNO.
+         SPACE 5
+*
+*                  ANALYZE TAPE LABELS AND INIT FOR MAIN PROCESS
+*
+         SPACE 2
+         MVC   TETYPE,=CL8'DSNAME' INSERT NEW ERR. TYPE
+         LA    R2,TAPEDSN          GET DSN START ADDRESS
+         LA    R3,TAPEDSN+17        "   "  END ADDRESS
+DSNLOOP  EQU   *
+         CR    R2,R3               END OF DSN REACHED?
+         BNL   TAPEERR             YES. ERROR.
+         TM    0(R2),X'C0'         IS FIRST DIGIT A - I?
+         BNO   DSNAGN              NO. TRY NEXT POSN.
+         TM    1(R2),X'F0'         SECOND NUMERIC?
+         BNO   DSNAGN              NO. TRY NEXT
+         CLI   8(R2),X'4B'         NINTH A FULL-STOP
+         BE    DSNLOCTD            YES. GO PICK UP DETAILS
+         CLI   8(R2),X'40'         OR BLANK?
+         BE    DSNLOCTD            YES. BRANCH
+DSNAGN   EQU   *
+         LA    R2,1(0,R2)          INCREMENT POSITION COUNTER
+         B     DSNLOOP             TRY NEXT POSITION.
+         SPACE
+DSNMOVE  MVC   TAPEDSN(0),0(R2)    EXECUTED MOVE INSTRUCTION
+DSNMOVE2 MVC   CATDSN(0),0(R2)     EXECUTED MOVE FOR CATDSN
+         SPACE
+DSNLOCTD EQU   *
+         SR    R3,R2               GET LENGTH OF DSN
+         LA    R1,9                9 IN REG1
+         CR    R3,R1               LENGTH LESS THAN 9 BYTES
+         BL    TAPEERR             YES. ERROR
+         BCTR  R3,0                REDUCE BY ONE FOR MOVE
+         MVI   CATDSN,C' '         CLEAR
+         MVC   CATDSN+1,CATDSN     DSN AREA
+         EX    R3,DSNMOVE2         MOVE FOR CATALOG
+         EX    R3,DSNMOVE          LEFT JUSTIFY DSNAME
+         OI    TAPEDSN,X'F0'       MAKE FIRST POSITION NUMERIC
+         TRT   TAPEDSN(8),NUMTABLE TEST FOR NUMERIC FORMS TYPE + PROJ
+         BNZ   TAPEERR             ERROR IF NOT NUMERIC
+         BAL   R4,WTORCTL          CHECK FO OP REPLY
+         BAL   R4,TAPECLSL         CLOSE AFTER READING TAPE LBELS
+         WTO   MF=(E,INFOWTO)      PRINT TAPE INFORMATION
+         MVC   FORMSTYP(4),TAPEDSN MOVE FORMS TYPE TO MESSAGE
+         WTO   MF=(E,FORMSWTO)     ISSUE FORMS MOUNT MESSAGE
+         BAL   R4,SKPGOMSG         ISSUE CONTROL PRINTER MSG.
+         PACK  DWORD,TAPEBLKS      PACK  BLOCK LENGTH
+         CVB   R3,DWORD            COVERT TO BINARY
+         STH   R3,DCBBLKSI         STORE TAPE BLOCKSIZE IN TAPE DCB
+         STH   R3,DCBBUFL          STORE BUFFER LENGTH IN TAPE DCB
+         MVI   DCBBUFNO,X'02'      DEFAULT DOUBLE BUFFERING
+         CLC   DCBBLKSI,=X'0600'   BLOCKKSIZE > 1536 BYTES?
+         BNH   *+8                 NO. LEAVE DOUBLE
+         MVI   DCBBUFNO,X'01'      YES. FORCE SINGLE BUFFERING
+         PACK  DWORD,TAPERECL      PACK RECORD LENGTH
+         CVB   R3,DWORD            CONVERT TO BINARY
+         STH   R3,DCBLRECL         STORE IN TAPE DCB
+         XC    DCBRECFM,DCBRECFM  CLEAR RECORD FORMAT BYTE
+         CLI   TAPERCFM,C'F'       FIXED LENGTH RECORDS?
+         BNE   *+12                NO. JUMP NEXT 2 INSTNS
+         OI    DCBRECFM,X'80'      YES. INSERT IN TAPE DCB
+         OI    SWS,SWSF            TURN ON FIXED SWITCH
+         CLI   TAPERCFM,C'V'       VARIABLE LENGTH RECORDS?
+         BNE   *+12                NO. JUMP NEXT 2 INSTNS
+         OI    DCBRECFM,X'40'      YES. INSERT IN TAP DCB
+         OI    SWS,SWSV            TURN ON VARIABLE SWITCH
+         CLI   TAPEBAT,C' '        UNBLOCKED RECORDS?
+         BE    *+16                YES. JUMP PAST OR INSTN.
+         CLI   TAPEBAT,C'S'        UNBLOCKED SPANNED RECORDS?
+         BE    *+8                 YES.JUMP
+         OI    DCBRECFM,X'10'      TURN ON BLOCKED BIT IN DCB
+         MVI   TAPJFCB+69,X'02'    INIT TO READ 2ND FILE (DATA)
+         MVI   PRINT+36,X'80'      MOVE FIXED UNBLOCKED TO PRINT DCB
+         CLI   TAPECTL,C'A'        ASA CONTRO CHARACTERS?
+         BNE   CHKCTLM1            NO. CHECK FOR  MACHINE CHARACTERS
+         OI    SWS,SWSCTLA         SHOW ASA CONTROL.
+         OI    DCBRECFM,X'04'      INSERT IN TAPE DCB
+         OI    PRINT+36,X'04'      INSERT IN PRINT DCB
+         MVC   CTLCHARS,ASACTL     USE ASA CONTROL CHARACTERS
+         B     CTLEND
+         SPACE
+CHKCTLM1 EQU   *
+         CLI   TAPECTL,C'M'        MACHINE CONTROL CHARS?
+         BNE   CTLEND              NO. NOT FOUND
+         OI    SWS,SWSCTLM         SHOW M/C CONTROL
+         OI    DCBRECFM,X'02'      INSERT IN TAPE DCB
+         OI    PRINT+36,X'02'      INSERT IN PRINT DCB
+         MVC   CTLCHARS,MCCTL      MOVE M/C CONTROL CHARS
+CTLEND   EQU   *
+         SPACE 5
+*
+*                  CONSTRUCT PRINT SEPARATOR
+*                  AND ACCOUNTING RECORD
+         SPACE 2
+         MVC   SEPSTEND,=CL5'START'
+         MVC   ACCTREC(4),=CL4'TWA '
+         MVC   ACCTREC+4(46),ACCTREC+3
+         MVC   ACCFORMS,TAPEDSN    MOVE FORMS TYPE TO ACCTNG REC
+         MVC   ACCPROJ,TAPEDSN+4   MOVE PROJECT NO.     DITTO
+         BAL   R4,GETDATE          CALL DATE ROUTINE
+         MVC   ACCDTST,UTYYDDD     PUT START DATE IN ACCTNG REC.
+         MVC   ACCTMST,UTHHMMSS    PUT START TIME IN ACCTNG REC.
+         MVC   ACCJOB,SEPJOB       JOBNAME  IN ACCTNG.REC
+         MVC   ACCSTEP,SEPSTEP     STEPNAME  "   "     "
+         MVC   ACCDATEC,SEPCDATE   MOVE CREATION DATE
+         ZAP   ACCPGSKP,=P'0'      INIT COUNTERS
+         ZAP   ACCPGPRT,=P'0'        "     ""
+         ZAP   ACCLINES,=P'0'        "     ""
+         BAL   R4,PRNTWRIT         CLEAR PRINT LINE
+         SPACE 5
+*
+*                  CHECK FOR REPLY TO TAPE MOUNT MESSAGE
+*
+         SPACE 2
+RPLYWAIT EQU   *
+         WAIT  ECB=WTORECB         WAIT FOR ANSWER TO SKIP/GO MESSAGE
+         BAL   R4,WTORCTL          REISSUE CONTROL WTOR
+         CLC   PGRPLY(2),=C'GO'    WAS IT GO?
+         BE    OPENDS              YES. GO TO DATASET OPEN.
+         TRT   PGRPLY,NUMTABLE     IS REPLY NUMERIC?
+         BZ    RPLYOK              YES. BRANCH
+         BAL   R4,SKPGOMSG         ERROR. RE-ISSUE SKIP/GO MESSAGE
+         B     RPLYWAIT            WAIT FOR NEW REPLY
+         SPACE
+RPLYOK   EQU   *
+         MVC   SEPSTEND,=CL5'CONT.'
+         PACK  ACCPGSKP,PGRPLY     PACK NO. OF PAGES TO SKIP
+*
+*                        OPEN TAPE DATASET.
+*                  READ FIRST INPUT RECORD AND CHECK FOR CTL CHAR
+*
+         SPACE 2
+OPENDS   EQU   *
+         MVC   DCBEODA,=AL3(TAPEEOF) REPLACE END OF D/S POINTER
+         MVC   TETYPE,=CL8'PERM I/O' CHANGE ERROR TYPE
+         BAL   R4,WTORCTL          CHECK FOR OP REPLY
+         BAL   R4,TAPEOPEN         OPEN TAPE  DATASET
+         USING LINAD,R7
+         BAL   R4,WTORCTL          CKECK FOR OP REPLY
+         BAL   R4,TAPEREAD         READ FIRST TAPE RECORD.
+         CLI   LINAD,X'F1'         ASA CHAN. ONE SKIP?
+         BNE   CHKCTLM2            NO. CHECK FOR M/C CONTROL
+         OI    SWS,SWSCTLA         SET ON ASA SWITCH
+         MVC   CTLCHARS,ASACTL     USE ASA CONTROL CHARS
+         OI    PRINT+36,X'04'      SET PRINT DCB TO ASA CTL CHARS.
+         B     SKIPAGES            GO TO PAGE SKIPPING
+         SPACE
+CHKCTLM2 EQU   *
+         CLC   LINAD(1),MCCTL      M/C CHAN ONE SKIP?
+         BE    MOVECTLM            YES. BRANCH
+         CLC   LINAD(1),MCCTL+1    M/C CHAN ONE SKIP?
+         BNE   SKIPAGES            NO. BRANCH TO PAGE SKIPPING
+MOVECTLM EQU   *
+         MVC   CTLCHARS,MCCTL      USE M/C CONTROL CHARACTERS
+         OI    PRINT+36,X'02'      SET PRINT DCB TO USE M/C CTL CHARS.
+         OI    SWS,SWSCTLM         SET OF M/C CTL SWITCH
+         SPACE 5
+*
+*                  TEST FOR CONTROL CHARACTER ERROR.
+*                  SKIP NUMBER OF PAGES REQUESTED BY OPERATOR
+*
+         SPACE 2
+SKIPAGES EQU   *
+         MVC   TETYPE,=CL8'CTL CHAR'
+         TM    SWS,SWSCTLA+SWSCTLM TEST CONTROL CHAR SWITCHES.
+         BM    *+8                 OK IF ONLY ONE ON
+         B     TAPEERR             ERROR IF NONE OR BOTH
+         MVC   TETYPE,=CL8'PERM I/O' RE-INIT TO I/O
+         ZAP   PGCNTR,=P'1'        RESET PAGE COUNTER
+PGLOOP   EQU   *
+         CP    PGCNTR,ACCPGSKP     CORRECT NO. OF PAGES SKIPPED?
+         BH    STARTPRT            YES. START PRINTING
+PGRDLOOP EQU   *
+         BAL   R4,WTORCTL          CHECK FOR OP REPLY
+         BAL   R4,TAPEREAD         GET NEXT TAPE RECORD
+         CLC   LINAD(1),CTLCHARS   1ST TYPE OF PAGE SKIP?
+         BE    PGADD1              YES. ADD ONE PAGE
+         CLC   LINAD(1),CTLCHARS+1 2ND TYPE OF PAGE SKIP?
+         BNE   PGRDLOOP            NO. READ NEXT RECORD
+PGADD1   EQU   *
+         AP    PGCNTR,=P'1'        ADD ONE MORE PAGE SKIPPED
+         B     PGLOOP              GO TEST IF ENOUGH SKIPPED
+         SPACE 5
+*
+*                        OPEN PRINT DATASET
+*                  PRINT REMAINING PART OF TAPE
+         SPACE 2
+STARTPRT EQU   *
+         BAL   R4,PRNTOPEN         OPEN PRINT DATASET
+         ZAP   ACCPGPRT,=P'1'      INIT PAGES PRINTED OR PARTIALLY
+         MVC   SEPCDATE(16),SEPDSTBN  OVERLAY CREATION DATE
+         BAL   R4,SEPWRITE         WRITE START SEPARATOR
+PRTLOOP  EQU   *
+         EX    R5,LINEMOVE         MOVE LINE TO PRINT LINE
+         BAL   R4,WTORCTL          CHECK FO OP REPLY
+         TR    PRNTLINE+1(132),TRTABLE  ELIMINATE UNPRINTABLE CHARS.
+         BAL   R4,PRNTWRIT         PRINT IT.
+         AP    ACCLINES,=P'1'      ADD TO LINE COUNTER
+         BAL   R4,WTORCTL          CHECK FOR OP REPLY
+         BAL   R4,TAPEREAD         READ NEXT TAPE RECORD
+         CLC   LINAD(1),CTLCHARS   1ST TYPE OF PAGE SKIP?
+         BE    PRTADD1             YES. BRANCH
+         CLC   LINAD(1),CTLCHARS+1 2ND TYPE OF PAGE SKIP?
+         BNE   PRTLOOP             NO. GO PRINT NEXT LINE
+PRTADD1  EQU   *
+         AP    ACCPGPRT,=P'1'      ADD 1 TO PAGE COUNTER
+         B     PRTLOOP             NEXT LINE
+         SPACE
+LINEMOVE MVC   PRNTLINE(0),0(R7)   EXECUTED MOVE INSTRUCTION
+         SPACE 5
+*
+*                  END OF INPUT TAPE PROCESSING
+*
+               SPACE               2
+TAPEEOF  EQU   *
+         NOP   TAPEEND             BRANCH TO ALLOW BYPASS OF CATALOG
+         MVC   DSNAME(7),=CL7'OFFLINE'
+         CATALOG UNCATLST          UNCATLOG OFFLINE.DSN
+         MVC   DSNAME(7),=CL7'PRINTED'
+         CATALOG CATLST            CATALOG AS PRINTED.DSN
+TAPEEND  EQU   *
+         BAL   R4,TAPECLSK         CLOSE TAPE  DATASET
+         BAL   R4,GETDATE          GET NEW DATE AND TIME
+         MVC   ACCDTEND,UTYYDDD    MOVE  DATE TO ACCTNG RECORD
+         MVC   ACCTMEND,UTHHMMSS   MOVE  TIME TO ACCTNG RECORD
+         BAL   R4,ACCWRITE         WRITE ACCOUNTING RECORD
+         MVC   PRNTLINE+1(132),PRNTLINE CLEAR OUT DATE INFO
+         MVC   SEPSTEND,=CL5'END'
+         BAL   R4,SEPWRITE
+         BAL   R4,PRNTCLOS         CLOS PRINT DATASET
+         TM    SWS,SWSEOJ          END OF JOB SWITCH ON?
+         BO    EOJ1                YES. RETURN TO EOJ PROCESSING.
+         B     NEXTTAPE            GO PROCESS NEXT TAPE
+         SPACE 5
+*
+*                  CONTROL PASSED TO T IS SECTION FOR ANY
+*                  ERROR ENCOUNTERED ON INPUT TAPE.
+*
+         SPACE 2
+TAPEERR  EQU   *
+         MVC   ACCTREC+77(3),TETYPE+9  MOVE CONSTANT 'ERR'
+         WTO   MF=(E,TPERRWTO)     ISSUE ERROR MESSAGE
+         B     TAPEEND             GO TO NORMAL END OF TAPE RTN.
+         SPACE 5
+*
+*                  ASYNCHRONOUS WTOR
+*                  TAKE ACTION ACCORDING TO REPLY RECD FROM OPERATOR
+*
+         SPACE 2
+WTORCTL  SUBIN SAVE=(R4)
+         TM    WTORECB,X'40'       REPLY RECD?
+         BCR   14,R4               NO. RETURN TO CALLER
+         CLC   WTORRPLY(3),=CL3'LIS'  LIST REQUEST ?
+         BNE   *+12                BRANCH IF NO
+         BAL   R4,LISTCON          YES
+         B     WTOEXIT
+         CLC   WTORRPLY(3),=CL3'ABE' ABEND REQUESTED?
+         BNE   *+8                 NO. JUMP NEXT INSTRUCTION
+         LA    R4,BADEND           POINT TO BAD END PARAGRAPH
+         CLC   WTORRPLY(3),=CL3'EOJ' END OF JOB?
+         BNE   *+8                 NO. JUMP NEXT INSTN.
+         LA    R4,EOJ              YES. POIT TO EOJ PARA.
+         CLC   WTORRPLY(3),=CL3'EOT' END OF THIS TAPE?
+         BNE   *+8                 NO. JUMP NEXT INSTN.
+         LA    R4,TAPEEND          POINT TO TAPE END PARA.
+         MVC   PGRPLY,WTORRPLY     SAVE REPLY FOR ANY FURTHER ANAL.
+         XC    WTORRPLY,WTORRPLY   CLEAR REPLY AREA
+         XC    WTORECB,WTORECB     CLEAR EVENT CONTROL BLOCK
+         WTOR  'TWTR - REPLY ID.',WTORRPLY,4,WTORECB
+         BR    R4
+WTOEXIT  MVC   PGRPLY,WTORRPLY     SAVE REPLY FOR ANY FURTHER ANAL
+         XC    WTORRPLY,WTORRPLY   CLEAR REPLY AREA
+         XC    WTORECB,WTORECB     CLEAR EVENT CONTROL BLOCK
+         WTOR  'TWTR - REPLY ID.',WTORRPLY,4,WTORECB
+         SUBOUT RESTORE=(R4)       RETURN TO CALLER FOR FURTHER
+*                                  ANALYSIS OR TO MODIFIED ADDRESS.
+         SPACE 5
+*
+*                  UNRESOLVABLE ERROR FOUND SO ABEND.
+*
+         SPACE 2
+BADEND   EQU   *
+         ABEND 1140,DUMP,STEP
+         SPACE 5
+*
+*                  END OF JOB PROCESSING
+*
+         SPACE 2
+EOJ      EQU   *
+         OI    SWS,SWSEOJ          SET ON EOJ SWITCH
+         TM    SWS,SWSTPOPN+SWSPROPN ARE ANY DATASETS OPEN?
+         BNZ   TAPEEND             YES. FORCE END OF TAPE PROCESSING
+EOJ1     EQU   *
+         PGMOUT
+         EJECT
+***********************************************************************
+*                            SUBROUTINES                              *
+***********************************************************************
+         SPACE 5
+TAPEOPEN EQU   *
+         TM    SWS,SWSTPOPN        ALREADY OPEN
+         BCR   1,R4                YES. RETURN
+         OPEN  ,MF=(E,TAPELIST),TYPE=J OPENTAPR DATASET
+         TM    DCBOFLGS,X'10'      OPEN SUCESSFUL
+         BZ    TAPEERR             NO. ERROR
+         OI    SWS,SWSTPOPN        SETON OPEN SWITCH
+         TM    DCBRECFM,X'80'      FIXED LENGTH RECORDS
+         BCR   14,R4               NO. RETURN
+         SR    R5,R5               CLEAR LINE LENGTH REGISTER
+         LH    R5,DCBLRECL         INSERT RECORD LENGTH
+         BCTR  R5,0                REDUCE BY ONE FOR MOVE
+         BR    R4                  RETURN
+         SPACE 2
+TAPEREAD EQU   *         READ A RECORD FROM TAPE DATASET
+         GET   TAPE                READ NEXT TAPE RECORD
+         LR    R7,R1               SAVE LINE ADDRESS
+         TM    SWS,SWSV            VARIABLE LENGTH RECORDS?
+         BCR   14,R4               NO. RETURN TO CALLER
+         MVC   LENALGN,LINAD       MOVE LINE LENGTH FOR ALIGNMENT
+         SR    R5,R5               CLEAR REG5
+         LH    R5,LENALGN          LOAD LINE LENGTH IN REG5
+         SH    R5,LENREDUC         REDUCE LENGTH BY 5 FOR MOVE
+         LA    R7,4(0,R7)          POINT PAST RECORD LENGTH
+         BR    R4                  RETURN TO CALLER
+         SPACE 2
+TAPECLSL EQU   *         CLOSE TAPE D/S NO REPOSITIONING.
+         TM    SWS,SWSTPOPN        DATASET OPEN
+         BCR   8,R4                NO. RETURN
+         MVI   TAPELIST,X'B0'      SET OPTION BYTE TO LEAVE
+         B     TAPECOMN            BRANCH TO COMMON CLOSE
+         SPACE 2
+TAPECLSK EQU   *         CLOSE TAPE D/S WITH REWIND AND UNLOAD
+         TM    SWS,SWSTPOPN        DATASET OPEN
+         BCR   8,R4                NO. RETURN
+TAPECOMN EQU   *
+         CLOSE ,MF=(E,TAPELIST)    CLOSE TAPE DATASET
+         FREEPOOL TAPE             FREE BUFFERS
+         MVI   TAPELIST,X'80'      RESET OPTION BYTE
+         NI    SWS,255-SWSTPOPN    TURN OFF OPEN SWITCH
+         BR    R4                  RETURN
+         SPACE 2
+PRNTOPEN EQU   *         OPEN PRINTER DATASET
+         TM    SWS,SWSPROPN        OPEN?
+         BCR   1,R4                YES. RETURN TO CALLER
+         OPEN  (PRINT,OUTPUT)      OPEN PRINTER
+         OI    SWS,SWSPROPN        TURN ON OPEN SWITCH
+         BR    R4                  RETURN
+         SPACE
+PRNTWRIT EQU   *         WRITE A PRINT RECORD
+         TM    SWS,SWSPROPN        IS PRINT DATASET OPEN?
+         BNO   PRNTLCLR            NO. JUST CLEAR PRINT LINE TO BLANKS
+         TM    SWS,SWSCTLM         M/C CONTROL CHARS IN USE?
+         BNO   PRNTPUT             NO. SKIP C/C ANALYSIS.
+         TM    PRNTLINE,X'01'      LOW ORDER BIT ON?
+         BZ    PRNTBADC            NO. BAD C/C
+         TM    PRNTLINE,X'84'      BITS 0 OR 5 ON.
+         BM    PRNTSKIP            YES. EITHER PAGE SKIP OR INVALID
+         TM    PRNTLINE,X'64'      TEST BITS 1, 2 AND 5
+         BZ    PRNTPUT             C/C GOOD IF ALL OFF
+PRNTSKIP EQU   *
+         CLI   PRNTLINE,X'89'      IS PAGE SKIP VALID?
+         BL    PRNTBADC            NO. IF LOW
+         CLI   PRNTLINE,X'E3'      CHECK FOR HIGH LIMIT
+         BNH   PRNTPUT             C/C GOOD IF NOT HIGHER
+PRNTBADC EQU   *
+         NI    PRNTLINE,X'02'      BAD COMMAND
+         OI    PRNTLINE,X'09'      CONVERT TO SINGLE SPACE
+PRNTPUT  EQU   *
+         PUT   PRINT,PRNTLINE      WRITE PRINT RECORD
+PRNTLCLR  EQU  *
+         MVI   PRNTLINE,C' '       *CLEAR PRINT AREA
+         MVC   PRNTLINE+1(132),PRNTLINE
+         BR    R4                  RETURN TO CALLER
+         SPACE 2
+PRNTCLOS EQU   *         CLOSE PRINT DATASET
+         TM    SWS,SWSPROPN        IS IT OPEN
+         BCR   14,R4               NO. RETURN
+         CLOSE (PRINT)             CLOSE PRINT DATASET
+         NI    SWS,255-SWSPROPN    TURN OFF PRINT SWITCH
+         BR    R4                  RETURN
+         SPACE 2
+GETDATE  EQU   *         RETRIEVE CURRENT DATE AND TIME
+         MVI   UTOPCODE,C'0'       INIT FOR CURRENT DATE AND TIME
+         LA    R1,UTPARMAD         PARM LIST ADDRESS
+         LA    R15,UT458ADD        ENTRY POINT SYMBOL ADDRESS
+         SVC   6                   LINK TO CALL UT458
+         MVC   SEPDATE,UTREPORT    MOVE DATE TO PRINT SEPARATOR
+         MVC   SEPHH,UTHHMMSS      MOVE HOURS
+         MVC   SEPMM,UTHHMMSS+2    MOVE MINUTES
+         MVC   SEPSS,UTHHMMSS+4    MOVE SECONDS
+         BR    R4                  RETURN TO MAINLINE
+         SPACE 2
+SKPGOMSG EQU   *                   ISUE SKIP PAGES OR GO MSG. FOR ACTN
+         WTO   'TWTR -RR- ENTER PAGES TO SKIP ''NNNN''  OR ''GO'''
+         BR    R4                  RETURN TO MAINLINE
+         SPACE 2
+ACCWRITE EQU   *         WRITE AN ACCOUNTING RECORD
+         OPEN  (ACCTNG,OUTPUT)     OPEN ACCOUNTING D/S
+         TM    SWS,SWSEOJ          END OF JOB?
+         BNO   *+10                NO. JUMP NEXT INSTN.
+         MVC   ACCTREC+76(3),=CL3'EOJ' MOVE INDICATOR TO ACCT RECORD
+         PUT   ACCTNG,ACCTREC      WRITE CURRENT ACCOUNTING RECORD
+         CLOSE (ACCTNG)            CLOSE ACCOUNTING D/S
+         BR    R4                  RETURN TO MAINLINE
+         SPACE 2
+SEPWRITE SUBIN SAVE=(R4)
+         LA    R2,60               SET UP LINE-COUNT
+         MVC   PRNTLINE(1),PAGECTL2 MOVE PAGE SKIP CTL CHAR.
+         BAL   R4,PRNTWRIT
+SEPLOOP  EQU   *
+         MVC   PRNTLINE+28(L'SEPLINE),SEPLINE GET SEPARATOR 1ST PART
+         MVC   PRNTLINE+(28+3+L'SEPLINE)(L'SEPINFO),SEPINFO 2ND PART
+         MVC   PRNTLINE(1),LINECTL MOVE RELAVENT SINGLE SPACING
+         BAL   R4,PRNTWRIT         PRINT NEXT SEPARATOR LINE
+         BCT   R2,SEPLOOP
+         SUBOUT RESTORE=(R4)       RETURN TO MAINLINE
+         EJECT
+***********************************************************************
+*                  DATA AREAS ETC                                     *
+***********************************************************************
+         SPACE 2
+WTORECB  DC    F'0'
+WTORRPLY DC    F'0'
+PGRPLY   DC    F'0'
+DWORD    DC    D'0'
+         SPACE
+UTPARMAD DC    A(UTOPCODE)         PARM LIST ADDRESS
+UTEPADD  DC    A(0)                ENTRY POINT ADDRESS
+UT458    DC    CL8'UT458'          ENTRY POINT SYMBOL
+UT458ADD DC    A(UT458)            ADDRESS OF ABOVE
+         DC    A(0)
+         SPACE
+LENALGN  DC    H'0'                ALIGNMENT FOR VAR LENGTH RECORDS
+LENREDUC DC    H'5'                LENGTH REDUCTION FOR ABOVE
+         SPACE
+TAPELIST DC    X'80',AL3(TAPE)     LIST FORM OF TAPE DCB OPEN/CLOSE
+         SPACE
+         DS    0F
+TAPEXLST DC    X'87',AL3(TAPJFCB)
+PTRWARN  DC    H'80'
+         DC    H'0'
+         DC    C'TWTR -A- ENTER ''$PPRT1'''
+         DS    0F
+TAPJFCB  DC    176C'*'             ASTERISKS ACCENTUATE PTRWARN
+         SPACE
+         DS    0F
+TRTABLE  EQU   *
+         DC    74C' '
+         DC    CL7'ó.<(+|&&'
+         DC    10C' '
+         DC    CL5'$*);^'
+         DC    C'-'
+         DC    C'/'
+         DC    9C' '
+         DC    CL5',%_>?'
+         DC    10C' '
+         DC    CL6':#@''="'
+         DC    C' '
+         DC    CL9'ABCDEFGHI'
+         DC    7C' '
+         DC    CL9'JKLMNOPQR'
+         DC    8C' '
+         DC    CL8'STUVWXYZ'
+         DC    6C' '
+         DC    CL10'0123456789'
+         DC    6C' '
+         DC    CL10'0ABCDEFGHI'
+         DC    6C' '
+         DC    CL10'_JKLMNOPQR'
+         DC    8C' '
+         DC    CL8'STUVWXYZ'
+         DC    6C' '
+         DC    CL10'0123456789'
+         DC    6C' '
+NUMERICS EQU   *
+         DC    10X'00'
+         DC    6X'FF'
+NUMTABLE EQU   NUMERICS-240
+         PRINT ON,NOGEN,NODATA
+         SPACE
+         DS    0H
+FORMSWTO DC    AL2(FWTOEND-*)
+         DC    H'0'
+         DC    C'TWTR - MOUNT XXXX FORMS IN PRT1'
+FWTOEND  EQU   *
+FORMSTYP EQU   FORMSWTO+17
+         SPACE
+         DS    0H
+TPERRWTO EQU   *
+         DC    AL2(TPEWEND-*)
+         DC    H'0'
+         DC    CL7'TWTR - '
+TETYPE   DC    CL8' '
+         DC    CL14' ERR ON TAPE. '
+         DC    CL16'PRINT TERMINATED'
+TPEWEND  EQU   *
+         SPACE
+SWS      DC    C' '
+SWSF     EQU   128
+SWSV     EQU   64
+SWSCTLA  EQU   32
+SWSCTLM  EQU   16
+SWSTPOPN EQU   8
+SWSPROPN EQU   4
+SWSEOJ   EQU   2
+         SPACE
+         DS    0H
+INFOWTO  EQU   *
+         DC    AL2(IWTOEND-*)
+         DC    H'0'
+         DC    CL13'TWTR - LABEL='
+SEPINFO  DS    0CL34
+SEPJOB   DC    CL8' '
+         DC    C' '
+SEPSTEP  DC    CL8' '
+         DC    C' '
+SEPCDATE DC    CL5' '
+         DC    C' '
+SEPDSTBN DC    CL16' '             EXTRA SIX BYTES FOR DATE OVLY
+IWTOEND  EQU   *
+         SPACE
+SEPLINE  DS    0CL39
+         DC    CL14'TAPEWTR REPORT'
+         DC    C' '
+SEPSTEND DC    CL5' '
+         DC    C' '
+SEPDATE  DC    CL9' '
+         DC    C' '
+SEPHH    DC    CL2' '
+         DC    C'.'
+SEPMM    DC    CL2' '
+         DC    C'.'
+SEPSS    DC    CL2' '
+         SPACE
+ACCTREC  DS    0CL80
+         DC    CL4'TWA '           RECORD ID
+ACCJOB   DC    CL8' '              JOBNAME AT TAPE CREATION
+ACCSTEP  DC    CL8' '              STEPNAME     "      "
+ACCDTST  DC    CL5' '              DATE STARTED PRINTING
+ACCTMST  DC    CL6' '              TIME    "        "
+ACCDTEND DC    CL5' '              DATE FINISHED
+ACCTMEND DC    CL6' '              TIME    "        "
+ACCFORMS DC    CL4' '              FORMS TYPE USED
+ACCPROJ  DC    CL4' '              PROJECT NUMBER
+ACCPGSKP DC    PL3'0'              NUMBER OF PAGES SKIPPED
+ACCPGPRT DC    PL3'0'              NUMBER OF PAGES PRINTED
+ACCLINES DC    PL4'0'              NUMBER OF LINES PRINTED
+ACCDATEC DC    CL5' '              DATE ON WHICH TAPE WAS CREATED
+         DS    0CL20               SPARE. OVERLAYS PRNTLINE
+         SPACE
+PRNTLINE DS    CL133
+         SPACE
+         ORG   PRNTLINE            TAPE INFO. OVERLAYS PRNTLINE
+         DS    C                   FILLER FOR CLEARING PRNTLINE
+TAPEDSN  DS    CL17
+TAPEBLKS DS    CL5
+TAPERECL DS    CL5
+TAPEDATE DS    CL5
+TAPERCFM DS    C
+TAPEBAT  DS    C
+TAPECTL  DS    C
+         SPACE
+*                                  UT458 PARAMETER AREA. PRNTLINE OVLY
+UTOPCODE DS    C
+         DS    CL28
+UTYYDDD  DS    CL5
+UTREPORT DS    CL9
+         DS    CL36
+UTHHMMSS DS    CL6
+UTRTCODE DS    C
+         SPACE
+PGCNTR   DC    PL3'0'
+         ORG
+         SPACE
+CTLCHARS DS    0CL3
+PAGECTL1 DC    X'89'
+PAGECTL2 DC    X'8B'
+LINECTL  DC    X'09'
+ASACTL   DC    X'F1F140'
+MCCTL    DC    X'898B09'
+         SPACE
+UNCATLST CAMLST UCATDX,DSNAME,
+CATLST   CAMLST CATBX,DSNAME,,VOLUME,
+DSNAME   DC    CL7'OFFLINE'
+         DC    C'.'
+CATDSN   DC    CL17' '             DSN FROM TAPE LABEL
+         DC    C' '                DELIMITER
+VOLUME   DC    H'1'                NO OF VOLS
+         DC    XL4'34008003'       UNIT TYPE
+TAPEVOL  DC    CL6' '              VOLUME SERIAL
+         DC    H'1'                DATASET SEQ NO.
+         SPACE
+         LTORG
+         EJECT
+*
+*                  DATA CONTROL BLOCKS
+*
+         SPACE 2
+TAPE     DCB   DSORG=PS,MACRF=GL,                                      C
+               DDNAME=TAPE,EODAD=TAPEEOF,SYNAD=TAPEERR,DEVD=TA,        C
+               EXLST=TAPEXLST,                                         C
+               RECFM=F,LRECL=80,BLKSIZE=80
+         SPACE 3
+PRINT    DCB   DSORG=PS,MACRF=PM,                                      C
+               DDNAME=SYSPRINT,DEVD=PR,                                C
+               RECFM=F,LRECL=133,BLKSIZE=133,BUFNO=5
+         SPACE 3
+ACCTNG   DCB   DSORG=PS,MACRF=PM,                                      C
+               DDNAME=ACCTNG,                                          C
+               RECFM=F,LRECL=80,BLKSIZE=80,OPTCD=W,BUFNO=1
+         SPACE 3
+         DCBD  DEVD=TA,DSORG=QS
+LINAD    DSECT
+         END

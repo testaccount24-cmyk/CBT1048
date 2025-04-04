@@ -1,0 +1,746 @@
+         TITLE      'MULTIPLE OUTPUT COPY UTILITY'
+MLTICOPY CSECT
+***********************************************************************
+*  DESCRIPTION THIS PROGRAM HAS THE ABILITY TO COPY FROM ONE          *
+*              INPUT DATASET TO ONE TO EIGHT OUTPUT DATASETS          *
+*              DEPENDING ON THE NUMBER OF DD STATEMENTS.              *
+*              IF THE INPUT DATASET IS NUL OR NOT DEFINED             *
+*              EMPTY DATA SETS WILL BE WRITTEN AS OUTPUT.             *
+*              IF NO OUTPUT DATASETS ARE DEFINED, A TOTALING          *
+*              OPERATION WILL BE PERFORMED.                           *
+*              IF THE PARM  'UNLIKE'  IS CODED IN THE EXEC            *
+*              STATEMENT MIXED DEVICE TYPES MAY BE USED FOR           *
+*              CONCATENATED INPUT.                                    *
+*                                                                     *
+*                                                                     *
+*    OPERATION REQUIRED DD STATEMENT:   SYSPRINT                      *
+*              OPTIONAL DD  STATEMENTS:  SYSUT1 - INPUT               *
+*                                        SYSUT2-9 - OUTPUT            *
+*                                                                     *
+*              RESTRICTION. OUTPUT DD STATEMENTS MUST START           *
+*                           AT SYSUT2 AND PROGRESS CONTIGUOUSLY.      *
+*                                                                     *
+*                                                                     *
+*      ACCESS METHOD:  QSAM                                           *
+*                      SIMPLE BUFFERING                               *
+*                      GET LOCATE / PUT MOVE                          *
+*                                                                     *
+*      SPECIAL TECHNIQUES:   TIOT SEARCH FOR DDNAMES.                 *
+*                            PROGRAM SUPPLIED LIST FOR OUTPUT OPENLIST*
+*                                                                     *
+*                                                                     *
+*                   REGISTER ASSIGNMENTS AND EQUATES                  *
+*                                                                     *
+R0       EQU   0    CURRENT RECORD ADDRESS                            *
+R1       EQU   1    ADDRESS LISTS PASSED TO MACROS.                   *
+R2       EQU   2    ADDRESS POINTER                                   *
+R3       EQU   3    DITTO                                             *
+R4       EQU   4    PROGRAM BAL RETURN ADDRESS                        *
+R5       EQU   5    WORK. FULL WORD ZERO                              *
+R6       EQU   6    WORK                                              *
+R7       EQU   7    WORK                                              *
+R8       EQU   8    WORK                                              *
+R9       EQU   9    OUTPUT DATA SET COUNTER                           *
+R10      EQU   10   UNUSED                                            *
+R11      EQU   11   BASE1                                             *
+R12      EQU   12   BASE2                                             *
+R13      EQU   13   SAVE AREA POINTER                                 *
+R14      EQU   14   OS BALR RETURN ADDRESS                            *
+R15      EQU   15   OS BRANCH TO ADDRESS. RETURN CODE                 *
+***********************************************************************
+         EJECT
+***********************************************************************
+*                  HOUSE KEEPING                                      *
+***********************************************************************
+         SPACE 2
+         PRINT ON,NOGEN,NODATA
+         USING MLTICOPY,R15     **
+         SAVE  (14,12)           *
+         ST    13,SAVEAREA+4     *
+         LR    R11,R13           *
+         LA    R13,SAVEAREA      *
+         ST    R13,8(R11)        **  HOUSEKEEPING
+         BALR  R11,0             *
+         DROP  R15               *
+         USING *,R11,R12         *
+         LA    R12,4095(R11)     *
+         LA    R12,1(R12)       **
+         ST    R1,PARMSAVE         STORE PARAMETER ADDRESS POINTER
+         SPACE 5
+***********************************************************************
+*                  INITIALISE MESSAGE DATASET                         *
+***********************************************************************
+         SPACE 2
+INIT     EQU   *
+         OPEN  (SYSPRINT,(OUTPUT)) OPEN MESSAGE DATASET
+         USING IHADCB,R2
+         LA    R2,SYSPRINT
+         TM    DCBOFLGS,X'10'      IS SYSPRINT DD STATEMENT MISSING
+         BZ    NOPRINT             YES,  GO TO BAD END
+         PUT   SYSPRINT,PRTAREA-1  START NEW PAGE
+         MVI   PRTCTL,X'19'        TRIPLE SPACE FOR TITLE
+         EJECT
+***********************************************************************
+*                  ANALYSE PARAMETER FIELD                            *
+*                                                                     *
+*         REGISTER USAGE IS AS FOLLOWS:-                              *
+*         R2   ADDRESS OF PARM FIELD                                  *
+*         R3   ADDRESS OF BYTE TO BE EXAMINED.                        *
+*         R4   BRANCH AND LINK REGISTER                               *
+*         R5   START OF PARM DETAIL. END OF FIELD FOUND +1            *
+*         R6   NO OF BYTES FOUND IN FIELD                             *
+*         R7   NO OF PARM CHARACTERS LEFT.                            *
+*         R8   GENERAL WORK.                                          *
+***********************************************************************
+         SPACE 3
+         L     R1,PARMSAVE         RETREIVE REG1 CONTENTS
+         L     R2,0(0,R1)          ADDRESS OF PARM FIELD
+         LH    R7,0(0,R2)          PARM FIELD LENGTH
+         LA    R5,2(0,R2)          ADDRESS OF FIRST CHAR.
+PARMPROC EQU   *
+         LR    R3,R5
+         BAL   R4,NXTFLD           FIND NEXT PARM FIELD
+         LTR   R6,R6               IS PARMFLD LENGTH ZERO.
+         BZ    MODIFY              END OF PARMS. GO TO NEXT SECTION
+         BCTR  R6,0                REDUCE LENGTH OF PARM BY 1.
+         LA    R8,5                LENGTH OF 5 IN REG 8
+         LA    R1,CUNLIKE
+         EX    R8,ICOMP            'UNLIKE REQUESTED'?
+         BE    PUNLIKE
+         LA    R1,CNODUMP          PARM  'NODUMP'?
+         EX    R8,ICOMP
+         BE    PNODUMP
+         LA    R1,CTITLE           PARM  'TITLE='?
+         EX    R8,ICOMP
+         BE    PTITLE
+         LA    R8,4                LENGTH OF 4 IN REG 8
+         LA    R1,CCOUNT           PARM  'COUNT'?
+         EX    R8,ICOMP
+         BE    PCOUNT
+         LA    R8,3                LENGTH OF 3 IN REG8
+         LA    R1,CDUMP            PARM 'DUMP'?
+         EX    R8,ICOMP
+         BE    PDUMP
+         LA    R8,1                LENGTH OF 1 IN REG 8
+         LA    R1,CUL              PARM 'UL'? SHORT UNLIKE
+         EX    R8,ICOMP
+         BE    PUNLIKE
+         LA    R1,CND              PARM 'ND'? SHORT NODUMP
+         EX    R8,ICOMP
+         BE    PNODUMP
+         LA    R1,CT               PARM 'T='? SHORT TITLE=
+         EX    R8,ICOMP
+         BE    PTITLE
+         SR    R8,R8               LENGTH OF ZERO IN REG8
+         LA    R1,CC               PARM 'C'?  SHORT FOR COUNT
+         EX    R8,ICOMP
+         BE    PCOUNT
+         B     PARMERR
+         SPACE
+ICOMP    CLC   0(00,R3),0(R1)      EXECUTED COMPARE INSTRUCTION
+         SPACE
+PUNLIKE  EQU   *
+         MVI   UT1LIST,X'85'       SET SYSUT1 EXIT TO GO
+         B     PARMPROC            FIND NEXT PARM.
+         SPACE
+PNODUMP  EQU   *
+         MVI   DUMP+1,X'F0'        SET-ON DUMP BYPASS
+         B     PARMPROC            FIND NEXT PARM
+         SPACE
+PDUMP    EQU   *
+         OI    ABEND+4,X'80'       SWITCH ON FULL DUMP
+         B     PARMPROC
+         SPACE
+PTITLE   EQU   *
+         LA    R8,1(0,R8)          INCREASE LENGTH TESTED BY 1
+         LA    R3,0(R8,R3)             MOVE ALONG PARM
+         SR    R6,R8               REDUCE LENGTH OF PARM FIELD
+         LA    R8,79               LOAD MAX LENGTH IN REG8
+         CR    R6,R8               COMPARE WITH LENGTH IN PARM
+         BH    PARMERR             ERROR IF PARM LONGER.
+         EX    R6,TITLEMV          MOVE TITLE TO HEADING LINE
+         MVI   PRTAREA+37,C'-'     MOVE PUNCTUATION TO HEADING LINE
+         B     PARMPROC            FIND NEXT PARM
+         SPACE
+TITLEMV  MVC   PRTAREA+40(0),0(R3) EXECUTED MOVE INSTRUCTION
+         SPACE
+PCOUNT   EQU   *
+         LA    R8,1(0,R8)          INCREASE LENGTH
+         LA    R3,0(R8,R3)         MOVE ALONG PARM
+         SR    R6,R8               REDUCE LENGTH OF PARM FIELD
+         MVC   MSG10OP,0(R3)       MOVE OPERATOR SIGN TO CHECK MESSAGE
+         CLI   0(R3),C'<'          LESS THAN SPECIFIED?
+         BNE   EQUALS
+         MVI   CNTCMPR+1,X'40'     MOVE A LOW TO MASK BYTE
+         B     MVCOUNT
+         SPACE
+EQUALS   CLI   0(R3),C'='          EQUALS SPECIFIED?
+         BNE   GTRTHAN
+         MVI   CNTCMPR+1,X'80'     MOVE EQUALS TO MASK BYTE
+         B     MVCOUNT
+         SPACE
+GTRTHAN  EQU   *
+         CLI   0(R3),C'>'          GREATER THAN SPECIFIED?
+         BNE   PARMERR             ERROR IF NOT ONE OF THESE
+         MVI   CNTCMPR+1,X'20'     MOVE A HIGH TO MASK BYTE
+MVCOUNT  EQU   *
+         LA    R8,1
+         LA    R3,0(R8,R3)         BUMP ADDRESS OF PARM
+         SR    R6,R8               REDUCE LENGTH LEFT
+CHECKNUM EQU   *
+         LR    R8,R5               END OF PARM+1
+NUMLOOP  EQU   *
+         BCTR  R8,0                DECREMENT ADDRESS
+         CR    R8,R3               HAS NUMBER BEEN VALIDATED
+         BL    MVNUM               YES. GO STORE IT
+         CLI   0(R8),C'0'          LESS THAN ZERO?
+         BL    BADNUM              YES. INVALID
+         CLI   0(R8),C'9'          GREATER THAN 9?
+         BH    BADNUM              YES. INVALID
+         B     NUMLOOP             CONTINUE REVERSE SCAN OF NUMBER
+         SPACE
+MVNUM    EQU   *
+         LA    R8,6                LOAD MAX LENTH IN REG8
+         CR    R6,R8               MAX LENGTH ALLOWED FOR NUMBER IS 7
+         BH    PARMERR             BRANCH TO ERR IF LONGER
+         EX    R6,PACKCNT          STORE NUMBER TO BE TESTED
+         MVI   TSTCNTSW+1,X'00'
+         B     PARMPROC            FIND NEXT PARAMETER
+         SPACE
+PACKCNT  PACK  TSTCOUNT,0(0,R3)    EXECUTED PACK INSTRUCTION
+         SPACE
+BADNUM   EQU   *
+         LR    R3,R8               POINT AT BAD PARM DIGIT
+         B     PARMERR
+         SPACE 3
+PARMERR  EQU   *
+         BAL   R4,PRINT            PRINT TITLE LINE.
+         L     R1,PARMSAVE         GET START ADDRESS
+         L     R1,0(R1)            OF PARM
+         LA    R1,1(R1)            IN REG1
+         SR    R3,R1               CALCULATE POSITION OF ERROR
+         CVD   R3,DWORK            CONVERT TO DECIMAL
+         ED    MSG8PSN,DWORK+6     INSERT INTO ERROR MESSAGE
+         MVC   PRTAREA(35),MSG8    MOVE PARM ERROR MSG TO PRINTLINE
+         BAL   R4,PRINT            PRINT IT
+         B     BADEND
+         EJECT
+***********************************************************************
+*        EXTRACT      FIELDS FROM EXEC PARM PASSED TO PROGRAM.        *
+*        FIELDS ARE RETURNED TO CALLER ONE AT A TIME.                 *
+*              DELIMITERS ARE AS FOLLOWS:-                            *
+*               1.  COMMA   ,                                         *
+***********************************************************************
+               SPACE 3
+NXTFLD   EQU   *
+         SR    R6,R6               ZEROISE FIELD COUNT
+         LTR   R7,R7               END OF PARMS?
+         BNZ   NXTSPOS             NO. GO CHECK FOR DELIMITERS
+         LR    R5,R3               MAKE END SAME AS BEGINNING
+         B     NXTEND              BRANCH TO END OF SUBROUTINE
+         SPACE
+NXTSPOS  EQU   *                   BYPASS ANY DELIMITERS IN FIRST POSN
+         CLI   0(R3),C','
+         BE    BYPDLM
+         B     NOTDLM
+         SPACE
+BYPDLM   LA    R3,1(0,R3)          BUMP ADDRESS BY ONE.
+         BCT   R7,NXTSPOS          BRANCH UNLESS END OF PARM
+         B     NXTEND
+         SPACE
+NOTDLM   EQU   *
+         LR    R5,R3
+NXTPPOS  EQU   *
+         CLI   0(R5),C','
+         BE    NXTEND
+         LA    R6,1(0,R6)          INCREASE CHARACTER COUNT.
+         BCT   R7,NXTINCR
+NXTEND   BR    R4                  RETURN TO CALLER
+         SPACE
+NXTINCR  EQU   *                   INCREMENT TO NEXT PARM CHARACTER
+         LA    R5,1(0,R5)
+         B     NXTPPOS             GO CHECK FOR END OF FIELD
+         EJECT
+***********************************************************************
+*                  SAVE AND PRINT INPUT DCB INFORMATION.              *
+*                  MODIFY OUTPUT PARAMETER LIST                       *
+*                  BRANCH ADDRES TO NUMBER OF                         *
+*                  OUTPUTS FOUND. OPEN RELAVENT DATASETS              *
+*                  MODIFY OPEN MESSAGE                                *
+***********************************************************************
+         SPACE 5
+MODIFY   EQU   *
+         BAL   R4,PRINT            PRINT TITLE LINE
+         BAL   R4,DDSEARCH         NO.OUTPUTS RETURNED IN REG 9
+UT1OPN   BC    15,NOUT1            BRANCH IF NO SYSUT1 DATASET
+         OPEN  SYSUT1              OPEN INPUT
+         USING IHADCB,R2
+         LA    R2,SYSUT1           ADDRES OF SYSUT1 DCB FOR DSECT
+         MVC   UT1RECFM,DCBRECFM   SAVE SYSUT1 RECFM
+         MVC   UT1LRECL,DCBLRECL   SAVE SYSUT1 LRECL
+         MVC   UT1BLKSI,DCBBLKSI   SAVE SYSUT1 BLKSIZE
+DCBPRINT EQU   *
+         LA    R3,MSG7RF
+         TM    UT1RECFM,X'C0'      UNDEFINED?
+         BNO   DCBPR1              NO. BRANCH
+         MVI   0(R3),C'U'          YES. INSERT 'U' IN PRINT-LINE.
+         B     DCBPRPT6
+DCBPR1   EQU   *
+         TM    UT1RECFM,X'80'      FIXED?
+         BNO   DCBPR2              NO. BRANCH
+         MVI   0(R3),C'F'          YES. INSERT 'F'
+         LA    R3,1(0,R3)          BUMP ADDRESS
+         B     DCBPRPT2            BRANCH TO PART 2
+DCBPR2   EQU   *
+         TM    UT1RECFM,X'40'      VARIABLE?
+         BNO   DCBPRPT2            NO. BRANCH
+         MVI   0(R3),C'V'          YES. INSERT 'V'
+         LA    R3,1(0,R3)          BUMP ADDRESS
+DCBPRPT2 EQU   *
+         TM    UT1RECFM,X'10'      BLOCKED?
+         BNO   DCBPRPT3            NO. BRANCH
+         MVI   0(R3),C'B'          INSERT 'B'
+         LA    R3,1(0,R3)          BUMP ADDRESS
+DCBPRPT3 EQU   *
+         TM    UT1RECFM,X'08'      STANDARD OR SPANNED RECORDS?
+         BNO   DCBPR4              NO. BRANCH
+         MVI   0(R3),C'S'          INSERT 'S'
+         LA    R3,1(0,R3)          BUMP ADDRESS
+DCBPR4   EQU   *
+         TM    UT1RECFM,X'04'      ASA CONTROL CHARACTER?
+         BNO   DCBPR5              NO. BRANCH
+         MVI   0(R3),C'A'          INSERT 'A'
+         B     DCBPRPT5
+DCBPR5   EQU   *
+         TM    UT1RECFM,X'02'      M/C CONTROL CHAR?
+         BNO   DCBPRPT5            NO. BRANCH
+         MVI   0(R3),C'M'          YES. INSERT 'M'
+DCBPRPT5 EQU   *
+         TM    DCBDEVT,X'81'       IS IT TAPE INPUT?
+         BNO   DCBPRPT6            NO. BRANCH
+         MVI   DCBPRMV+1,X'38'     INCREASE LENGTH OF MESSAGE
+         TM    18(R2),X'C0'        TEST IF DENSITY IS 1600 BPI
+         BNO   DCBPR6              BRANCH IF NOT
+         MVI   MSG7DEN,C'3'        INSERT '3'
+         B     DCBPRPT6            BRANCH TO PART 6
+DCBPR6   EQU   *
+         MVI   MSG7DEN,C'2'        ASSUME 800 BPI. INSERT '2'
+DCBPRPT6 EQU   *
+         XR    R3,R3               CLEAR WORK REGISTER
+         LH    R3,DCBLRECL         LOAD LRECL
+         CVD   R3,DWORK            CONVERT TO DECIMAL
+         ED    MSG7LR,DWORK+5      EDIT INTO PRINT LINE
+         MVI   MSG7LR,C'='         RESTORE EQUALS SIGN
+         LH    R3,DCBBLKSI         LOAD BLOCKSIZE
+         CVD   R3,DWORK            CONVERT TO DECIMAL
+         ED    MSG7BS,DWORK+5      EDIT BLOCKSIZE INTO PRINTLINE
+         MVI   MSG7BS,C'='         RESTORE EQUALS SIGN
+DCBPRMV  MVC   PRTAREA(L'MSG7),MSG7 MOVE DCB MESSAGE TO PRINT AREA
+         BAL   R4,PRINT            PRINT DCB DESCRIPTION
+NOUT1    EQU   *
+         CR    R5,R9               TEST FOR NO OUTPUT DATASET.
+         BE    NOOUTPUT            YES. GO TO COUNT ONLY ROUTINE
+         MVC   PRTAREA+8(L'MSG1),MSG1  MOVE MODE MESSAGE TO PRINTLINE
+         BAL   R4,PRINT            PRINT MODE MESSAGE
+         LA    R6,4(R0)            PUT 4 INTO A REGISTER
+         LR    R7,R6               AND THE NEXT
+         MR    R6,R9               GET FULLWORD DISPLACEMENT
+         LR    R8,R7               EQUATE TWO REGISTERS
+         LA    R6,OPENLIST-4       LOAD REG WITH OPENLIST ADDRESS
+         AR    R7,R6               CALCULATE ABSOLUTE ADDRESS WITH DISP
+         OI    0(R7),X'80'         MODIFY OPTION BYTE. LAST IN LIST
+         LA    R6,BRLIST           GET ADDRESS OF BRANCH ADDRESS LIST
+         AR    R8,R6               GET ABS. ADDRESS OF BRANCH ADDRESS
+         L     R8,0(R8)            GET BRANCH ADDRESS
+         MVI   1(R8),X'F0'         MODIFY CORRECT BRANCH INSTRUCTION
+         LA    R1,OPENLIST         LOAD PARAMETER LIST
+         SVC   19                  OPEN OUTPUT DATASETS
+         CVD   R9,DWORK
+         UNPK  MSG2+16(1),DWORK+7(1)
+         OI    MSG2+16,X'F0'       CHANGE SIGN FOR PRINTING
+         MVC   PRTAREA(L'MSG2),MSG2
+         BAL   R4,PRINT            PRINT DATASET MESSAGE
+MAINBYPS BC    15,EMPTYEND         BRANCH IF NO INPUT
+         EJECT
+***********************************************************************
+*                  MAIN PROGRAM LOOP.                                 *
+*                  AN INPUT RECORD IS READ AND THEN WRITTEN           *
+*                  TO AS MANY OUTPUTS AS REQUIRED.                    *
+*                  THE NOP BRANCHES BEFORE EACH PUT ARE               *
+*                  ALTERED TO UNCONDITIONAL DURING INITIALIZATION     *
+*                  IF A DD CARD IS NOT FOUND FOR THE NEXT OUTPUT.    *
+***********************************************************************
+         SPACE 5
+GETINPUT EQU   *
+         GET   SYSUT1              GET RECORD. ADDRESS RETURNED IN R1
+         CLI   RRSW,C'1'           IS REREAD REQ FOR UNLIKE INPUT
+         BE    SWTCHOFF            YES. REISSUE READ
+         AP    COUNTER,=P'1'       UPDATE COUNTER
+BRUT2    BC    0,GETINPUT
+         LR    0,1                 LOAD RECORD ADDRESS READY FOR WRITE
+         PUT   SYSUT2,(0)
+BRUT3    BC    0,GETINPUT
+         PUT   SYSUT3,(0)
+BRUT4    BC    0,GETINPUT
+         PUT   SYSUT4,(0)
+BRUT5    BC    0,GETINPUT
+         PUT   SYSUT5,(0)
+BRUT6    BC    0,GETINPUT
+         PUT   SYSUT6,(0)
+BRUT7    BC    0,GETINPUT
+         PUT   SYSUT7,(0)
+BRUT8    BC    0,GETINPUT
+         PUT   SYSUT8,(0)
+BRUT9    BC    0,GETINPUT
+         PUT   SYSUT9,(0)
+BRUT10   B     GETINPUT
+         EJECT
+***********************************************************************
+*                  ENDINGS                                            *
+***********************************************************************
+         SPACE 3
+ENDIP    EQU   *
+         LA    R1,PATRN+8          SECURITY FOR EDMK
+         EDMK  PATRN,COUNTER       EDIT RECORD COUNT
+         MVC   PATRN+1,0(R1)       CORRECT ALIGNMENT OF COUNT
+         MVC  PRTAREA(25),MSG3     MOVE RECORD COUNT MESSAGE
+         BAL   R4,PRINT            PRINT SAME
+EMPTYEND EQU   *
+UT1CLS   BC    15,CLSUT1           CHANGED TO NOP IF SYSUT1 FOUND
+         CLOSE (SYSUT1)            CLOSE INPUT DATASET
+CLSUT1   EQU   *
+         LA    R1,OPENLIST         SET UP PARAMETER LIST FOR CLOSE
+         SVC   20                  CLOSE OUTPUT DATASETS
+TSTCNTSW BC    15,GOODEND          CHANGED TO NO-OP IF COUNT
+*                                  TEST IS REQUIRED
+         LA    R1,MSG10PTN+8       SECURITY FOR EDIT
+         EDMK  MSG10PTN,TSTCOUNT   EDIT TEST COUNT
+         LR    R8,R1               SAVE SIGNIFICANT POSITION
+         CP    COUNTER,TSTCOUNT    COMPARE REST COUNT WITH ACTUAL
+CNTCMPR  BC    00,CMPROK           BRANCH IF TEST SATISFIED
+         MVC   MSG10PTN+1(22),0(R8) ALIGN TEST COUNT + MESSAGE
+         MVC   PRTAREA(35),MSG10   MOVE TO PRINT LINE
+         BAL   R4,PRINT            PRINT TEST COUNT MESSAGE
+         B     BADEND
+         SPACE
+CMPROK   EQU   *
+         MVC   MSG10CRT,MSG10CRT+2 DELETE 'IN' FROM INCORRECT
+         MVC   MSG10PTN+1(20),0(R8) ALIGN TEST COUNT + MESSAGE
+         MVC   PRTAREA(35),MSG10   MOVE TO PRINT LINE
+         BAL   R4,PRINT            PRINT COMPARE OK MESSAGE
+GOODEND  EQU   *
+         ED    MSG5CODE,=P'00'     PUT ZERO IN RETURN CODE MSG
+         MVC   PRTAREA(18),MSG5    MOVE RETURN CODE MESSAGE
+         BAL   4,PRINT             PRINT RETURN CODE MESSAGE
+         CLOSE (SYSPRINT)          CLOSE MESSAGE DATASET
+         L     R13,SAVEAREA+4      RESTORE REG 13
+         RETURN (14,12),RC=0       REURN WITH R/C = 0
+         SPACE 3
+ABORT    EQU   *                   ABORTIVE END NO DD STATEMENTS
+         MVC   MSG1+8(5),=C'NO-OP' MODIFY MODE MESSAGE
+         MVC   PRTAREA+8(L'MSG1),MSG1  MOVE MODE MESSAGE TO PRINTLINE
+         BAL   R4,PRINT            PRINT MODE MESSAGE
+BADEND   EQU   *
+DUMP     BC    0,CONDCD            BRANCH IF 'NODUMP' REQUESTED
+         MVC   PRTAREA(L'MSG9),MSG9  MOVE ABEND MSG TO PRINTAREA
+         BAL   R4,PRINT          PRINT  IT.
+         CNOP  0,4
+         PRINT ON,GEN
+ABEND    ABEND 0432,,STEP
+         PRINT ON,NOGEN
+         SPACE 3
+CONDCD   EQU   *
+         ED    MSG5CODE,=P'16'     PUT 16 IN RETURN CODE MSG
+         MVC   PRTAREA(18),MSG5    MOVE RETURN CODE MESSAGE
+         BAL   4,PRINT             PRINT RETURN CODE MESSAGE
+         CLOSE (SYSPRINT)          CLOSE MESSAGE DATASET
+RC16     EQU   *
+         L     R13,SAVEAREA+4      RESTORE REG 13
+         RETURN (14,12),RC=16      RETURN WITH R/C = 16
+         SPACE 3
+NOPRINT  EQU   *                   BADEND FOR ABSENCE OF SYSPRINT DDNAM
+         WTO   '******* UT432(COPY) TERMINATED ******'
+         B     ABEND
+         EJECT
+***********************************************************************
+*                  NO OUTPUTS FOUND                                   *
+*                  SO COUNT INPUT DATASET                             *
+***********************************************************************
+         SPACE 5
+NOOUTPUT EQU   *
+NOSTAT   BC    15,ABORT            BAD END IF NO I/O DD STATEMENTS
+         MVC   MSG1+8(5),=C'COUNT' MODIFY MODE MESSAGE
+         MVC   PRTAREA+8(L'MSG1),MSG1  MOVE MODE MESSAGE TO PRINTLINE
+         BAL   R4,PRINT            PRINT MODE MESSAGE
+         LA    R2,SYSUT1           GET ADDRESSABILITY OF INPUT DCB
+         MVC   DCBEODAD+1(3),COUNTEOD  CHANGE END OF INPUT ADDRESS
+CNTREAD  EQU   *
+         GET   SYSUT1              READ INPUT FILE
+         AP    COUNTER,=P'1'       COUNT IT
+         B     CNTREAD             GO READ NEXT RECORD
+ENDCOUNT EQU   *
+         CLOSE  (SYSUT1)
+         LA    R1,PATRN+8          SECURITY FOR EDMK
+         EDMK  PATRN,COUNTER       MOVE COUNT TO MESSAGE3
+         MVC   PATRN+1,0(R1)       CORRECT ALIGNMENT OF COUNT
+         MVC   PRTAREA(25),MSG3    MOVE COUNT TO PRINT LINE
+         BAL   R4,PRINT            PRINT COUNT
+         B     TSTCNTSW            GO TEST FOR COUNT COMPARE
+         EJECT
+***********************************************************************
+*                  ROUTINE TO SEARCH TIOT FOR DDNAMES                 *
+*                  SUBMITTED BY USER AT EXECUTION TINE.               *
+***********************************************************************
+         SPACE 5
+DDSEARCH EQU   *
+         L     2,16(0)             GET CVT ADDRESS
+         L     2,0(2)              GET ADDRESS OF TCB DISPATCH FIELDS
+         L     2,4(2)              GET ADDRESS OF THIS DCB
+         L     2,12(2)             GET ADDRESS OF TIOT
+         LA    R2,24(2)             LEAP TO FIRST DDNAME ENTRY
+         SR    R3,R3               CLEAR A SPARE REGISTER
+         SR    R9,R9               ANOTHER ONE FOR D/S COUNT
+         SR    R5,R5               AND ANOTHER ONE AS ZERO
+DDLOOP   EQU   *
+         CL    R5,0(R2)            DOES FIRST WORD EQUAL ZERO
+         BE    0(R4)               YES. END OF DDNAMES SO RETURN
+         SR    R3,R3               CLEAR REG FOR INSERT
+         IC    R3,0(R2)            INSERT COUNT TO NEXT DDNME ENTRY
+         LA    3,0(R3,R2)          STORE ADDRESS OF NEXT ENTRY
+         CLC   4(5,R2),=C'SYSUT'    IS THE PREFIX RIGHT?
+         BNE   DDRELOOP            NO. IGNORE THIS ENTRY
+         CLC   9(2,R2),=C'1 '      IS IT THE SYSUT1 DATASET
+         BL    DDRELOOP            BRANCH IF NOT VALID LAST DIGIT
+         BE    UT1PROC             YES. PREPARE TO OPEN
+         C     R9,=F'8'
+         BH    DDRELOOP            BRANCH IF YOO MANY OUTPUTS
+         CLI   10(R2),C' '         IS DDNAME TOO LONG
+         BNE   DDRELOOP            YES. GO TO NEXT ENTRY
+         LA    R9,1(0,R9)          INCREASE NO.OF DATASETS BY ONE
+         B     DDRELOOP
+UT1PROC  EQU   *
+         MVC   MSG1+8(5),=C'COPY ' MODIFY MODE MESSAGE
+         MVI   UT1OPN+1,X'00'      NEGATE OPEN BYPASS
+         MVI   UT1CLS+1,X'00'      NEGATE CLOSE BYPASS
+         MVI   MAINBYPS+1,X'00'    NEGATE MAIN LOOP BYPASS
+         MVI   NOSTAT+1,X'00'      NEGATE ABORTIVE END
+         MVI   EXLIST,X'85'        SET DCB OPEN EXITS TO GO
+DDRELOOP EQU   *
+         LR    R2,R3               LOAD NEXT DD ENTRY
+         B     DDLOOP              GO PROCESS NEXT ENTRY
+         EJECT
+***********************************************************************
+*                  PRINT ROUTINE                                      *
+***********************************************************************
+         SPACE 3
+PRINT    EQU   *
+         PUT   SYSPRINT,PRTAREA-1  WRITE CURRENT PRINT LINE
+         MVI   PRTCTL,C' '         MOVE IN SPACE
+         MVC   PRTAREA,PRTCTL      PROPAGATE IT
+         MVI   PRTCTL,X'09'        MOVE IN SIGNLE SPACING
+         BR    4                   END PRINT ROUTINE
+         SPACE 5
+***********************************************************************
+*                  SYNAD ROUTINE                                      *
+***********************************************************************
+         SPACE 5
+ERRUT2   EQU   *
+ERRUT3   EQU   *
+ERRUT4   EQU   *
+ERRUT5   EQU   *
+ERRUT6   EQU   *
+ERRUT7   EQU   *
+ERRUT8   EQU   *
+ERRUT9   EQU   *
+         MVC   MSG4+13(6),=C'OUTPUT'  ALTER I/O ERROR MESSAGE
+ERRUT1   EQU   *
+         SYNADAF   ACSMETH=QSAM    CALL IBM SYSNAD ROUTINE
+         LR    R3,R1               SAVE ADDRESS OF SYSNAD MSG BUFFER
+         MVC   PRTAREA(L'MSG4),MSG4  MOVE IT TO PRINT LINE
+         BAL   R4,PRINT            PRINT MESSAGE
+         MVC   PRTAREA(78),50(R3)  MOVE ANALYSIS MESSAGE TO PRINTLINE
+         BAL   R4,PRINT            PRINT ERROR ANALYSIS
+         MVC   MSG6TXT,50(R3)      MOVE SYSNAD MSG TO OPERATOR BUFFER
+         WTO   MF=(E,MSG6)         TELL OPERATOR OF CALAMITY
+         SYNADRLS
+         LA    R1,PATRN+8          SECURITY FOR EDMK
+         EDMK  PATRN,COUNTER       EDIT RECORD COUNT
+         MVC   PATRN+1,0(R1)       CORRECT ALIGNMENT OF COUNT
+         MVC   PRTAREA(25),MSG3    MOVE RECORD COUNT TO PRINTLINE
+         BAL   R4,PRINT            PRINT IT
+         B     BADEND
+         EJECT
+***********************************************************************
+*                  MODIFY OUTPUT DATA CONTROL BLOCKS                  *
+***********************************************************************
+         SPACE 3
+DCBMOD   EQU   *
+         LR    R2,R1               SET UP ADDEESSABILITY OF DCB
+         CLI   DCBRECFM,X'00'      RECFM SPECIFIED IN JCL?
+         BNE   MODLRECL            YES. CHECK LRECL
+         MVC   DCBRECFM,UT1RECFM   NO. MOVE IN INPUT RECFM
+MODLRECL EQU   *
+         CLC   DCBLRECL,=X'0000'   LRECL SPECIFIED IN JCL?
+         BNE   MODBLKSI            YES. GO CHECK BLKSIZE
+         MVC   DCBLRECL,UT1LRECL   NO. MOVE IN INPUT LRECL
+MODBLKSI EQU   *
+         CLC   DCBBLKSI,=X'0000'   BLKSIZE SPECIFIED IN JVL?
+         BNE   ENDMOD              YES.GO TO END EXIT
+         MVC   DCBBLKSI,UT1BLKSI   NO. MOVE IN INPUT BLKSIZE
+ENDMOD   EQU   *
+         BR    R14
+         SPACE 8
+***********************************************************************
+*                  DCB EXIT WHEN UNLIKE DEVICE ATTRIBUTES             *
+*                  REQUESTED FOR CONCATENATED INPUT                   *
+***********************************************************************
+         SPACE 3
+UNLIKEX  EQU   *
+         LR    R2,R1               SET UP ADDRESSABILITY FOR SYSUT1 DCB
+         CLI   RRSW,X'00'          FIRST TIME AROUND?
+         BNE   OTHTIMES            NO. GOTO SET RRSW
+         MVI   RRSW,C'0'           SET FIRST TIME TO REREAD SWITCH
+         OI    DCBOFLGS,X'08'      SET UNLIKE FLAG ON IN DCB
+         BR    14                  RETURN TO OPEN
+         SPACE
+OTHTIMES EQU   *
+         MVI   RRSW,C'1'           TURN ON REREAD SWITCH
+         BR    14                  RETURN TO OPEN
+         SPACE
+SWTCHOFF EQU   *
+         MVI   RRSW,C'0'           RESET SWITCH TO OFF
+         B     GETINPUT      GO REREAD NEXT RECORD
+         EJECT
+***********************************************************************
+*                  DATA CONTROL BLOCKS                                *
+***********************************************************************
+         SPACE 5
+SYSPRINT DCB   DDNAME=SYSPRINT,MACRF=PM,                               C
+               DSORG=PS,BUFNO=1,                                       C
+               RECFM=FM,LRECL=121,BLKSIZE=121
+         SPACE 3
+SYSUT1   DCB   DDNAME=SYSUT1,                                          C
+               DSORG=PS,MACRF=GL,EXLST=UT1LIST,                        C
+               EODAD=ENDIP,SYNAD=ERRUT1
+         SPACE 3
+SYSUT2   DCB   DDNAME=SYSUT2,EXLST=EXLIST,                             C
+               DSORG=PS,MACRF=PM,                                      C
+               SYNAD=ERRUT2
+         SPACE 3
+SYSUT3   DCB   DDNAME=SYSUT3,EXLST=EXLIST,                             C
+               DSORG=PS,MACRF=PM,                                      C
+               SYNAD=ERRUT3
+         SPACE 3
+SYSUT4   DCB   DDNAME=SYSUT4,EXLST=EXLIST,                             C
+               DSORG=PS,MACRF=PM,                                      C
+               SYNAD=ERRUT4
+         SPACE 3
+SYSUT5   DCB   DDNAME=SYSUT5,EXLST=EXLIST,                             C
+               DSORG=PS,MACRF=PM,                                      C
+               SYNAD=ERRUT5
+         SPACE 3
+SYSUT6   DCB   DDNAME=SYSUT6,EXLST=EXLIST,                             C
+               DSORG=PS,MACRF=PM,                                      C
+               SYNAD=ERRUT6
+         SPACE 3
+SYSUT7   DCB   DDNAME=SYSUT7,EXLST=EXLIST,                             C
+               DSORG=PS,MACRF=PM,                                      C
+               SYNAD=ERRUT7
+         SPACE 3
+SYSUT8   DCB   DDNAME=SYSUT8,EXLST=EXLIST,                             C
+               DSORG=PS,MACRF=PM,                                      C
+               SYNAD=ERRUT8
+         SPACE 3
+SYSUT9   DCB   DDNAME=SYSUT9,EXLST=EXLIST,                             C
+               DSORG=PS,MACRF=PM,                                      C
+               SYNAD=ERRUT9
+         SPACE 3
+         DCBD  DSORG=PS,DEVD=DA
+         EJECT
+***********************************************************************
+*                  STORAGE AREAS AND CONSTANTS                        *
+***********************************************************************
+         SPACE 5
+MLTICOPY CSECT
+SAVEAREA DS    18F                 GR SAVEAREA FOR CALLED MODULES
+COUNTER  DC    PL4'0'              RECORD ACCUMULATOR
+TSTCOUNT DC    PL4'0'              COUNT FROM PARM FOR COMPARISON
+EXLIST   DC    X'80',AL3(DCBMOD)
+UT1LIST  DC    X'80',AL3(UNLIKEX)
+RRSW     DC    X'00'
+COUNTEOD DC    AL3(ENDCOUNT)
+PRTCTL   DC    X'8B'
+PRTAREA  DC    CL120'  UT432 - DUPLICATE DATASET UTILITY'
+MSG1     DC    C'MODE :  EMPTY'
+MSG2     DC    C'OUTPUT FILES =   '
+MSG3     DC    C'RECORD COUNT = '
+PATRN    DC    X'40206B2020206B212020'
+         DC    CL10' '
+MSG4     DC    C'I/O ERROR ON  INPUT DATA SET MORE DATA FOLLOWS'
+MSG5     DC    C'RETURN  CODE ='
+MSG5CODE DC    X'40212020'         EDIT PATTERN FOR RETURN CODE
+MSG6     DS    0F
+         DC    AL2(MSG6END-*),H'0',C'UT432 - '
+MSG6TXT  DC    CL78' '
+MSG6END  EQU   *
+MSG7     DS    0CL51
+         DC    C'  SYSUT1 DCB :  RECFM='
+MSG7RF   DC    CL4' '
+         DC    C'LRECL'
+MSG7LR   DC    X'402020202120'
+         DC    C' BLKSIZE'
+MSG7BS   DC    X'402020202120'
+         DC    C' DEN='
+MSG7DEN  DC    C' '
+MSG8     DC   CL31'INVALID PARM PASSED AT POSITION'
+MSG8PSN  DC    X'40212020'
+MSG9     DC    C'ABNORMAL END -  U0432'
+MSG10    DC    C'CHECK  COUNT '
+MSG10OP  DC    C' '
+         DC    C' '
+MSG10PTN DC    X'40206B2020206B212020'
+         DC    C' - '
+MSG10CRT DC    C'INCORRECT'
+         DC    CL10' '
+CUNLIKE  DC    C'UNLIKE'
+CNODUMP  DC    C'NODUMP'
+CTITLE   DC    C'TITLE='
+CCOUNT   DC    C'COUNT'
+CDUMP    DC    C'DUMP'
+CUL      DC    C'UL'
+CND      DC    C'ND'
+CT       DC    C'T='
+CC       DC    C'C'
+UT1RECFM DC    X'00'               SYSUT1 DCB RECFM
+UT1LRECL DC    X'0000'             SYSUT1 DCB LRECL
+UT1BLKSI DC    X'0000'             SYSUT1 DCB BLKSIZE
+         DS    0D
+DWORK    DC    PL8'0'
+PARMSAVE DC    F'0'
+OPENLIST DC    AL1(15)
+         DC    AL3(SYSUT2)
+         DC    AL1(15)
+         DC    AL3(SYSUT3)
+         DC    AL1(15)
+         DC    AL3(SYSUT4)
+         DC    AL1(15)
+         DC    AL3(SYSUT5)
+         DC    AL1(15)
+         DC    AL3(SYSUT6)
+         DC    AL1(15)
+         DC    AL3(SYSUT7)
+         DC    AL1(15)
+         DC    AL3(SYSUT8)
+         DC    AL1(143)
+         DC    AL3(SYSUT9)
+BRLIST   DC    AL4(BRUT2)
+         DC    AL4(BRUT3)
+         DC    AL4(BRUT4)
+         DC    AL4(BRUT5)
+         DC    AL4(BRUT6)
+         DC    AL4(BRUT7)
+         DC    AL4(BRUT8)
+         DC    AL4(BRUT9)
+         DC    AL4(BRUT10)
+         LTORG
+         END   MLTICOPY

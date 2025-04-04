@@ -1,0 +1,1350 @@
+* * * * * * * * * * * * * * * * * * *
+*        PRODUCED AT TRIANGLE UNIVERSITIES COMPUTATION CENTER,
+*                    RESEARCH TRIANGLE PARK,
+*                    NORTH CAROLINA, 27709
+*        SYSTEMS PROGRAMMER - H. L. JACKSON
+*        MODIFIED FOR 2314 DEC67 BY TED BAUER & FRED FELBER MINNEAPOLIS
+* FUNCTION
+*  TO MAP THE ALLOCATION OF DATA SETS ON DISK PAKS.
+* INPUT  NONE
+* UTILITY  SYSUT1 - A FULLY DD DESCRIBED DATA SET
+* VOLUMES TO BE MAPPED  ALL VOLUMES TO BE MAPPED MUST HAVE A DD CONTROL
+*                  CARD, THE DDNAME MAY BE ANYTHING, IT IS PREFFERED
+*                  IF THEY WERE DD1, DD2, ETC.  DISP=OLD,VOLUME=SER ADN
+*                  UNIT=  MUST BE GIVEN. NO OTHER PARAMETERS ARE NEEDED
+*                  THESE DD CARDS MUST FOLLOW THE SYSUT1 DD CARD.
+* OUTPUT  SYSPRINT
+* METHOD
+*   1.  FIND TIOT BY USING EXTRACT
+*   2.  READ TIOT TO FIND NEW DDNAMES
+*   3.  PUT DDNAME IN DCB OF 'TEST' AND 'UTILITY'
+*   4.  READ JFCB FOR 'TEST'  THIS GIVES VOLUME NUMBER OF DISK
+*       DESIRED TO BE MAPPED.
+*   5.  FETCH VOLUME NUMBER FROM JFCB.
+*   6.  SEARCH UCB'S FOR THIS DISK.
+*   7.  LOCATE POSITION OF VTOC.
+*   8.  READ VTOC USING OBTAIN ABSOLUTE TRACK.
+*   9.  CONVERT DATA TO READABLE FORMAT FOR PRINT LINE.
+*  10.  ACCUMULATE ALL EXTENTS AND SORT IN ORDER OF FIRST TRACK.
+*  11.  IF THE DATA SET IS A PARTITIONED DATA SET THEN THE FOLLOWING
+*       TASKS ARE PERFORMED TO CHECK THE DIRECTORY SIZE.  IF NOT
+*       THEN THE NEXT DATA SET IS FETCHED AND CONVERTED.
+*  12.  READ THE JFCB FOR THE 'UTILITY' DCB.  IT HAS THE DDNAME
+*       INSERTED FROM ITEM 3.
+*  13.  CHANGE THE NAME OF THE DATA SET TO CORRESPOND TO THE PARTITION-
+*       ED ONE DESIRED.
+*  14.  OPEN TYPE J THE DATA SET USING THE MODIFIED JFCB.
+*  15.  GET BLOCKS FROM THE DIRECTORY UNTIL END OF FILE.  RECORD THE
+*       NUMBER OF TOTAL DIRECTORY BLOCKS AND THE NUMBER USED.
+*  16.  AFTER ALL THE DATA SETS ARE LISTED, THEN A DISK STORAGE SPACE
+*       MAP IS MADE.  THE MAP SHOWS ALL EXTENTS IN ASCENDING TRACK
+*       ORDER.  A CROSS REFERENCE IS MADE TO THE DSNAME.
+*
+*
+*
+*        THIS  PROGRAM MODIFIED  16 MARCH 1972 TO ALLOW FOR
+*        3330'S.  THE MAIN PROBLEM WAS THAT SPACE WAS ALLOCATED
+*        IN-LINE FOR TABLES AND THESE TABLES WERE NOT LARGE ENOUGH
+*        FOR 3330'S.  THE PROGRAM WAS CHANGED TO OBTAIN CORE (GETMAIN)
+*        FOR THE MAJORITY OF THE TABLES NEEDED.  ALSO NO CHECKING
+*        WAS MADE FOR END OF TABLE SO THIS CODE WAS ALSO INSERTED.
+*        IF TABLE OVERFLOW OCCURS A MESSAGE WILL BE PRINTED WHICH
+*        INDICATES WHICH TABLE NEEDS TO BE INCREASED:
+*          ***MAPDISK TABLE OVERFLOW***D
+*                                      *
+*          *****************************
+*          *
+*          ***WHERE D=0  INCREASE FMT1SIZE
+*                   D=1  INCREASE F356SIZE
+*                   D=3  INCREASE ACCTSIZE
+*                   D=7  INCREASE SRTSIZE
+*        EQU'S WERE USED TO FACILITATE CHANGES
+*        IT IS ACKNOWLEDGED BY THE MODIFIER THAT THE MODIFIEE
+*        SHOULD PROBABLY BE CHANGED SO THAT NO BOUNDS EXIST FOR
+*        TABLES OTHER THAN REGION SIZE BUT TIME WAS NOT AVAILABLE
+*
+*
+* MACROS USED
+*     2. OPEN - PUT - CLOSE - DCB
+*     3. OBTAIN - CAMLST, SEEK
+*      4. EXTRACT
+*      5. RDJFCB - DCB
+* GENERAL REGISTER USAGE
+*        0     TTR OF VTOC PLUS STANDARD PARAM REGISTER
+*        1     DEB ADDRESS PLUS STANDARD PARAM REGISTER
+*        2     PARAMETER TO CONVERT TTR - BOOST R IN ABSOLUTE
+*        2     CONVERT TO RELATIVE TRACK, TEMP. REG.
+*        3     WORKING REG - SORT FORMAT1 DSCB'S DS TABLE ADDRESS
+*        3     ABSOLUTE TO RELATIVE TRACK, TEMP. STORE
+*        4     WORKING REG - SORT F1  KOUNT REGISTER
+*        5     WORKING REG - SORT F1 ADDRESS OF DSCB
+*        6     BASE FOR PROGRAM, SECOND
+*        7     BASE ADDRESS FOR 3-5-6 DSCB TABLE
+*        8     BASE REGISTER
+*        9     BASE FOR UCB ADDRESS LIST
+*        10    BASE FOR DSCB FORMAT4 DESCRIPTION BLOCK
+*        11    BASE FOR UCB DESCRIPTION BLOCK
+*        12    BASE FOR CVT POINTER BLOCK
+*        12    BASE FOR F1 TABLE ON OUTPUT STAGE
+*        13    SAVE AREA POINTER
+*        14    RETURN FOR SUBS
+*        15    POINTER AND CONDITION CODE RETURN
+DRIVE    START 0                                                    FCM
+         PRINT NOGEN                                                FCM
+         USING DSCB4,R10          SETTING UP ADDRESSES
+         USING UCB,R11
+         USING CVT,R12
+         USING *,R8,R6
+         STM   14,12,12(13)        SAVE REGS IN CALLER'S SAVE AREA
+         LR    R8,15               LOAD BASE REG
+         LR    R6,R8               LOAD SECOND BASE
+         LA    R6,4095(R6)         ADD  4095 TO BASE
+         LA    R6,1(R6)            ADD 1 TO BASE
+         CNOP  0,4                 ALIGN TO FULL WORD
+         ST    13,*+12             STORE SAVE AREA POINTER
+         BAL   13,*+76             BRANCH AROUND SAVE AREA
+         DC    18F'0'
+         L     R12,16              LOAD CVT POINTER
+         L     R1,0(R1)                GET PARM                     DLO
+         CLI   1(R1),X'00'             ARE THERE PARMS              DLO
+         BE    NOSORT                  NO                           DLO
+         CLI   2(R1),C'G'              PARM=G?                      DLO
+         BNE   NOSORT                  NO                           DLO
+         NI    PUTGEN+1,X'0F'          YES RESET BYPASS             DLO
+         CLI   3(R1),C'S'              PARM=GS?                     DLO
+         BNE   NOSORT                  NO                           DLO
+         OI    FORMAT1+1,X'F0'         SET TO SORT GDG              DLO
+NOSORT   EQU   *                                                    DLO
+         OPEN  (PRINT,(OUTPUT))                                     DLO
+         USING IHADCB,R9                                            DLO
+         LA    R9,PRINT                OPEN SUCCESSFUL?             DLO
+         TM    DCBOFLGS,X'10'                                       DLO
+         BZ    RETURN                  NO                           DLO
+         OPEN  (SYSOUT,(OUTPUT))                                    DLO
+         LA    R9,SYSOUT                                            DLO
+         TM    DCBOFLGS,X'10'          OPEN SUCCESSFUL?             DLO
+         DROP  R9                                                   DLO
+         BZ    NOSYSOUT                NO                           DLO
+         OI    GENOPT,X'80'            PUT GDG TO SYSOUT            DLO
+NOSYSOUT EQU   *                                                    DLO
+         GETMAIN VC,LA=BOUNDS,A=TBLADDR      FIND CORE AVAILABLE DLO
+         FREEMAIN V,A=TBLADDR                FREE IT             DLO
+         NC    TBLLENG+2,=X'F800'            TRUNC TO 2K         DLO
+         L     R0,TBLLENG                                        DLO
+*        SAVE 10K FOR PDS PROCESSING AND ABEND                   DLO
+         SH    R0,=H'10240'                                      DLO
+         ST    R0,TBLLENG                                        DLO
+         GETMAIN R,LV=(0)                    GET TABLE AREA      DLO
+         ST    R1,TBLADDR                                        DLO
+         MVC   APPEN,CVTXAPG+1    MOVE ADDRESS ONCE
+         EXTRACT   TIOT,'S',FIELDS=(TIOT) GET ADDRESS OF TIOT IN WORK
+         L     R2,TIOT            BRING ADDRESS OF TIOT IN
+         LA    R2,24(R2)          BUILD UP TO FIRST DDNAME
+         ST    R2,TIOT            STORE VALUE FOR NEXT TIME AROUND
+         EJECT                                                      FCM
+DISKLOOP MVC   DATANAME(132),OUTBIN    CLEAR PRINT LINE             FCM
+         MVI   ERMS+L'ERMS-1,C'0'     SET UP ERROR MESSAGE VALUE    MES
+         L     R7,TBLADDR                    LOAD START OF TABLE DLO
+         ST    R7,DSTBL                      START OF F1 TABLE   DLO
+         ST    R7,DSEND                      END OF F1 TABLE     DLO
+         A     R7,TBLLENG                    ADD LENGTH OF TABLE DLO
+         ST    R7,F356TBL                    START OF F356 TABLE DLO
+         ST    R7,F356END                    END OF F356 TABLE   DLO
+         L     R7,F356TBL         R7=START OF 3-5-6 DSCB POINTERS   MES
+         LA    R10,WORK           ADDRESS FOR DSCB FORMAT 4
+         L     R12,RCVT           ADDRESS FOR CUT TABLE
+         L     R9,UCBADDR         R9=ADDR OF NEXT UCB ADDRESS
+         MVC   NTRKNT,=F'1'       START DSCB'S AT BOTTOM OF TABLE
+         MVC   SRTKNT,=F'1'       START SORT COUNT AT BOTTOM
+SWT1     NOP   MANY               SWITCH FOR MORE THAN ONE VOL IN DD
+         L     R2,TIOT            CHECK FOR END OF WORK
+TIOTLOOP SR    R3,R3              CLEAR COUNT REG                   MES
+         IC    R3,0(R2)
+         LTR   R3,R3              TEST FOR LAST ENTRY IN TIOT       MES
+         BZ    ALLDONE            BRANCH IF DONE                    MES
+         B     LOOKON              GO TEST FOR SPECIAL NAMES
+BYPASSDD LA    R2,0(R2,R3)        BUMP TO NEST DD NAME              MES
+         B     TIOTLOOP           CONTINUE TO LOOK FOR DDNAMES      MES
+LOOKON   CLC   4(3,R2),=C'SYS'
+         BE    BYPASSDD           BYPASS IF  SYSTEM DDNAME
+         CLC   4(4,R2),=CL4'PGM='                                   MES
+         BE    BYPASSDD           BYPASS IF DD IS PGM=              MES
+         CLC   4(8,R2),=CL8'STEPCAT'
+         BE    BYPASSDD           BYPASS  DD  IF STEPCAT DD
+         CLC   4(8,R2),=CL8'STEPLIB'                                GLA
+         BE    BYPASSDD           BYPASS IF STEPLIB                 GLA
+         MVC   DCBDDNM(8),4(R2)   MOVE THIS NAME TO DCB
+         MVC   DCBDDNM2(8),4(R2)  MOVE NAME TO UTILITY DATA BLOCK
+         LA    R9,12(R2)          SAVE START OF UCB'S
+         LA    R2,0(R2,R3)        READY FOR NEXT DDNAME
+         ST    R2,TIOT            REPLACE
+         RDJFCB    (TEST)         GET VOLUMN NO. FOR THSI DD
+         TM    JFCBTSDM,X'20'     SEE IF USER SPECIFIED A SYSOUT
+         BNO   CHECKV             OR SYSIN,BRANCH IF NOT
+         MVC   EXTOUT+10(L'ERMS1),ERMS1
+PRINTIT  BAL   R14,LINE1OUT       PRINT FROM EXTOUT                 FCM
+         B     DISKLOOP           PROCESS NEXT ONE
+CHECKV   SH    R3,=H'16'          REDUCE BY OVERHEAD
+         SRL   R3,2               R3=NUMBER OF VOLUMES
+         STC   R3,TIOTNVOL        SAVE NUMBER OF VOLUMES
+         OI    SWT1+1,X'F0'       TURN ON SW FOR MULTI VOLS         FCM
+         B     VOLICK             CHECK FOR LAST VOL.
+MANY     SR    R3,R3
+         IC    R3,TIOTNVOL        GET NUMBER OF VOLS REMAINING
+         LTR   R3,R3
+         BZ    DISKLOOP           LOOK FOR MORE DD'S
+VOLICK   BCT   R3,SLIPIN          LAST ONE DOES NOT BRANCH          FCM
+         NI    SWT1+1,X'0F'       TURN OFF SWITCH
+SLIPIN   LA    R9,4(R9)           GET ADDR OF NEXT UCB
+         ST    R9,UCBADDR         SAVE IT
+         STC   R3,TIOTNVOL        SAVE NUMBER OF VOLS
+         L     R11,0(R9)          R11=ADDR OF UCB
+         MVC   SAVESER,SRTEVOLI   SAVE VOLUME SERIAL SERIAL
+         MVC   SERMSG,SRTEVOLI    PUT IN VOLSER                     FCM
+         MVC   MSGTP,SRTEVOLI     PUT IN VOLSER                     FCM
+         ZAP   PAGEKNT,=P'0'           CLEAR PAGE COUNTS            DLO
+         ZAP   GPAGEKNT,=P'0'                                       DLO
+         CLI   UCBTYP+2,X'20'     CHECK IF DIRECT ACCESS
+         BE    ONOFF              BRANCH IF UNIT IS A DASD
+UNITERR  MVC   EXTOUT+10(L'ERMS2),ERMS2
+         B     PRINTIT           GO PRINT IT                        FCM
+ONOFF    TM    SRTESTAT,X'80'     CHECK FOR ON LINE
+         BZ    UNITERR            BRANCH IF OFF-LINE
+         MVC   NOSPARES,=H'3'     SET UP NUMVER OF SPARES AT 3      MES
+         CLI   UCBTYP+3,X'08'     SEE IF DEVICE A 2314              MES
+         BE    ITSA2314           BRANCH IF SO                      MES
+         OI    NOSPARES+1,X'04'   SET NUMBER OF SPARES TO 7(3330)   MES
+ITSA2314 MVC   TTRVTOC,UCBVTOC
+         MVI   SEEK,0
+         MVC   SEEK+1(7),SEEK     CLEAR CONVERT BIN
+         STH   R11,UCBXREF+2      STORE UCB ADDRESS INDEX
+         L     R15,CVTPCNVT       LOAD ADDRESS OF CONVERT ROUTINE
+         L     R0,UCBVTOC
+         LA    R1,DEB             ADDRESS OF PSEUDO DEB
+         LA    R2,SEEK            ADDRESS TO STORE
+         STM   R9,R13,HOLD        SAVE REGS
+         BALR  R14,R15
+         LM    R9,R13,HOLD        RETURN REGS
+GETDSCB  OBTAIN LIST              LOOK FOR DSCB'S
+         LTR   R15,R15            SEE IF OK
+         BE    NEXTCHK            OK
+CHECKIT   C    R15,=F'8'          MIDDLE OF TEST AREA
+         BL    VOL                VOLUME NOT MOUNTED
+         BE    FETCHNXT           NOT THERE ANY MORE, GET NEXT DSCB
+IOER     WTO   MF=(E,MSSAGE)      PRINT IO ERROR                    FCM
+IOER3    PUT   PRINT,MSSAGE+4     PUT MESSAGE ON PRINTER
+         B     PRINTIT           GO PRINT IT                        FCM
+IOER1    MVC   EXTOUT+1(L'ERMS3),ERMS3      ERROR MSG               FCM
+         B     IOER               PRINT ERROR                       FCM
+TABLOVF0 MVC   EXTOUT+10(L'ERMS),ERMS      PRINT ERROR MESSAGE      MES
+         B     PRINTIT           GO PRINT IT                        FCM
+IOER2    MVC   EXTOUT+1(L'ERMS4),ERMS4      ERROR MSG               FCM
+         B     IOER               PRINT ERROR                       FCM
+VOL      WTO   MF=(E,LISTWTO)     PRINT INTERVENTION REQD           FCM
+         TIME  BIN                GET TIME
+         LR    R1,R0
+         A     R1,=F'4000'        ADD FORTY SECONDS
+         ST    R1,HOLD            SAVE
+STALL    TIME  BIN
+         C     R0,HOLD
+         BL    STALL              STALL FORTY  SECONDS
+         B     GETDSCB            TRY AGAIN
+CHECKIT1 C     R15,=F'8'          MIDDLE OF AREA
+         BL    VOL1
+         BE    FETCHNXT
+         B     IOER
+VOL1     MVC   MSGTP,SAVESER      INTERVENTION REQUIRED
+         WTO   MF=(E,LISTWTO)
+         TIME  BIN                GIVE OPERATOR TIME TO MOUNT
+         A     R0,=F'4000'        ADD FORTY SECONDS
+         ST    R0,HOLD            SAVE
+STALL1   TIME  BIN
+         C     R0,HOLD            SEE IF AT 40 SECONDS
+         BL    STALL1             JUMP TO STALL
+         B     F1DSCBS            TRY AGAIN TO FTECH IT
+NOTHERE  MVC   EXTOUT+1(31),WARNING    VOLUME NOT MOUNTED           FCM
+         B     PRINTIT           GO PRINT IT                        FCM
+PUTGEN   EQU   *                                                    DLO
+         B     FETCHNXT                BYPASS UNLESS PARM=G         DLO
+NOINIT1  NOP   NOINIT                  BRANCH AROUND INIT           DLO
+         BAL   R14,GENHEAD             PUT OUT HEAD                 DLO
+         OI    NOINIT1+1,X'F0'         SET FOR BRANCH               DLO
+NOINIT   EQU   *                                                    DLO
+         CP    GLINEKNT,=P'56'         END OF PAGE                  DLO
+         BL    GENOUT                  NO                           DLO
+         BAL   R14,GENHEAD                                          DLO
+GENOUT   EQU   *                                                    DLO
+         MVC   DATANAME,DS1DSNAM       MOVE DSNAME                  DLO
+         LA    R1,DS1CREDT             CREATE DATE                  DLO
+         LA    R2,CRDATE                                            DLO
+         BAL   R14,CALEN                                            DLO
+         LA    R1,DS1EXPDT             EXPIRATION DATE              DLO
+         LA    R2,PURGDATE                                          DLO
+         BAL   R14,CALEN                                            DLO
+         MVC   TYPESET(4),=C' GEN'     TYPE DS                      DLO
+         TM    GENOPT,X'80'            TO SYSOUT                    DLO
+         BO    GENSYS1                 YE                           DLO
+         PUT   PRINT,OUTBIN                                         DLO
+         B     GENSYS2                                              DLO
+GENSYS1  EQU   *                                                    DLO
+         PUT   SYSOUT,OUTBIN                                        DLO
+GENSYS2  EQU   *                                                    DLO
+         MVC   DATANAME(132),OUTBIN    CLEAR                        DLO
+         AP    GLINEKNT,=P'1'                                       DLO
+         B     FETCHNXT                                             DLO
+GENHEAD  EQU   *                                                    DLO
+         ST    R14,HOLD                SAVE RETURN                  DLO
+         AP    GPAGEKNT,=P'1'                                       DLO
+         MVC   PAGEPLC,PATTERN                                      DLO
+         ED    PAGEPLC,GPAGEKNT        MOVE PAGE NUMBER             DLO
+         ZAP   GLINEKNT,=P'6'          RESET LINE COUNT             DLO
+         TM    GENOPT,X'80'            TO SYSOUT?                   DLO
+         BO    SYSHEAD                 YES                          DLO
+         PUT   PRINT,HEAD1                                          DLO
+         PUT   PRINT,GHEAD1                                         DLO
+         PUT   PRINT,GHEAD2                                         DLO
+         PUT   PRINT,SKIP2                                          DLO
+         B     HEADRET                                              DLO
+SYSHEAD  EQU   *                                                    DLO
+         PUT   SYSOUT,HEAD1                                         DLO
+         PUT   SYSOUT,GHEAD1                                        DLO
+         PUT   SYSOUT,GHEAD2                                        DLO
+         PUT   SYSOUT,GSKIP2                                        DLO
+HEADRET  EQU   *                                                    DLO
+         L     R14,HOLD                                             DLO
+         BR    R14                     RETURN                       DLO
+HEADING  ST    R14,HOLD           SAVE RETURN
+         AP    PAGEKNT,=P'1'      ADD ONE TO PAGE COUNT
+         MVC   PAGEPLC,PATTERN    PUT IN EDIT MASK
+         ED    PAGEPLC,PAGEKNT    NUMBER FOR PAGE
+         PUT   PRINT,HEAD1        TITLE HEADING
+         ZAP   LINEKNT,=P'3'           INITIATE 3 LINES PRINTED     FCM
+HEADER   B     HEADTXT                 NOP TO PRINT TEXTT           FCM
+         PUT   PRINT,HEAD3             COLUMN HEADING               FCM
+         PUT   PRINT,HEAD4             COLUMN HEADING               FCM
+         AP    LINEKNT,=P'3'           3 MORE LINES PRINTED         FCM
+HEADTXT  PUT   PRINT,SKIP2             DOUBLE SPACE                 FCM
+         L     R14,HOLD           RESTORE
+         BR    R14                CONTINUE
+NEXTCHK   CLI  DS4IDFMT,C'4'      CHECK FOR FORMAT 4
+         BNE   IOER               FIRST BLOCK MUST BE
+         MVC   SAVEF4,DSCB4       SAVE ALL OF FORMAT 4
+         MVC   SVCOUNT,DS4DEVDT   SAVE NUMBER OF DSCBS PER TRACK
+         MVC   SAVEHWM,DS4HPCHR   SAVE HIGH WATER MARK IN VTOC     *RC*
+         CLC   SAVEHWM,DS4F6PTR   IS THERE A FORMAT6 PAST THIS     *RC*
+         BNL   FETCHNXT           BRANCH IF NOT                    *RC*
+         MVC   SAVEHWM,DS4F6PTR   OTHERWISE, SAVE THIS ADDRESS     *RC*
+FETCHNXT SR    R2,R2              CLEAR WORKING REG
+         LA    R10,SAVEF4         SET UP ADDRESS FOR IT
+         IC    R2,ADDRS+4         RECORD COUNT IN
+         LA    R2,1(R2)           BOOST BY ONE
+         CH    R2,TRKCNT          CHECK NUMBER OF RECORDS ON THE TRACK
+         BNH   FETCHSQ            GO FETCH NEXT
+         MVC   WORK(4),ADDRS      MOVE TO TAKE CARE OF BOUNDRY
+         LH    R2,WORK+2           LOAD HH OF CCHH
+         LA    R2,1(R2)            BUMP TO NEXT TRACK
+         STH   R2,WORK+2
+         CH    R2,DS4DEVSZ+2       END OF CYL?
+         BL    PUTBACK             NO
+         SR    R2,R2
+         STH   R2,WORK+2           RESET TRACK TO ZERO
+         LH    R2,WORK             GET CYL
+         LA    R2,1(R2)            BUMP
+         STH   R2,WORK
+PUTBACK  EQU   *
+         MVC   ADDRS(4),WORK      PLACE BACK (CYL + 1)
+         LA    R2,1               RECORD = 1
+FETCHSQ  STC   R2,ADDRS+4         STORE RECORD COUND
+FETCHRND CLC   SAVEHWM,ADDRS      SEE IF VTOC FINISHED             *RC*
+         BL    PRMAP              GO PRINT OUT MAP OF DISK
+F1DSCBS  OBTAIN    LIST           NEXT DSCB
+         LTR   R15,R15            CHECK FOR SUCCESS
+         BNE   CHECKIT1           JUMP IF BAD
+         LA    R10,WORK           RE INSTATE FOR NEXT TWO CHECKS
+         CLI   DS4IDFMT,0         CHECK FOR FORMAT 0               *RC*
+         BE    FETCHNXT           IGNORE IF SO                     *RC*
+         CLC   SAVEHWM,DS1PTRDS   SEE IF CHAIN ADDRESS HIGHER THAN *RC*
+         BNL   CHECKF1            ANY SO FAR.  BRANCH IF NOT       *RC*
+         MVC   SAVEHWM,DS1PTRDS   SAVE IT IF SO                    *RC*
+CHECKF1  CLI   DS4IDFMT,C'1'      CHECK FOR FORMAT 1               *RC*
+         BE    FORMAT1            GO PROCESS                       *RC*
+         SH    R7,H160                       BACK UP ENTRY       DLO
+         CL    R7,DSEND                      TABLES OVERLAPPED?  DLO
+         BNH   TABLOVF0                      YES                 DLO
+         ST    R7,F356END                    STORE NEW END       DLO
+         LA    R1,4(R7)                                          DLO
+         ST    R1,0(R7)                      STORE PTR TO DSCB   DLO
+         MVC   4(140,R7),WORK                SAVE DSCB           DLO
+         MVC   144(8,R7),SEEK                SAVE CCHHR          DLO
+         B     FETCHNXT           GO GET NEXT DSCB
+FORMAT1  EQU   *                                                 DLO
+         NOP   SORTGEN                                              DLO
+         CLI   DS1NOEPV,X'00'          IF 0 EXTENTS GEN TYPE        DLO
+         BE    PUTGEN                  DONT SORT JUST PUT           DLO
+SORTGEN  EQU   *                                                    DLO
+         L     R3,DSEND                      END OF TABLE        DLO
+         MVC   4(140,R3),WORK                SAVE DSCB           DLO
+         MVC   144(8,R3),SEEK                SAVE CCHHR          DLO
+         LA    R1,4(R3)                      PTR TO DSCB         DLO
+         LA    R3,160(R3)                    NEW END             DLO
+         CL    R3,F356END                    TABLES OVERLAPPED?  DLO
+         BNL   TABLOVF0                      YES                 DLO
+         ST    R3,DSEND                      SAVE NEW END        DLO
+         L     R3,DSTBL                      START OF TABLE      DLO
+         SH    R3,H160                                           DLO
+         L     R4,NTRKNT                     NO OF ENTRIES       DLO
+SORTF12  EQU   *                                                 DLO
+         BCT   R4,SORTF11                                        DLO
+         ST    R1,160(R3)                    STORE DSCB PTR      DLO
+SORTF14  L     R4,NTRKNT          BRING IN COUNT
+         LA    R4,1(R4)           TO BOOST BY ONE
+         ST    R4,NTRKNT
+         B     FETCHNXT           GO GET NEXT DSCB
+SORTF11  LA    R3,160(R3)                    BOOST TABLE ADDR    DLO
+         L     R5,0(R3)           POINTER TO DSCB
+         CLC   WORK(44),0(R5)     LOOK AT DSNAME
+         BH    SORTF12            JUMP AROUND IF IT DOES NOT FIT
+SORTF13  ST    R1,0(R3)           PUT ADDRESS IN TABLE
+         LR    R1,R5              LAST ADDRESS MOVED AROUND
+         L     R5,160(R3)                    NEXT ADDR           DLO
+         LA    R3,160(R3)                    BOOST TO NEXT       DLO
+         BCT   R4,SORTF13         MOVE ALL UP
+         ST    R1,0(R3)           PUT OUT LAST ADDRESS
+         B     SORTF14            FINISH UP THIS DSCB
+PRMAP    EQU   *                                                 DLO
+         NI    HEADER+1,X'0F'          PRINT FULL HEADER            DLO
+         BAL   R14,HEADING             PRINT HEADING                DLO
+         L     R9,DSEND                                          DLO
+         ST    R9,SRTBL                      SRT TABLE           DLO
+         ST    R9,SREND                                          DLO
+         L     R9,F356END                                        DLO
+         ST    R9,ACCTABLE                   ACC TABLE           DLO
+         ST    R9,ACCEND                                         DLO
+         MVC   DATANAME(4),=C'VTOC'
+         LA    R1,DS4VTOCE        PUT OUT EXTENT SIZE
+         BAL   R14,ABTOREL        CONVERT TO RELATIVE TRACKS R2 BACK
+         LA    R3,1               PSUEDO EXTENT NO 1
+         BAL   R14,STORMAP        STORE EXTENT FOR MAP R1,R2,DATANAME
+         BAL   R14,LENGTH         FIND LENGTH OF DATA SET R2-R3 BACK
+         LA    R1,SPALLOC
+         BAL   R14,EDIT           PREPARE TO PRINT R3,R1
+         LR    R9,R2              SAVE TOTAL FOR AWHILE
+         MVC   HOLD+4(4),DS4HPCHR GET END MARKER
+         SRL   R2,16
+         BAL   R14,ABTOREL1       DO ONLY USED
+         BAL   R14,LENGTH
+         LA    R1,SPUSED
+         BAL   R14,EDIT
+         BAL   R14,LINETEST            TEST PAGE EJECT              FCM
+         PUT   PRINT,OUTBIN       PRINT LINE OF OUTPUT
+         MVC   EXTOUT+11(22),HEAD5  EXT-FIRST--LAST-LENGTH
+         BAL   R14,LINE0OUT
+         LR    R2,R9              OUT OF ICE
+         LA    R3,1               EXTENT NUMBER
+         BAL   R14,FULLEDIT       DO FULL EDIT
+         BAL   R14,LINE1OUT
+         TM    DS4VTOCI,X'80'     TEST FOR DSCB 5
+         BO    DOF1S              NO DSCB 5 JUMPS
+         MVC   DATANAME(10),=CL10'FREE SPACE'
+         MVC   SPUSED-1(5),SPUSED-2          CLEAR USED SPACE    DLO
+         L     R10,F356TBL                   START OF TABLE      DLO
+         SH    R10,H160                                          DLO
+         L     R10,0(R10)                    ADDR FO F5 DSCB     DLO
+         CLI   DS5FMTID,C'5'      CHECK FOR 5
+         BNE   IOER1              BAD, GO TO NEXT VOL
+         L     R9,ACCTABLE        GET TO START OF ACCUM TABLE       MES
+         SR    R1,R1              CLEAR ACCUM REG.
+NEXTDS   LA    R5,8               8 FIELDS FIRST                   *RC*
+         LA    R4,DS5AVEXT        AREA OF EXTENTS
+         BAL   R14,NOTHER         DO FIRST 8 EXTENTS               *RC*
+         LA    R5,18              LAST IN DSCB
+         LA    R4,DS5MAVET
+         BAL   R14,NOTHER         DO LAST 18 EXTENTS
+         C     R5,DS5PTRDS+1      CHECK IF ONE MORE DSCB5 AROUND
+         BE    ENDDSCB5           NO, QUIT
+         BAL   R14,SRCHDSCB       GO SEARCH FOR DSCB 5
+         B     NEXTDS             KEEP GOING TILL END
+ENDDSCB5 SH    R9,H4                                             DLO
+         MVC   0(4,R9),=F'0'                 END OF LIST         DLO
+         ST    R9,ACCEND                     SAVE ADDR           DLO
+         LR    R3,R1              COUNT IN PARM AREA
+         LA    R1,SPALLOC         OUTPUT AREA
+         BAL   R14,EDIT           READY FOR PRINT
+         PUT   PRINT,OUTBIN
+         MVC   DATANAME,OUTBIN         CLEAR LINE                   FCM
+         MVC   DATANAME+11(10),=CL10'FREE SPACE'      RE INSTATE    FCM
+         B     PRNTCOM            GO PRINT AND SORT ALL EXTENTS     FCM
+         EJECT                                                      FCM
+* START REAL DATA SET PRINT OUTS HERE, THRU WITH 4 AND 5
+*      DO  FORMAT  1  DSCB'S
+FINEST   ST    R4,NTRKNT          STORE CORRECT VALUE FOR COUNT
+NXTF1    NOP   DONXTF1                 BR ALWAYS EXCEPT 1ST TIME    FCM
+         OI    NXTF1+1,X'F0'           SET BR ON                    FCM
+         BAL   R14,HEADING             START NEW PAGE FOR DATA SETS FCM
+         L     R12,DSTBL          GET START OF TABLE                MES
+DONXTF1  L     R10,0(R12)         ADDRESS OF DSCB IS IN
+         MVC   DATANAME,DS1DSNAM  BRING IN NAME OF DATA SET
+         LA    R1,DS1CREDT        LOAD ADDRESS OF DATE
+         LA    R2,CRDATE          PLACE TO STORE
+         BAL   R14,CALEN          GO DO CALENDER
+         LA    R1,DS1EXPDT        PICKUP
+         LA    R2,PURGDATE        STORE
+         BAL   R14,CALEN
+         TM    DS1DSORG,X'40'     CHECK FOR PHYSICAL SEQUENTIAL
+         BZ    TYPX1
+         MVC   TYPESET,=C'SEQ '        SEQUENTIAL DATA SET          FCM
+         B     TYPON1
+TYPX1    TM    DS1DSORG,X'02'      CHECK FOR PARTITIONED           *RC*
+         BZ    TYPX2               BRANCH IF NOT                   *RC*
+         MVC   TYPESET,=C'PART'    INDICATE PO                     *RC*
+         NI    SWPDS+1,X'0F'       SET TO GO THRU PDS              *RC*
+         B     TYPON                                               *RC*
+TYPX2    TM    DS1DSORG,X'20'      CHECK FOR DIRECT ACCESS         *RC*
+         BZ    TYPX3               BRANCH IF NOT                   *RC*
+         MVC   TYPESET,=C'DIR '        DIRECT ACCESS DATA SET       FCM
+         B     TYPON1                                              *RC*
+TYPX3    TM    DS1DSORG,X'80'      CHECK FOR INDEX SEQ.            *RC*
+         BZ    TYPX4               BRANCH IF NOT                   *RC*
+         MVC   TYPESET,=C'I.S.'                                    *RC*
+         B     TYPON1                                              *RC*
+TYPX4    MVC   TYPESET,=C'NOT '    INDICATE UNKNOWN                *RC*
+TYPON1   OI    SWPDS+1,X'F0'      JUMP AROUND PDS
+TYPON    SR    R3,R3
+         IC    R3,DS1NOEPV        GET EXTENT NO.
+         ST    R3,EXTKNT          STORE EXTENT VALUE FOR REST OF CALCUL
+         LA    R1,EXTENTS                                        DLO
+         BAL   R14,EDIT2                                         DLO
+         MVC   SERIALNO,DS1DSSN   MOVE SERIAL NUMBER
+         MVC   WORK(2),DS1VOLSQ   SEQUENCE NO IN HALF WORD
+         LH    R3,WORK
+         LA    R1,SEQNO                                          DLO
+         BAL   R14,EDIT2                                         DLO
+*                                 CHECK SECURITY
+         MVC   SECURITY,=C'NO '   PUT NONE IN
+         TM    DS1DSIND,X'14'      TEST FOR DATA SET SECURITY
+         BZ    SEC2               BRANCH IF SMART USER
+SEC1     MVC   SECURITY,=C'YES'
+SEC2     L     R9,ACCTABLE        NOW READY TO FIND PRIMARY ALLOC   MES
+         LH    R3,DS1LSTAR        RELATIVE NUMBER OF TRACKS USED
+         CLI   DS1LSTAR+2,X'00'    PARTIAL TRACK USED?
+         BE    *+8                 NO. SKIP NEXT INSTN.
+         LA    R3,1(0,R3)          ADD 1 FOR PARTIAL TRACK USED
+         LA    R1,SPUSED          OUT AREA
+         BAL   R14,EDIT           PUT OUT USED VALUE
+         SR    R11,R11            CLEAR ACCUM REG
+         LA    R1,DS1EXT1         F1 FIRST EXTENT
+         L     R5,EXTKNT          NUMBER OF EXTENTS
+         LTR   R5,R5              TEST FOR AN EMPTY DATA SET
+         BZ    EXTSS3             JUMP IF EMPTY
+         C     R5,=F'4'           CHECK FOR ALL EXTENTS IN F1
+         BL    EXTSS1
+         LA    R5,3               SET FOR LAST 3
+EXTSS1   BAL   R14,ALLSUM         SUM UP ALLOCATION
+         CLI   DS1NOEPV,4         CHECK FOR F3 TO BE CHECKED
+         BL    EXTSS3             THRU
+         BAL   R14,SRCHDSCB       GET NEW FORMAT 3 DSCB
+         CLI   DS3FMTID,C'2'       IS THIS A FORMAT2               *RC*
+         BNE   EXTDO3              BRANCH IF NOT                   *RC*
+         BAL   R14,SRCHDSCB        GO GET FORMAT 3                 *RC*
+EXTDO3   EQU   *                                                   *RC*
+         LA    R1,DS3EXTNT        START OF GROUP
+         L     R5,EXTKNT          EXTENT COUNT BACK
+         S     R5,=F'3'           REDUCE BY THOSE ALREADY DONE
+         C     R5,=F'5'           FOUR MORE FIELDS
+         BL    EXTSS2
+         LA    R5,4               SET TO 4
+EXTSS2   BAL   R14,ALLSUM         SUM UP SOME MORE
+         L     R5,EXTKNT          LOAD IN COUNT
+         S     R5,=F'7'           SET TO DO LAST 9
+         BNH   EXTSS3             THRU
+         LA    R1,DS3ADEXT
+         BAL   R14,ALLSUM         DO LAST OF THEM
+EXTSS3   LR    R3,R11             PUT IN OUTPUT AREA
+         LA    R1,SPALLOC         TOTAL ALLOCATION
+         BAL   R14,EDIT           PUT OUT TATAL
+         SH    R9,H4                                             DLO
+         MVC   0(4,R9),=F'0'      INDICATE END OF LIST BY ZERO
+         CL    R9,SREND                                          DLO
+         BNH   TABLOVF0                                          DLO
+         ST    R9,ACCEND                                         DLO
+         L     R10,0(R12)         POINT BACK TO F1
+SWPDS    B     NOPDS              SWITCH FOR DIRECTORY SEARCH
+         RDJFCB    (UTILITY)      READ IN PARMS
+         MVC   JFCBDSNM(44),DS1DSNAM
+         MVI   JFCBNV0L,1         ONE VOLUME
+         MVC   JFCBV0LS(6),SAVESER PUT IN VOLUME SERIAL NUMBER
+         OI    JFCBMASK+4,X'80'    TURN ON 'DO NOT WRITE BACK' BIT
+SHRDISP  EQU   X'08'               INDICATES SHARED DATA SET
+         OI    JFCBIND2,SHRDISP    SET DISP FOR SHARED USE
+         OPEN  (UTILITY,(INPUT)),TYPE=J
+         SR    R3,R3              CLEAR NO. USED REG
+         SR    R4,R4              CLEAR TOTAL SIZE REG
+         SR    R2,R2              JUST ZERO FOR TEST
+PDSLOOP  GET   UTILITY,WORK
+         CH    R2,WORK            SEE IF BLOCK IS USED
+         BZ    PDSLOP             IF ZERO, AVAILABLE
+         A     R3,=F'1'
+PDSLOP   A     R4,=F'1'
+         B     PDSLOOP            MERRY GO ROUND TILL EOV (DS END)
+PDSEND   LA    R1,DRBLUSED
+         BAL   R14,EDIT           BLOCKS USED
+         LR    R3,R4
+         LA    R1,DRBLOCKS
+         BAL   R14,EDIT           TOTAL NUMBER OF BLOCKS
+CLOSEPDS DS    0H
+         CLOSE (UTILITY)          READY FOR NEXT ROUND
+NOPDS    LA    R12,160(R12)                                      DLO
+         LA    R5,DSORG
+         MVC   0(5,R5),HEAD1+1    CLEAR AREA
+         TM    DS1DSORG,X'40'     SEE IF BIT IS THERE
+         BZ    CHBIT1
+         MVC   0(2,R5),=C'PS'     PUT IN TYPE
+         LA    R5,2(R5)
+CHBIT1   TM    DS1DSORG,X'20'     PUT CHECK ON NEXT BIT
+         BZ    CHBIT2
+         MVC   0(2,R5),=C'DA'     DIRECT ACCESS
+         LA    R5,2(R5)
+CHBIT2   TM    DS1DSORG,X'02'     CHECK MORE BITS
+         BZ    CHBIT25                                             *RC*
+         MVC   0(2,R5),=C'PO'     PARTITIONED
+         LA    R5,2(R5)
+CHBIT25  TM    DS1DSORG,X'80'      CHECK FOR INDEXED SEQ.          *RC*
+         BZ    CHBIT3              BRANCH IF NOT                   *RC*
+         MVC   0(2,R5),=C'IS'                                      *RC*
+         LA    R5,2(,R5)                                           *RC*
+CHBIT3   TM    DS1DSORG,X'01'
+         BZ    CHBIT4
+         MVI   0(R5),C'U'         UNMOVABLE
+CHBIT4   LA    R5,RECFM
+         MVC   0(5,R5),HEAD1+1    CLEAR FROM TIME BEFORE
+         TM    DS1RECFM,X'C0'
+         BZ    CHBIT8             NOTHING AT ALL - GO OUT
+         BM    CHBIT5
+         MVI   0(R5),C'U'         PUT IN UNDEFINED
+CHBIT6   LA    R5,1(R5)
+         B     CHBIT8
+CHBIT5   TM    DS1RECFM,X'80'     CHECK FIXED
+         BZ    CHBIT7
+         MVI   0(R5),C'F'         FIXED FORMAT
+         B     CHBIT6
+CHBIT7   MVI   0(R5),C'V'         VARIABLE FORMAT
+         B     CHBIT6
+CHBIT8   TM    DS1RECFM,X'20'     CHECK TRACK OVERFLOW
+         BZ    CHBIT9
+         MVI   0(R5),C'T'         TRACK OVERFLOW
+         LA    R5,1(R5)
+CHBIT9   TM    DS1RECFM,X'10'     CHECK
+         BZ    CHBIT10
+         MVI   0(R5),C'B'         BLOCKED
+         LA    R5,1(R5)
+CHBIT10  TM    DS1RECFM,X'08'     CHECK NEXT BIT
+         BZ    CHBIT11
+         MVI   0(R5),C'S'         STANDARD BLOCKS
+         LA    R5,1(R5)
+CHBIT11  TM    DS1RECFM,X'04'
+         BZ    CHBIT12
+         MVI   0(R5),C'A'         ASA CONTROL CHARACTER
+         B     CHBIT13
+CHBIT14   LH   R3,DS1SCALO+2      GET 2ND ALLOCATION
+         MH    R3,SAVEF4+64
+         B     CHBIT15            GO IN
+CHBIT12  TM    DS1RECFM,X'02'
+         BZ    CHBIT13
+         MVI   0(R5),C'M'         MACHINE CONTROL CHARACTER
+CHBIT13  LH    R3,DS1LRECL        BRING IN RECORD LENGTH
+         LA    R2,LRECL           ADDRESS TO STORE
+         BAL   R14,LFTJXT         PUT IN SYMBOLS LEFT JUSTIFIED
+         LH    R3,DS1BLKL         BLOCK SIZE
+         LA    R2,BLKSIZE
+         BAL   R14,LFTJXT         SYMBOLS IN
+         TM    DS1SCALO,X'C0'     CHECK FOR CYLINDER
+         BO    CHBIT14            IT IS IF JUMPS
+         TM    DS1SCALO,X'40'     TEST FOR BLOCK ALLOCATION
+         BNO   TRKS                BRANCH FI NOT BLOCKS
+         XR    R15,R15
+         IC    R15,DS1KEYL         R15=KEY LENGTH
+         CLI   NOSPARES+1,X'03'   SEE IF 2314
+         BNE   BLKS3330           BRANCH IF NOT 2314
+         LH    R14,DS1BLKL        R14=BLKSIZE
+         AR    R14,R15            BL+KEYL
+         MH    R14,=H'2137'       (BL+KEYL)*2137
+         AH    R14,=H'1024'       ((BL+KEYL)*2137)/2048
+         SRL   R14,11
+         LH    R3,=H'7294'
+         SH    R3,DS1BLKL         7294-BL
+         LTR   R15,R15            SEE IF KEY =0
+         BZ    NOKEY
+         SR    R3,R15
+         SH    R3,=H'45'          7 94-&L--EYL-45
+         AH    R14,=H'45'
+NOKEY    XR    R2,R2
+         AH    R14,=H'101'
+         DR    R2,R14             R3=BLKS PER TRACK
+         LA    R3,1(R3)
+         B     HOWMANY
+BLKS3330 LTR   R15,R15            TEST FOR ZERO KEYLENGTH
+         BZ    NOKEY1
+         AH    R15,=H'58'
+NOKEY1   AH    R15,=H'135'        KEYL+58+135+BL
+         AH    R15,DS1BLKL
+         LH    R3,=H'13165'
+         XR    R2,R2
+         DR    R2,R15             R3=13135/(KEYL+58+135+BL)
+HOWMANY  LR    R14,R3
+         XR    R2,R2
+         LH    R3,DS1SCALO+2      BLKS REQUESTED/BLKS PER TRK=TRKS
+         DR    R2,R14
+         LTR   R2,R2              SEE IF REMAINDER
+         BZ    CHBIT15
+         LA    R3,1(R3)           BUMP IF REMAINDER
+         B     CHBIT15
+TRKS     LH    R3,DS1SCALO+2      GET SECONDARY  BY TRACKS
+CHBIT15  EQU   *                  COME BACK
+         LA    R2,ALL2ND
+         BAL   R14,LFTJXT
+         CLC   OUTBIN+74(2),=C' 0'           IS THIS GEN TYPE    DLO
+         BNE   SKIPL2                  BRANCH IF NO                 FCM
+         MVC   TYPESET,=C'GEN '        CHANGE 'NOT' TO 'GEN'        FCM
+         TM    GENOPT,X'80'            IS THERE A SYSOUT            DLO
+         BZ    NOSYSO                                               DLO
+NOINIT2  NOP   NOINIT3                 PRINT HEAD FIRST TIME        DLO
+         BAL   R14,GENHEAD                                          DLO
+         OI    NOINIT2+1,X'F0'                                      DLO
+NOINIT3  CP    GLINEKNT,=P'56'         END OF PAGE?                 DLO
+         BL    GENOUT2                 NO                           DLO
+         BAL   R14,GENHEAD                                          DLO
+GENOUT2  MVC   EXTENTS(59),EXTENTS-1   CLEAR END OF LINE            DLO
+         PUT   SYSOUT,OUTBIN                                        DLO
+         MVC   DATANAME(132),OUTBIN    CLEAR PRINT LINE             DLO
+         AP    GLINEKNT,=P'1'          BUMP LINE COUNT              DLO
+         B     DOF1S                                                DLO
+NOSYSO   EQU   *                                                    DLO
+         OI    NOTEMPTY+1,X'F0'        TAKE BR ON GEN TYPE          FCM
+         NI    SKIPL2+1,X'0F'          NOP BR FOR 1ST NON GEN TYPE  FCM
+         B     SKIP1                                                DLO
+SKIPL2   B     SKIP1                   GO PRINT SINGLE SPACE        FCM
+         MVI   OUTBIN,C'0'             DOUBLE SPACE                 FCM
+SKIP1    PUT   PRINT,OUTBIN            PRINT DATA SET INFO          FCM
+         MVI   OUTBIN,C' '             SINGLE SPACE                 FCM
+NOTEMPTY NOP   EMPTY                   BRANCH ON GEN TYPE           FCM
+         OI    SKIPL2+1,X'F0'          SET BR ON AFTER 1ST PASS     FCM
+         MVC   EXTOUT+6(33),TYPESORG   MOVE IN DSORG,LRECL,RECFM    FCM
+         BAL   R14,LINE0OUT            PRINT LINE W/O LINE TEST     FCM
+         MVC   EXTOUT+6(33),TYPESIZE   SIZES OF RECORDS OF F1       FCM
+         BAL   R14,LINE0OUT            PRINT LINE W/O LINE TEST     FCM
+PRNTCOM  BAL   R14,PRNTEXTS       GO PRINT AND SORT ALL EXTENTS     FCM
+EMPTY    NI    NOTEMPTY+1,X'0F'        SET BR OFF EACH TIME         FCM
+         MVC   DATANAME(132),OUTBIN    CLEAR PRINT LINE             FCM
+         BAL   R14,LINETEST            TEST PAGE EJECT              FCM
+DOF1S    L     R4,NTRKNT          LOAD COUNT OF FMT 1'S             FCM
+         BCT   R4,FINEST          GET NEXT F1                       FCM
+         NI    NXTF1+1,X'0F'      SET BR OFF, NO MORE F1'S          FCM
+         EJECT                                                      FCM
+* START OF ALLOCATION MAP
+MAPZ     MVC   OUTBIN(133),TEXTT       MOVE IN NEW HEADING          FCM
+         OI    HEADER+1,X'F0'          SET TO NOP COLUMN HEADING    FCM
+         L     R5,SRTKNT          LOAD UP NO OF EXTENTS
+         BCTR  R5,0               CORRECT COUNT
+         L     R9,SRTBL            START OF SORT BIN
+         XC    CHECKER,CHECKER    ZERO EXTENT CHECKER              *RC*
+MAP3     BAL   R14,HEADING        TITLE
+MAP2     L     R10,0(R9)          BRING IN ADDRESS STORED IN TABLE
+         L     R2,44(R10)         BRING IN SIZE
+         BAL   R14,LENGTH         LENGTH
+         LA    R1,LNGTH                      PUT OUT LENGTH      DLO
+         BAL   R14,EDIT                                          DLO
+         LH    R3,HOLD            FIRST TRACK
+         LA    R1,STRTT                      START TRACK         DLO
+         BAL   R14,EDIT                                          DLO
+         BCTR  R3,0               SUBTRACT 1                       *RC*
+         C     R3,CHECKER         IS IT EQUAL TO END OF LAST XTENT *RC*
+         BNE   ERRFLAG            BRANCH IF NOT                    *RC*
+         C     R5,=F'1'           IS THIS LAST EXTENT              *RC*
+         BNE   OK                 BRANCH IF NOT                    *RC*
+         LH    R3,SAVEF4+62       NUMBER OF CYLINDERS              *RC*
+         SH    R3,NOSPARES        MINUS NO. SPARES                 *RC*
+         MH    R3,SAVEF4+64       TIMES NO. OF TRACKS/CYLINDER     *RC*
+         BCTR  R3,0               MINUS 1                          *RC*
+         CH    R3,HOLD+2          SHOULD EQUAL LAST TRACK NUMBER   *RC*
+         BE    OK                                                  *RC*
+ERRFLAG  MVC   STRTT-3(2),=C'**'             FLAG IT             DLO
+OK       LH    R3,HOLD+2          LAST TRACK                       *RC*
+         LA    R1,LSTT                       LAST TRACK          DLO
+         BAL   R14,EDIT                                          DLO
+         ST    R3,CHECKER         SAVE TO CHECK AGAINST NEXT XTENT *RC*
+         SR    R3,R3
+         IC    R3,48(R10)         EXTENT VALUE
+         LA    R1,EXTT                       EXTENT              DLO
+         BAL   R14,EDIT2                                         DLO
+         MVC   SHLINE,0(R10)      BRING IN DATA SET NAME
+         BAL   R14,LINE1OUT            PRINT LINE                   FCM
+         LA    R9,56(R9)                                         DLO
+         BCT   R5,MAP2                 FALL THRU ON LAST            FCM
+*  THROUGH WITH THIS VOLUME, PREPARE TO GO TO NEXT
+         L     R3,ACCEND                     CALC FREE SPACE     DLO
+         S     R3,SREND                      IN TABLE            DLO
+         SRL   R3,11                         DIVIDE BY 2K        DLO
+         SLL   R3,1                          MULT BY 2           DLO
+         LA    R1,SIZEF                                          DLO
+         BAL   R14,EDIT                      PUT IN MESSAGE      DLO
+         PUT   PRINT,FREESPC                 WRITE IT            DLO
+         B     DISKLOOP           GO LOOK FOR NEXT VOL
+ALLDONE  PUT   PRINT,=CL133'- END OF UTILITY - DISK PACKS ARE MAPPED'
+         CLOSE (PRINT)
+RETURN   EQU   *                                                    DLO
+         L     13,4(13)            RESTORE REG 13 TO CALLER'S SAVE
+         LM    14,12,12(13)        RESTORE REGS
+         SR    15,15             SET RETURN CODE OF ZERO 08/11/71
+         BR    14                  RETURN TO CALLER
+ABTOREL  MVC   HOLD(8),2(R1)      MOVE FOR BOUNDRIES
+         LH    R2,HOLD            CC
+         MH    R2,SAVEF4+64
+         AH    R2,HOLD+2          HH
+ABTOREL1 LH    R3,HOLD+4          CC
+         MH    R3,SAVEF4+64
+         AH    R3,HOLD+6          HH
+         SLL   R2,16              MOVE TO TOP
+         ALR   R2,R3              PUT TOGETHER
+         BR    R14                EXIT
+ALLSUM   ST    R14,HOLD+8         TAKE CARE OF FETCHING ALLOCATIONS
+ALLSUM1  BAL   R14,ABTOREL        CONVERT TO RELATIVE TRACKS
+         SH    R9,H4                                             DLO
+         ST    R2,0(R9)                      STORE IN TABLE      DLO
+         BAL   R14,LENGTH         GET LENGTH IN R3
+         AR    R11,R3             TOTAL UP ALL LENGTHS FOR DS
+         LA    R1,10(R1)          SET FOR NEXT
+         BCT   R5,ALLSUM1         LOOP
+         L     R14,HOLD+8         RESTORE
+         BR    R14                BACK OUT
+CALEN    SR    R3,R3              COMPUTE YEARS AND DAYS
+         IC    R3,0(R1)           PICK UP YEAR
+         CVD   R3,WORK
+         UNPK  0(2,R2),WORK+6(2)  YEAR
+         OI    1(R2),X'F0'        ZONE
+         MVC   WORK(2),1(R1)      FETCH LAST TWO BYTES
+         LH    R3,WORK
+         CVD   R3,WORK            TO DECIMAL
+         UNPK  2(3,R2),WORK+6(2)  DAYS
+         OI    4(R2),X'F0'        ZONE
+         BR    R14                RETURN
+EDIT     CVD   R3,WORK            MAKE IT DECIMAL
+         S     R1,=F'2'           SET UP CORRECT ADDRESS
+         MVC   0(L'PAT,R1),PAT    MOVE PATTERN
+         ED    0(L'PAT,R1),WORK+5 PUT IT IN SHAPE
+         BR    R14                EXIT
+EDIT2    CVD   R3,WORK                       MAKE IT DECIAML     DLO
+         S     R1,=F'2'                                          DLO
+         MVC   0(L'PATTERN,R1),PATTERN       MOVE PATTERN        DLO
+         ED    0(L'PATTERN,R1),WORK+6        EDIT                DLO
+         BR    R14                           RETURN              DLO
+FULLEDIT ST    R14,HOLD+4                    SAVE RETRRN         DLO
+         LA    R1,ZEXT                       EXTENT              DLO
+         BAL   R14,EDIT2                                         DLO
+         BAL   R14,LENGTH                    DETERMIAA LENGTH    DLO
+         LA    R1,ZLNGTH                     LENGTH              DLO
+         BAL   R14,EDIT                                          DLO
+         LH    R3,HOLD                                           DLO
+         LA    R1,ZFIRST                     FIRST TRACK         DLO
+         BAL   R14,EDIT                                          DLO
+         LH    R3,HOLD+2                                         DLO
+         LA    R1,ZLAST                      LAST TRACK          DLO
+         BAL   R14,EDIT                                          DLO
+         L     R14,HOLD+4         RESTORE RETURN ADDRESS
+         BR    R14
+LENGTH   ST    R2,HOLD            SAVE VALUE FOR TEMP
+         LH    R3,HOLD+2          BRING IN LAST POSITION
+         A     R3,=F'1'           UPDATE
+         SH    R3,HOLD            TAKE OFF START TRACK VALUE
+         BR    R14                GO ON BACK
+LFTJXT   ST    R14,HOLD           SAVE EXIT
+         LA    R1,CALCU+2         TEMP WORK AREA
+         BAL   R14,EDIT           EDIT INTO TEMP
+LOOPBIT  CLI   0(R1),C' '         FIND FIRST NONSPACE
+         BNE   FOUNDX
+         LA    R1,1(R1)           CHECK NEXT CHARACTER
+         B     LOOPBIT
+FOUNDX   MVC   0(5,R2),0(R1)      LEFT JUSTIFY
+         L     R14,HOLD           EXIT BACK
+         BR    R14
+LINE0OUT MVI   SWIT,X'00'              SET FOR NO PAGE TEST         DLO
+LINE1OUT ST    R14,HOLD+16             SAVE RETURN                  DLO
+         TM    GENOPT,X'20'            NEW PAGE?                    DLO
+         BZ    NOFORM                  NO                           DLO
+         BAL   R14,HEADING             YES                          DLO
+         NI    GENOPT,X'DF'            RESET SWITHH                 DLO
+NOFORM   PUT   PRINT,EXTOUT                                         DLO
+         MVC   EXTOUT+1(132),EXTOUT    CLEAR LINE                   DLO
+         TS    SWIT                    DO PAGE TEST?                DLO
+         BC    8,LINEOUT               NO
+LINE2OUT CP    LINEKNT,=P'56'          END OF PAGE?                 DLO
+         BL    LINEOUT                 NO                           DLO
+         OI    GENOPT,X'20'            YES SET FLAG                 DLO
+LINEOUT  AP    LINEKNT,=P'1'           BUMP LINE COUNT              DLO
+         L     R14,HOLD+16                                          DLO
+         BR    R14
+LINETEST ST    R14,HOLD+16                                          DLO
+         CP    LINEKNT,=P'56'                                       DLO
+         BL    NOEJE                                                DLO
+         NI    GENOPT,X'DF'                                         DLO
+         BAL   R14,HEADING                                          DLO
+NOEJE    AP    LINEKNT,=P'1'                                        DLO
+         L     R14,HOLD+16                                          DLO
+         BR    R14                                                  DLO
+NOTHER   EQU   *                                                 DLO
+         MVC   WORK(5),0(R4)      LOAD UP  EXTENT VALUE
+         LH    R3,WORK+2
+         MH    R3,SAVEF4+64
+         SR    R2,R2
+         IC    R2,WORK+4
+         AR    R3,R2              FIRST TRACK PLUS CYLINDER
+         BZ    ENDDSCB5           DONE IF NOTHING THERE
+         AR    R1,R3              ACCUMULATE TOTAL
+         LH    R2,WORK
+         AR    R3,R2              STOP ADDRESS PLUS ONE
+         SLL   R2,16              MOVE TO LEFT
+         ALR   R2,R3              ALL TOGETHER
+         BCTR  R2,0               LESS ONE
+         SH    R9,H4                         NEXT ENTRY          DLO
+         CL    R9,SREND                      TALLE OVFL?         DLO
+         BNH   TABLOVF0                      YES                 DLO
+         ST    R2,0(R9)           PUT IT AWAY IN ACCUM
+         LA    R4,5(R4)           GO TO NEXT ONE
+         BCT   R5,NOTHER          GO DO FOR NEXT
+         BR    R14
+PRNTEXTS L     R9,ACCTABLE        SET UP TABLE OF STORED EXTENTS    MES
+         SH    R9,H4                                             DLO
+         MVC   EXTKNT,=F'0'       SET EXTENT COUNT TO 1
+         ST    R14,HOLD+8
+         MVC   EXTOUT+11(22),HEAD5  EXT-FIRST----
+         BAL   R14,LINE0OUT
+         MVI   SWIT,0                  NO TEST  EJECT 1ST TIME      FCM
+PRNTXT1  L     R2,0(R9)           LOAD IN EXTENT SIZE
+         LTR   R2,R2              CHEKC FOR END OF LIST
+         BZ    JUMPS1             NO MORE LINES OUT
+         L     R3,EXTKNT          BRING EXTENT COUNT IN
+         LA    R3,1(R3)           BOOST
+         ST    R3,EXTKNT          RESTORE
+         BAL   R14,STORMAP        STORE EXTENT FOR MAP OUTPUT
+         L     R3,EXTKNT          COUNT BACK IN
+         BAL   R14,FULLEDIT       CONVERT AND DISPLAY IN EBCDIC
+         SH    R9,H4                         NEXT ENTRY          DLO
+         BAL   R14,LINE1OUT            PRINT LINE W/ LINE TEST      FCM
+         B     PRNTXT1
+JUMPS1   L     R14,HOLD+8         RESTORE RETURN ADDRESS
+         BR    R14
+SRCHDSCB L     R5,F356TBL         GET TO START OF TABLE AFTER F5    MES
+         SH    R5,H160                       BACJ UP IN TABLE    DLO
+         SH    R5,H160                                           DLO
+NEXTETRY CLC   147(5,R5),DS1PTRDS            COMPARE CCHHR       DLO
+         BE    SETITUP            THERE
+         SH    R5,H160                       NEXT ONE            DLO
+         CR    R5,R7                         END OF TABLE        DLO
+         BNL   NEXTETRY                      NO                  DLO
+         B     IOER2              NOT THER SO ERROR
+SETITUP  L     R10,0(R5)                     LOAD DSCB ADDR      DLO
+         BR    R14                EXIT
+STORMAP  MVC   WORK(44),DATANAME  FETCH NAME
+         ST    R2,WORK+44         STORE TRACKS
+         STC   R3,WORK+48         STORE EXTENT NUMBER
+         L     R3,SREND                      END OF TABLE        DLO
+         MVC   4(49,R3),WORK                 STORE EXTENTS       DLO
+         LA    R1,4(R3)                      SAVE ADDR           DLO
+         LA    R3,56(R3)                     BUMP END            DLO
+         CL    R3,ACCEND                     TABLE OVERLAP       DLO
+         BNL   TABLOVF0                      YES                 DLO
+         ST    R3,SREND                      SAVE END            DLO
+         L     R3,SRTBL                      GET START           DLO
+         SH    R3,H56                                            DLO
+         L     R4,SRTKNT                     NO OF ENTRIES       DLO
+SORTE12  BCT   R4,SORTE11                                        DLO
+         ST    R1,56(R3)                     STORE ADDRESS       DLO
+SORTE14  L     R4,SRTKNT
+         LA    R4,1(R4)           BOOST FOR NEXT ENTRY
+         ST    R4,SRTKNT
+         BR    R14                EXIT
+SORTE11  LA    R3,56(R3)                     BOOST TO NEXT       DLO
+         L     R5,0(R3)           POINTER TP SORT MATERIAL
+         CL    R2,44(R5)          LOOK AT REL TRACK
+         BH    SORTE12            JUMP AROUND IF TOO BIG
+SORTE13  ST    R1,0(R3)           STORE ADDRESS IN TABLE
+         LR    R1,R5              LAST ADDRESS
+         L     R5,56(R3)                     NEXT ADDRESS        DLO
+         LA    R3,56(R3)                     BOOST               DLO
+         BCT   R4,SORTE13         MOVE ALL REST POINTERS UP
+         ST    R1,0(R3)           CATCH LAST ONE
+         B     SORTE14            GO FINISH
+         SPACE 3
+*   SYNAD ROUTINE *
+PDSIOER  DS    0H
+         SYNADAF ACSMETH=QSAM
+         MVC   SYNADMS2+1(132),8(R1)        SAVE ERROR MESSAGE      FCM
+         MVC   SYNADMS1+65(44),DS1DSNAM     GET DSNAME              FCM
+         PUT   PRINT,SYNADMS1                                       FCM
+         BAL   R14,LINE1OUT            PRINT LINE W/ LINE TEST      FCM
+         SYNADRLS                                                   FCM
+         B     CLOSEPDS                PRINT PDS DSN INFO           FCM
+SYNADMS1 DC    CL133' * * * I/O ERROR OCCURRED READING DIRECTORY OF PDS1
+               .* * * DSNAME='                                      FCM
+         SPACE 3
+R0       EQU   0                  SYSTEMS
+R1       EQU   1                  SYSTEMS
+R2       EQU   2                  WORK & TEMP
+R3       EQU   3                  WORK & TEMP
+R4       EQU   4                  WORK & TEMP
+R5       EQU   5                  WORK & TEMP
+R6       EQU   6                  BASE REGISTER FOR PROGRAM
+R7       EQU   7                  BASE TABLE
+R8       EQU   8                  BASE THIS CSECT
+R9       EQU   9                  BASE UCB DSECT
+R10      EQU   10                 BASE DSCB DSECT
+R11      EQU   11                 BASE UCB TABLE DSECT
+R12      EQU   12                 BASE CVT DSECT
+R13      EQU   13                 SAVE
+R14      EQU   14                 RETURN
+R15      EQU   15                 REGISTER ASSIGNMENTS
+RCVT     EQU   16  FETCH ADDRESS OF CVT TABLE
+         DS    0H
+NOSPARES DS    H                  NO OF SPARES                      MES
+TRKCNT   DC    AL1(0)             HALF WORD CHECK FOR NUMBER OF
+SVCOUNT  DC    AL1(0)             DSCB'S PER TRACK
+LINEKNT  DC    PL2'0'             KEEP TRACK OF LINES PER PAGE
+PAGEKNT  DC    PL2'0'
+GPAGEKNT DC    PL2'0'                                               DLO
+GLINEKNT DC    PL2'0'                                               DLO
+PAT      DC    X'402020202120'    EDITING PATTERN - FOUR COLUMNS
+PATTERN  DC    X'40202120'
+SWIT     DC    X'FF'
+TIOTNVOL DS    CL1                NUMBER OF VOLS PER DD ENTRY
+         DS    0D
+SAVEF4   DS    CL140              STORE F4 DSCB FOR MORE REFS
+CHECKER  DC    F'0'               TO CHECK FOR MISSING TRACKS      *RC*
+EXTKNT   DC    F'0'               SAVE EXTENT COUNT OF F1
+TTRVTOC  DC    1F'0'              SAVE TTR0 OF VTOC
+HOLD     DS    5F                 SAVE RETURN ADDRESS
+SRTKNT   DC    F'1'               ENTRIES IN SORT TABLE
+NTRKNT   DC    F'1'               NEXT ENTRY POSITION FOR DSCB F1
+TIOT     DS    1F  SAVE TIOT   ADDRESS
+UCBADDR  DS    F                  ADDRESS OF NEXT UCB ADDRESS
+TYPE     DC    X'30002001'        TYPE FOR DISK
+         DS    0F
+PDSJFCB  DC    X'87'              READ JFCB
+         DC    AL3(PDSAREA)
+PDSAREA  DS    CL176
+JFCBDSNM EQU   PDSAREA
+JFCBMASK EQU   PDSAREA+72
+JFCBCRDT EQU   PDSAREA+80
+JFCBIND1 EQU   PDSAREA+86
+JFCBIND2 EQU   PDSAREA+87
+JFCBNV0L EQU   PDSAREA+117
+JFCBV0LS EQU   PDSAREA+118
+         DS    0F
+STRJFCB  DC    X'87'              ONE ENTRY ONLY
+         DC    AL3(JFCBAREA)
+JFCBAREA DS    CL176
+JFCBNVOL EQU   JFCBAREA+117
+JFCBVOLS EQU   JFCBAREA+118
+JFCBTSDM EQU   JFCBAREA+52
+LIST     CAMLST    SEEK,ADDRS,SAVESER,WORK
+         DS    0D
+SEEK     DC    AL3(0)             DUMMY PART
+ADDRS    DC    XL5'0'             ADDRESS PART
+DEB      DC    4F'0'              FAKE UP A DEB FOR TRACK CONVERSION
+         DC    AL1(1)             ONE EXTENT
+         DC    AL3(0)
+         DC    1F'0'              NO PURGE
+         DC    X'0F'              ID
+         DC    AL3(0)
+         DC    X'04'              EXTENT SCALE
+APPEN    DC    AL3(0)             APPENTAGE TABLE ADDRESS
+UCBXREF  DC    XL4'C0000000'      UCB ADDRESS - PLACED BY PROGRAM
+         DC    3AL2(0)            STARTING ADDRESS
+         DC    X'FFFFFFFF7FFF'    LAST CCHH NUMBER POSSIBLE
+         DS    0D
+WORK     DS    CL350              WORKING STORAGE FOR OBTAIN
+SAVEHWM  DC    XL5'0'             SAVE FOR HIGHEST CCHHR TO CHECK  *RC*
+         DS    0F                 ALIGN FOR SPS
+MSSAGE   DC    AL2(MSEND-*)
+         DC    AL2(0)
+         DC    C' SER='
+SERMSG   DC    CL6' '
+         DC    C' PERMANENT I/O ERROR ON DISK. NO RECOVERY.'
+MSEND    DC    CL80' '
+ERMS     DC    C'***OUT OF SPACE - INCREASE REGION SIZE***'      DLO
+ERMS1    DC    C'****IMPOSSIBLE TO MAP A SYSIN OR SYSOUT DD'
+ERMS2    DC    C'*****UNIT NOT A DASD OR UNIT OFF-LINE'
+ERMS3    DC    C'FMT 5 DSCB NOT FOUND, POINTED TO BY FMT 4 DSCB'    FCM
+ERMS4    DC    C'SEARCH FOR FMT 3 OR 5 DSCB UNSUCCESSFUL'           FCM
+         DS    0F
+LISTWTO  DC    AL2(TOPMSG-*)
+         DC    AL2(0)
+         DC    C' SER '
+MSGTP    DC    CL7' '
+         DC    C'INTERVENTION REQUIRED'
+GSKIP2   DC    CL133'0'                                             DLO
+TOPMSG   DS    0C
+SKIP2    DC    C'0'               ONE SPACE PLUS LINE
+OUTBIN   DC    C' '               OUT PUT BIN - NO SPACE
+DATANAME DC    CL44'WHO'          DATASET NAME
+         DC    CL3' '             BLANK
+CRDATE   DC    CL5'01234'         CREATED DATE
+         DC    CL3' '
+PURGDATE DC    CL5'99350'         PURGE DATE
+         DC    CL4' '
+TYPESET  DC    CL4' NOT'          TYPE OF DATA SET (NOT,PART,SEQ)
+         DC    CL5' '
+EXTENTS  DC    CL2'00'            NUMBER OF EXTENTS
+         DC    CL5' '
+SERIALNO DC    CL6'SYSRES'        SERIAL NUMBER
+         DC    CL5' '
+SEQNO    DC    CL2'00'            SEQUENCE NUMBER
+         DC    CL5' '
+SECURITY DC    CL3'YES'           SECURITY (NO)
+         DC    CL4' '
+SPALLOC  DC    CL4'2000'          SPACE ALLOCATED TRACKS TOTAL
+         DC    CL4' '
+SPUSED   DC    CL4'1000'          SPACE USED - TOTAL TRACKS
+         DC    CL4' '
+DRBLOCKS DC    CL4'  35'          BLOCKS IN DIRECTORY
+         DC    CL2' '                                               DLO
+DRBLUSED DC    CL4'   0'          NUMBER OF DIRECTORY BLOCKS USED
+         DC    CL1' '                                               DLO
+TYPESORG DC    CL6'DSORG='
+DSORG    DC    CL11'     RECFM='
+RECFM    DC    CL11'     LRECL='
+LRECL    DC    CL5' '
+TYPESIZE DC    CL8'BLKSIZE='
+BLKSIZE  DC    CL21'      2ND ALLOCATION='
+ALL2ND   DC    CL4' '
+CALCU    DC    CL10' '
+EXTOUT   DC    CL133' '           SPACE FOR OUTPUT LINES
+         ORG   EXTOUT+12                                            FCM
+ZEXT     DC    CL2' '             EXTENT NUMBER
+         DC    CL2' '
+ZFIRST   DC    CL4' '             FIRST TRACK HERE
+         DC    CL2' '
+ZLAST    DC    CL4' '             LAST TRACK NEXT
+         DC    CL2' '
+ZLNGTH   DC    CL4' '             LENGTH OF EXTENT
+         ORG   EXTOUT                                               FCM
+SYNADMS2 EQU   EXTOUT                                               FCM
+MAPS     DC    CL4' '
+STRTT    DC    CL4' '             START TRACK
+         DC    CL10' '
+LSTT     DC    CL4' '             LAST TRACK
+         DC    CL10' '
+LNGTH    DC    CL4' '             LENGTH OF EXTENT
+         DC    CL7' '
+EXTT     DC    CL2' '             EXTENT NUMBER
+         DC    CL7' '
+SHLINE   DC    CL44' '            DATA SET NAME
+         DC    CL37' '            REST ARE BLANK
+HEAD1    DC    CL32'1'            SKIP TO TOP OF PAGE
+HEAD2    DC    CL38'MAP OF DISK CONTENTS ON VOLUME  ***'            FCM
+SAVESER  DC    CL6'SYSOUT'                                          FCM
+         DC    CL48'   ***'                                         FCM
+         DC    CL5'PAGE'
+PAGEPLC  DC    CL4' '             PAGE COUNT HERE
+HEAD3    DC    CL48'0'                                              FCM
+         DC    CL8'DATE'
+         DC    CL9'DATE'
+         DC    CL17'FILE'
+         DC    CL9'FILE'
+         DC    CL15'VOL.'
+         DC    CL7'TOTAL'
+         DC    CL8'TRACKS'
+         DC    CL8'DIREC.'
+         DC    CL4'BLKS'
+HEAD4    DC    CL16' '
+         DC    CL31'DATA SET NAME'
+         DC    CL9'CREATED'
+         DC    CL9'PURGE'
+         DC    CL7'TYPE'
+         DC    CL9'EXTENTS'
+         DC    CL10'SERIAL'
+         DC    CL5'SEQ.'
+         DC    CL10'SECURITY'
+         DC    CL8'ALLOC'
+         DC    CL7'USED'
+         DC    CL8'BLOCKS'
+         DC    CL4'USED'
+HEAD5    DC    CL22'EXT-FIRST--LAST-LENGTH'
+GHEAD1   DC    CL48'0'                                              DLO
+         DC    CL8'DATE'                                            DLO
+         DC    CL9'DATE'                                            DLO
+         DC    CL68'FILE'                                           DLO
+GHEAD2   DC    CL47'     GENERATION DATA SET NAME'                  DLO
+         DC    CL9'CREATED'                                         DLO
+         DC    CL9'PURGE'                                           DLO
+         DC    CL68'TYPE'                                           DLO
+WARNING  DC    CL31'VOLUME NOT MOUNTED OR AVAILABLE'
+TEXTT    DC    CL133' FIRST TRACK   LAST TRACK      LENGTH    EXTENT   1
+                     DATA SET NAME'
+FREESPC  DS    0CL133                                            DLO
+         DC    CL42'0 REGION MAY BE REDUCED BY APPROXIMATELY  '  DLO
+SIZEF    DC    CL4' '                                            DLO
+         DC    CL87'K FOR MAPPING THIS PACK'                     DLO
+PRINT    DCB   DSORG=PS,MACRF=PM,DDNAME=SYSPRINT,BFTEK=S,RECFM=FA,     1
+               BLKSIZE=133,LRECL=133,BUFNO=14
+SYSOUT   DCB   DSORG=PS,RECFM=FA,BFTEK=S,DDNAME=SYSOUT,MACRF=PM,    FCM1
+               LRECL=133,BLKSIZE=133,BUFNO=10                       FCM
+UTILITY  DCB   DSORG=PS,MACRF=GM,DDNAME=SYSUT1,BFTEK=S,RECFM=F,        1
+               BLKSIZE=256,LRECL=256,BUFNO=4,EODAD=PDSEND,             X
+               EXLST=PDSJFCB,SYNAD=PDSIOER
+DCBDDNM2 EQU   UTILITY+40         HWERE DDNAME GOES
+TEST     DCB   DSORG=PS,MACRF=GM,RECFM=F,BLKSIZE=140,BFTEK=S,          1
+               EXLST=STRJFCB
+DCBDDNM  EQU   TEST+40
+         DS    0D
+         LTORG
+SRTBL    DS    F                   ADDRESS OF SORT TABLE
+DSTBL    DS    F                  POINTER TO DSCB TABLE             MES
+F356TBL  DS    F                  ADDR OF START OF F356 TABLE       MES
+F356END  DS    F                  SAVED END OF FORMAT356 TABLE      MES
+DSEND    DS    F                             END OF F1 TABLE     DLO
+BOUNDS   DC    F'1024'                       BOUNDS FOR GETMAIN  DLO
+         DC    F'409600'                                         DLO
+TBLADDR  DC    F'0'                          START OF TABLE      DLO
+TBLLENG  DC    F'0'                          LENGTH OF TABLE     DLO
+ACCEND   DS    F                                                 DLO
+SREND    DS    F                                                 DLO
+ACCTABLE DS    F                                                 DLO
+H160     DC    H'160'                                            DLO
+H4       DC    H'4'                                              DLO
+H56      DC    H'56'
+GENOPT   DC    X'00'                                                DLO
+         EJECT
+DSCB4    DSECT
+         DS    0XL44 EQU 0        PADDING OF 04 TO INDICATE FORMAT 4
+         DC    44X'04' EQU 0
+DS4IDFMT DC    C'4' EQU 44        F4 FOR FORMAT 4
+DS4HPCHR DS    CL5  EQU 45        LAST FORMAT 1 - CCHHR
+DS4DSREC DS    H    EQU 50        NUMBER OF FORMAT 0'S IN VTOC
+DS4HCCHH DS    CL4  EQU 52        CCHH OF NEXT ALTERNATE TRACK
+DS4NOATK DS    H    EQU 56        NUMBER OF ALTERNATE TRACKS AVAILABLE
+DS4VTOCI DS    1C   EQU 58        =80 IF FORMAT 5 HAS NO MEANING
+DS4NOEXT DC    X'1' EQU 59        INDICATES VTOC OF ONE EXTENT
+         DS    2C   RESERVED
+DS4DEVSZ DS    2H   EQU 62        DEVICE SIZE. 0,1 NO. OF LOGICAL CYL.
+*                                              2,3 NO. OF TRACKS PER
+DS4DEVTK DS    H    EQU 66        DEVICE TRACK LENGTH IN BYTES
+DS4DEVI  DS    AL1  EQU 68        OVERHEAD BYTES FOR KEYED BLOCK
+DS4DEVL  DS    AL1  EQU 69        OVERHEAD BYTES FOR KEYED LAST BLOCK
+DS4DEVK  DS    AL1  EQU 70        OVERHEAD BYTES REDUCTION IF NO KEY
+DS4DEVFG DS    X    EQU 71        =1 IF TOLERANCE FACTOR MUST APPLY
+DS4DEVTL DS    H    EQU 72        DFVICE TOLERANCE
+DS4DEVDT DS    AL1  EQU 74        NUMBER OF DSCB'S PER TRACK (44+96)
+DS4DEVDB DS    AL1  EQU 75        NUMBER OF PDS DIR. BLOCKS PER TRACK
+         DS    24C  RESERVED      (8+256)
+DS4F6PTR DS    CL5  EQU 100       FORMAT 6 POINTER TO FIRST F6     *RC*
+DS4VTOCE DS    CL10 EQU 105       VTOC EXTENT FLAG,COUNT,CCHH,CCHH
+         DS    25C  RESERVED
+         EJECT
+         ORG   DSCB4              RESTORE TO TOP FOR OTHER DSCB
+DS1DSNAM DS    CL44 EQU 0         DATA SET NAME
+DS1FMTID DC    C'1' EQU 44        FORMAT 1 IDENTIFIER = F1
+DS1DSSN  DS    CL6  EQU 45        DATA SET SERIAL NUMBER
+DS1VOLSQ DS    CL2  EQU 51        VOLUME SEQUENCE NUMBER
+DS1CREDT DS    CL3  EQU 53        CREATION DATE  (YDD)
+DS1EXPDT DS    CL3  EQU 56        EXPIRATION DATE (YDD)
+DS1NOEPV DS    AL1  EQU 59        NUMBER OF EXTENTS
+DS1NOBDB DS    AL1  EQU 60        NUMBER OF BYTES USED IN LAST PDS
+         DS    1C   RESERVED
+DS1SYSCD DS    CL13 EQU 62        SYSTEM CODE FOR PROGRAMMING SYS ?
+         DS    7C   RESERVED
+DS1DSORG DS    XL2  EQU 82        D. S. ORGANIZATION
+*        EQU   4000 0100000X      PS PHYSICAS SEQ.   1
+*        EQU   2000 0010000X      DA DIRECT ACCESS   2
+*        EQU   0200 0000001X      PO PARTITIONED     6
+*        EQU   0100 XXXXXXX1      U UNMOVABLE         7
+DS1RECFM DS    XL1  EQU 84        RECORD FORMAT
+*        EQU   80   10XXXXXX      F  FIXED
+*        EQU   40   01XX0XXX      V  VARIABLE
+*        EQU   C0   11X00XXX      U  UNKNOWN
+*        EQU   20   XX1XXXXX      T  TRACK OVERFLOW
+*        EQU   10   XXX1XXXX      B  BLOCKED  (^U)
+*        EQU   88   10XX1XXX      S  STANDARD
+*        EQU   04   XXXXX10X      A  ASA CONTROL CHARACTER
+*        EQU   02   XXXXX01X      M  MACHINE CONTROL CHARACTER
+*        EQU   00   XXXXX00X         NO CONTROL CHARACTER
+DS1OPTCD DS    XL1  EQU 85        SEE DCBOPTCD IN DCB
+DS1BLKL  DS    H    EQU 86        BLOCK LENGTH
+DS1LRECL DS    H    EQU 88        LOGICAL RECORD LENGTH
+DS1KEYL  DS    AL1  EQU 90        KEY LENGTH
+DS1RKP   DS    CL2  EQU 91        RELATIVE KEY POSITION
+DS1DSIND DS    XL1  EQU 93        DATA SET INDICATORS
+*        EQU   80                 LAST VOLUME FOR DATA SET
+*        EQU   40                 DATA SET MUST REMAIN IN SAME ABSOLUTE
+*                                 LOCATION ON DISK
+*        EQU   20                 BLOCK LENGTH MUST BE MULTIPLE OF 8
+DS1SCALO DS    0CL4 EQU 94        SECONDARY ALLOCATION
+         DS    XL1  EQU 94        ALLOCATION PARAMETERS
+*        EQU   00                 NO SECONDARY - TRACKS RELATICE TO FIX
+*        EQU   40                 PHYSICAL RECORDS (BLOCKS)
+*        EQU   80                 TRACKS
+*        EQU   C0                 CYLINDERS
+*        EQU   08                 CONTIGUOUS EXTENT
+*        EQU   04                 MAX. CONTIGUOUS EXTENT ON VOLUME
+*        EQU   02                 5 LARGEST EXTENTS GREATER THAN A MIN
+*        EQU   01                 RECORDS TO ROUND UP TO CYLINDER BOUND
+         DS    AL3  EQU 95        SECONDARY ALLOCATION QUANITY
+DS1LSTAR DS    0CL5 EQU 98        LAST BLOCK POINTER
+         DS    CL2  EQU 98        TT RELATIVE TRACK ADDRESS OF LAST
+         DS    CL1  EQU 100       R - BLOCK NUMBER ON THAT TRACK
+DS1TRBAL DS    CL2  EQU 101       LL- BYTES REMAINING ON LAST TRACK
+         DS    2C   RESERVED
+DS1EXT1  DS    0CL10 EQU 105      FIRST EXTENT DESCRIPTION
+         DS    CL1  EQU 105       EXTENT INDICATOR
+*        EQU   00                 NO EXTENT
+*        EQU   01                 EXTENT CONTAINS USER BLOCKS
+*        EQU   80                 SHARED CYLINDERS
+*        EQU   81                 EXTENT IS ONE OR MORE CYLINDERS LONG
+         DS    AL1  EQU 106       EXTENT SEQUENCE NUMBER
+         DS    AL4  EQU 107       CCHH - LOWER LIMIT
+         DS    AL4  EQU 111       CCHH - UPPER LIMIT (LAST BLOCK)
+DS1EXT2  DS    CL10 EQU 115       SECOND EXTENT DESCRIPTION
+DS1EXT3  DS    CL10 EQU 125       THIRD EXTENT DESCRIPTION
+DS1PTRDS DS    CL5  EQU 135       CCHHR POINTER TO FORMAT 3 FOR NEXT
+         EJECT
+         ORG   DSCB4
+         DS    0CL4 EQU 0         IDENTIFY FORMAT 3 DSCB
+         DC    4X'03'  EQU 0
+DS3EXTNT DS    4CL10  EQU 4       4 EXTENT FIELDS. SEE DS1EXT1 FORMAT
+DS3FMTID DC    C'3' EQU 44        F3 - INDICATE F3 FOR FORMAT 3
+DS3ADEXT DS    9CL10  EQU 48      9 MORE FIELDS FOR EXTENTS
+DS3PTRDS DS    CL5  RESERVED
+         EJECT
+         ORG   DSCB4
+DS5KEYID DS    0CL4 EQU 0         IDENTIFY FORMAT 5
+         DC    4XL1'05' EQU 0     IDENTIFICATION FOR FORMAT 5
+DS5AVEXT DS    0CL5 EQU 4         AVAILABLE SPACE
+         DS    CL2  EQU 4         RELATIVE TRACK ADDRESS OF EXTENT
+         DS    CL2  EQU 6         NUMBER OF FULL CYLINDERS
+         DS    CL1  EQU 8         NUMBER OF TRACKS ALSO USED
+DS5EXTAV DS    7CL5 EQU 9         7 MORE AVAILABLE SPACE FIELDS
+DS5FMTID DC    C'5' EQU 44        F5 IDENTIFY FORMAT 5
+DS5MAVET DS    18CL5 EQU 45       18 MORE AVAILABLE SPACE FIELDS
+DS5PTRDS DS    CL5  EQU 135       POINTER TO NEXT DSCB 5 - CCHHR
+         EJECT
+         ORG   DSCB4
+DS6KEYID DS    0CL4 EQU 0         IDENTIFY FORMAT 6
+         DC    4XL1'06'           06 IN FULL WORD
+DS6AVEXT DS    0CL5 EQU 4         EXTENT BEING SHARED
+         DS    CL2  EQU 4         RELATIVE TRACK ADDRESS OF FIRST CYL.
+         DS    CL2  EQU 6         NUMBER OF FULL CYLINDERS BEING SHARED
+         DS    CL1  EQU 8         NUMBER OF DATA SETS SHARING EXTENT
+DS6EXTAV DS    7CL5 EQU 9         7 MORE EXTENTS BEING SHARED
+DS6FMTID DC    C'6' EQU 44        F6 - FORMAT 6 ID.
+DS6MAVET DS    18CL5 EQU 45       18 MORE EXTENTS BEING SHARED
+DS6PTRDS DS    CL5  EQU 135       POINTER TO NEXT DSCB 6 - CCHHR
+         EJECT
+UCB      DSECT
+UCBVTOC  EQU   UCB+X'18'
+         IEFUCBOB
+         EJECT
+CVT      DSECT
+*        CVT
+CVTXAPG  EQU   CVT+20
+CVTPCNVT EQU   CVT+28
+CVTILK2  EQU   CVT+40
+         DCBD                                                       DLO
+       END DRIVE

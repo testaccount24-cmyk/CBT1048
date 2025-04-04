@@ -1,0 +1,176 @@
+START    START X'0'                                                       000120
+         STM   14,12,12(13)        SAVE REGISTERS IN SYS. SAVE.           000130
+         USING START,12            ESTABLISH ADDRESSIBILITY RELATIVE TO   000140
+         LR    12,15               BASE ADDRESS IN REGISTER 12.           000150
+         LA    11,SAVE             LOAD REG11 WITH ADDRESS OF SAVE AREA   000160
+         ST    13,4(11)            STORE SYS. SAVE ADDRESS IN SAVE AREA   000170
+         ST    11,8(13)            STORE SAVE ADDRESS IN SYS. SAVE AREA   000180
+         LR    13,11               LOAD REG13 WITH ADDRESS OF SAVE AREA   000190
+         MVI   0(1),X'00'          ZERO HI-ORDER BYTE OF PARM ADDRESS.    000200
+         L     8,0(1)              REG8 POINTS TO PARM LENGTH.            000210
+         LH    10,0(8)             REG10 CONTAINS PARM LENGTH.            000220
+         LA    10,1(8,10)          REG10 POINTS TO LAST BYTE OF PARM.     000230
+         LA    8,2(8)              REG8 POINTS TO FIRST BYTE OF PARM.     000240
+         LR    9,8                 LOAD REG9 TO FIRST BYTE OF PARM.       000250
+         BCTR  9,0                 STEP DOWN BY ONE.                      000260
+         OPEN  (OUTFILE,(OUTPUT))  OPEN DATA FILES.                       000270
+PARMLOOP LA    9,1(9)              BUMP UP BY ONE.                        000280
+         CR    9,10                HAS SCAN GONE PAST END OF PARM.        000290
+         BH    PARMEND             YES- PARM SCAN FINISHED.               000300
+         CLI   0(9),C','           FIND PARM DELIMITER.                   000310
+         BNE   PARMLOOP            NOT COMA. TRY NEXT POSITION.           000320
+PARMEND  AP    PARMCNT,=P'1'       KEEP TRACK OF WHICH PARM WE ARE ONE.   000330
+         CR    8,9                 COMPARE 1ST BYTE ADDRES TO LAST BYTE   000340
+         BE    SETREG8             NO PARM 1 PRESENT.                     000350
+         CP    PARMCNT,=P'2'       GO TO PROCESS PARM FIELD               000360
+         BL    PARM1                   ONE                                000370
+         BE    PARM2                   TWO OR                             000380
+         B     PARM3                   THREE.                             000390
+PARM1    CLC   0(3,8),=C'YES'      PARM 1  CONTAIN 'YES'.                 000400
+         BE    SETREG8             YES- BRANCH OUT.                       000410
+         CLC   0(2,8),=C'NO'       PARM 1 CONTAIN 'NO'.                   000420
+         BNE   PARMERR             ERROR IF NEITHER 'YES| OR 'NO'.        000430
+         OI    RPTCDESW+1,X'F0'    SET SWITCH TO NO REPORT CODE BYTE.     000440
+SETREG8  CR    9,10                                                       000450
+         BH    OPENIN                                                     000460
+         LA    8,1(9)              STEP REG8 TO END OF PREVIOUS PARM      000470
+         B     PARMLOOP            FIELD PLUS 1. PROCESS NEXT PARM.       000480
+PARM2    CR    8,9                 COMPARE 1ST BYTE ADDRES TO LAST BYTE   000490
+         BE    SETREG8             EQUAL- NO PARM 2 PRESENT.              000500
+         CLC   0(1,8),=C'*'        ALL LINES TO BE ONE REPORT             000510
+         BNE   PARM2A              NO - CONTINUE PARM 2                   000520
+         NI    ASTRSW+1,X'F0'      CHANGE NOP TO BRANCH                   000530
+         B     PARM2B                                                     000540
+PARM2A   EQU   *                                                          000550
+         MVI   REPORTSW+1,X'02'    SET REPORTSW TO SELECT REPORTS.        000560
+         NI    0(8),X'7F'          SAVE ONLY BITS 1 THRU 7 OF REPT CODE   000570
+         SR    6,6                 CLEAR REG6.                            000580
+         IC    6,0(8)              LOAD REG6 TO ADDRESS OF RPTCODES       000590
+         LA    6,RPTCODES(6)       PLUS INDEX FACTOR FROM REPORT CODE.    000600
+         OI    0(6),X'02'          SET REPORT SELECT SWITCH ON.           000610
+PARM2B   EQU   *                                                          000620
+         LA    8,1(8)              BUMP REG8.                             000630
+         B     PARM2               CONTINUE SCAN.                         000640
+PARM3    CLI   0(8),C'M'           PARM3 INDICATE MACHINE CODE.           000650
+         BNE   NOTMACH             NO- GO TO MAINLINE OF PROGRAM.         000660
+         OI    MACHSW+1,X'F0'      SET FOR MACHINE CODE.                  000670
+         B     OPENIN              GO TO MAINLINE OF PROGRAM.             000680
+NOTMACH  CLI   0(8),C'A'                                                  000690
+         BNE   PARMERR                                                    000700
+         NI    MACHSW+1,X'0F'                                             000710
+         B     OPENIN                                                     000720
+PARMERR  UNPK  MSG+24(1),PARMCNT   PUT PARM FIELD NUMBER IN MESSAGE.      000730
+         OI    MSG+24,X'F0'        WIPE OUT SIGN.                         000740
+         PUT   OUTFILE             WRITE ERROR MESSAGE.                   000750
+         MVC   0(133,1),MSG                                               000760
+         B     CLOSE               GO TO END OF JOB.                      000770
+OPENIN   OPEN  (INFILE,(INPUT))                                           000780
+         PUT   OUTFILE                                                *   000790
+         LR    3,1                                                    *   000800
+         MVC   0(133,3),BLANKS                                        *   000810
+         MVI   0(3),X'89'         NEW PAGE                            *   000820
+         OI    SKIPSW+1,X'F0'     MAKE BRANCH                         *   000830
+GET      GET   INFILE              LOCATE NEXT LOGICAL RECORD.            000840
+         MVI   NULLSW,X'FF'        TURN OFF NULL FILE SWITCH            TL000850
+         LR    2,1                 INPUT LOGICAL RECORD POINTER IN REG2   000860
+         LH    4,INFILE+82         LOAD INPUT LRECL INTO REG4.            000870
+         TM    INFILE+36,B'10000000' IS INPUT FILE RECFM F, FB OR U.      000880
+         BO    RPTCDESW            YES- BRANCH. NO-RECFM IS V OR VB.      000890
+         SR    4,4                 RESET REG4.                            000900
+         IC    4,1(2)              LOAD VARIABLE LENGTH INTO REG4.        000910
+         SH    4,=H'4'             REDUCE LENGTH FOR 4 BYTE RDW.          000920
+         AH    2,=H'4'             STEP RECORD POINTER FOR 4 BYTE RDW.    000930
+RPTCDESW NOP   SELECTED            NO-OP IF 1ST CHAR IS REPORT CODE.      000940
+ASTRSW   NOP   SELECTA             BRANCH IF * IN PARM 2                  000950
+         SR    6,6                 RESET REG6.                            000960
+         NI    0(2),X'7F'          SAVE ONLY BITS 1 THRU 7 OF REPT CODE   000970
+         IC    6,0(2)              PUT REPORT CODE IN REG6.               000980
+         LA    6,RPTCODES(6)       SET BYTE 1 THRU 255 OF RPTCODES ON     000990
+         OI    0(6),X'01'          FOR ALL CODES WHEN NO PARM 2 GIVEN     001000
+FIRSTRPT B     SETUP1             NOP AFTER FIRST PASS                *   001010
+SELECT   NI    FIRSTBR+1,X'0F'     SET 1ST BRANCH SWITCH OFF.             001020
+         CLC   0(1,2),RPTCODES     IS THIS THE REPORT CURRENTLY BEING     001030
+         BNE   GET                 PRINTED. NO- GET NEXT RECORD.          001040
+         BCTR  4,0                      DECREMENT LRECL BY REPORT CODE*   001050
+SELECTA  LA    2,1(2)              YES, STEP RECORD POINTER PAST REPORT   001060
+SELECTED TM    INFILE+36,B'0010'   CODE.                                  001070
+MACHSW   BO    RESTRTSW            BRANCH IF PRINT CONTROL MACHINE CODE   001080
+ASCI     TR    0(1,2),ASCILIST     IF ASCI CODE CONVERT TO MACHINE CODE   001090
+SKIPSW   B     SKIP                                                   *   001100
+         MVC   0(1,3),0(2)        MOVE CC TO PREV OUTPUT BUFF         *   001110
+SKIP     NI    SKIPSW+1,X'0F'     CHANGE BRANCH TO NOP                *   001120
+         MVC   PCC(1),0(2)        UPDATE PREVIOUS CONTROL CHAR        *   001130
+         MVI   0(2),X'09'         BLANKOUT CC IN CURRENT RECORD       *   001140
+RESTRTSW EQU   *                                                      *   001150
+PRINT    PUT   OUTFILE             LOCATE NEXT OUTPUT AREA.               001160
+         LR    3,1                 LOAD OUTPUT AREA POINTER INTO REG3.    001170
+         LH    5,OUTFILE+82        LOAD REG5 WITH OUTPUT LRECL.           001180
+         MVI   0(3),C' '           CLEAR OUTPUT LOGICAL RECORD AREA       001190
+         SH    5,=H'2'             TO BLANKS.                             001200
+         STC   5,CLEAR+1                                                  001210
+CLEAR    MVC   1(0,3),0(3)                                                001220
+         C     4,=F'133'                DOES LRECL EXCEED PRINT LINE  *   001230
+         BL    REDUCE                   NO - PRINT ENTIRE RECORD      *   001240
+         LA    4,133                    YES- TRUNCATE RECORD TO 133CHR*   001250
+REDUCE   EQU   *                                                      *   001260
+         BCTR  4,0                 REDUCE INPUT RECORD LENGTH BY 1 AND    001270
+         STC   4,MOVE+1            STORE IN MOVE INSTRUCTION LENGTH.      001280
+MOVE     MVC   0(0,3),0(2)         MOVE RECORD FROM INPUT AREA TO OUTPT   001290
+         AP    LYNCOUNT,=P'1'                                         *   001300
+         B     GET                 AREA. GET NEXT LOGICAL RECORD.         001310
+EOF      EQU   *                                                          001320
+         CLI   NULLSW,X'FF'        HAS NULLSW BEEN TURNED OFF?          TL001330
+         BNE   NULLFILE            NO - CLOSE FILES AND END.            TL001340
+SETUP1   NI    FIRSTRPT+1,X'0F'    SET FIRST REPORT SWITCH OFF        *   001350
+         LA    6,RPTCODES          LOAD REG6 WITH ADDR OF REPORT CODE     001360
+         LA    7,256(6)            SWITCHES. LOAD REG7 WITH END ADDRESS   001370
+LOOP     LA    6,1(6)              STEP REPORT SWITCH ADDRESS BY ONE.     001380
+         TM    0(6),X'80'          HAS THIS REPORT BEEN PRINTED           001390
+         BO    TESTEND             YES - SKIP THIS REPORT                 001400
+REPORTSW TM    0(6),X'01'          NO - IS THIS REPORT TO BE PRINTED      001410
+         BZ    TESTEND             NO - TEST FOR END OF REPORT PRINT      001420
+NEXTPRT  OI    0(6),X'80'          REPORT TO BE PRINTED - INDICATE THIS   001430
+         LA    7,RPTCODES          REPORT HAS BEEN PRINTED.               001440
+         SR    6,7                 INDEX FACTOR 1 THRU 255 CORRESPONDS    001450
+         STC   6,RPTCODES          TO ALL REPORT CODES POSSIBLE. STORE    001460
+*                                  INDEX AS CURRENT REPORT.               001470
+FIRSTBR  B     SELECT              BRANCH 1ST TIME THRU ONLY.             001480
+         CLOSE (INFILE,REREAD)     BEING PRINTED. CLOSE BUT DONOT UNLOD   001490
+         FREEPOOL INFILE          RELEASE BUFFERS                     *   001500
+         B     OPENIN              GO BACK TO PROCESS NEXT REPORT.        001510
+TESTEND  EQU   *                                                          001520
+         CR    6,7                 HAVE ALL REPORTS PRESENT BEEN PRINTD   001530
+         BNE   LOOP                NO- LOOK AGAIN.                        001540
+NULLFILE CLOSE (INFILE)            YES- CLOSE DATA FILES.               TL001550
+CLOSE    CLOSE (OUTFILE)                                                  001560
+         FREEPOOL INFILE                                              *   001570
+         FREEPOOL OUTFILE                                             *   001580
+         L     13,4(13)            RETURN TO SYSTEM.                      001590
+         L     14,12(13)                                                  001600
+         SR    15,15                                                      001610
+         RETURN (2,12),RC=(15)                                            001620
+RPTCODES DC    257X'00'            1ST BYTE IS REPORT BEING PRINTED.      001630
+ASCILIST DC    64X'00'                                                    001640
+         DC    X'09'                                                      001650
+         DC    13X'00'                                                    001660
+         DC    X'01'                                                      001670
+         DC    17X'00'                                                    001680
+         DC    X'19'                                                      001690
+         DC    96X'00'                                                    001700
+         DC    X'D1D9E1'                                                  001710
+         DC    44X'00'                                                    001720
+         DC    X'11899199A1A9B1B9C1C9'                                    001730
+         DC    6X'00'                                                     001740
+PAGE     DC    PL3'0'                                                     001750
+MSG      DC    X'89'                                                      001760
+         DC    CL132'BAD END OF B1900, PARM X ERROR.'                     001770
+BLANKS   DC    133CL1' '                                              *   001780
+PARMCNT  DC    PL1'0'                                                     001790
+SAVE     DC      18F'0'                                                   001800
+NULLSW   DC    X'00'                                                    TL001810
+INFILE   DCB    DDNAME=SYSUT1,DSORG=PS,MACRF=(GL),BUFNO=2,EODAD=EOF   *   001820
+OUTFILE  DCB    DDNAME=SYSUT2,DSORG=PS,MACRF=(PL),BUFNO=2,RECFM=FM,   *X  001830
+               LRECL=133,BLKSIZE=133                                      001840
+LYNCOUNT DC    PL4'0'                                                 *   001850
+PCC      DC    CL1' '                                                 *   001860
+         END   START                                                      001870

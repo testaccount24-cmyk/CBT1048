@@ -1,0 +1,249 @@
+//JEAEDIT2 JOB (1140,5),'JEA MOPEEDIT',CLASS=N,NOTIFY=JEA,COND=(0,NE)
+// EXEC LIBRARYN,FILE=MVS,BLKSIZE=6480
+//SYSABEND DD SYSOUT=A
+//SYSIN DD DATA,DLM='??'
+-OPT NOLIST,EXEC
+-DLM MOPE,MOPE
+-ADD MOPE,MOPE
+-PGMR JEABBEY
+-DESC MONTANTO ONLINE PROGRAM EDITOR
+***********************************************************************
+*        MONSANTO ONLINE PROGRAM EDITTOR
+***********************************************************************
+MOPE     ZCSECT 12,9,GETMAIN=1,WKLEN=WALENGTH
+         USING WORKAREA,REG13      ADDRESSABILITY FOR DSECT
+         EJECT
+***********************************************************************
+*        FIRST ALLOCATE THE MOPEPARM DATA SET
+***********************************************************************
+         SPACE 2
+         LINK  EP=UT501,PARAM=(MOPEJCL,ALLCODE,RETCODE,A,B),VL=1,      X
+               MF=(E,CALLLIST)     ALLOCATE THE MOPEPARM DATA SET
+         EJECT
+***********************************************************************
+*        WRITE A LOGO AND WAIT FOR A LOGON
+***********************************************************************
+         SPACE 2
+WRLOGO   DS    0H
+         LA    REG1,LOGO           LOAD ADDRESS OF THE LOGO SCREEN
+         LINK  SF=(E,SCREENSF)     GO INVOKE SCREEN WRITE ROUTINE
+         LTR   REG15,REG15         ANY REAL DATA ENTERED THEN
+         BNZ   WRLOGO              NO. GO REISSUE THE LOGO WRITE
+         XC    LGERROR(L'LGERROR),LGERROR CLR LOGON ERROR MESSAGE AREA
+         CLC   USERID(2),=C'X '    DOES HE WANT TO TERMINATE MOPE
+         BE    MOPEEXIT            DIRTY ROTTEN SWINE
+         EJECT
+***********************************************************************
+*        OPEN AND INIIALISE THE PARAMETER FILE
+***********************************************************************
+         SPACE 2
+         MVC   MOPEPARM,DCBDUMMY   SET UP A DCB AREA
+         MVC   MOPEDECB(20),DECBDUMY AND A DECB TO READ/WRITE WITH
+         OI    OPENLIST,X'80'      TURN ON TOP BIT OF OPENLIST
+         OPEN  (MOPEPARM,UPDAT),MF=(E,OPENLIST) OPEN THE PARM FILE
+         GETBUF MOPEPARM,REG2      GET THE ADDRESS OF A BUFFER
+         ST    REG2,MOPEDECB+12    AND STORE IT IN THE DECB
+         EJECT
+***********************************************************************
+*        ENQ THE USER NAME TO PROTECT USER PARM
+***********************************************************************
+         SPACE 2
+         ENQ   (QNAME,USERID,E,8,SYSTEM),RET=USE
+         LTR   REG15,REG15         GOOD RETURN CODE ?
+         BNZ   ALREADY             NO. USER IS ALREADY ON
+         EJECT
+***********************************************************************
+*        LOCATE THE PARAMETER FILE ENTRY AND CHECK PASSWORD
+***********************************************************************
+         SPACE 2
+GETLOGON DS    0H
+         FIND  MOPEPARM,USERID,D   POINT AT THE USER PARM ENTRY
+         LTR   REG15,REG15         TEST THE RETURN CODE
+         BNZ   BADUSER             FAILED. GO REPORT
+         READ  MOPEDECB,SF,MOPEPARM,MF=E READ THE PARAMETER DATA IN
+         CHECK MOPEDECB            WAIT FOR IO COMPLETION
+         L     REG3,MOPEDECB+12    LOAD ADDRESS OF THE PARM AREA
+         USING USERPARM,REG3       ADDRESSABILITY FOR IT
+         CLC   UPPASSWD,PASSWORD   DOES PASSWORD AGREE ?
+         BNE   BADPASSW            NO. GO CHUCK HIM OFF
+         EJECT
+***********************************************************************
+*        INVITE THE USER TO ENTER A COMMAND
+***********************************************************************
+         SPACE 2
+GETCMND  DS    0H
+         MVC   COMMAND,=C'  '      CLEAR THE OLD COMMAND AREA
+         LA    REG1,CMSCREEN       LOAD ADDRESS OF COMMAND SCREEN
+         LINK  SF=(E,SCREENSF)     CALL THE SERVICE ROUTINE
+         EJECT
+***********************************************************************
+*        PROCESS THE REQUESTED COMMAND
+***********************************************************************
+         SPACE 2
+GETCMND2 DS    0H
+         CLI   COMMAND,C'X'        REQUEST TO TERMINATE ?
+         BE    REWRITE             YES. CLOSE PARAMETER FILE AND WAIT
+         IC    REG15,COMMAND       LOAD UP THAT COMMAND NUMBER
+         N     REG15,=F'15'        JUST GET THE NUMBER PART
+         LTR   REG15,REG15         IS IT A BLANK OR SOMETHING ?
+         BZ    GETCMND             YES. GO ASK HIM AGAIN
+         C     REG15,HIGHEST       IS IT BEYOND OUR RANGE
+         BH    BADNUMB             YES. GO MOAN BITTERLY
+         SLL   REG15,2             MULTIPLY BY FOUR
+         L     REG15,RTNTABLE-4(REG15) LOAD THE ADDRESS OF THE RTN
+         L     REG1,MOPEDECB+12    LOAD ADDRESS OF USERPARM AREA
+         BALR  REG14,REG15         GO INVOKE THE REQUIRED ROUTINE
+         B     GETCMND             HE CAME BACK....? GO GET ANOTHER
+         EJECT
+***********************************************************************
+*        REWRITE THE PARAMETER AREA
+***********************************************************************
+         SPACE 2
+REWRITE  DS    0H
+         WRITE MOPEDECB,SF,MOPEPARM,MF=E
+         CHECK MOPEDECB            WAIT FOR WRITE TO COMPLETE
+         EJECT
+***********************************************************************
+*        CLOSE THE PARAMETER FILE
+***********************************************************************
+         SPACE 2
+CLOSE    DS    0H
+         OI    CLOSLIST,X'80'      TURN ON TOP BIT OF CLOSE PARM LIST
+         CLOSE (MOPEPARM),MF=(E,CLOSLIST) CLOSE PARAMETER FILE
+         L     REG2,MOPEDECB+12   RELOAD ADDRESS OF THE BUFFER
+         FREEBUF MOPEPARM,REG2     FREE THE BUFFER AREA
+         FREEPOOL MOPEPARM         FREE THE BUFFER POOL
+         DEQ   (QNAME,USERID,8,SYSTEM),RET=HAVE FREE USER ID
+         MVC   USERID(8),=CL8' '   CLEAR LOGO SCREEN MESSAGE AREAS
+         MVC   PASSWORD(8),=CL8' '  CLEAR LOGO SCREEN MESSAGE AREAS
+         B     WRLOGO              GO INVITE ANOTHER SESSION
+         EJECT
+***********************************************************************
+*        RETURN CONTROL TO MVS. QUEL DOMAGE
+***********************************************************************
+         SPACE 2
+MOPEEXIT DS    0H
+         LINK  EP=UT501,PARAM=(MOPEJCL,ALLCODE2,RETCODE,A,B),VL=1,     X
+               MF=(E,CALLLIST)     FREE THE MOPEPARM FILE
+         ZRETURN
+         EJECT
+***********************************************************************
+*        ERROR ROUTINES
+***********************************************************************
+         SPACE 2
+ALREADY  DS    0H
+         MVC   LGERROR(L'ALERRMSG),ALERRMSG USER ALREADY ON
+         B     CLOSE
+BADUSER  DS    0H
+         MVC   LGERROR(L'BUERRMSG),BUERRMSG BAD USER ERROR MESSAGE
+         B     CLOSE               GOSTART ALL OVER AGAIN
+BADPASSW DS    0H
+         MVC   LGERROR(L'BPERRMSG),BPERRMSG LOAD AN ERROR MESSAGE
+         B     CLOSE               GO OUTPUT THE ERROR MESSAGE
+BADNUMB  DS    0H
+         LA    REG1,BNSCRN         LOAD ADDRESS OF BAD NUMBER SCREEN
+         LINK  SF=(E,SCREENSF)     GO SHOUT AT HIM
+         MVC   COMMAND,ERRCMND     PICK UP WHAT IS RETURNED
+         B     GETCMND2            AND GO PROCESS THAT
+         EJECT
+***********************************************************************
+*        CONSTANTS NOT CHANGE BY THIS PROGRAM
+***********************************************************************
+         SPACE 2
+HIGHEST  DC    F'2'                HIGHEST COMMAND CODE ALLOWED
+RTNTABLE DS    0F                  TABLE OF ROUTINE ADDRESS
+         DC    V(DEFINE)           USER PARM REDEFINITION
+         DC    V(EDIT)             DATA SET EDIT ROUTINE
+QNAME    DC    CL8'MOPE'
+MOPEJCL  DC    AL2(MOPEJEND-*)
+         DC    C'//MOPEPARM DD DSN=JEA.MOPEPARM,DISP=SHR   '
+MOPEJEND EQU   *
+ALLCODE  DC    C'A'                ALLOCATE FUNCTION CODE
+ALLCODE2 DC    C'D'                DE-ALLOCATE FUNCTION CODE
+DCBDUMMY DCB   DDNAME=MOPEPARM,DSORG=PO,MACRF=(R,W),BUFNO=1
+         READ  DECBDUMY,SF,0,0,MF=L
+SCREENSF LINK  EP=SCREEN,SF=L      LINK EXECUTE FORM PARM LIST
+BUERRMSG DC    C'***** USER ID IS NOT DEFINED. PLEASE REENTER *****'
+BPERRMSG DC    C'***** PASSWORD INVALID *****  PLEASE REENTER'
+ALERRMSG DC    C'***** USERID ALREADY IN USE ******'
+LGERROR  DC    CL60' '
+         EJECT
+***********************************************************************
+*        SCREEN FORMAT AREAS
+***********************************************************************
+         SPACE 2
+LOGO     SCREEN CLEAR=YES,REPLY=YES
+         DATA  1,1,'MONSANTO ONLINE PROGRAM EDITOR'
+         DATA  22,10,LGERROR
+ DATA 4,11,'MMM       MMM   OOOOOOOOOOO   PPPPPPPPPPPP    EEEEEEEEEEE'
+ DATA 5,11,'MMMM     MMMM  OOOOOOOOOOOOO  PPPPPPPPPPPPP  EEEEEEEEEEEE'
+ DATA 6,11,'MMMMM   MMMMM  OOO       OOO  PPP       PPP  EEE         '
+ DATA 7,11,'MMMMM   MMMMM  OOO       OOO  PPP       PPP  EEE         '
+ DATA 8,11,'MMM MMMMM MMM  OOO       OOO  PPP       PPP  EEE         '
+ DATA 9,11,'MMM  MMM  MMM  OOO       OOO  PPP       PPP  EEE         '
+ DATA 10,11,'MMM   M   MMM  OOO       OOO  PPP       PPP  EEEEEEEEE   '
+ DATA 11,11,'MMM       MMM  OOO       OOO  PPPPPPPPPPPPP  EEEEEEEEE   '
+ DATA 12,11,'MMM       MMM  OOO       OOO  PPPPPPPPPPPP   EEE         '
+ DATA 13,11,'MMM       MMM  OOO       OOO  PPP            EEE         '
+ DATA 14,11,'MMM       MMM  OOO       OOO  PPP            EEE         '
+ DATA 15,11,'MMM       MMM  OOO       OOO  PPP            EEE         '
+ DATA 16,11,'MMM       MMM  OOO       OOO  PPP            EEE         '
+ DATA 17,11,'MMM       MMM  OOO       OOO  PPP            EEE         '
+ DATA 18,11,'MMM       MMM  OOOOOOOOOOOOO  PPP            EEEEEEEEEEEE'
+ DATA 19,11,'MMM       MMM   OOOOOOOOOOO   PPP             EEEEEEEEEEE'
+         DATA  24,1,'ENTER USERID ===>'
+USERID   DATA  24,19,'        ',BRIGHT=YES,CHANGE=YES,CURSOR=YES
+         DATA  24,35,'PASSWORD ===>'
+PASSWORD DATA  24,49,'        ',BRIGHT=YES,CHANGE=YES,SECRET=YES
+         SCEND
+CMSCREEN SCREEN  CLEAR=YES,REPLY=YES
+         DATA  1,1,'*MOPE*  ----  SELECT AN OPTION CODE ===>'
+COMMAND  DATA  1,*,'  ',CHANGE=YES,BRIGHT=YES,CURSOR=YES
+         DATA  2,1,'----------------------------------------------------
+               ----------------'
+         DATA  4,5,'YOU CAN CHOOSE FROM THE FOLLOWING:'
+         DATA  06,10,'1',BRIGHT=YES
+         DATA  06,12,'DEFINE AND REDIFINE YOUR DEFAULT PARAMETERS'
+         DATA  07,10,'2',BRIGHT=YES
+         DATA  07,12,'EDIT SEQUENTIAL AND PARTITIONED DATA SETS'
+         DATA  08,10,'X',BRIGHT=YES
+         DATA  08,12,'RETURN TO THAT BEAUTIFUL LOGO YOU SAW BEFORE'
+         SCEND
+BNSCRN   SCREEN CLEAR=NO,REPLY=YES
+         DATA  14,1,'OH FOR HEAVEN''S SAKE!!',BRIGHT=YES
+         DATA  16,10,'PLEASE ENTER A NUMBER IN THE RANGE'
+         DATA  16,45,'CLEARLY',BRIGHT=YES
+         DATA  16,53,'MARKED ABOVE'
+         DATA  18,10,'NOW HAVE ANOTHER GO HERE ==>'
+ERRCMND  DATA  18,40,'  ',CHANGE=YES,CURSOR=YES,BRIGHT=YES
+         DATA  24,70,'IDIOT'
+         SCEND
+         EJECT
+***********************************************************************
+*        DSECTS USED IN THE PROGRAM
+***********************************************************************
+         SPACE 2
+WORKAREA DSECT
+         DS    18F                 REGISTER SAVE AREA
+MOPEPARM DS    CL96                DCB FOR PARAMETER FILE
+         READ  MOPEDECB,SF,0,0,MF=L DECB FOR READ/WRITE ON PARM FILE
+OPENLIST OPEN  (0,UPDAT),MF=L      OPEN PARAMETER LIST
+CLOSLIST CLOSE (0),MF=L            CLOSE PARAMETER LIST
+CALLLIST DS    12F                 BUILD AREA FOR CALL LISTS
+A        DS    F                   NOT USED
+B        DS    F                   NOT USED
+RETCODE  DC    X'00'               RETURN CODE FROM UT501
+WALENGTH EQU   *-WORKAREA
+         SPACE 2
+         USERPARM
+         END
+??
+// EXEC ASMFCL,L=H
+//SYSLIB DD DSN=JEA.MACLIB,DISP=SHR
+//       DD DSN=SYS2.MACLIB,DISP=SHR
+// DD    DSN=SYS1.MACLIB,DISP=SHR
+//SYSIN DD DSN=&OSJOB,DISP=(OLD,DELETE)
+//LKED.SYSLMOD DD DSN=JEA.LOADLIB,DISP=SHR
+ INCLUDE SYSLMOD(MOPE)
+ ENTRY MOPE
+ NAME MOPE(R)

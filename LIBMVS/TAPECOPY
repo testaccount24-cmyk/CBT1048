@@ -1,0 +1,207 @@
+//TAPECOPY JOB (1580,5),'TAPE CONVERT',CLASS=N
+// EXEC ASMFCL,L=H
+//SYSLIB DD
+// DD DSN=JEA.MACLIB,DISP=SHR
+// DD DSN=SYS1.AMODGEN,DISP=SHR
+**********************************************************************
+*                    T A P E C O P Y                                  *
+*                                                                     *
+*            THIS PROGRAM WILL COPY ANY TAPE VOLUME TO ANOTHER        *
+*        TAPE VOLUME PERFORMAING ANY FORMAT CONVERSION APPROPRIATE    *
+*        ON THE WAY.                                                  *
+*            FOR EXAMPLE: A 1600 BPI TAPE MAY BE COPIED TO A TAPE ON  *
+*        A 6250 BPI DRIVE OR VICE VERSA. NO RECORD REBLOCKING WILL    *
+*        BE PERFORMED BY THE PROGRAM, TAPE DENSITY IS THE THING THAT  *
+*        WILL CHANGE.                                                 *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+**********************************************************************
+         EJECT
+***********************************************************************
+*        DSECTS USED IN THIS MODULE                                   *
+***********************************************************************
+         SPACE 2
+JFCB     DSECT
+         IEFJFCBN
+         EJECT
+***********************************************************************
+*        EQUATES USED IN THIS MODULE                                  *
+***********************************************************************
+         SPACE 2
+         EJECT
+**********************************************************************
+*        INITIAL PROGRAM ENTRY HOUSEKEEPING
+**********************************************************************
+         SPACE 2
+TAPECOPY ZCSECT
+         MVI   FLAG,0              INITIALISE LOGIC FLAG
+         EJECT
+***********************************************************************
+*        OPEN THE INPUT AND OUTPUT VOLUMES                            *
+***********************************************************************
+         SPACE 2
+OPEN     DS    0H
+         USING JFCB,REG1           ADDRESSABILITY FOR JFCB
+         RDJFCB (IN,,OUT)          READ JOB FILE CTL BLOCKS
+         LA    REG1,INJFCB         LOAD ADDRESS INPUT JFCB
+         NI    JFCBLTYP,X'80'      TURN OFF ALL LABEL SPECIFICATIONS
+         OI    JFCBLTYP,JFCBLP     SET BYPASS LABEL PROCESSING
+         LA    REG1,OUTJFCB        LOAD ADDRESS OUTPUT JFCB
+         NI    JFCBLTYP,X'80'      TURN OFF ALL LABEL SPECIFICATIONS
+         OI    JFCBLTYP,JFCBLP     SET BYPASS LABEL PROCESSING
+         MVC   JFCBFLSQ,=H'1'      SET FILE SEQUENCE NUMBER
+         OPEN  (IN,INPUT,OUT,OUTPUT),TYPE=J OPEN IN AND OUT FILES
+         BAL   REG11,SETUPIN       INITIALISE INPUT BUFFERS
+         BAL   REG11,SETUPOUT      INITIALISE OUTPUT BUFFERS
+         B     IOLOOP              BRANCH TO NEXT ROUTINE
+         EJECT
+***********************************************************************
+*        READ THE INPUT FILE AND COPY TO OUTPUT TAPE                  *
+***********************************************************************
+         SPACE 2
+IOLOOP   DS    0H
+         BAL   REG11,GET           OBTAIN INPUT BLOCK
+         BAL   REG11,PUT           WRITE TO OUTPUT TAPE
+         B     IOLOOP              REPEAT FOR WHOLE FILE
+         EJECT
+***********************************************************************
+*        END OF FILE ROUTINE. A TAPE MARK IS READ                     *
+***********************************************************************
+         SPACE 2
+EODAD    DS    0H
+         L     REG9,20(REG9)       LOAD ADDRESS OF ACTIVE OUTPUT I/O
+         CLI   3(REG9),X'FF'       CHECK NEEDED ?
+         BE    NOCHECK2            NO. ALL I/O COMPLETE
+         CHECK (9)                 WAIT FOR LAST OUTPUT I/O
+NOCHECK2 TM    FLAG,EOF            ONE TAPE MARK READ ALREADY ?
+         BO    EOJ                 YES. PROCESSING IS FINISHED
+         OI    FLAG,EOF            SIGNAL TAPE MARK READ
+         CLOSE (OUT,LEAVE)         WRITE TWO TAPE MARKS
+         RDJFCB (OUT)              READ THE JFCB BACK AGAIN
+         LA    REG1,OUTJFCB        LOAD ADDRESS OF IT IN CORE
+         LH    REG15,JFCBFLSQ      LOAD FILE SEQUENCE NUMBER
+         LA    REG15,1(REG15)      ADD 1 TO IT
+         STH   REG15,JFCBFLSQ      STORE IT BACK IN JFCB
+         OPEN  (OUT,OUTPUT),TYPE=J REOPEN THE OUTPUT FILE
+         READ  (10),SF,MF=E        START NEXT FILE
+         L     REG10,20(REG10)     LOAD ADDRESS OF FIRST FREE DECB
+         MVI   3(REG9),X'FF'       SET 'NO CHECK' FLAG
+         L     REG9,20(REG9)       LOAD ADDRESS OF FIRST WRITE DECB
+         B     IOLOOP              CARRY ON FOR NEXT FILE
+         EJECT
+***********************************************************************
+*        CLOSE THE INPUT AND OUTPUT FILES                             *
+***********************************************************************
+         SPACE 2
+EOJ      DS    0H
+         CLOSE (IN,,OUT)           CLOSE ALL FILES
+         B     EXITPGM             RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        COMMON PROGRAM EXIT                                          *
+***********************************************************************
+         SPACE 2
+EXITPGM  DS    0H
+         ZRETURN RC=0
+         EJECT
+***********************************************************************
+*        INITIALISE THE INPUT I/O CONTROL BLOCKS                      *
+***********************************************************************
+         SPACE 2
+SETUPIN  DS    0H
+         GETBUF IN,10              OBTAIN ADDRESS FIRST INPUT BUFFER
+         ST    REG10,DECBIN1+12    SAVE ADDRESS IN DECB
+         GETBUF IN,10              OBTAIN ADDRESS SECOND BUFFER
+         ST    REG10,DECBIN2+12    SAVE THAT ALSO IN DECB
+         READ  DECBIN1,SF,MF=E     START TO READ FIRST BLOCK
+         LA    REG10,DECBIN2       INITIALISE INPUT CHAIN REGISTER
+         BR    REG11               RTURN TO CALLER
+         SPACE 2
+         READ  DECBIN1,SF,IN,0,32767,MF=L FIRST READ DECB
+         DC    A(DECBIN2)          CHAIN FIELD FOR DECBS
+         READ  DECBIN2,SF,IN,0,32767,MF=L SECOND READ DECB
+         DC    A(DECBIN1)          CHAIN FIELD FOR DECBS
+         EJECT
+***********************************************************************
+*        LOCATE THE NEXT INPUT BLOCK                                  *
+***********************************************************************
+         SPACE 2
+GET      DS    0H
+         READ  (10),SF,MF=E        READ INTO NEXT BUFFER
+         L     REG10,20(REG10)     LOAD ADDRESS NEXT DECB
+         CHECK (10)                AWAIT ARRIVAL OF NEXT BLOCK
+         NI    FLAG,255-EOF        RESET TAPE MARK FLAG
+         L     REG1,16(REG10)      LOAD ADDRESS OF IOB
+         LH    REG8,6(REG10)       LOAD LENGTH OF READ
+         SH    REG8,14(REG1)       SUBTRACT RESIDUAL BYTE COUNT
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        INITIALISE OUTPUT I/O CONTROL BLOCKS                         *
+***********************************************************************
+         SPACE 2
+SETUPOUT DS    0H
+         GETBUF OUT,9              OBTAIN ADDRESS FIRST OUTPUT BUFFER
+         ST    REG9,DECBOUT1+12    SAVE ADDRESS IN DECB
+         GETBUF OUT,9              OBTAIN ADDRESS SECOND BUFFER
+         ST    REG9,DECBOUT2+12    SAVE IN DECB ALSO
+         LA    REG9,DECBOUT1       INITIALISE CONTROL REGISTER
+         MVI   DECBOUT2+3,X'FF'    INITIALISE TO SHOW NO CHECK NEEDED
+         BR    REG11               RETURN TO CALLER
+         SPACE 2
+         WRITE DECBOUT1,SF,OUT,0,0,MF=L FIRST WRITE DECB
+         DC    A(DECBOUT2)         DECB CHAIN FIELD
+         WRITE DECBOUT2,SF,OUT,0,0,MF=L SECOND WRITE DECB
+         DC    A(DECBOUT1)         DECB CHAIN FIELD
+         EJECT
+***********************************************************************
+*        OUTPUT THE NEXT BLOCK                                        *
+***********************************************************************
+         SPACE 2
+PUT      DS    0H
+         L     REG1,12(REG10)      LOAD ADDRESS OF INPUT BUFFER
+         MVC   12(4,REG10),12(REG9) SAVE ADDRESS OF O/P BUFF IN DECBIN
+         ST    REG1,12(REG9)       USE INPUT BUFFER AS OUTPUT
+         WRITE (9),SF,,,(8),MF=E   WRITE THIS BLOCK TO OUTPUT FILE
+         L     REG9,20(REG9)       LOAD ADDRESS OF OTHER DECB
+         CLI   3(REG9),X'FF'       CHECK NEEDED ?
+         BE    NOCHECK             NO. BYPASS LINK TO CHECK RTN
+         CHECK (9)                 WAIT FOR OUTPUT TO FINISH
+NOCHECK  BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        ERROR PROCESSING ROUTINES                                    *
+***********************************************************************
+         SPACE 2
+SYNADIN  DS    0H
+SYNADOUT DS    0H
+         ABEND 4095,DUMP,,SYSTEM
+         EJECT
+***********************************************************************
+*        CONSTANTS AND LITERALS                                       *
+***********************************************************************
+         SPACE 2
+INEXLST  DS    0F
+         DC    X'87'
+         DC    AL3(INJFCB)
+OUTEXLST DC    X'87'
+         DC    AL3(OUTJFCB)
+INJFCB   DS    CL176
+OUTJFCB  DS    CL176
+FLAG     DC    X'00'               FLAG FOR INTERNAL LOGIC
+EOF      EQU   X'80'               END OF FILE REACHED ON INPUT
+         PRINT NOGEN
+IN       DCB   DDNAME=SYSUT1,DSORG=PS,MACRF=R,EODAD=EODAD,BUFNO=2,     X
+               BLKSIZE=32767,RECFM=U,NCP=2,SYNAD=SYNADIN,EXLST=INEXLST
+         SPACE 2
+OUT      DCB   DDNAME=SYSUT2,DSORG=PS,MACRF=W,BUFNO=2,RECFM=U,         X
+               BLKSIZE=32767,NCP=2,SYNAD=SYNADOUT,EXLST=OUTEXLST,      X
+               EODAD=OUTEODAD
+         LTORG
+         EJECT
+         END
+//LKED.SYSLMOD DD DSN=SYS2.TESTLIB,DISP=SHR
+  NAME TAPECOPY(R)

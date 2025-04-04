@@ -1,0 +1,125 @@
+//JEAEDIT2 JOB (1140,5),'JEA OSSUBMIT',CLASS=N,NOTIFY=JEA
+// EXEC LIBRARYN,FILE=MVS,BLKSIZE=6480
+//SYSIN DD DATA,DLM='??'
+-OPT NOLIST,EXEC
+-DLM OSSUBMIT,SOSD
+-ADD OSSUBMIT,SOSD
+-PGMR JEABBEY
+-DESC SERVICE ROUTINE FOR SUPREDIT
+         TITLE 'WRITE OUT AN EDIT DATA STACK TO INTERNAL READER'
+***********************************************************************
+*                        O S S U B M I T
+*
+*            THIS ROUTINE WILL WRITE OUT FROM THE EDIT DATA STACK ALL
+*        OF THE RECORDS TO THE INTERNAL READER
+*
+*            ON ENTRY TO THIS ROUTINE, REG1 WILL ADDRESS A PARAMETER
+*        LIST OF ONE ENTRY:
+*
+*        1)    ADDRESS OF THE USER PARAMETER AREA
+*
+*            ON EXIT FROM THIS ROUTINE, THE DATA SET WILL HAVE BEEN
+*        WRITTEN TO THE DDNAME 'INTRDR'.
+*
+***********************************************************************
+         EJECT
+***********************************************************************
+*        WRITE OUT TO THE INTERNAL READER
+***********************************************************************
+         SPACE 2
+OSSUBMIT ZCSECT GETMAIN=1
+         L     REG9,0(REG1)        LOAD ADDRESS OF USER PARM AREA
+         USING USERPARM,REG9       ADDRESSABILITY
+         L     REG10,UPEDITWK      LOAD ADDRESS OF EDIT WORK AREA
+         USING WDSECT,REG10        ADDRESSABILITY
+         EJECT
+***********************************************************************
+*        OPEN THE DCB FOR THE OUTPUT FILE
+***********************************************************************
+         SPACE 2
+         MVC   SYSUT1(96),DCBMASK  INITIALISE THE DCB TO BE SURE
+         OPEN  (SYSUT1,OUTPUT),MF=(E,OPENLIST) OPEN OUTPUT FILE
+         LA    REG4,DUMMY          ADDRESS OF FIRST RECORD AREA
+         EJECT
+***********************************************************************
+*        OUTPUT THE DATA STACK TO THE FILE
+***********************************************************************
+         SPACE 2
+OUTLOOP  EQU   *
+         L     REG4,4(REG4)       ADDRESS OF FIRST/NEXT STACK ENTRY
+         CLI   0(REG4),X'EE'       IS THAT END OF FILE
+         BE    ENDITALL            YES. FINISH THE OUTPUT
+         L     REG2,0(REG4)        ADDRESS OF THE RECORD
+         PUT   SYSUT1              OBTAIN AN OUTPUT BUFFER
+         LR    REG6,REG1           ADDRESS OF THE BUFFER
+         LH    REG3,LRECL          LENGTH OF THE DATA
+         LR    REG7,REG3           SECOND LENGTH REGISTER
+         CLC   HEX,=C'YES'         ARE WE WORKING HEX ?
+         BNE   NOHEX3              NO. CARRY ON
+         LH    REG1,LRECL          LOAD LENGTH OF DATA
+         LA    REG0,0(REG1,REG2)   END OF UNPACKED DATA
+         LR    REG14,REG6          START OF RESULT DATA
+         LR    REG15,REG2          START OF SOURCE DATA
+PACKLOOP EQU   *
+         MVC   DBLWORD(2),0(REG15) MOVE SOURCE DATA TO WORK AREA
+         TR    DBLWORD(2),HEXTABL2 MAKE NUMERIC FIELDS GOOD
+         PACK  DBLWORD+4(2),DBLWORD(3) PACK THE DATA
+         MVC   0(1,REG14),DBLWORD+4 AND MOVE TO OUT AREA
+         LA    REG14,1(REG14)      ADDRESS NEXT RESULT BYTE
+         LA    REG15,2(REG15)      ADDRESS NEXT SOURCE FIELD
+         CR    REG15,REG0          END OF INPUT DATA ?
+         BL    PACKLOOP            NO. PROCESS ENTIRE RECORD
+         B     OUTLOOP             RETURN FOR NEXT RECORD
+NOHEX3   EQU   *
+         MVCL  REG6,REG2           MOVE RECORD TO OUTPUT BUFFER
+         B     OUTLOOP             PROCESS ALL THE DATA
+         EJECT
+***********************************************************************
+*        CLOSE THE FILE AND FREE THE BUFFER POOL
+***********************************************************************
+         SPACE 2
+ENDITALL EQU   *
+         OI    CLOSLIST,X'80'      ENSURE END OF LIST INDIC'TR IS ON
+         CLOSE (SYSUT1),MF=(E,CLOSLIST)  CLOSE THE OUTPUT FILE
+         FREEPOOL SYSUT1           FREE UP THE BUFFER POOL
+         EJECT
+***********************************************************************
+*        RETURN TO CALLER
+***********************************************************************
+         SPACE 2
+EXITPGM  ZRETURN
+         EJECT
+***********************************************************************
+*        ERROR ROUTINES
+***********************************************************************
+         SPACE 2
+         EJECT
+***********************************************************************
+*        CONSTANTS NOT CHANGED BY THE PROGRAM
+***********************************************************************
+         SPACE 2
+DCBMASK  DCB   DDNAME=INTRDR,DSORG=PS,MACRF=PL,LRECL=80,RECFM=F,       X
+               BLKSIZE=80
+HEXTABL2 DC    256AL1(*-HEXTABL2)  AND HEX BACK TO GOOD DATA
+         ORG   HEXTABL2+C'A'
+         DC    X'FAFBFCFDFEFF'     MAKE HEX LETTERS LOOK GOOD
+         ORG
+         EJECT
+***********************************************************************
+*        DSECTS
+***********************************************************************
+         SPACE 2
+         USERPARM
+         SPACE 2
+         EDITWK2
+         END
+??
+// EXEC ASMFCL,L=H
+//SYSLIB DD
+// DD
+// DD DSN=JEA.MACLIB,DISP=SHR
+//SYSIN DD DSN=&OSJOB,DISP=(OLD,DELETE)
+//LKED.SYSLMOD DD DSN=JEA.LOADLIB,DISP=SHR
+ INCLUDE SYSLMOD(MOPE)
+ ENTRY MOPE
+ NAME MOPE(R)

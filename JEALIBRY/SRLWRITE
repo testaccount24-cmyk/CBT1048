@@ -1,0 +1,551 @@
+//JEAILJN2 JOB (1140,5),'J ABBEY',CLASS=N,NOTIFY=JEA
+/*ROUTE  PRINT LOCAL
+// EXEC LIBRARYN,FILE=MVS,BLKSIZE=6480
+//SYSIN DD DATA,DLM='??'
+-OPT NOLIST,EXEC
+-DLM SRLWRITE,SRLW
+-ADD SRLWRITE,SRLW
+-PGMR JEABBEY
+-DESC SELF REORGANISING FILE WRITER
+***********************************************************************
+*                          S R L W R I T E
+*
+*            THIS ROUTINE WILL WRITE OUT A MEMBER OF A MONSANTO
+*        SELF REORGANISING LIBRARY DATA SET. IT IS CALLED BY THE
+*        'SUPREDIT' MODULE OF MOPE WHEN A SCREEN USER WISHES TO SAVE
+*        SUCH A MEMBER
+*
+*            ON ENTRY TO THE ROUTINE, REGISTER ONE WILL ADDRESS A
+*        PARAMETER LIST OF ONE ENTRY:
+*
+*        1)    THE ADDRESS OF THE USER PARAMETER DEFINITION AREA
+*              CONTAINING THE CHAIN POINTS FOR THE DATA HELD IN THE
+*              IN-CORE DATA STACK
+*
+*        ON EXIT FROM THE ROUTINE, THE DATA WILL HAVE BEEN LOADED
+*        INTO THE SELF REORGANISING DATA SET AND WILL REPLACE ANY
+*        SIMILARLY NAMED FILE ALREADY THERE.
+*
+***********************************************************************
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING
+***********************************************************************
+         SPACE 2
+SRLWRITE ZCSECT 12,GETMAIN=1,WKLEN=SRLWKLEN
+         USING SRLWORK,REG13,REG6  ADDRESSABILITY FOR WORK AREA
+         LA    REG6,2048(REG13)    PREPARE SECOND ADDRESS REGISTER
+         LA    REG6,2048(REG6)     FOR THE SRL WORK AREA
+         L     REG9,0(REG1)        LOAD UP THE PASSED PARAMETER
+         USING USERPARM,REG9       ADDRESSABILITY FOR IT
+         L     REG10,UPEDITWK      ADDRESS OF EDIT WORK AREA
+         USING WDSECT,REG10        ADDRESSABILITY FOR IT
+         EJECT
+***********************************************************************
+*        OBTAIN AN ENQ LOCK ON THE FILE TO PREVENT TROUBLE
+***********************************************************************
+         SPACE 2
+         ENQ   (SRLQNAME,SRLRNAME,E,8,SYSTEM)
+         XC    SRLFLAGS,SRLFLAGS   CLEAR THE LOGIC FLAGS
+         OI    SRLFLG1,NODATA      ASSUME AN EMPTY FILE
+         EJECT
+***********************************************************************
+*        OPEN AND INITIALISE THE PHYSICAL FILE
+***********************************************************************
+         SPACE 2
+         MVI   OPENLIST,X'80'      SET ON END OF LIST INDICATOR
+         MVI   CLOSLIST,X'80'      SET ON END OF LIST INDICATOR
+         MVC   SYSUT2,BDAMDUMY     SET UP A BDAM DCB
+         OPEN  (SYSUT2,OUTPUT),MF=(E,OPENLIST) OPEN THE BDAM FILE
+         MVC   DECB1(8),BDAMDECB   INITIALISE A BDAM DECB
+         MVC   DECB2(8),BDAMDECB   INITIALISE A BDAM DECB
+         LA    REG1,DECB1          LOAD CHAIN ADDRESS
+         ST    REG1,DECB2+CHAINL   AND SET UP CHAIN FIELD
+         LA    REG1,DECB2          LOAD SECOND CHAIN ADDRESS
+         ST    REG1,DECB1+CHAINL   AND COMPLETE READ DECB LOOP CHAIN
+         EJECT
+***********************************************************************
+*        INITIALISE THE BUFFER AREAS
+***********************************************************************
+         SPACE 2
+         LH    REG2,SYSUT2+X'3E'   LOAD THE LENGTH OF A BLOCK
+         LA    REG1,0(REG2,REG2)   DOUBLE IT
+         AR    REG1,REG2           AND ADD A THIRD
+         GETMAIN R,LV=(1)          AND GETMAIN SOME BUFFERS
+         STM   REG0,REG1,GETREGS   SAVE REGISTERS FOR FREEMAIN
+         ST    REG1,DECB1+12       INITIALISE FIRST DECB
+         LA    REG3,0(REG2,REG1)   ADDRESS OF END OF FIRST BUFFER
+         STM   REG1,REG3,PUTREGS   INITIALISE BUFFER PARAMETERS
+         LA    REG1,0(REG2,REG1)   ADDRESS OF THE OTHER BUFFER
+         ST    REG1,DECB2+12       AND INITIALISE SECOND DECB
+         LA    REG1,0(REG2,REG1)   ADDRESS OF SPARE BUFFER
+         ST    REG1,NEXTREC        USE AS RECORD BUILD AREA
+         LA    REG7,DECB1          SET UP DECB CHAIN ADDRESS POINTER
+         LA    REG8,DUMMY          INITIALISE TOP OF STACK REGISTER
+         EJECT
+***********************************************************************
+*        LOCATE AND READ THE CNTL & FREE BLOCK BIT MAPS
+***********************************************************************
+         SPACE 2
+         XC    BLOCKID,BLOCKID     FIRST BLOCK HAS CNTL & FREE ENTRIES
+         READ  DECB1,DI,SYSUT2,,'S',0,BLOCKID+1,MF=E READ FRST BLOCK
+         CHECK DECB1               WAIT FOR IT TO ARRIVE
+         L     REG2,DECB1+12       ADDRESS OF BUFFER
+         LA    REG3,CNTLPARM       ADDRESS OF RECEIVING FIELD
+         CALL  EXPAND,((9),(2),(3)),VL,MF=(E,CALLLIST)
+         AH    REG2,0(REG2)        ADDRESS OF NEXT ENTRY
+         LA    REG3,FREEPARM       ADDRESS OF RECEIVING FIELD
+         CALL  EXPAND,((9),(2),(3)),VL,MF=(E,CALLLIST)
+         EJECT
+***********************************************************************
+*        INITIALISE FOR THE WRITE OF ALL HIS DATA
+***********************************************************************
+         SPACE 2
+         MVI   DECB1,X'EE'         SIGNAL DECB NOT READ YET
+         MVI   DECB2,X'EE'         SIGNAL DECB NOT READ YET
+         XC    BLOCKID,BLOCKID     CLEAR THE CURRENT BLOCK ID
+         LA    REG1,FREEMAP        LOAD ADDRESS OF FREE BLOCK MAP
+         ST    REG1,CURNTMAP       AND STORE IN WORK AREA
+         L     REG1,NEXTREC        ADDRESS OF RECORD BUILD AREA
+         XC    0(4,REG1),0(REG1)   MAKE SURE IT IS 'EMPTY'
+         LA    REG0,HOLDBITS       ADDRESS OF BIT MAP BUILD AREA
+         LH    REG1,CNTLBITS       GET LENGTH OF BIT MAPS
+         XR    REG14,REG14         PREPARE MVCL REGISTERS TO CLEAR
+         XR    REG15,REG15         THE BIT MAP BUILD AREA
+         MVCL  REG0,REG14          AND THEN CLEAR IT
+         MVC   RECLENTH,LRECL      TELL COMPRESS ROUTINE RECORD LENGTH
+         EJECT
+***********************************************************************
+*        WRITE ALL HIS RECORDS TO THE DATA SET
+***********************************************************************
+         SPACE 2
+READLOOP EQU   *
+         BAL   REG11,GETSTACK      GO LOCATE NEXT STACK RECORD
+         BAL   REG11,PUTREC        GO OUTPUT IT TO A BLOCK
+         B     READLOOP            PROCESS ALL RECORDS
+         EJECT
+***********************************************************************
+*        COMPLETE THE OUTPUT IO
+***********************************************************************
+         SPACE 2
+CLOSEOFF DS    0H
+         LM    REG0,REG2,PUTREGS   LOAD BLOCK CONTROL PARMS
+         L     REG14,NEXTREC       LOAD ADDRESS OF RECORD BUILD AREA
+         XC    0(4,REG14),0(REG14) 'EMPTY' RECORD BUILD AREA
+         CH    REG1,SYSUT2+X'3E'   IS THIS AN EMPTY BLOCK IN FACT ?
+         BNL   NOLASTWR            YES. NO NEED FOR A LAST WRITE
+         XR    REG1,REG1           OTHERWISE CLEAR LENGTH LEFT FIELD
+         STM   REG0,REG2,PUTREGS   TO FORCE A LAST BLOCK WRITE
+         BAL   REG11,PUTREC        AND GO DO IT
+NOLASTWR EQU   *
+         EJECT
+***********************************************************************
+*        BUILD FILE HEADER
+***********************************************************************
+         SPACE 2
+         MVC   FILEID,EDITNAME     SET UP NAME OF THE FILE
+         MVC   FILEBITS,CNTLBITS   INITIALISE BIT MAP LENGTH
+         MVC   FILERECL,LRECL      INITIALISE LRECL OF THE FILE
+         LA    REG0,FILEMAP        ADDRESS OF BIT MAP FIELD
+         LH    REG1,FILEBITS       LOAD LENGTH OF BIT MAP
+         LA    REG14,HOLDBITS      ADDRESS OF MAP BUILT FOR HIM
+         LR    REG15,REG1          SECOND LENGTH REGISTER
+         MVCL  REG0,REG14          MOVE IN NEW MAP
+         LA    REG0,HOLDBITS       RELOAD BUILD AREA ADDRESS
+         LH    REG1,CNTLBITS       AND LENGTH OF IT
+         XR    REG14,REG14         PREPARE MVCL REGISTERS FOR CLEAR
+         XR    REG15,REG15         OPERATION ON HOLDBITS
+         MVCL  REG0,REG14          AND CLEAR THE BUILD AREA
+         EJECT
+***********************************************************************
+*        INITIALISE FOR REWRITE OF CONTROL PARM FILE
+***********************************************************************
+         SPACE 2
+         MVC   DECB3(32),BDAMDECB  SET UP FRESH DECB
+         MVC   DECB4(32),BDAMDECB  SET UP FRESH DECB
+         LA    REG1,DECB3          ADDRESS OF FIRST DECB
+         ST    REG1,DECB4+CHAINL   INITIALISE DECB CHAINING
+         LA    REG1,DECB4          LOAD ADDRESS OF SECOND DECB
+         ST    REG1,DECB3+CHAINL   AND COMPLETE ROUND ROBIN CHAIN
+         MVI   DECB3,X'EE'         SIGNAL DECB NOT READ YET
+         MVI   DECB4,X'EE'         SIGNAL DECB NOT READ YET
+         LA    REG5,DECB3          INITIALISE CHAIN POINTER
+         LA    REG1,CNTLMAP        LOAD ADDRESS OF CONTROL BIT MAP
+         ST    REG1,CURNTMP2       AND SAVE ITS ADDRESS
+         XC    BLOCKID2,BLOCKID2   CLEAR THE CURRENT BLOCK ID
+         LA    REG1,BLOCKID2       BORROW ADDRESS OF A NULL FIELD
+         ST    REG1,NEXTREC2       AND MAKE FIRST READ APPEAR AS EOB
+         MVC   RECLENTH,CNTLRECL   TELL COMPRESS ROUTINE HDR LENGTH
+         EJECT
+***********************************************************************
+*        REWRITE THE FILE CONTROL AREA
+***********************************************************************
+         SPACE 2
+HDRLOOP1 DS    0H
+         BAL   REG11,READREC       LOCATE FIRST/NEXT FILE HEADER
+         LR    REG2,REG1           ADDRESS OF SOURCE FIELD
+         LA    REG3,WORKPARM       ADDRESS OF RESULT FIELD
+         CALL  EXPAND,((9),(2),(3)),VL,MF=(E,CALLLIST)
+         CLC   FILEID,WORKID       CORRECT PLACEFOR NEW HEADER
+         BH    NOTYET              NO. REWRITE AND TRY NEXT
+         BE    REPLACIT            YES. REPLACE CURRENT ENTRY
+         TM    SRLFLG1,NODATA      IS THIS AN EMPTY FILE
+         BO    BYPASS1             YES. IGNORE THE FILE HEADER
+         LA    REG2,FILEPARM       ADDRESS OF NEW PARM AREA
+         L     REG3,NEXTREC        ADDRESS OF RESULT RECORD AREA
+         CALL  COMPRESS,((9),(2),(3)),VL,MF=(E,CALLLIST)
+         BAL   REG11,PUTREC        INSERT NEW HEADER
+BYPASS1  EQU   *
+         LA    REG2,WORKPARM       ADDRESS OF THAT ONE I JUST READ
+         L     REG3,NEXTREC        ADDRESS OF BUILD AREA
+         CALL  COMPRESS,((9),(2),(3)),VL,MF=(E,CALLLIST)
+         BAL   REG11,PUTREC        AND STOW IN AN OUTPUT BLOCK
+         B     EXHAUST             GO COPY REMAINING RECORDS
+REPLACIT EQU   *
+         TM    SRLFLG1,NODATA      IS THIS AN EMPTY FILE ?
+         BO    BYPASS2             YES. IGNORE THE HEADER
+         LA    REG2,FILEPARM       ADDRESS OF REPLACEMENT PARMS
+         L     REG3,NEXTREC        ADDRESS OF RECORD BUILD AREA
+         CALL  COMPRESS,((9),(2),(3)),VL,MF=(E,CALLLIST)
+         BAL   REG11,PUTREC        AND OUTPUT THE NEW PARM AREA
+BYPASS2  EQU   *
+         B     EXHAUST             THEN GO COPY ACROSS THE REST
+NOTYET   EQU   *
+         L     REG0,NEXTREC        ADDRESS OF OUTPUT RECORD AREA
+         LH    REG3,0(REG2)        LENGTH OF THIS COMPRESSED HDR
+         LR    REG1,REG3           SECOND LENGTH REGISTER
+         MVCL  REG0,REG2           COPY COMPRESSED HEADER
+         BAL   REG11,PUTREC        AND STOW IN AN OUTPUT BLOCK
+         B     HDRLOOP1            CONTINUE ALONG HEADER FILE
+         EJECT
+***********************************************************************
+*        FINISH CONTROL UPDATE BY COPYING REST OF HEADER RECORDS
+***********************************************************************
+         SPACE 2
+EXHAUST  DS    0H
+         BAL   REG11,READREC       FETCH NEXT HEADER
+         LR    REG2,REG1           SAVE ITS ADDRESS
+         LH    REG3,0(REG2)        GET LENGTH OF IT
+         L     REG0,NEXTREC        ADDRESS OF OUTPUT BUILD AREA
+         LR    REG1,REG3           SECOND LENGTH REGISTER
+         MVCL  REG0,REG2           MOVE RECORD ACROSS
+         BAL   REG11,PUTREC        OUTPUT THE HEADER
+         B     EXHAUST             KEEP GOING TILL LOGICAL EOF
+         SPACE 2
+CNTLEOF  EQU   *
+         LM    REG0,REG2,PUTREGS   LOAD BLOCK CONTROL PARMS
+         L     REG14,NEXTREC       LOAD ADDRESS OF RECORD BUILD AREA
+         XC    0(4,REG14),0(REG14) 'EMPTY' RECORD BUILD AREA
+         CH    REG1,SYSUT2+X'3E'   IS THIS AN EMPTY BLOCK IN FACT ?
+         BNL   NOLASTW2            YES. NO NEED FOR A LAST WRITE
+         XR    REG1,REG1           OTHERWISE CLEAR LENGTH LEFT FIELD
+         STM   REG0,REG2,PUTREGS   TO FORCE A LAST BLOCK WRITE
+         BAL   REG11,PUTREC        AND GO DO IT
+NOLASTW2 EQU   *
+         EJECT
+***********************************************************************
+*        UPDATE THE CONTROL AND FREE FILE HEADERS
+***********************************************************************
+         SPACE 2
+         LA    REG14,CNTLMAP       ADDRESS OF OLD HEADER FILE MAP
+         LA    REG15,FREEMAP       ADDR OF MAP THEY'RE TO BE ADDED TO
+         BAL   REG11,DEALLOC       GO FREE UP THE OLD BLOCKS
+         CLC   FILEID,WORKID       HAVE WE REPLACED A FILE ?
+         BNE   NOFREEND            NO. NO FREE NEEDED
+         LA    REG14,WORKMAP       OTHERWISE LOAD HIS CURRENT MAP
+         LA    REG15,FREEMAP       AND LOAD RETURN MAP ADDRESS
+         BAL   REG11,DEALLOC       AND FREE HIS OLD BLOCKS
+NOFREEND EQU   *
+         LA    REG0,CNTLMAP        ADDRESS OF CONTROL MAP
+         LH    REG1,CNTLBITS       LENGTH OF THE BIT MAP
+         LA    REG14,HOLDBITS      ADDRESS OF NEW CNTL BIT MAP
+         LR    REG15,REG1          SECOND LENGTH REGISTER
+         MVCL  REG0,REG14          UPDATE CONTROL AREA BIT MAP
+         EJECT
+***********************************************************************
+*        REWRITE THE PHYSICAL FILE HEADER
+***********************************************************************
+         SPACE 2
+         L     REG7,CHAINL(REG7)   ADDRESS OF LAST BLOCK WRITTEN
+         CHECK (7)                 WAIT FOR IT TO COMPLETE
+         L     REG4,12(REG7)       LOAD ADDRESS OF ITS BUFFER
+         XC    0(4,REG4),0(REG4)   'EMPTY' IT
+         LA    REG2,CNTLPARM       ADDRESS OF NEW CONTROL PARMS
+         LA    REG3,0(REG4)        ADDRESS OF RESULT FIELD
+         CALL  COMPRESS,((9),(2),(3)),VL,MF=(E,CALLLIST)
+         AH    REG4,0(REG4)        ADDRESS OF NEXT SLOT
+         LA    REG2,FREEPARM       NEW FREE AREA DEFINITION
+         LA    REG3,0(REG4)        ADDRESS OF RESULT FIELD
+         CALL  COMPRESS,((9),(2),(3)),VL,MF=(E,CALLLIST)
+         AH    REG4,0(REG4)        ADDRESS OF FINAL SLOT
+         XC    0(4,REG4),0(REG4)   'EMPTY' REST OF BLOCK
+         XC    BLOCKID,BLOCKID     PREPARE TO REWRITE HEADER
+         WRITE (7),DI,SYSUT2,,'S',0,BLOCKID+1,MF=E REWRITE FILE HEADER
+         CHECK (7)                 AND WAIT
+         EJECT
+***********************************************************************
+*        RETURN TO CALLER
+***********************************************************************
+         SPACE 2
+EXITPGM  EQU   *
+         CLOSE (SYSUT2),MF=(E,CLOSLIST) CLOSE THE OUTPUT FILE
+         LM    REG0,REG1,GETREGS   RELOAD GETMAIN REGISTERS
+         FREEMAIN R,LV=(0),A=(1)   FREE UP THE BUFFERS
+         DEQ   (SRLQNAME,SRLRNAME,8,SYSTEM) FREE UP THE ENQ
+         ZRETURN
+         EJECT
+***********************************************************************
+*        LOCATE THE NEXT LOGICAL RECORD
+***********************************************************************
+         SPACE 2
+READREC  DS    0H
+         L     REG1,NEXTREC2        ADDRESS OF NEXT RECORD
+         LH    REG15,0(REG1)       LENGTH OF THE NEXT RECORD
+         LA    REG2,0(REG15,REG1)  AND ADDRESS OF ONE AFTER THAT
+         ST    REG2,NEXTREC2        UPDATE CONTROL FIELD
+         LTR   REG15,REG15         IS THIS REALLY A VALID RECORD ?
+         BNZ   0(REG11)            YES. RETURN TO CALLER WITH IT
+         EJECT
+***********************************************************************
+*        EXTRACT THE NEXT BLOCK NUMBER FROM THE BIT MAP
+***********************************************************************
+         SPACE 2
+FINDABI2 DS    0H
+         L     REG3,BLOCKID2        LOAD ID OF LAST BLOCK READ
+         XR    REG2,REG2           CLEAR TOP OF DOUBLE REGISTER
+         LA    REG0,8              NUMBER OF BITS PER BYTE
+         DR    REG2,REG0           GET OFFSET INTO BIT MAP
+         L     REG4,CURNTMP2       LOAD ADDRESS OF BIT MAP IN USE
+         LA    REG4,0(REG4,REG3)   ADDRESS OF BYTE WITH THIS BIT IN IT
+         ICM   REG15,8,0(REG4)     LOAD THAT BYTE INTO WORK REGISTER
+         SLDL  REG14,1(REG2)       SHIFT OUT TO CORRECT PLACE
+         XR    REG14,REG14         CLEAR BITS WORK REGISTER
+BITLOOP2 EQU   *
+         LA    REG2,1(REG2)        ADD ONE FOR NEXT BIT
+         CR    REG2,REG0           GONE INTO NEXT BYTE
+         BL    SAMEBYT2            NO. CONTINUE WITH SAME BYTE
+NEWBYTE2 EQU   *
+         LA    REG3,1(REG3)        INCREMENT BYTE OFFSET
+         CH    REG3,CNTLBITS       OFF THE END OF BIT MAP ?
+         BNL   NOMORE2             YES. NO MORE BITS AVAILABLE
+         L     REG4,CURNTMP2       LOAD ADDRESS OF BIT MAP IN USE
+         LA    REG4,0(REG4,REG3)   ADDRESS OF NEXT BYTE
+         CLI   0(REG4),0           ANY BITS ON IN THIS BYTE
+         BE    NEWBYTE2            NO. FETCH NEXT ONE THEN
+         ICM   REG15,8,0(REG4)     AND RELOAD WORK REGISTER
+         XR    REG2,REG2           CLEAR THE 'BIT COUNTER'
+SAMEBYT2 EQU   *
+         SLDL  REG14,1             SHIFT OUT NEXT BIT
+         LTR   REG14,REG14         ANYTHING THERE ?
+         BZ    BITLOOP2            NO. TRY NEXT BIT
+         LR    REG15,REG2          SAVE THE BIT OFFSET
+         MR    REG2,REG0           GET BYTES TIMES EIGHT
+         AR    REG15,REG3          AND LOAD NEW RECORD ID
+         ST    REG15,BLOCKID2       AND UPDATE CONTROL FIELDS
+         EJECT
+***********************************************************************
+*        READ AHEAD THE NEXT BLOCK
+***********************************************************************
+         SPACE 2
+         CLI   0(REG5),X'EE'       UNREAD BUFFER ?
+         BE    NOFREE              YES. DO NOT FREE DYNAMIC BUFFER
+         FREEDBUF (5),D,SYSUT2     FREE DYNAMICALLY AQUIRED BUFFER
+NOFREE   EQU   *
+         READ  (5),DI,SYSUT2,'S','S',0,BLOCKID2+1,MF=E READ NEXT BLOCK
+CHECKLST EQU   *
+         L     REG5,CHAINL(REG5)       LOAD ADDRESS OF PREVIOUS READ
+         CLI   0(REG5),X'FF'       WAS THAT A LOGICAL END OF FILE
+         BE    CNTLEOF             YES. TERMINATE PROCESSING
+         CLI   0(REG5),X'EE'       IS THAT BLOCK UNREAD AS YET ?
+         BE    FINDABI2            YES. THIS IS FIRST ENTRY
+         CHECK (5)                 OTHERWISE CHECK COMPLETION
+         L     REG1,12(REG5)       LOAD ADDRESS OF DATA
+         ST    REG1,NEXTREC2        UPDATE CONTROL FIELDS
+         B     READREC             AND START ALL OVER AGAIN
+         SPACE 2
+NOMORE2  EQU   *
+         MVI   0(REG5),X'FF'       SIGNAL LOGICAL END OF FILE
+         B     CHECKLST            AND TRY THE OTHER ONE
+         EJECT
+***********************************************************************
+*        MOVE THE BUILT RECORD TO A BLOCK AND WRITE FULL BLOCKS
+***********************************************************************
+         SPACE 2
+PUTREC   DS    0H
+         LM    REG0,REG2,PUTREGS   LOAD DETAILS OF CURRENT BLOCK
+         L     REG14,NEXTREC       ADDRESS OF RECORD TO BE ADDED
+         LH    REG15,0(REG14)      AND LENGTH OF IT
+         LA    REG3,2(REG15)       ALLOW FOR REQUIRED TRAILING '0'S
+         CR    REG1,REG3           SPACE LEFT IN THIS BLOCK FOR IT
+         BL    FINDABIT            NO. GO WRITE IT
+         LR    REG1,REG15          GET SECOND LENGTH REGISTER
+         MVCL  REG0,REG14          AND MOVE RECORD TO BUFFER
+         LR    REG1,REG0           GET NEW EOB ADDRESS
+         XC    0(2,REG1),0(REG1)   CLEAR NEXT LENGTH FIELD
+         LR    REG1,REG2           GET PHYSICAL END OF BLOCK
+         SR    REG1,REG0           GET LENGTH OF SPACE LEFT IN BLOCK
+         STM   REG0,REG2,PUTREGS   AND SAVE NEW DETAILS IN WORK AREA
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        EXTRACT THE NEXT BLOCK NUMBER FROM THE FREE BIT MAP
+***********************************************************************
+         SPACE 2
+FINDABIT DS    0H
+         L     REG3,BLOCKID        LOAD ID OF LAST BLOCK READ
+         XR    REG2,REG2           CLEAR TOP OF DOUBLE REGISTER
+         LA    REG0,8              NUMBER OF BITS PER BYTE
+         DR    REG2,REG0           GET OFFSET INTO BIT MAP
+         L     REG4,CURNTMAP       LOAD ADDRESS OF BIT MAP IN USE
+         LA    REG4,0(REG4,REG3)   ADDRESS OF BYTE WITH THIS BIT IN IT
+         ICM   REG15,8,0(REG4)     LOAD THAT BYTE INTO WORK REGISTER
+         SLDL  REG14,1(REG2)       SHIFT OUT TO CORRECT PLACE
+         XR    REG14,REG14         CLEAR BITS WORK REGISTER
+BITLOOP  EQU   *
+         LA    REG2,1(REG2)        ADD ONE FOR NEXT BIT
+         CR    REG2,REG0           GONE INTO NEXT BYTE
+         BL    SAMEBYTE            NO. CONTINUE WITH SAME BYTE
+NEWBYTE  EQU   *
+         LA    REG3,1(REG3)        INCREMENT BYTE OFFSET
+         CH    REG3,CNTLBITS       OFF THE END OF BIT MAP ?
+         BNL   NOMORE              YES. NO MORE BITS AVAILABLE
+         L     REG4,CURNTMAP       ADDRESS OF BIT MAP IN USE
+         LA    REG4,0(REG4,REG3)   ADDRESS OF NEXT BYTE
+         CLI   0(REG4),0           ANY BITS ON IN THIS BYTE
+         BE    NEWBYTE             NO. GO FETCH NEXT ONE
+         ICM   REG15,8,0(REG4)     ELSE RELOAD WORK REGISTER
+         XR    REG2,REG2           CLEAR THE 'BIT COUNTER'
+SAMEBYTE EQU   *
+         SLDL  REG14,1             SHIFT OUT NEXT BIT
+         LTR   REG14,REG14         ANYTHING THERE ?
+         BZ    BITLOOP             NO. TRY NEXT BIT
+         LA    REG4,HOLDBITS       ADDRESS OF BIT MAP BEING BUILT
+         LA    REG4,0(REG4,REG3)   ADDRESS OF CORRESPONDING BYTE
+         LA    REG14,X'80'         ASSUME FIRST BIT OF BYTE AFFECTED
+         SRL   REG14,0(REG2)       OTHERWISE GET CORRECT BIT
+         EX    REG14,OIINST        TURN ON THE 'I'VE GOT IT' BIT
+         X     REG14,FLIPBITS      GET COMPLIMENT OF THAT PATTERN
+         L     REG4,CURNTMAP       ADDRESS OF BIT MAP IN USE
+         LA    REG4,0(REG4,REG3)   ADDRESS OF CORRECT BYTE
+         EX    REG14,NIINST        TURN OFF THE BIT IN THIS MAP
+         LR    REG15,REG2          SAVE THE BIT OFFSET
+         MR    REG2,REG0           GET BYTES TIMES EIGHT
+         AR    REG15,REG3          AND LOAD NEW RECORD ID
+         ST    REG15,BLOCKID       AND UPDATE CONTROL FIELDS
+         EJECT
+***********************************************************************
+*        WRITE OUT THE PREPARED BLOCK
+***********************************************************************
+         SPACE 2
+         MVC   BLKREFL(3,REG7),BLOCKID+1 INITIALISE BLKREF FIELD
+         WRITE (7),DI,SYSUT2,,'S',0,BLKREFL(REG7),MF=E ISSUE THE WRITE
+         L     REG7,CHAINL(REG7)   LOAD ADDRESS OF PREVIOUS WRITE
+         CLI   0(REG7),X'EE'       IS THAT BLOCK UNWRITTEN AS YET ?
+         BE    NOCHECK             YES. BYPASS THE CHECK
+         CHECK (7)                 OTHERWISE CHECK COMPLETION
+NOCHECK  EQU   *
+         L     REG1,12(REG7)       LOAD ADDRESS OF DATA
+         XC    0(4,REG1),0(REG1)   CLEAR ANYTHIN ALREADY THERE
+         LH    REG2,SYSUT2+X'3E'   GET LENGTH OF A BLOCK
+         LA    REG3,0(REG2,REG1)   AND CALCULATE END OF BLOCK ADDR
+         STM   REG1,REG3,PUTREGS   INITIALISE BLOCK CONTROL
+         B     PUTREC              AND START ALL OVER AGAIN
+         SPACE 2
+NOMORE   EQU   *
+         ABEND 1,DUMP              RUN OUT OF FREE BLOCKS
+         EJECT
+***********************************************************************
+*        MOVE NEXT STACK RECORD TO THE BUFFER AREA
+***********************************************************************
+         SPACE 2
+GETSTACK DS    0H
+         L     REG8,4(REG8)        ADDRESS OF NEXT RECORD AREA
+         CLI   0(REG8),X'EE'       END OF DATA STACK REACHED ?
+         BE    CLOSEOFF            YES. GO TIDY UP AND WRITE CTL INFO
+         NI    SRLFLG1,255-NODATA  TURN OFF THE 'NO DATA' FLAG
+         L     REG3,0(REG8)        ADDRESS OF THE DATA
+         L     REG2,NEXTREC        ADDRESS OF RESULT FIELD
+         CALL  COMPRESS,((9),(3),(2)),VL,MF=(E,CALLLIST)
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        RETURN OLD BITS TO THE FREE MAP
+***********************************************************************
+         SPACE 2
+DEALLOC  DS    0H
+         LH    REG1,CNTLBITS       GET LENGTH OF THE BIT MAPS
+         LH    REG2,=H'256'        GET MAXIMUM LENGTH OF INSTRUCTION
+ALLCLOOP EQU   *
+         SR    REG1,REG2           SUBTRACT MAXIMUM LENGTH
+         BNP   TAILEND             NOT ENOUGH. GO FINISH THE JOB
+         OC    0(256,REG15),0(REG14) LOGICAL OR THE BITS INTO 2ND MAP
+         AR    REG14,REG2          BUMP SOURCE MAP ADDRESS
+         AR    REG15,REG2          BUMP RECEIVING MAP ADDRESS
+         B     ALLCLOOP            AND TRY NEXT LOT
+TAILEND  EQU   *
+         AR    REG1,REG2           GET THE CORRECT LENGTH BACK
+         BCT   REG1,*+10           SUBTRACT 1 FOR EXECUTE
+         OC    0(0,REG15),0(REG14) OR IN FINAL LOT OF BITS
+         EX    REG1,*-6            EXECUTE THE OR INSTRUCTION
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        BDAM DCB OPEN EXIT
+***********************************************************************
+         SPACE 2
+EXLST    DS    0F
+         DC    X'85'               DCB OPEN EXIT
+         DC    AL3(DCBEXIT)        ADDRESS OF THE ROUTINE
+         PUSH  USING
+DCBEXIT  DS    0H
+         USING *,REG15
+         USING IHADCB,REG1         ADDRESSABILITY FOR THE DCB
+         LH    REG0,DCBBLKSI       LOAD BLOCKLENGTH
+         STH   REG0,DCBBUFL        AND UPDATE THE BUFFER LENGTH FIELD
+         BR    REG14               RETURN TO CALLER
+         DROP  REG1                RELEASE ADDRESSABILITY
+         POP   USING               RESTORE NORMAL PROGRAM ADDRESSABILIT
+         EJECT
+***********************************************************************
+*        CONSTANTS NOT CHANGED BY THE PROGRAM
+***********************************************************************
+         SPACE 2
+BDAMDUMY DCB   DDNAME=SYSUT2,DSORG=DA,MACRF=(RISC,WIC),OPTCD=R,        X
+               BUFNO=2,EXLST=EXLST
+         WRITE BDAMDECB,DI,0,0,0,0,0,MF=L
+LASTENTY DS    0CL16               IDENTIFIES LAST ENTRY
+         DC    16X'FF'
+FREENAME DS    0CL16               IDENTIFIES FREE FILE
+         DC    16X'01'
+OIINST   OI    0(REG4),0           EXECUTED TO TURN A BIT ON
+NIINST   NI    0(REG4),0           EXECUTED TO TURN A BIT OFF
+FLIPBITS DS    0F                  LABEL
+         DC    4X'FF'              USED IN EXCL. OR TO FLIP BITS
+SRLQNAME DC    CL8'MOPE.SRL'       Q NAME FOR SRL WRITE ENQ
+SRLRNAME DC    CL8'SRLWRITE'       R NAME FOR SRL WRITE ENQ
+         LTORG
+         EJECT
+***********************************************************************
+*        WORK AREAS USED BY THE PROGRAM
+***********************************************************************
+         SPACE 2
+         USERPARM
+         SPACE 2
+         EDITWK2
+         SPACE 2
+         SRLDSECT
+         SPACE 2
+         PRINT NOGEN
+         DCBD DSORG=DA,DEVD=DA
+         END
+??
+// EXEC ASMFCL,L=H
+//SYSLIB DD DSN=JEA.MACLIB,DISP=SHR
+//       DD DSN=SYS2.MACLIB,DISP=SHR
+// DD    DSN=SYS1.MACLIB,DISP=SHR
+//SYSIN DD DSN=&OSJOB,DISP=(OLD,DELETE)
+//LKED.SYSLMOD DD DSN=JEA.LOADLIB,DISP=SHR
+ INCLUDE SYSLMOD(MOPE)
+ ENTRY MOPE
+ NAME MOPE(R)
+/*

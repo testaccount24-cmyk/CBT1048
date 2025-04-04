@@ -1,0 +1,435 @@
+JES2S405 TITLE 'ADD/ALTER TIME IN JOBCARD - CONTROL BLOCK GENERATION MA*ST405016
+               CRO DEFINITIONS'                                         ST405017
+*                                                                       ST405018
+**** $HASPCB ****                  GENERATE HASP CONTROL BLOCKS         ST405019
+*                                                                       ST405020
+         MACRO                                                          ST405021
+         $HASPCB &DOC=NO,&LIST=NO                                       ST405022
+         GBLC  &GEN,&DATA,&PRINT                                        ST405023
+         PUSH  PRINT                                                    ST405024
+         PRINT &PRINT                                                   ST405025
+         $HCT  DOC=&DOC            GENERATE HASP HCT DSECT              ST405026
+         $JCT  DOC=&DOC            GENERATE HASP JCT DSECT              ST405027
+         $AHCT DOC=&DOC            GENERATE AHCT DSECT                  ST405028
+         $PCE  DOC=&DOC            GENERATE HASP PCE DSECT              ST405029
+         $APCE DOC=&DOC            GENERATE MODS APCE DSECT             ST405030
+         $APCE TYPE=SPCE,DOC=&DOC  GENERATE MODS SPCE DSECT             ST405031
+         $TEXT LIST=&LIST          GENERATE INTERNAL TEXT DSECTS        ST405032
+         $KEYS LIST=&LIST          GENERATE EQUATES FOR INTERNAL TEXT   ST405033
+         $BUFFER DOC=&DOC          GENERATE HASP BUFFER DSECT           ST405034
+         SPACE 1                                                        ST405035
+         POP   PRINT                                                    ST405036
+         PRINT &GEN,&DATA          SET ASSEMBLY PRINT OPTIONS           ST405037
+         MEND                                                           ST405038
+         TITLE 'JES2S405 - ADD/ALTER TIME IN JOBCARD'                   ST405039
+JES2S405 CSECT                     ADD / ALTER TIME IN JOBCARD          ST405040
+         SPACE 2                                                        ST405041
+*********************************************************************** ST405042
+*                                                                     * ST405043
+*        PROGRAM ID. :             JES2S405                           * ST405044
+*                                                                     * ST405045
+*        DATE WRITTEN :            JUNE 1977                          * ST405046
+*                                                                     * ST405047
+*        AUTHOR :                  D.A.MOORCROFT                      * ST405048
+*                                                                     * ST405049
+*        LOCATION :                MONSANTO MISD/TSG BRUSSELS         * ST405050
+*                                                                     * ST405051
+*********************************************************************** ST405052
+         SPACE 3                                                        ST405053
+*********************************************************************** ST405054
+*                                                                     * ST405055
+*        PURPOSE                                                      * ST405056
+*       ---------                                                     * ST405057
+*                                                                     * ST405058
+*        THIS IS A MONSANTO JES2 MODIFICATION MODULE.                 * ST405059
+*        IT IT LOADED AT JES2 INITIALISATION UPON REQUEST VIA         * ST405060
+*        JES2B001,THE MONSANTO INITIALISATION MODULE,AND IS           * ST405061
+*        ENTERED VIA A $CBAL FROM THE JCL CONVERSION SUB-TASK         * ST405062
+*        INTERNAL TEXT EXIT ( XTXTEXIT ) IN HASPXEQ AT U2124400       * ST405063
+*                                                                     * ST405064
+*        ON ENTRY:                                                    * ST405065
+*        APCESR1  - ADDRESS OF INTERNAL TEXT PREFIX                   * ST405066
+*        JCTETIME - CONTAINS THE ESTIMATED CPU TIME ( IN SECONDS )    * ST405067
+*                                                                     * ST405068
+*        THE EIGHTH POSITIONAL PARAMETER OR OUR ACCOUNTING DATA       * ST405069
+*        FIELD IS DEFINED AS BEING ESTIMATED CPU TIME FOR THE JOB.    * ST405070
+*        THIS VALUE IS EXTRACTED FROM THE ACCOUNTING DATA AND PLACED  * ST405071
+*        IN THE FIELD JCTETIME BY OUR MODIFICATION JES2B401, AND      * ST405072
+*        THE PURPOSE OF THIS MODIFICATION IS TO CREATE A TIME         * ST405073
+*        PARAMETER IN THE JOB CARD USING THIS VALUE.  NOTE THAT THE   * ST405074
+*        JES2 INITIALISATION OPTION &ESTIME SETS A DEFAULT VALUE OF   * ST405075
+*        1439 MINUTES ( TO ENSURE THAT PRODUCTION JOBS ARE            * ST405076
+*        EFFECTIVELY NOT MONITORED), WHILE JES2B401 ALTERS THIS       * ST405077
+*        DEFAULT TO 5 MINUTES FOR JOBS WITH A CATEGORY CODE LESS THAN * ST405078
+*        9 ( I.E. NON-PRODUCTION JOBS ).                              * ST405079
+*                                                                     * ST405080
+*        IF THE JOB ALREADY CONTAINS A TIME PARAMETER, IT IS DELETED  * ST405081
+*        AND A NEW ONE IS ADDED.                                      * ST405082
+*                                                                     * ST405083
+*********************************************************************** ST405084
+         EJECT                                                          ST405085
+         PRINT OFF                 SUPPRESS PRINT OF HASP OPTIONS       ST405086
+         COPY  $HASPGEN            HASP OPTIONS                         ST405087
+         PRINT ON                  RE-ESTABLISH PRINT FOR PROGRAM       ST405088
+         TITLE 'CONTROL BLOCK OPTIONS'                                  ST405089
+         $SYSPARM (OFF,GEN,NODATA,NO,NO)   SET DOCUMENTATION OPTIONS    ST405090
+         SPACE 3                                                        ST405091
+*                                                                       ST405092
+*        GENERATE HASP CONTROL BLOCKS                                   ST405093
+*                                                                       ST405094
+         SPACE 2                                                        ST405095
+         $HASPCB DOC=&DOC,LIST=YES               GENERATE HASP C/B      ST405096
+         TITLE 'DELETE REGION FROM JOBCARD'                             ST405097
+*********************************************************************** ST405098
+*        FORMAT OF APCE WORK AREA  ( AS USED BY JES2S405 )            * ST405099
+*********************************************************************** ST405100
+         SPACE 1                                                        ST405101
+APCEDSCT DSECT                                                          ST405102
+         ORG   APCEUSER            REDEFINE GENERAL PURPOSE WORK AREA   ST405103
+S405USER DS    0CL40               WE HAVE 40 BYTES TO PLAY WITH        ST405104
+         DS    0D                  ENSURE DOUBLEWORD ALIGNMENT          ST405105
+S405DWRD DS    D                   DOUBLE-WORD WORK AREA                ST405106
+TXTAKEY  DS    F                   ADDRESS OF REQUESTED KEY             ST405107
+TXTANEXT DS    F                   ADDRESS OF NEXT KEY IN STRING        ST405108
+TXTLKEY  DS    F                   LENGTH OF REQUESTED KEY + ITS PARMS  ST405109
+TXTRLEN  DS    F                   LENGTH FROM NEXT KEY TO END OF STRNG ST405110
+TXTSKEY  DS    C                   KEY FOR WHICH TO SEARCH              ST405111
+S405TIME DS    CL(TIMETXTL)        WORK AREA FOR TIME TEXT              ST405112
+         ORG                                                            ST405113
+JES2S405 CSECT                                                          ST405114
+         TITLE 'JE2S405 - MAIN PROCESSING ROUTINE'                      ST405115
+*********************************************************************** ST405116
+*        INITIALISATION                                               * ST405117
+*********************************************************************** ST405118
+         SPACE 1                                                        ST405119
+JES2S405 $MODNTRY CSECT=YES,EXIT=EXITS405,DOC=&DOC MODIFICATION ENTRY   ST405120
+         SPACE 2                                                        ST405121
+         USING TXTDSECT,R5         ESTABLISH TEXT STRING ADDR'Y         ST405122
+         USING JCTDSECT,JCT        ESTABLISH JCT ADDRESSABILITY         ST405123
+         SPACE 5                                                        ST405124
+*        REGISTER USAGE IN THIS MODULE :-                               ST405125
+         SPACE 1                                                        ST405126
+*        R0    -                                                        ST405127
+*        R1    - LENGTH OF KEY + ALL ITS PARM VALUES                    ST405128
+*        R2    - ADDRESS OF REQUESTED TEXT KEY                          ST405129
+*        R3    - LENGTH OF TEXT FROM NEXT KEY TO END OF STRING          ST405130
+*        R4    - BAL RETURN ADDRESS                                     ST405131
+*        R5    - ADDRESS OF TEXT STRING PREFIX                          ST405132
+*        R6    - AHCT ADDRESS                                           ST405133
+*        R7    - APCE ADDRESS                                           ST405134
+*        R8    - ADDRESS OF NEXT TEXT KEY                               ST405135
+*        R9    -                                                        ST405136
+*        R10   - JCT ADDRESS                                            ST405137
+*        R11   - HCT ADDRESS                                            ST405138
+*        R12   - MODULE BASE REGISTER                                   ST405139
+*        R13   - PCE ADDRESS                                            ST405140
+*        R14   -                                                        ST405141
+*        R15   -                                                        ST405142
+         EJECT                                                          ST405143
+*********************************************************************** ST405144
+*        MAIN-LINE LOGIC: DELETE REGION PARAMETER                     * ST405145
+*********************************************************************** ST405146
+         SPACE 1                                                        ST405147
+         L     R5,APCESR1          GET ADDRESS OF TEXT PREFIX           ST405148
+         LA    R1,STRJKEY          POINT AT 1ST KEY IN STRING           ST405149
+         MVI   TXTSKEY,TIMEJK      SET TO SCAN FOR TIME KEYWORD         ST405150
+         BAL   R4,TXTFIND          LOCATE KEY IN TEXT STRING            ST405151
+         BE    MAINLNEX            LEAVE WELL ENOUGH ALONE              ST405152
+*        BNE   BUILDTME            GO TO CONSTRUCT TIME IF NON PRESENT  ST405153
+*        BAL   R4,TXTDEL           DELETE TIME FROM TEXT STRING         ST405154
+*        L     R10,APCESR10        REFRESH JCT ADDRESS                  ST405155
+         SPACE 1                                                        ST405156
+BUILDTME EQU   *                   CONSTRUCT TIME PARAMETER             ST405157
+         MVC   S405TIME,TIMETEXT   MOVE SKELETON OF TEXT TO APCE        ST405158
+         SR    R14,R14             ZEROISE R14                          ST405159
+         L     R15,JCTETIME        RETRIEVE ESTIMATED CPU TIME          ST405160
+         D     R14,=F'60'          CONVEERT TIME BACK INTO MINUTES      ST405161
+         CVD   R15,S405DWRD        CONVERT ESTIAMTED TIME TO DECIMAL    ST405162
+         OI    S405DWRD+7,X'0F'    ENSURE SIGN IS X'F'                  ST405163
+         UNPK  S405TIME+TIMEMINS-TIMETEXT(L'TIMEMINS),S405DWRD+5(3)     ST405164
+         LA    R8,S405TIME         POINT AT THE NEW TEXT STRING         ST405165
+         LA    R3,TIMETXTL         SET R3 TO LENGTH OF NEW STRING       ST405166
+         BAL   R4,TXTADD           ADD TIME TEXT TO END OF STRING       ST405167
+         SPACE 1                                                        ST405168
+MAINLNEX EQU   *                   END OF MAIN-LINE PROCESSING          ST405169
+         EJECT                                                          ST405170
+*********************************************************************** ST405171
+*        RETURN TO JES2 MAINLINE CODE                                 * ST405172
+*********************************************************************** ST405173
+         SPACE 1                                                        ST405174
+EXITS405 $MODEXIT YES,DOC=&DOC     RETURN TO JES2 CODE                  ST405175
+         TITLE 'A BRIEF DISSERTATION ON THE FORMAT OF INTERNAL TEXT'    ST405176
+*********************************************************************** ST405177
+*        DESCRIPTION OF INTERNAL TEXT                                 * ST405178
+*********************************************************************** ST405179
+         SPACE 1                                                        ST405180
+*        THE MAPPING MACROS ARE SINGULARLY UNHELPFUL ABOUT THE FORMAT   ST405181
+*         OF THE STRING OF INTERNAL TEXT, AND SO THAT YOU MAY BETTER    ST405182
+*         UNDERSTAND WHAT THE FOLLOWING ROUTINES ARE DOING, I WILL      ST405183
+*         ILLUSTRATE WITH AN EXAMPLE.                                   ST405184
+         SPACE 1                                                        ST405185
+*        CONSIDER THE STATEMENT :-                                      ST405186
+*              SPACE=(TRK,(190,19),RLSE)                                ST405187
+         SPACE 1                                                        ST405188
+*        IN A STRING OF INTERNAL TEXT, THIS WOULD APPEAR AS :-          ST405189
+*              X'47'               KEY REPRESENTING 'SPACE'             ST405190
+*              X'03'               NO OF PARMS ( 'TRK', '(19,19)'       ST405191
+*                                  AND 'RLSE' )                         ST405192
+*              X'03'               LENGTH OF IST PARM ('TRK')           ST405193
+*              C'TRK'              PARAMETER VALUE                      ST405194
+*              X'82'               SUBPARM COUNT OF 2 (PRIMARY & SEC'Y  ST405195
+*              X'03'               LENGTH OF 1ST SUBPARM OF SECOND PARM ST405196
+*              C'190'              VALUE OF IST SUBPARM OF SECOND PARM  ST405197
+*              X'02'               LENGTH OF 2ND SUBPARM OF 2ND PARM    ST405198
+*              C'19'               VALUE OF 2ND SUBPARM OF 2ND PARM     ST405199
+*              X'04'               LENGTH OF 3RD PARM                   ST405200
+*              C'RLSE'             VALUE OF 3RD PARM                    ST405201
+         SPACE 1                                                        ST405202
+*        EASY, ISN'T IT ?                                               ST405203
+         SPACE 5                                                        ST405204
+*        NOTE:                                                          ST405205
+*         1. IN THE ROUTINES THAT FOLLOW I REFER TO A PARM DESCRIPTOR.  ST405206
+*            I MEAN BY THIS A FIELD THAT MAY EITHER CONTAIN THE LENGTH  ST405207
+*            OF THE IMMEDIATELY ADJACENT PARM VALUE, OR MAY CONATIN     ST405208
+*            A SUB-PARM COUNT.  IF IT CONTAINS A SUB-PARM COUNT, THEN   ST405209
+*            THE FIRST BIT IS ON ( SO THAT IT WILL SET A MINUS          ST405210
+*            CONDITION WHEN INSERTED INTO A REGISTER WITH 'ICM' ).      ST405211
+         TITLE 'LOCATE KEY IN STRING OF INTERNAL TEXT'                  ST405212
+*********************************************************************** ST405213
+*        LOCATE KEY IN STRING OF INTERNAL TEXT                        * ST405214
+*********************************************************************** ST405215
+         SPACE 1                                                        ST405216
+*        THE FOLLOWING ROUTINE LOCATES A KEY IN A STRING OF             ST405217
+*         INTERNAL TEXT.                                                ST405218
+         SPACE 1                                                        ST405219
+*        ON ENTRY:                                                      ST405220
+*        R1       - ADDRESS OF THE 1ST KEY IN THE STRING                ST405221
+*        TXTSKEY  - KEY FOR WHICH TO SEARCH                             ST405222
+         SPACE 1                                                        ST405223
+*        ON EXIT:                                                       ST405224
+*        R1       - LENGTH OF THE KEY PLUS ALL PARMS AND SUB-PARMS      ST405225
+*        TXTLKEY  - DITTO                                               ST405226
+*        R2       - ADDRESS OF THE REQUESTED KEY ( OR THE END KEY )     ST405227
+*        TXTAKEY  - DITTO                                               ST405228
+*        R3       - LENGTH OF THE REMAINDER (FROM NEXT KEY TO END )     ST405229
+*        TXTRLEN  - DITTO                                               ST405230
+*        R8       - ADDRESS OF THE NEXT KEY IN THE STRING               ST405231
+*        TXTANEXT - DITTO                                               ST405232
+         SPACE 1                                                        ST405233
+*        UPON RETURN THE PSW COND CODE IS SET SUCH THAT:                ST405234
+*         BE  - REQUESTED KEY LOCATED                                   ST405235
+*         BNE - REQUESTED KEY NOT FOUND                                 ST405236
+         EJECT                                                          ST405237
+*********************************************************************** ST405238
+*        LOCATE KEY IN STRING OF INTERNAL TEXT ( CONT'D )             * ST405239
+*********************************************************************** ST405240
+         SPACE 1                                                        ST405241
+         SPACE 1                                                        ST405242
+TXTFIND $SUBIN SAVE=R4             ENTER ROUTINE                        ST405243
+         LR    R2,R5               POINT R2 AT THE START OF THE TEXT    ST405244
+         AH    R2,STRLTH           ADD LENGTH OF TEXT STRING ...        ST405245
+         BCTR  R2,0                 ..AND DECREMENT TO POINT AT END KEY ST405246
+         ST    R2,TXTAKEY          PRESERVE ADDR OF END KEY JUST IN CAS ST405247
+         MVI   APCE$$X,$$Y         ASSUME REQUESTED KEY NOT PRESENT     ST405248
+         XR    R2,R2               CLEAR WORK REGISTER                  ST405249
+         XR    R3,R3               CLEAR WORK REGISTER                  ST405250
+         SPACE 1                                                        ST405251
+TXTFIND1 EQU   *                   AT THIS POINT R1 POINTS AT A KEY     ST405252
+         BAL   R4,TXTGETKY         GET THE ADDRESS OF THE NEXT KEY      ST405253
+*                                  R1 NOW POINTS AT THE NEXT KEY        ST405254
+         CLI   0(R1),ENDK          IS THIS KEY THE END OF THE TEXT      ST405255
+         BE    TXTFINDX            EXIT IF YES: REQUESTED KEY NOT THERE ST405256
+         CLC   0(1,R1),TXTSKEY     IS THIS THE KEY WE ARE LOOKING FOR   ST405257
+         BNE   TXTFIND1            BR IF NOT TO GET NEXT                ST405258
+         SPACE 1                                                        ST405259
+*                                  R1 POINTS AT THE KEY WE REQUIRE      ST405260
+         ST    R1,TXTAKEY          PRESERVE ADDRESS OF DESIRED KEY      ST405261
+         MVI   APCE$$X,$$X         PREPARE TO SET COND CODE FOR SUCCESS ST405262
+         SPACE 1                                                        ST405263
+         BAL   R4,TXTGETKY         GET ADDRESS OF NEXT KEY              ST405264
+         ST    R1,TXTANEXT          ... AND PRESERVE ITS ADDRESS        ST405265
+         LR    R8,R1               POINT R8 AT THE NEXT KEY             ST405266
+         SPACE 1                                                        ST405267
+         L     R2,TXTAKEY          POINT R2 AT THE DESIRED KEY          ST405268
+         SR    R1,R2               CALCULATE LENGTH OF THE DESIRED KEY  ST405269
+         ST    R1,TXTLKEY           ... AND PRESERVE IT                 ST405270
+         SPACE 1                                                        ST405271
+         LA    R3,STRLTH           POINT R3 AT START OF PREFIX          ST405272
+         AH    R3,STRLTH           POINT R3 1 BYTE PAST END OF STRING   ST405273
+         SR    R3,R8               DETERMINE LENGTH FROM NEXT KEY TO EN ST405274
+         ST    R3,TXTRLEN           ... AND PRESERVE IT                 ST405275
+         SPACE 1                                                        ST405276
+TXTFINDX L     R2,TXTAKEY          SET ADDR OF REQUESTED OR END KEY     ST405277
+         $SUBOUT SETCC=YES         RESTORE REG, SET COND CODE & RETURN  ST405278
+         EJECT                                                          ST405279
+*********************************************************************** ST405280
+*        LOCATE NEXT KEY IN STRING                                    * ST405281
+*********************************************************************** ST405282
+         SPACE 1                                                        ST405283
+*        THIS ROUTINE LOCATES THE NEXT KEY IN THE STRING OF TEXT        ST405284
+         SPACE 1                                                        ST405285
+*        ON INPUT:                                                      ST405286
+*         R1  - ADDRESS OF CURRENT KEY                                  ST405287
+         SPACE 1                                                        ST405288
+*        ON OUTPUT:                                                     ST405289
+*         R1  - ADDRESS OF NEXT KEY                                     ST405290
+         SPACE 1                                                        ST405291
+*        R2 AND R3 ARE USED AS WORK REGISTERS                           ST405292
+         SPACE 1                                                        ST405293
+TXTGETKY $SUBIN ,                  ENTER ROUTINE                        ST405294
+         ICM   R2,1,1(R1)          SET R2 TO NUMBER OF PARMS FOR KEY    ST405295
+         LA    R1,2(,R1)           POINT R1 AT 1ST PARM DESCRIPTION     ST405296
+         BZ    TXTGKYX             IF PARM COUNT WAS ZERO, THEN WE ARE  ST405297
+*                                  POINTING AT ANOTHER KEY, SO EXIT     ST405298
+         SPACE 1                                                        ST405299
+TXTGKY1  EQU   *                   R1 POINTS AT A PARM DESCRIPTOR       ST405300
+         ICM   R3,1,0(R1)          SET R3 TO LENGTH OF PARM             ST405301
+         BM    TXTGKY3             IF BIT ONE IS ON THEN THIS IS NOT A  ST405302
+*                                  LENGTH FIELD BUT A SUBPARM COUNT SO  ST405303
+*                                  BRANCH TO PROCESS IT                 ST405304
+         LA    R1,0(R3,R1)         POINT AT END OF THIS PARM            ST405305
+         SPACE 1                                                        ST405306
+TXTGKY2  EQU   *                   R1 POINTS AT THE END OF A PARM VALUE ST405307
+*                                  OR AT A PURIFIED SUBPARM COUNT FIELD ST405308
+         LA    R1,1(,R1)           POINT AT LENGTH OF NEXT PARM -IF ANY ST405309
+         BCT   R2,TXTGKY1          LOOP BACK IF ANY PARMS LEFT          ST405310
+         B     TXTGKYX             IF NO PARMS LEFT WE ARE POINTING AT  ST405311
+*                                  ANOTHER KEY SO EXIT                  ST405312
+         SPACE 1                                                        ST405313
+TXTGKY3  EQU   *                   R1 POINTS AT A SUBPARM COUNT         ST405314
+         SL    R3,=A(X'80')        CLEAR HIGH-ORDER BIT OF COUNT        ST405315
+         ALR   R2,R3               ADD SUBPARM COUNT TO PARM COUNT      ST405316
+         B     TXTGKY2             LOOP ABCK TO INCH ALONG SUBPARMS     ST405317
+         SPACE 1                                                        ST405318
+TXTGKYX $SUBOUT ,                  RETURN TO CALLER                     ST405319
+         TITLE 'DELETE STRING FROM STRING OF INTERNAL TEXT'             ST405320
+*********************************************************************** ST405321
+*        DELETE STRING FROM STRING OF INTERNAL TEXT                   * ST405322
+*********************************************************************** ST405323
+         SPACE 1                                                        ST405324
+*        THIS ROUTINE DELETES A STRING FROM A STRING OF INTERNAL TEXT   ST405325
+*         BY OVERWRITING IT WITH THE TEXT THAT FOLLOWS THE STRING TO BE ST405326
+*         DELETED, PADDING THE REMAINDER WITH BLANKS, AND ALTERING THE  ST405327
+*         LENGTH OF THE TOTAL TEXT ( IN THE STRING PREFIX ).            ST405328
+         SPACE 1                                                        ST405329
+*        ON ENTRY:                                                      ST405330
+*         R1  - LENGTH OF STRING TO BE DELETED                          ST405331
+*         R2  - ADDRESS OF TEXT TO BE OVERWRITTEN                       ST405332
+*         R3  - LENGTH OF REMAINDER ( FROM NEXT KEY TO END OF STRING )  ST405333
+*         R8  - ADDRESS OF NEXT KEY                                     ST405334
+         SPACE 1                                                        ST405335
+*        ON EXIT:                                                       ST405336
+*         R2  - ADDRESS OF LAST BYTE IN TEXT STRING ( END KEY )         ST405337
+*         R3  - NEW LENGTH OF TOTAL TEXT STRING                         ST405338
+         SPACE 1                                                        ST405339
+TXTDEL  $SUBIN ,                   ENTER ROUTINE                        ST405340
+         LR    R10,R3              SET R9 TO LENGTH OF REMAINDER        ST405341
+         ICM   R10,8,=C' '         SET PAD CHARACTER TO BLANK           ST405342
+         MVCL  R2,R8               MOVE TEXT DOWN STRING TO OVERWRITE   ST405343
+         BCTR  R2,0                DECREMENT R2 TO POINT AT LAST BYTE   ST405344
+         LH    R3,STRLTH           GET ORIGINAL LENGTH OF TEXT STRING   ST405345
+         SR    R3,R1               SUBTRACT LENGTH OF DELETED STRING    ST405346
+         STH   R3,STRLTH           UPDATE LENGTH WITH NEW VALUE         ST405347
+       $SUBOUT ,                   RETURN TO CALLER                     ST405348
+         EJECT                                                          ST405349
+*********************************************************************** ST405350
+*        ADD TEXT TO STRING OF INTERNAL TEXT                          * ST405351
+*********************************************************************** ST405352
+         SPACE 1                                                        ST405353
+*        THIS ROUTINE ADDS A STRING OF TEXT TO THE END OF AN EXISTING   ST405354
+*         STRING OF INTERNAL TEXT, ADDS A NEW END KEY TO THE END OF THE ST405355
+*         MODIFIED STRING, AND UPDATES THE LENGTH FIELD IN THE PREFIX.  ST405356
+         SPACE 1                                                        ST405357
+*        ON ENTRY:                                                      ST405358
+*         R2  - ADDRESS OF CURRENT END KEY                              ST405359
+*         R3  - LENGTH OF THE NEW TEXT                                  ST405360
+*         R5  - ADDRESS OF THE INTERNAL TEXT STRING PREFIX              ST405361
+*         R8  - ADDRESS OF THE NEW TEXT TO BE ADDED                     ST405362
+         SPACE 1                                                        ST405363
+*        ON EXIT:                                                       ST405364
+*         R1  - NEW LENGTH OF TOTAL STRING                              ST405365
+*         R2  - ADDRESS OF THE NEW END KEY                              ST405366
+         SPACE 1                                                        ST405367
+TXTADD  $SUBIN ,                   ENTER ROUTINE                        ST405368
+         BCTR  R3,0                DECREMENT LENGTH FOR EXECUTE         ST405369
+         EX    R3,TXTADDM          MOVE NEW TEXT TO END OF STRING       ST405370
+         LA    R2,1(R3,R2)         POINT R2 PAST ADDED TEXT             ST405371
+         MVI   0(R2),ENDK          INSERT NEW END KEY                   ST405372
+         LH    R1,STRLTH           RETRIEVE PREVIOUS LENGTH OF STRING   ST405373
+         LA    R1,1(R3,R1)         CALCULATE NEW STRING LENGTH          ST405374
+         STH   R1,STRLTH           PRESERVE NEW STRING LENGTH IN PREFIX ST405375
+        $SUBOUT ,                  RETURN TO CALLER                     ST405376
+         SPACE 5                                                        ST405377
+TXTADDM  MVC   0(0,R2),0(R8)       EXECUTED MOVE OF NEW TEXT            ST405378
+         EJECT                                                          ST405379
+*********************************************************************** ST405380
+*        REPLACE SUBSTRING OF INTERNAL TEXT                           * ST405381
+*********************************************************************** ST405382
+         SPACE 1                                                        ST405383
+*        THIS ROUTINE REPLACES ONE SUBSTRING OF INTERNAL TEXT WITH      ST405384
+*         ANOTHER.  NOT THAT THE REPLACEMENT STRING MAY BE OF ANY       ST405385
+*         LENGTH, AND NEED NOT BE THE SAME LENGTH AS THE STRING IT      ST405386
+*         REPLACES.  THE LENGTH OF THE TOTAL STRING ( IN THE TEXT       ST405387
+*         STRING PREFIX ) IS UPDATED.                                   ST405388
+         SPACE 1                                                        ST405389
+*        ON ENTRY:                                                      ST405390
+*         R1  - LENGTH OF TEXT TO BE REPLACED                           ST405391
+*         R2  - ADDRESS OF TEXT TO BE REPLACED                          ST405392
+*         R3  - LENGTH OF REMAINDER ( FROM NEXT KEY TO THE END )        ST405393
+*         R5  - ADDRESS OF THE TEXT PREFIX                              ST405394
+*         R8  - ADDRESS OF NEXT KEY                                     ST405395
+*         R10 - LENGTH OF REPLACEMENT STRING                            ST405396
+*         R14 - ADDRESS OF THE REPLACEMENT STRING                       ST405397
+         SPACE 1                                                        ST405398
+*        ON EXIT:                                                       ST405399
+*         R2  - ADDRESS OF NEW END KEY                                  ST405400
+*         R3  - NEW LENGTH OF TOTAL STRING                              ST405401
+         SPACE 1                                                        ST405402
+TXTREP  $SUBIN ,                   ENTER ROUTINE                        ST405403
+        $GETAPCE TXTR              ACQUIRE SECONDARY APCE FOR STORAGE   ST405404
+         LR    R15,R1              PRESERVE ADDRESS OF SECONDARU APCE   ST405405
+         USING SPCEDSCT,R15        ESTABLISH DSECT ADDRESSABILITY       ST405406
+         BCTR  R3,0                DECREMENT LENGTH OF REMAINDER        ST405407
+         EX    R3,TXTREPM1         PRESERVE REMAINDER OF STRING IN APCE ST405408
+         BCTR  R10,0               DECREMENT LENGTH OF REPLACEMENT STRI ST405409
+         EX    R10,TXTREPM3        MOVE REPLACEMENT STRING TO TEXT      ST405410
+         LA    R2,1(R10,R2)        POINT R2 PAST END OF ADDED TEXT      ST405411
+         EX    R3,TXTREPM2         RESTORE PRESERVED REMAINDER          ST405412
+         EJECT                                                          ST405413
+*********************************************************************** ST405414
+*        REPLACE SUBSTRING OF INTERNAL TEXT ( CONT'D )                * ST405415
+*********************************************************************** ST405416
+         SPACE 1                                                        ST405417
+         LA    R2,1(R3,R2)         POINT R2 AT NEW POSN OF END KEY      ST405418
+         LA    R3,1(,R2)           POINT R3 PAST END KEY                ST405419
+         SR    R3,R5               CALCULATE LENGTH OF TOTAL STRING     ST405420
+         STH   R3,STRLTH           PRESERVE LENGTH IN PREFIX            ST405421
+        $FREAPCE TXTR              RELEASE THE SECONDARY APCE           ST405422
+        $SUBOUT ,                  RETURN TO THE CALLER                 ST405423
+         SPACE 5                                                        ST405424
+TXTREPM1 MVC   SPCEAREA(0),0(R8)   PRESERVE REMAINDER IN APCE           ST405425
+TXTREPM2 MVC   0(0,R2),SPCEAREA    RESTORE PRESERVED REMAINDER          ST405426
+TXTREPM3 MVC   0(0,R2),0(R14)      ADD NEW TEXT TO STRING               ST405427
+         SPACE 1                                                        ST405428
+         DROP  R15                 DROP SECONDARY APCE ADDR'Y           ST405429
+         EJECT                                                          ST405430
+*********************************************************************** ST405431
+*        MISCELLANEOUS CONSTANTS                                      * ST405432
+*********************************************************************** ST405433
+         SPACE 1                                                        ST405434
+*        THE FOLLOWING CONSTANTS ARE THE INTERNAL TEXT EQUIVALENT       ST405435
+*         OF THE TIME PARAMETER :                                       ST405436
+*              TIME=(0000,00)                                           ST405437
+         SPACE 1                                                        ST405438
+TIMETEXT EQU   *                   START OF INTERNAL TEXT STRING        ST405439
+         DC    AL1(TIMEJK)         KEY FOR 'TIME'                       ST405440
+         DC    AL1(2)              TWO PARAMETERS                       ST405441
+         DC    AL1(4)              1ST PARAMETER IS 4 BYTES LONG        ST405442
+TIMEMINS DC    CL4'0000'           MINUTES                              ST405443
+         DC    AL1(2)              2ND PARAMETER IS 2 BYTES LONG        ST405444
+         DC    CL2'00'             SECONDS                              ST405445
+TIMETXTL EQU   *-TIMETEXT          LENGTH OF TIME TEXT                  ST405446
+         SPACE 2                                                        ST405447
+         LTORG                                                          ST405448
+         SPACE 1                                                        ST405449
+         END                                                            ST405450

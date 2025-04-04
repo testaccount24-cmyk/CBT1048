@@ -1,0 +1,212 @@
+         TITLE 'BUDGIE3U - INTERNAL MACROS'                             U 000010
+         MACRO                                                          U 000020
+         $CB   &PRINT=OFF                                               U 000030
+         PUSH PRINT                PRESERVE CURRENT PRINT STATUS        U 000040
+         PRINT &PRINT              ESTABLISH NEW PRINT STATUS           U 000050
+               TITLE 'CB02 - CB02 CONTROL BLOCK'                        U 000060
+         CB02  ,                   GENERATE DSECT                       U 000070
+               TITLE 'CCB  - CENTRAL CONTROL BLOCK'                     U 000080
+         CCB   ,                   GENERATE DSECT                       U 000090
+               TITLE '     - BATCH BALANCING REPORT LINES'              U 000100
+      DETAILBB ,                   GENERATE DSECTS                      U 000110
+               TITLE '     - GENERAL EQUATES'                           U 000120
+       EQUATES ,                   GENERATE EQUATES                     U 000130
+               TITLE '     - USER ROUTINE LINKAGE AREA'                 U 000140
+      URTNPARM ,                   GENERATE DSECT                       U 000150
+         POP   PRINT               RESTORE ORIGINAL PRINT STATUS        U 000160
+         MEND                                                           U 000170
+         SPACE 5                                                        U 000180
+BUDGIE3U CSECT                                                          U 000190
+         $CB   ,                   GENERATE DSECTS AND EQUATES          U 000200
+         TITLE 'BUDGIE3U - USER ROUTINE PROCESSING'                     U 000210
+        SCSECT U                   DEFINE START OF CSECT BUDGIE3U       U 000220
+         ENTRY URTCALL             INVOKE USER PROCESSING               U 000230
+         ENTRY URTDLET             DELETE USER ROUTINES                 U 000240
+         ENTRY URTLOAD             LOAD USER ROUTINES                   U 000250
+         TITLE 'BUDGIE3U - USER ROUTINE PROCESSING'                     U 000260
+*********************************************************************** U 000270
+*        LOAD AND INITIALISE USER EXIT                                * U 000280
+*********************************************************************** U 000290
+         SPACE 1                                                        U 000300
+URTLOAD  SUBIN ,                   ENTR ROUTINE                         U 000310
+         USING URTNPARM,R9         ESTABLISH L/A ADDRESSABILITY         U 000320
+         USING CB02NTRY,R10        ESTABLISH CB02 ADDRESSABILITY        U 000330
+         MVC   URTNRTN,CB02URTN    RETRIEVE SUBROUTINE NAME             U 000340
+         LOAD  EPLOC=URTNRTN       LOAD SUBROUTINE                      U 000350
+         LR    R2,R0               SAVE ENTRY POINT ADDRESS             U 000360
+         LR    R15,R0              ESTABLISH ROUTINE ADDRESS FOR BALR   U 000370
+         LA    R1,$PTRPARM         POINT R1 AT ADR OF L/A               U 000380
+         MVI   URTNCSW,C'1'        INDICATE INITIALISATION              U 000390
+         BALR  R14,R15             EXECUTE USER ROUTINE                 U 000400
+         DROP  R10,R9              DROP ADDRESSABILITY                  U 000410
+         USING CB02NTRY,R3         RE-ESTABLISH CB02 ADDRESSABILITY     U 000420
+         L     R3,$FSTCB02         GET ADDR OF 1ST CB02                 U 000430
+         B     *+8                 BYPASS LOAD 1ST TIME                 U 000440
+URTNL01  EQU   *                   LOOP BACK POINT FOR MULTIPLE PASSES  U 000450
+         L     R3,CB02CB02         RETRIEVE NEXT POINTER                U 000460
+         LTRR  R3,R3               TEST FOR END OF CHAIN                U 000470
+         BZ    URTNL02             BRANCH IF END                        U 000480
+         CLC   CB02URTN,URTNRTN    TEST IF SAME ROUTINE                 U 000490
+         BNE   URTNL01             PROCESS NEXT IF NOT                  U 000500
+         ST    R2,CB02ARTN         STORE ADDRESS OF ENTRY POINT         U 000510
+         OI    CB02SW,SW02IRTN     INDICATE RTN LOADED & INITIALISED    U 000520
+         B     URTNL01             PROCESS NEXT                         U 000530
+URTNL02 SUBOUT ,                   RETURN TO CALLER                     U 000540
+         DROP  R3                  DROP CB02 ADDRESSABILITY             U 000550
+         EJECT                                                          U 000560
+*********************************************************************** U 000570
+*        TERMINATE AND DELETE A USER'S SUBROUTINE.  ON ENTRY,         * U 000580
+*         R10 POINTS AT THE RELEVANT CB02 CONTROL BLOCK9              * U 000590
+*********************************************************************** U 000600
+         SPACE 1                                                        U 000610
+URTDLET  SUBIN SAVE=R10            PR*SERVE REGISTERS                   U 000620
+         USING URTNPARM,R9         ESTABLISH L/A ADDRESSABILITY         U 000630
+         USING CB02NTRY,R10        ESTABLISH CB02 ADDRESSABILITY        U 000640
+         L     R9,$PTRPRMU         POINT R9 AT L/A CONTROL DATA         U 000650
+         LA    R1,$PTRPARM         POINT R1 AT L/A ADRESS               U 000660
+         MVI   URTNCSW,C'4'        INDICATE TERMINATION                 U 000670
+         MVC   URTNRTN,CB02URTN    PRESERVE NAME OF USER ROUTINE        U 000680
+         L     R15,CB02ARTN        GET ROUTINE ENTRY POINT ADDRESS      U 000690
+         BALR  R14,R15             ALLOW ROUTINE TO TERMINATE           U 000700
+         DROP  R10,R9              DROP ADDRESSABILITY                  U 000710
+         USING CB02NTRY,R3         RE-ESTABLISH CB02 ADDRESSABILITY     U 000720
+        DELETE EPLOC=URTNRTN       DELETE SUBROUTINE FROM CORE          U 000730
+         L     R3,$FSTCB02         GET ADDRESS OD 1ST CB02              U 000740
+         B     *+8                 BYPASS LOAD 1ST TIME                 U 000750
+URTND01  EQU   *                   LOOP BACK POINT FOR MULTIPLE PASSES  U 000760
+         L     R3,CB02CB02         GET NEXT POINTER                     U 000770
+         LA    R3,0(,R3)           PURIFY HIGH ORDER BYTE               U 000780
+         LTR   R3,R3               TEST FOR END OF CHAIN                U 000790
+         BZ    URTND02             BRANCH IF END                        U 000800
+         CLC   CB02URTN,URTNRTN    TEST IF SAME ROUTINE                 U 000810
+         BNE   URTND01             PROCESS NEXT IF NOT                  U 000820
+         XC    CB02ARTN,CB02ARTN   ZEROISE ENTRY POINT ADDRESS          U 000830
+         NI    CB02SW,FF-SW02IRTN  INDICATE ROUTINE NOT PRESENT         U 000840
+         B     URTND01             PROCESS NEXT                         U 000850
+         DROP  R3                  DROP CB02 ADDRESSABILITY             U 000860
+URTND02 SUBOUT RESTORE=R10         RESTORE REGISTERS & RETURN           U 000870
+         EJECT                                                          U 000880
+*********************************************************************** U 000890
+*        INVOKE USER ROUTINE                                          * U 000900
+*********************************************************************** U 000910
+         SPACE 1                                                        U 000920
+*        ON ENTRY, R10 POINTS AT THE CURRENT CB02 ELEMENT               U 000930
+         SPACE 1                                                        U 000940
+         USING CB02NTRY,R10        ESTABLISH ADDRESSABILITY TO CB02     U 000950
+         USING URTNPARM,R9         ESTABLISH LINKAGE AREA ADDRESSABILIT U 000960
+         USING DETAILBB,R7         ESTABLISH B/B REPORT ADDRESSABI.TY   U 000970
+URTCALL  SUBIN SAVE=(R4,R9)        PRESEREV REGISTERS                   U 000980
+         L     R9,$PTRPRMU         GET ADDR OF L/A CONTROL DATA         U 000990
+         TM    CB02SW,SW02IRTN     TEST IF RTN LOADED & INITIALISED     U 001000
+         BO    URTNC00             BYPASS INITIALISATION IF DONE        U 001010
+         CBAL  R4,URTLOAD          LOAD & INITIALISE USER ROUTINE       U 001020
+URTNC00  MVI   URTNRSW2,C'0'       INDICTAE 'DO NOT RETURN' LEST USER F U 001030
+         CLI   URTNCSW,C'5'        IS THIS AN R5 INVAOCATION            U 001040
+         BE    URTNC01             BR IF ONVOKED BY R5                  U 001050
+         CLI   URTNCSW,C'6'        IS THIS END-IF-BATCH                 U 001060
+         BE    URTNC01             BR IF END-OF-BATCH                   U 001070
+         MVI   URTNCSW,C'3'        ASSUME DETAIL RECORD                 U 001080
+         TM    PSWITCH,PSWBCARD    TEST IF BATCH CARD                   U 001090
+         BNO   *+8                 BRANCH IF NOT                        U 001100
+         MVI   URTNCSW,C'2'        INDICATE BATCH CARD                  U 001110
+URTNC01  EQU   *                   LOOP BACK POINT FOR MULTIPLE PASSES  U 001120
+         MVI   URTNRSW1,C' '       CLEAR ...                            U 001130
+         MVC   URTNMESS,$SPACES    ... LINKAGE ...                      U 001140
+         MVC   URTNPOS(4),$ZEROES  ... FIELDS                           U 001150
+         LA    R1,$PTRPARM         POINT R1 AT ADDRESS OF L/A           U 001160
+         L     R15,CB02ARTN        GET ENTRY POINT ADDRESS              U 001170
+         BALR  R14,R15             EXECUTE USER'S ROUTINE               U 001180
+         CLI   URTNRSW1,C'2'       IS RECORD TO BE DELETED              U 001190
+         BNE   *+14                BR IF NOT                            U 001200
+         MVC   DTBBFLAG-1(6),=C'DELETE' SET UP DELETE MESSAGE           U 001210
+         OI    MASTER,SWMPRINT     ENSURE LINE WILL BE PRINTED          U 001220
+         CLI   URTNRSW1,C'1'       IS BATCH TO BE REJECTED              U 001230
+         BNE   *+14                BR IF NOT                            U 001240
+         MVC   DTBBFLAG,=C'****'   ADD REJECT FLAG                      U 001250
+         OI    MASTER,SWMPRINT     ENSURE LINE WILL BE PRINTED          U 001260
+         CLC   URTNMESS,$SPACES    TEST IF MESSAGE SUPPLIED             U 001270
+         BE    *+14                BRANCH IF NOT                        U 001280
+         MVC   DTBBEMSS,URTNMESS   ADD MESSAGE TO LINE                  U 001290
+         OI    MASTER,SWMPRINT     INDICATE PRINT NECESSARY             U 001300
+         CLC   URTNPOS(4),$ZEROES  TEST IF ERROR FIELD INDICATED        U 001310
+         BE    URTNC02             BRANCH IF NOT                        U 001320
+         EJECT                                                          U 001330
+*********************************************************************** U 001340
+*        INVOKE USER RTN ( CONT'D )                                   * U 001350
+*********************************************************************** U 001360
+         SPACE 1                                                        U 001370
+         OI    MASTER,SWMPRINT     INDICATE PRINT NECESSARY             U 001380
+         CBAL  R4,CONVPL           CONVERT PPLL TO BINARY               U 001390
+         LA    R3,$ULINEPL         POINT AT PL DESCRIPTOR               U 001400
+         CBAL  R4,UNDRSCR          UNDERLINE FIELD IN ERROR             U 001410
+URTNC02  TM    MASTER,SWMPRINT     TEST IF LINE SHOULD BE PRINTED       U 001420
+         BZ    URTNC03             BYPASS PRINTING IF NOT               U 001430
+         CLC   DTBBEMSS,$SPACES    WAS ERROR MESSAGE SUPPLIED           U 001440
+         BNE   *+10                BR IF YES                            U 001450
+         MVC   DTBBEMSS,BBMESS01   ADD DEFAULT ERROR MESSAGE TO LINE    U 001460
+         CBAL  R4,PRNTBBL          PRINT ERROR MESSAGE                  U 001470
+         NI    MASTER,FF-SWMPRINT  SET OFF PRINT SWITCH                 U 001480
+         SPACE 5                                                        U 001490
+*********************************************************************** U 001500
+*        CONT'D OVERLEAF                                              * U 001510
+*********************************************************************** U 001520
+         EJECT                                                          U 001530
+*********************************************************************** U 001540
+*        INVOKE USER RTN ( CONT'D )                                   * U 001550
+*********************************************************************** U 001560
+         SPACE 1                                                        U 001570
+URTNC03  CLI   URTNRSW1,C'2'       IS RECORD TO BE DELETED              U 001580
+         BNE   *+12                BR IF NOT TO BE DELETED              U 001590
+         OI    PSWITCH,PSWDLETE    FLAG TO DELETE RECORD                U 001600
+         B     URTNC04             BYPASS FURTHER FLAG SETTINF          U 001610
+         CLI   URTNRSW1,C'1'       IS IT A HARD ERROR                   U 001620
+         BNE   *+22                BR IF NOT                            U 001630
+         OI    PSWITCH,PSWHARD     SET ON HARD ERROR SW FOR CARD        U 001640
+         OI    MASTER,SWMHARD      SET ON HARD ERROR SW FOR BATCH       U 001650
+         AP    CB02HCNT,$ONE       INCREMENT HARDERROR COUNT            U 001660
+         B     URTNC04             BYPASS FUTTHER SETTING               U 001670
+         CLC   URTNMESS,$SPACES    IS MESSAGE SUPPLIED                  U 001680
+         BE    URTNC04             NO MESSAGE, SO NO ERROR FOUND        U 001690
+         OI    MASTER,SWMSOFT      SET ON SOFT ERROR SW FOR BATCH       U 001700
+         OI    PSWITCH,PSWSOFT     SET ON SOFT ERROR SW FOR CARD        U 001710
+         AP    CB02SCNT,$ONE       INCREMENT SOFTERROR COUNT            U 001720
+URTNC04  CLI   URTNRSW2,C'0'       TEST IF RECORD REQUIED AGAIN         U 001730
+         BNE   URTNC01             LOOP BACK IF YES                     U 001740
+         MVI   URTNCSW,C' '        NULLIFY CALL SWITCH FOR NEXT TIME    U 001750
+        SUBOUT RESTORE=(R4,R9)     RESTORE REGISTERS & RETURN           U 001760
+         DROP  R9,R10              DROP ADDRESSABILITY                  U 001770
+         TITLE 'BUDGIE3U - CONVERT PPLL TO BINARY PL'                   U 001780
+*********************************************************************** U 001790
+*        CONVERT USER'S PPLL TO BINARY PL                             * U 001800
+*********************************************************************** U 001810
+         SPACE 1                                                        U 001820
+         USING URTNPARM,R9         ESTABLISH LINKAGE AREA ADDRESSABILIT U 001830
+CONVPL   SUBIN SAVE=R4             PRESERVE RETURN ARDRESS              U 001840
+         XC    $ULINEPL,$ULINEPL   ZEROISE RESULT FIELD LEST NOT NUMERI U 001850
+         CLC   URTNPOS(4),$ZEROES  WAS PPLL SUPPLIED                    U 001860
+         BE    CONVPLX             EXIT IF NOT                          U 001870
+       NUMERIC URTNPOS             ENSURE PP IS NUMERIC                 U 001880
+         BNE   CONVPLE             GO FLAG ERROR IF NOT                 U 001890
+       NUMERIC URTNLEN             EXSURE THAT LL IS NUMERIC            U 001900
+         BNE   CONVPLE             FLAG AS ERROR ID NOT                 U 001910
+         PACK  $WRKPACK,URTNPOS    PACK PP INTO W/A                     U 001920
+         CVB   R1,$WRKPACK         CONVET PP TO BINARY                  U 001930
+         STC   R1,$ULINEPL         PRESERVE BINARY P IN W/A             U 001940
+         PACK  $WRKPACK,URTNLEN    PACK LL INTO W/A                     U 001950
+         CVB   R1,$WRKPACK         CONVERT LL TO BINARY                 U 001960
+         STC   R1,$ULINEPL+1       PRESERVE BINARY L IN W/A             U 001970
+         B     CONVPLX             GO TO EXIT                           U 001980
+CONVPLE  OI    SWERROR,SWEURTN     FLAG THAT USER RTN IN ERROR          U 001990
+CONVPLX SUBOUT RESTORE=R4          RESTORE AND RETURN                   U 002000
+         DROP R9                   DROP LINKAGE AREA ADDRESSABILITY     U 002010
+         TITLE 'BUDGIE3U - MISCELLANEOUS CONSTANTS AND FIELDS'          U 002020
+BBMESS01 DC    CL30'USER RTN FOUND ERROR: NO MSG'                       U 002030
+         SPACE 1                                                        U 002040
+URTNRTN  DC    CL8' '              NAME OF CURRENT USER ROUTINE         U 002050
+         SPACE 5                                                        U 002060
+        SCSEND U                   TERMINATE CSECT BUDGIE3U             U 002070
+         END                                                            U 002080
+         SPACE 1                                                        U 002090
+         REPRO                                                          U 002100
+ IDENTIFY BUDGIE3U('USER ROUTINE PROCESSING')                           U 002110
+         END                                                            U 002120

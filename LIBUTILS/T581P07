@@ -1,0 +1,407 @@
+T581P07  START 0
+         SPACE 1
+***********************************************************************
+*                                                                     *
+*        PROGRAM ID :              T581P07                            *
+*        DATE WRITTEN :            APRIL, 1974.                       *
+*        LOCATION :                EUROPEAN COMPUTER CENTER           *
+*        AUTHOR :                  J. NOLS                            *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         SPACE 2
+***********************************************************************
+*                                                                     *
+*        THIS PROGRAM PRODUCES FOUR REPORTS :                         *
+*                                                                     *
+*              T581R07A = DATA SET NAME BY VOLUME NUMBER              *
+*              T581R07B = USE OF SCRATCH TAPES AND VOLUME ID. BLANK   *
+*              T581R07C = DUPLICATE TAPE USAGE EXCEPTION REPORT       *
+*              T581R07D = UNASSIGNED TAPE SERIAL NUMBERS              *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        REGISTER  EQUATES    /    HOUSEKEEPING                       *
+***********************************************************************
+         SPACE 1
+         PGMIN EQUATES=YES,USING=(R13)  ESTABLISH ADDRESSABILITY
+         SPACE 3
+         PRINT NOGEN               SUPPRESS MACRO EXPANSION
+         SPACE 3
+***********************************************************************
+*        OPEN THE FILES                                               *
+***********************************************************************
+         SPACE 1
+         OPEN  (T581F100,,T581P07A,(OUTPUT),T581P07B,(OUTPUT),         C
+               T581P07C,(OUTPUT),T581P07D,(OUTPUT))
+         EJECT
+***********************************************************************
+*                                                                     *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+         UT458 ,                   ASK FOR IPL DATE AND TIME
+         MVC   RDATE(9),UTREPORT   MOVE IPL DATE TO TITLE
+         MVC   RTIMEHH(2),UTHHMMSS MOVE IPL TIME
+         MVC   RTIMEMM(2),UTHHMMSS+2      TO TITLE
+         BAL    R4,HLA             PERFORM PRINT HEAD LINES
+         BAL    R4,HLB             PERFORM PRINT HEAD LINES
+         BAL    R4,HLC             PERFORM PRINT HEAD LINES
+         BAL    R4,HLD             PERFORM PRINT HEAD LINES
+         LA    R7,OUTPUTD+6        GET ADDRESS FOR FIRST MOVE REPORT D
+         LA    R8,10
+READ     GET   T581F100,INPUT
+         TM    FLAG,B'11000000'    IS IT A VSAM POINTER ?
+         BO    READ                YES - GO READ NEXT RECORD
+         TM    FLAG,B'01100000'    IS IT A CLUSTER/VOLUME/VSAM D&I
+         BO    READ                YES - GO READ NEXT RECORD
+         TM    FLAG,DATASET        IS IT A DATA SET ENTRY
+         BNO   READ                NO - GO TO NEXT READ
+         BAL   R4,REPORTA          PERFORM PRINT REPORT A
+         CLI   DEVICECD+2,DASD     IS IT A DASD
+         BE    READ                YES - GO TO NEXT READ
+         LA    R1,VOLSER           LOAD ADDRESS OF VOLSER
+         LA    R2,6                LOAD LENGTH OF VOLSER
+LPVOL1   CLI   0(R1),BLANK         TEST IF BLANK IN VOLSER
+         BE    RPTBB               BRANCH IF YES
+         LA    R1,1(R1)            GET ADDRESS FOR NEXT TEST
+         BCT   R2,LPVOL1           REPEAT TEST
+         CLC   VOLSER(3),=C'SCR'   IS IT A SCRATCH TAPE
+         BE    RB
+TBV      CLI   VOLSER,X'FF'
+         BNE   NT
+RB       BAL   R4,REPORTB          PERFORM PRINT ROUTINE REPORT B
+NT       CLC   VOLSER(8),LASTVOLS  TEST IF DUPLICATE TAPE ASSIGNMENT
+         BNE   STVS                NO - GO TO SAVE THIS VOL SER
+         MVC   DUPOUT+133(133),OUTPUT
+         BAL   R4,TFDUP            PERFORM TEST IF FIRST DSN IS PRINTED
+         B     READ                GO TO NEXT READ
+STVS     MVC   LASTVOLS,VOLSER     SAVE THE NUMBER OF THIS VOL SER
+         MVC   DUPOUT(133),OUTPUT
+         CLC   VOLSER,FIRSTVNP     IS IT A PRODUCTION TAPE
+         BNH   READ                NO - GO TO NEXT READ
+         CLI   VOLSER,C'9'
+         BH    READ
+         LA    R1,VOLSER+1         LOAD ADDEESS OF VOLSER+1
+         LA    R2,5                LOAD LENGTH OF VOLSER-1
+LPVOL2   CLI   0(R1),C'0'          TEST IF NUMERIC
+         BL    RPTBB               NO - ERROR
+         CLI   0(R1),C'9'          TEST IF NUMERIC
+         BH    RPTBB               NO - ERROR
+         LA    R1,1(R1)            YES, GET ADDRESS FOR NEXT TEST
+         BCT   R2,LPVOL2           REPEAT TEST
+         B     *+12
+RPTBB    BAL   R4,REPORTBB         GO TO REPORT B
+         B     READ                GO TO NEXT READ
+         PACK  DECIMAL(4),VOLSER   PACK VOL SER
+LOOPUNA  CP    DECIMAL(4),LASTVSP
+         BH    UNASSIGN
+         BL    READ
+         AP    LASTVSP,ONE         ADD ONE TO LAST VOL SER OF PROD TAPE
+         B     READ                GO TO NEXT READ
+UNASSIGN MVC   DECIMAL+4(4),DECIMAL
+         SP    DECIMAL+4(4),LASTVSP
+         CP    DECIMAL+4(4),DIFPVS
+         BH    READ
+         BE    READ
+         UNPK  VSUNA,LASTVSP       UNPACK
+         OI    VSUNA+6,SIGN        FORCE SIGN
+         BAL   R4,REPORTD          PERFORM PRINT ROUTINE REPORT D
+         AP    LASTVSP,ONE         ADD ONE TO LAST VOL SER OF PROD TAPE
+         B     LOOPUNA
+         EJECT
+***********************************************************************
+*        PRINT  ROUTINE FOR REPORT A                                  *
+***********************************************************************
+         SPACE 1
+REPORTA  SUBIN PREFIX=A,SAVE=(R4)
+         MVC   OUTPUT+10(6),VOLSER MOVE VOL SER TO PRINT DETAIL LINE
+         MVC   OUTPUT+21(44),NAME  MOVE DSNAME TO PRINT DETAIL LINE
+         MVC   HEXSTOR,DEVICECD    MOVE DEVICE CODE
+         LA    R5,8                **
+         LA    R6,HEXSTOR           *
+HEXLOOP  MVO   0(5,R6),0(4,R6)      *> CONVERT A FW OF HEX CHARACTERS
+         LA    R6,1(R6)             *     TO DISPLAY FORMAT
+         BCT   R5,HEXLOOP           *
+         TR    HEXSTOR(8),HEXTABLE **
+         MVC   OUTPUT+69(8),HEXSTOR    MOVE DEVICE CODE TO PRINT DET L.
+         MVC   DECIMAL,DSEQ        ALIGNMENT BEFORE LOAD INTO REG
+         LH    R5,DECIMAL          LOAD DS SEQ INTO REG.5
+         LH    R6,DECIMAL+2        LOAD MULTI-VOL SEQ INTO REG.6
+         CVD   R5,DECIMAL          CONVERT TO PACKED
+         UNPK  OUTPUT+84(3),DECIMAL+6(2)  UNPACK
+         OI    OUTPUT+86,SIGN      FORCE SIGN
+         CVD   R6,DECIMAL          CONVERT TO PACKED
+         UNPK  OUTPUT+93(3),DECIMAL+6(2)  UNPACK
+         OI    OUTPUT+95,SIGN      FORCE SIGN
+         MVI   OUTPUT,SPACE1       MOVE CONTROL CHAR
+         CP    LINEA,MAXLINE       TEST IF LINE COUNT IS > MAX LINE
+         BNH   PUTA                NO
+         MVI   OUTPUT,SKIP         MOVE CONTROL CHAR
+         MVI   SWA+1,X'00'
+PUTA     PUT   T581P07A,OUTPUT
+         AP    LINEA,ONE           ADD ONE TO LINE COUNT
+SWA      B     ENDRA
+         BAL    R4,HLA             PERFORM PRINT HEAD LINES
+         MVI   SWA+1,X'F0'
+ENDRA    SUBOUT PREFIX=A,RESTORE=(R4)
+         EJECT
+***********************************************************************
+*        PRINT  ROUTINE FOR REPORT B                                  *
+***********************************************************************
+         SPACE 1
+REPORTBB MVC   OUTPUT+104(16),=C'VOL=ERROR   ****'
+         B     NOVT
+REPORTB  CLI   VOLSER,X'FF'
+         BNE   NBV
+         MVC   OUTPUT+104(16),=C'VOL=BLANK   ****'
+         B     NOVT
+NBV      EQU   *
+         CLI   FLAG,OF1            IS IT A OVERFLOW TAPE (TEST 1)
+         BE    OVT                 YES
+         CLI   FLAG,OF2            IS IT A OVERFLOW TAPE (TEST 2)
+         BNE   NOVT                NO
+OVT      MVC   OUTPUT+104(16),=C'OVERFLOW    ****'     MOVE TITLE SP
+NOVT     SUBIN PREFIX=B,SAVE=(R4)
+         MVI   OUTPUT,SPACE1       MOVE CONTROL CHAR
+         CP    LINEB,MAXLINE       TEST IF LINE COUNT IS > MAX LINE
+         BNH   PUTB                NO
+         MVI   OUTPUT,SKIP         MOVE CONTROL CHAR
+         MVI   SWB+1,X'00'
+PUTB     PUT   T581P07B,OUTPUT
+         AP    LINEB,ONE           ADD ONE TO LINE COUNT
+         MVI   OUTPUT+104,BLANK    CLEAR
+         MVC   OUTPUT+105(15),OUTPUT+104      TITLE SP
+SWB      B     ENDRB
+         BAL    R4,HLB             PERFORM PRINT HEAD LINES
+         MVI   SWB+1,X'F0'
+ENDRB    SUBOUT PREFIX=B,RESTORE=(R4)
+         SPACE 3
+***********************************************************************
+*        PRINT  ROUTINE FOR REPORT C                                  *
+***********************************************************************
+         SPACE 1
+REPORTC  SUBIN PREFIX=C,SAVE=(R4)
+         MVI   OUTPUT,SPACE1       MOVE CONTROL CHAR
+         CP    LINEC,MAXLINE       TEST IF LINE COUNT IS > MAX LINE
+         BNH   PUTC                NO
+         MVI   OUTPUT,SKIP         MOVE CONTROL CHAR
+         MVI   SWC+1,X'00'
+PUTC     PUT   T581P07C,OUTPUT
+         AP    LINEC,ONE           ADD ONE TO LINE COUNT
+SWC      B     ENDRC
+         BAL    R4,HLC             PERFORM PRINT HEAD LINES
+         MVI   SWC+1,X'F0'
+ENDRC    SUBOUT PREFIX=C,RESTORE=(R4)
+         SPACE 2
+TFDUP    SUBIN PREFIX=X,SAVE=(R4)
+         CLI   DUPOUT,X'FF'
+         BE    NL
+         MVC   OUTPUT,DUPOUT
+         BAL   R4,REPORTC          PERFORM PRINT ROUTINE REPORT C
+         MVI   DUPOUT,X'FF'
+NL       MVC   OUTPUT,DUPOUT+133
+         BAL   R4,REPORTC          PERFORM PRINT ROUTINE REPORT C
+         SUBOUT PREFIX=X,RESTORE=(R4)
+         EJECT
+***********************************************************************
+*        PRINT  ROUTINE FOR REPORT D                                  *
+***********************************************************************
+         SPACE 1
+REPORTD  SUBIN PREFIX=D,SAVE=(R4)
+         MVC   0(6,R7),UNANUB      MOVE NUMBER UNASSIGN
+         LA    R7,9(R7)            GET ADDRESS FOR NEXT MOVE
+         BCTR  R8,R4
+         LA    R7,OUTPUTD+6        GET ADDRESS FOR FIRST MOVE REPORT D
+         LA    R8,10
+         MVI   OUTPUTD,SPACE2      MOVE CONTROL CHAR
+         CP    LINED,MAXLINE       TEST IF LINE COUNT IS > MAX LINE
+         BNH   PUTD                NO
+         MVI   OUTPUTD,SKIP        MOVE CONTROL CHAR
+         MVI   SWD+1,X'00'
+PUTD     PUT   T581P07D,OUTPUTD
+         AP    LINED,TWO           ADD TWO TO LINE COUNT
+         MVI   OUTPUTD,BLANK       * CLEAR
+         MVC   OUTPUTD+1(132),OUTPUTD   *    WA
+SWD      B     ENDRD
+         BAL    R4,HLD             PERFORM PRINT HEAD LINES
+         MVI   SWD+1,X'F0'
+ENDRD    SUBOUT PREFIX=D,RESTORE=(R4)
+         EJECT
+***********************************************************************
+*        PRINT ROUTINE FOR HEAD LINES                                 *
+***********************************************************************
+         SPACE 1
+HLA      AP    PAGEA,ONE           ADD ONE TO PAGE COUNT
+         UNPK  PAGE,PAGEA          UNPACK
+         OI    PAGE+2,SIGN         FORCE SIGN
+         MVI   SRCODE,C'A'         MOVE REPORT ID.
+         MVC   TITLE(L'TITLEA),TITLEA   MOVE TITLE OF REPORT
+         PUT   T581P07A,HEADLNE1
+         PUT   T581P07A,HEADLNE2
+         ZAP   LINEA,=P'5'         ZERO AND ADD 5 TO LINE COUNT
+         BR    R4
+         SPACE 1
+HLB      AP    PAGEB,ONE           ADD ONE TO PAGE COUNT
+         UNPK  PAGE,PAGEB          UNPACK
+         OI    PAGE+2,SIGN         FORCE SIGN
+         MVI   SRCODE,C'B'         MOVE REPORT ID.
+         MVC   TITLE(L'TITLEB),TITLEB   MOVE TITLE OF REPORT
+         PUT   T581P07B,HEADLNE1
+         MVC   HEADLNE2+105(16),=C'STATUS    ACTION'   MOVE TITLE SP
+         PUT   T581P07B,HEADLNE2
+         MVI   HEADLNE2+105,BLANK            CLEAR
+         MVC   HEADLNE2+106(15),HEADLNE2+105      TITLE SP
+         ZAP   LINEB,=P'5'         ZERO AND ADD 5 TO LINE COUNT
+         BR    R4
+         SPACE 1
+HLC      AP    PAGEC,ONE           ADD ONE TO PAGE COUNT
+         UNPK  PAGE,PAGEC          UNPACK
+         OI    PAGE+2,SIGN         FORCE SIGN
+         MVI   SRCODE,C'C'         MOVE REPORT ID.
+         MVC   TITLE(L'TITLEC),TITLEC   MOVE TITLE OF REPORT
+         PUT   T581P07C,HEADLNE1
+         PUT   T581P07C,HEADLNE2
+         ZAP   LINEC,=P'5'         ZERO AND ADD 5 TO LINE COUNT
+         BR    R4
+         SPACE 1
+HLD      AP    PAGED,ONE           ADD ONE TO PAGE COUNT
+         UNPK  PAGE,PAGED          UNPACK
+         OI    PAGE+2,SIGN         FORCE SIGN
+         MVI   SRCODE,C'D'         MOVE REPORT ID.
+         MVC   TITLE(L'TITLED),TITLED   MOVE TITLE OF REPORT
+         PUT   T581P07D,HEADLNE1
+         ZAP   LINED,=P'3'         ZERO AND ADD 5 TO LINE COUNT
+         BR    R4
+         SPACE 3
+END      MVI   OUTPUTD,SPACE2      MOVE CONTROL CHAR
+         PUT   T581P07D,OUTPUTD
+         CLOSE (T581F100,,T581P07A,,T581P07B,,T581P07C,,T581P07D)
+         PGMOUT ,                  END OF PROGRAM
+         EJECT
+***********************************************************************
+*        DATA CONTROL BLOCKS                                          *
+***********************************************************************
+         SPACE 1
+T581F100 DCB   DDNAME=T581F100,                                        C
+               DSORG=PS,                                               C
+               RECFM=FB,                                               C
+               MACRF=GM,                                               C
+               LRECL=100,                                              C
+               BLKSIZE=1600,                                           C
+               EODAD=END
+         SPACE 3
+T581P07A DCB   DDNAME=T581P07A,                                        C
+               DSORG=PS,                                               C
+               MACRF=PM,                                               C
+               RECFM=FM,                                               C
+               LRECL=133,                                              C
+               BLKSIZE=133
+         SPACE 3
+T581P07B DCB   DDNAME=T581P07B,                                        C
+               DSORG=PS,                                               C
+               MACRF=PM,                                               C
+               RECFM=FM,                                               C
+               LRECL=133,                                              C
+               BLKSIZE=133
+         SPACE 3
+T581P07C DCB   DDNAME=T581P07C,                                        C
+               DSORG=PS,                                               C
+               MACRF=PM,                                               C
+               RECFM=FM,                                               C
+               LRECL=133,                                              C
+               BLKSIZE=133
+         SPACE 3
+T581P07D DCB   DDNAME=T581P07D,                                        C
+               DSORG=PS,                                               C
+               MACRF=PM,                                               C
+               RECFM=FM,                                               C
+               LRECL=133,                                              C
+               BLKSIZE=133
+         EJECT
+***********************************************************************
+*        WORK AREAS                                                   *
+***********************************************************************
+         SPACE 1
+INPUT    DS    0CL65
+CATLGON  DS    CL6
+NAME     DS    CL44
+FLAG     DS    C
+DEVICECD DS    CL4
+VOLSER   DS    CL6
+DSEQ     DS    CL2
+MVSEQ    DS    CL2
+         DS    CL35
+         SPACE 1
+HEADLNE1 DS    0CL133
+         DC    X'19'
+         DC    CL8'T581P07/'
+SRCODE   DS    C
+         DC    CL10' '
+TITLE    DS    CL50
+         DC    C' DATE             TIME   .  '
+RDATE    EQU   *-21
+RTIMEHH  EQU   *-5
+RTIMEMM  EQU   *-2
+         DC    C'  PAGE  '
+PAGE     DS    CL3
+         DC    CL24' '
+         SPACE 1
+HEADLNE2 DS    0CL133
+         DC    X'11'
+         DC    CL50'           NO           DATA SET NAME             '
+         DC    CL50'                 DEVICE CODE   SEQ.NO   M-V.SEQ.  '
+         DC    CL32' '
+         SPACE 1
+OUTPUT   DC    CL133' '
+OUTPUTD  DC    CL133' '
+DUPOUT   DC    CL133' '
+         DC    CL133' '
+         SPACE 1
+PAGEA    DC    PL2'0'
+PAGEB    DC    PL2'0'
+PAGEC    DC    PL2'0'
+PAGED    DC    PL2'0'
+         SPACE 1
+LINEA    DC    PL2'0'
+LINEB    DC    PL2'0'
+LINEC    DC    PL2'0'
+LINED    DC    PL2'0'
+         SPACE 1
+HEXSTOR  DC    3F'0'
+         SPACE 1
+DECIMAL  DS    D
+VSUNA    DS    CL7
+UNANUB   EQU   VSUNA+1
+LASTVSP  DC    PL4'1'
+LASTVOLS DC    CL8' '
+DIFPVS   DC    PL4'500'
+         EJECT
+***********************************************************************
+*        CONTANTS, EQUATES AND  LITERAL POOL                          *
+***********************************************************************
+         SPACE 1
+TITLEA   DC    C'DATA SET NAME BY VOLUME NUMBER                    '
+TITLEB   DC    C'USE OF SCRATCH TAPES AND VOLUME ID. BLANK         '
+TITLEC   DC    C'DUPLICATE TAPE USAGE EXCEPTION REPORT             '
+TITLED   DC    C'UNASSIGNED TAPE SERIAL NUMBERS                    '
+         SPACE 1
+ONE      DC    P'1'
+TWO      DC    P'2'
+MAXLINE  DC    P'55'
+FIRSTVNP DC    C'000000'
+HEXTABLE DC    C'0123456789ABCDEF'
+         SPACE 1
+DATASET  EQU   B'01000000'
+DASD     EQU   X'20'
+OF1      EQU   X'40'
+OF2      EQU   X'48'
+SPACE1   EQU   X'09'
+SPACE2   EQU   X'11'
+BLANK    EQU   X'40'
+SKIP     EQU   X'89'
+SIGN     EQU   X'F0'
+         END

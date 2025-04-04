@@ -1,0 +1,175 @@
+         TITLE 'IEA0TI00 EXTENSION TO DETERMINE IF RUN TIME HAS BEEN EXCTSL00010
+               CEEDED'                                                  TSL00020
+         MACRO                                                          TSL00030
+&NAME    CSID  &NONAME                                                  TSL00040
+         LCLC  &NAME1                                                   TSL00050
+&NAME1   SETC  '&NAME'                                                  TSL00060
+         AIF   ('&NONAME' EQ 'NONAME').A01                              TSL00070
+&NAME1   DC    CL8'&SYSECT'        NAME OF CSECT                        TSL00080
+&NAME1   SETC  ' '                                                      TSL00090
+.A01           ANOP                                                     TSL00100
+&NAME1   DC    CL8'&SYSDATE'       DATE OF ASSEMBLY                     TSL00110
+         DC    CL8'&SYSTIME'       TIME OF ASSEMBLY                     TSL00120
+         MEND                                                           TSL00130
+         EJECT                                                          TSL00140
+* WRITTEN BY D. R. HURTGEN                                              TSL00150
+         SPACE 1                                                        TSL00160
+* MONSANTO COMPANY - GENERAL OFFICES                                    TSL00170
+         SPACE 1                                                        TSL00180
+* AUGUST, 1976                                                          TSL00190
+         SPACE 2                                                        TSL00200
+* THIS MODULE CONVERTS THE I/O TIME CHARGES CALCULATED IN THE IEASMFEX  TSL00210
+* EXTENSION INTO THE TIME-OF-DAY CLOCK FORMAT, ADDS IT TO THE I/O TIME  TSL00220
+* ACCUMULATED SO FAR IN THE JOB STEP, AND INCLUDES THIS SUM WITH THE    TSL00230
+* JOB STEP CPU TIME IN DETERMINING WHETHER OR NOT THE RUN TIME WAS      TSL00240
+* EXCEEDED.                                                             TSL00250
+         SPACE 1                                                        TSL00260
+* NO SYSTEM CONTROL BLOCKS EXCEPT THE TIMER SUPERVISOR WORK AREA (FOR   TSL00270
+* POSTING TIME EXCESSION) AND OUR OWN ARE MODIFIED IN THIS CODE.        TSL00280
+         SPACE 2                                                        TSL00290
+* SYSTEM FUNCTIONS AFFECTED BY THIS EXTENSION -                         TSL00300
+*              TIMER SECOND LEVEL INTERRUPT HANDLER                     TSL00310
+*              MODULE - IEAVRTI0, CSECT - IEA0TI00                      TSL00320
+         SPACE 2                                                        TSL00330
+* ENTRY -                                                               TSL00340
+*              FROM AN UNCONDITIONAL BRANCH PLACED IN IEA0TI00 BY NIP   TSL00350
+*              MODULE IEAVNPMC                                          TSL00360
+         SPACE 2                                                        TSL00370
+* SYSTEM STATUS UPON ENTRY TO THIS MODULE -                             TSL00380
+*                                                                       TSL00390
+*        ATTRIBUTES -                                                   TSL00400
+*              SUPERVISOR STATE, PROTECT KEY ZERO, REFRESHABLE,         TSL00410
+*              DISPATCHER AND SPACE ALLOCATION LOCKS HELD, DISABLED     TSL00420
+*              EXCEPT FOR MACHINE CHECKS                                TSL00430
+*                                                                       TSL00440
+*        REGISTER SETTINGS -                                            TSL00450
+*              UPON ENTRY -                                             TSL00460
+*                             0    RETURN ADDRESS TO TSLIH              TSL00470
+*                            12    ADDRESS OF THIS EXTENSION            TSL00480
+*                            13    ADDRESS OF ASCB BEING CHECKED        TSL00490
+*                                                                       TSL00500
+*              DURING EXECUTION -                                       TSL00510
+*                           2-7    WORK REGISTERS                       TSL00520
+*                             8    ADDRESS OF ACCOUNTING SERVICE AREA   TSL00530
+*                             9    ADDRESS OF ACCOUNTING WORK BLOCKS    TSL00540
+*                 1,10-11,14-15    UNUSED                               TSL00550
+*                                                                       TSL00560
+*              REGISTERS 2-9 ARE SAVED AND RESTORED PRIOR TO RETURNING  TSL00570
+         EJECT                                                          TSL00580
+*        NOTE THAT IN BRUSSELS WE USE CPU TIME TO BOMB JOBS OFF, AND    TSL00590
+*         NOT RUN TIME.  CONSEQUENTLY, THIS ROUTINE IS EFFECTIVELY      TSL00600
+*         NO-OPED BY RUNNING ONLY IF A FLAG IS ON IN THE MVT.  THIS FLA TSL00610
+*         IS SET ON ( OR NOT, AS IS THE USUAL CASE ) BY THE NIP ROUTINE TSL00620
+*         ( IEAVNPMC ) WHICH ESTABLISHES THE ACCOUNTING ENVIRONMENT.    TSL00630
+         EJECT                                                          TSL00640
+TSLIHEXT START                                                          TSL00650
+         USING *,BASEREG           ESTABLISH ADDRESSABILITY             TSL00660
+         USING ASADSECT,ASA                                             TSL00670
+         USING CADSECT,AWB                                              TSL00680
+         B     *+28                BRANCH AROUNG IDENTIFIER             TSL00690
+         CSID  ,                   IDENTIFY CSECT LEST DUMP             TSL00700
+         STM   WA,AWB,SAVEAREA     SAVE REGISTERS                       TSL00710
+         L     WA,FLCCVT           GET THE ADDRESS OF THE               TSL00720
+         L     WB,CVTUSER(,WA)       MVT VIA THE CVT                    TSL00730
+         LTR   WB,WB               TEST TO ENSURE MVT EXISTS            TSL00740
+         BZ    CHEKTIME              EXIT FROM ROUTINE IF NO MVT        TSL00750
+         L     AWB,0(,WB)          GET ADDR. OF ACCOUNTING WORK BLOCK   TSL00760
+         LH    WA,ASCBASID(,ASCB)  GET ASID FOR                         TSL00770
+         SLL   WA,2                  INDEXING INTO THE MVT              TSL00780
+         L     ASA,0(WA,WB)        ASA = ASA ADDRESS FOR THIS ASCB      TSL00790
+         L     WC,ASCBEJST(,ASCB)  SET UP IN CASE THERE IS NO ASA       TSL00800
+         LTR   ASA,ASA             Q.-IS THERE ONE                      TSL00810
+         BZ    CHEKTIME            B.-NO - THIS SHOULD NOT OCCUR        TSL00820
+         L     WB,ASAIOBET         WB = I/O TIME NOT YET CONVERTED      TSL00830
+         LM    WE,WF,ASAIOCHG      SET UP IN CASE WB IS ZERO            TSL00840
+         LTR   WB,WB               Q.-IS IT                             TSL00850
+         BZ    GETCPUTM            B.-YES, BYPASS CALCULATIONS          TSL00860
+         SR    WA,WA                                                    TSL00870
+         CS    WB,WA,ASAIOBET      TRY TO RESET THE FIELD               TSL00880
+         BNE   *-4                 B.-UNSUCCESSFUL                      TSL00890
+         AL    WB,AWBFACHA         FACTOR DOWN I/O TIME TO BASE MACHINE TSL00900
+         D     WA,AWBFACTR           SPEED AND                          TSL00910
+         M     WA,AWBTODC            CONVERT TO TOD CLOCK FORMAT        TSL00920
+         LM    WC,WD,ASAIOCHG      GET ACCUMULATED I/O TIME FOR STEP    TSL00930
+CSLOOP   LR    WE,WC               SET UP FOR CDS INSTRUCTION           TSL00940
+         LR    WF,WD                                                    TSL00950
+         ALR   WE,WA               UPDATE ACCUMULATED I/O TIME          TSL00960
+         ALR   WF,WB                                                    TSL00970
+         BC    12,*+8              B.-IF NO CARRY                       TSL00980
+         LA    WE,1(,WE)           REFLECT CARRY OUT                    TSL00990
+         CDS   WC,WE,ASAIOCHG      TRY TO STORE UPDATED VALUE           TSL01000
+         BNE   CSLOOP              B.-NOT SUCCESSFUL - TRY AGAIN        TSL01010
+GETCPUTM L     WB,FLCCVT           GET ADDRESS OF CVT                   TSL01020
+         L     WB,CVTUSER(,WB)     GET ADDRESS OF MVT                   TSL01030
+         LM    WC,WD,ASCBEJST(ASCB)     GET ACCUM. CPU TIME FOR STEP    TSL01040
+         USING MVTDSECT,WB         ESTABLISH MVT ADDRESSABILITY         TSL01050
+         TM    MVTFLAG1,MVTFTEXT   IS RUN TIME TO BE USED               TSL01060
+         BZ    CHEKTIME              EXIT FROM ROUTINE IF NOT REQUIRED  TSL01070
+         DROP  WB                  DROP MVT ADDRESSABILITY              TSL01080
+         ALR   WC,WE               COMBINE CPU TIME PLUS I/O TIME       TSL01090
+         ALR   WD,WF                                                    TSL01100
+         BC    12,*+8              B.-IF NO CARRY                       TSL01110
+         LA    WC,1(,WC)           REFLECT CARRY OUT                    TSL01120
+CHEKTIME C     WC,ASCBJSTL(,ASCB)  Q.-HAS TASK EXCEEDED TIME LIMIT      TSL01130
+         BNH   GETOUT              B.-NO                                TSL01140
+         L     WA,FLCCVT           GET THE ADDRESS OF THE TIMER SUPER-  TSL01150
+         L     WA,CVTTPC(,WA)        VISOR WORK AREA VIA THE CVT        TSL01160
+         MVI   VIOL(WA),X'8F'      INDICATE TIME VIOLATION              TSL01170
+GETOUT   LM    WA,AWB,SAVEAREA     RESTORE REGISTERS                    TSL01180
+         LR    BASEREG,R0          'BR    R0' IS A PERFORMANCE NO-NO    TSL01190
+         BR    BASEREG             RETURN TO TSLIH                      TSL01200
+         EJECT                                                          TSL01210
+*                        EQUATES USED IN THIS MODULE                    TSL01220
+         SPACE 3                                                        TSL01230
+*                                  REGISTERS                            TSL01240
+         SPACE 1                                                        TSL01250
+R0       EQU   0                   RETURN ADDRESS TO TSLIH              TSL01260
+*              1                   UNUSED                               TSL01270
+WA       EQU   2                   WORK                                 TSL01280
+WB       EQU   3                   WORK                                 TSL01290
+WC       EQU   4                   WORK                                 TSL01300
+WD       EQU   5                   WORK                                 TSL01310
+WE       EQU   6                   WORK                                 TSL01320
+WF       EQU   7                   WORK                                 TSL01330
+ASA      EQU   8                   ADDRESS OF ACCOUNTING SERVICE AREA   TSL01340
+AWB      EQU   9                   ADDRESS OF ACCOUNTING WORK BLOCK     TSL01350
+*              10                  UNUSED                               TSL01360
+*              11                  UNUSED                               TSL01370
+BASEREG  EQU   12                  BASE REGISTER                        TSL01380
+ASCB     EQU   13                  ADDRESS OF ASCB BEING CHECKED        TSL01390
+*              14                  UNUSED                               TSL01400
+*              15                  UNUSED                               TSL01410
+         EJECT                                                          TSL01420
+*                        DISPLACEMENTS INTO THE -                       TSL01430
+         SPACE 1                                                        TSL01440
+*                                - CVT -                                TSL01450
+CVTTPC   EQU   88                  ADDRESS OF TIMER SUPV. WORK AREA     TSL01460
+CVTUSER  EQU   204                 ADDRESS OF MONSANTO VECTOR TABLE     TSL01470
+         SPACE 1                                                        TSL01480
+*                                - ASCB -                               TSL01490
+ASCBASID EQU   36                  ADDRESS SPACE IDENTIFIER             TSL01500
+ASCBEJST EQU   64                  ELAPSED JOB STEP TIMING (CPU TIME) - TSL01510
+*                                    64 BIT UNSIGNED BINARY             TSL01520
+ASCBJSTL EQU   80                  JOB STEP TIME LIMIT -                TSL01530
+*                                    32 BIT UNSIGNED BINARY             TSL01540
+         SPACE 1                                                        TSL01550
+*                                - PSA -                                TSL01560
+FLCCVT   EQU   16                  ADDRESS OF CVT                       TSL01570
+         SPACE 1                                                        TSL01580
+*                                - TPC -                                TSL01590
+TPCWORK  EQU   264                                                      TSL01600
+VIOL     EQU   TPCWORK+7                                                TSL01610
+         EJECT                                                          TSL01620
+*                        CONSTANTS AND WORK AREAS                       TSL01630
+         SPACE 1                                                        TSL01640
+         LTORG *                                                        TSL01650
+SAVEAREA DS    (AWB-WA+1)F                                              TSL01660
+         EJECT                                                          TSL01670
+         $MVT                                                           TSL01680
+         EJECT                                                          TSL01690
+        $MCA                                                            TSL01700
+         EJECT                                                          TSL01710
+        $MASA                                                           TSL01720
+TSLIHEXT CSECT                                                          TSL01730
+        $MDLENTH                                                        TSL01740
+         END                                                            TSL01750

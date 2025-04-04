@@ -1,0 +1,1376 @@
+         TITLE 'BATCH BALANCING SUITE FRONT-END'
+BUDGIE1  CSECT
+         PRINT ON,GEN,NODATA
+         SPACE 1
+*        REGISTER EQUATES AND USAGE
+         SPACE 1
+R0       EQU   0                   WORK REGISTER
+R1       EQU   1                   WORK REGISTER
+R2       EQU   2                   SUB-ROUTINE CONTROL INFORMATION
+R3       EQU   3                   PTR TO SUB-FIELD OFFSET AND LENGTH
+R4       EQU   4                   BAL RETURN ADDRESS
+R5       EQU   5                   ADDRESS OF SYSPRINT BUFFER
+R6       EQU   6                   ADDRESS OF SYSUT1 / SYSIN  BUFFER
+R7       EQU   7                   ADDRESS OF RECORD FROM / TO SORT
+R8       EQU   8                   POINTER TO MS02-TABLE ELEMENT
+R9       EQU   9                   WORK REGISTER
+R10      EQU   10                  WORK REGISTER UNALTERED BY SUB RTNS
+R11      EQU   11                  WORK REGISTER
+R12      EQU   12                  BASE REGISTER 2
+R13      EQU   13                  SAVE AREA POINTER / BASE REGISTER 1
+R14      EQU   14                  BALR RETURN ADDRESS
+R15      EQU   15                  BALR ROUTINE ADDRESS / WORK REGISTER
+         SPACE 5
+*        PROGRAMMER      D.A.MOORCROFT
+*        DATE WRITTEN    FEBRUARY, 1974
+         SPACE 1
+*        PURPOSE - THIS PROGRAM SORTS THE INPUT TO A BUDGIE
+*         SUITE INTO ASCENDING BATCH NUMBER SEQUENCE, AND INTO
+*         RECORD NUMBER WITHIN BATCH.  THE PROGRAM CAN DEAL
+*         WITH ANY LENGTH OF INPUT DATA, ANY BATCH CARD FORMAT,
+*         AND ANY NUMBER OF DIFFERENT FORMATS IN ONE RUN.
+         SPACE 1
+*        LIMITATIONS - BUDGIE1 IMPOSES A NUMBER OF RESTRICTIONS
+*         AND LIMITATIONS, BUT MOST ARE LESS RIGOROUS THAN THOSE
+*         IMPOSED BY OTHER PROGRAMS IN THE SUITE :-
+*         1. MAXIMUM RECORD LENGTH 256 BYTES
+*         2. MAXIMUM LENGTH OF BATCH CARD ID IS 8 BYTES
+*         3. MAXIMUM NUMBER OF RECORDS IN A BATCH IS 10000.
+*         4. MAXIMUM NUMBER OF RECORDS THAT CAN BE INSERTED AFTER
+*            ANY GIVEN CARD IS 10000.
+*         5. INPUT DATA IS NEITHER VALIDATED NOR EDITED FOR
+*            CONSISTENCY.
+*         6. MAXIMUM LENGTH OF BATCH NUMBER IS 16 BYTES.
+*         7. MAXIMUM NUMBER OF COMPONENT FIELDS FOR THE BATCH
+*            NUMBER IS 5.
+*         8. IF SPECIAL ( *** ) BATCH CARDS ARE USED FOR CORRECTION
+*            BATHCES, THEN ONLY ONE TYPE OF BATCH CARD ( I.E. ONLY
+*            ONE MS02 CARD ) MAY BE USED.
+         EJECT
+*        DEFAULTS - CERTAIN DEFAULTS ARE ASSUMED BY BUDGIE1 IN
+*         THE ABSENCE OF NECESSARY CONTROL INFORMATION :-
+*         1. INPUT & OUTPUT RECORD LENGTH DEFAULTS TO 80.
+*         2. BLKSIZE DEFAULTS TO LRECL.
+*         3. NON-NUMERIC OR ABSENT NUMERIC FIELDS DEFAULT TO 0.
+         SPACE 1
+*        TECHNIQUE - THE BUDGIE CONTROL CARDS ARE READ AND
+*         THE INFORMATION FROM MS02 CARDS IS REFORMATTED AND
+*         STORED IN A DYNAMICALLY ACQUIRED TABLE.  THE INPUT
+*         DATA IS READ, AND A PREFIX IS ADDED TO EACH RECORD
+*         BEFORE IT IS PASSED TO THE SORT.  THE PREFIX CONTAINS
+*         BATCH NUMBER AND RECORD NUMBER WITHIN BATCH, AND A
+*         FLAG THAT ENSURES DELETION BATCH CARDS PRECEDE BATCH
+*         CARDS OF THE SAME NUMBER, AND THAT DATA FOLLOWS THE
+*         RIGHT BATCH CARD NO MATTER HOW INVALID IT IS.
+*         UNRECOGNISABLE CARDS ARE FORCED TO THE FRONT OF THE
+*         OUTPUT FILE BEFOTO AVOID CORRUPTING GOOD BATCHES.
+*         AFTER SORTING, THE PREFIX IS REMOVED BEFORE THE
+*         RECORDS ARE WRITTEN.
+*
+*        (MS02 CONTROL INFORMATION IN THE FORM PPL - POSITION
+*         AND LENGTH - IS CONVERTED TO TWO ADJACENT ONE-BYTE
+*         BINARY FIELDS - PL).
+         SPACE 1
+*        FILES :-
+*         SYSPRINT - MESSAGE DATA SET
+*         SYSIN    - BUDGIE CONTROL CARDS
+*         SYSUT1   - INPUT BATCHES
+*         SYSUT2   - OUTPUT BATCHES
+*         WORK     - USED IF TRAILING BATCH CARDS ARE ENTERED
+*         DELETED  - DELETED RECORDS ( OPTIONAL )
+*         SORTLIB  - SORT/MERGE LIBRARY
+*         SYSLIST  - SORT/MERGE MESSAGE DATA SET
+*         SORTWK01 - SORT/MERGE WORK DATA SET
+*         SORTWK02 - SORT/MERGE WORK DATA SET
+*         SORTWK03 - SORT/MERGE WORK DATA SET
+         EJECT
+*        PARMS:
+*            DELETE     - DELETE UNRECOGNISED RECORDS.  IF DD STATEMENT
+*                         DELETED IS PRESENT THESE RECORDS WILL BE
+*                         WRITTEN TO IT.
+*            TRAILING   - INPUT CONSISTS OF DATA CARDS FOLLOWED BY THE
+*                         BATCH CARD.  OUTPUT WILL HAVE LEADING B/C.
+*            UNLIKE     - SYSUT1 INPUT CONSISTS OF CONCATENATED DATA
+*                         SETS ON UNLIKE DEVICE TYPES.
+         SPACE 5
+*        ABENDS:
+*               8 - I/O ERROR IN BUDGIE1
+*              12 - REQUIRED DD STATEMENT MISSING
+*              16 - ERROR IN SORT
+*             999 - I/O ERROR IN SORT
+         SPACE 5
+*        CONDITION CODES:
+*               0 - GOOD END OF PROGRAM
+*              16 - NO INPUT DATA
+         EJECT
+***********************************************************************
+*        FORMAT OF MS02 CARD                                          *
+***********************************************************************
+         SPACE 1
+MS02CARD DSECT
+MS02ID   DS    CL4                 CARD ID
+MS02PBCI DS    CL2                 POS'N OF BATCH CARD IDENTIFIER
+MS02LBCI DS    CL1                 LENGTH OF BATCH CARD IDENTIFIER
+MS02BCI  DS    CL8                 LITERAL BATCH CARD IDENTIFIER
+MS02CBCI DS    CL8                 LITERAL ID FOR CORRECTION BATCHES
+         DS    CL3                 UNUSED
+MS02PCRN DS    CL2                 POSITION OF CORR'N DATA RECORD NO.
+MS02LCRN DS    CL1                 LENGTH OF CORR'N DATA RECORD NO.
+MS02ORL  DS    CL3                 OUTPUT RECORD LENGTH
+MS02OCTL DS    CL1                 OUTPUT CONTROL SWITCH
+MS02URTN DS    CL8                 NAME OF USER SUB-ROUTINE
+MS02PBN1 DS    CL2                 POSN OF 1ST SEGMENT OF BATCH NO.
+MS02LBN1 DS    CL1                 LGTH OF 1ST SEGMENT OF BATCH NO.
+MS02PBN2 DS    CL2                 POSN OF 2ND SEGMENT OF BATCH NO.
+MS02LBN2 DS    CL1                 LGTH OF 2ND SEGMENT OF BATCH NO.
+MS02PBN3 DS    CL2                 POSN OF 3RD SEGMENT OF BATCH NO.
+MS02LBN3 DS    CL1                 LGTH OF 3RD SEGMENT OF BATCH NO.
+MS02PBN4 DS    CL2                 POSN OF 4TH SEGMENT OF BATCH NO.
+MS02LBN4 DS    CL1                 LGTH OF 4TH SEGMENT OF BATCH NO.
+MS02PBN5 DS    CL2                 POSN OF 5TH SEGMENT OF BATCH NO.
+MS02LBN5 DS    CL1                 LGTH OF 5TH SEGMENT OF BATCH NO.
+MS02IRL  DS    CL3                 LENGTH OF RECORD INTERNALLY FOR BUD3
+MS02PID1 DS    CL2                 POSN OF 1ST SEGMENT OF SUBMITTOR ID
+MS02LID1 DS    CL1                 LGTH OF 1ST SEGMENT OF SUBMITTOR ID
+MS02PID2 DS    CL2                 POSN OF 2ND SEGMENT OF SUBMITTOR ID
+MS02LID2 DS    CL1                 LGTH OF 2ND SEGMENT OF SUBMITTOR ID
+MS02PID3 DS    CL2                 POSN OF 3RD SEGMENT OF SUBMITTOR ID
+MS02LID3 DS    CL1                 LGTH OF 3RD SEGMENT OF SUBMITTOR ID
+MS02PSR1 DS    CL2                 POSN OF 1ST DETAIL SORT FIELD
+MS02LSR1 DS    CL2                 LGTH OF 1ST DETAIL SORT FIELD
+MS02PSR2 DS    CL2                 POSN OF 2ND DETAIL SORT FIELD
+MS02LSR2 DS    CL2                 LGTH OF 2ND DETAIL SORT FIELD
+MS02PSR3 DS    CL2                 POSN OF 3RD DETAIL SORT FIELD
+MS02LSR3 DS    CL2                 LGTH OF 3RD DETAIL SORT FIELD
+         DS    CL3                 UNUSED
+MS02LGTH EQU   *-MS02CARD          LENGTH OF DSECT
+BUDGIE1  CSECT
+         EJECT
+***********************************************************************
+*        FORMAT OF SPECIAL BUDGIE CONTROL CARDS                       *
+***********************************************************************
+         SPACE 1
+*        THERE ARE FIVE SPECIAL BUDGIE INPUT CARDS :-
+         SPACE 1
+*        CC1
+         SPACE 1
+* (1)    ***BATCH=........
+* (2)    ***DELETE BATCH=........
+* (3)    ***CHANGE RECORD=...
+* (4)    ***DELETE RECORD=...
+* (5)    ***INSERT RECORD=...
+         SPACE 1
+SPECLCRD DSECT
+SPECLID  DS    CL9                 CARD IDENTIFIER
+SPECLTYP DS    CL5                             'BATCH=' OR 'RECORD'
+SPECLN1  DS    0CL66               VARIABLE LENGTH BATCH NUMBER
+         DS    CL1                 UNREFERENCED
+SPECLN2  DS    CL65                VARIABLE LENGTH BATCH/RECORD NUMBER
+SPECLGTH EQU   *-SPECLCRD          LENGTH OF DSECT
+BUDGIE1  CSECT
+         EJECT
+***********************************************************************
+*        FORMAT OF TABLE ENTRIES CREATED FROM MS02 CARDS              *
+***********************************************************************
+         SPACE 1
+MS2NTRY  DSECT
+NTRYNTRY DS    F                   ADDRESS OF NEXT CHAIN ELEMENT
+NTRYPBCI DS    C                   POSN OF BATCH CARD IDENTIFIER (BIN)
+NTRYLBCI DS    C                   LGTH OF BATCH CARD IDENTIFIER (BIN)
+NTRYBCI  DS    CL8                 LITERAL BATCH CARD IDENTIFIER
+NTRYCBCI DS    CL8                 LITERAL ID FOR CORRECTION BATCHES
+NTRYPCRN DS    C                   POSN OF CORR'N RECORD NUMBER
+NTRYLCRN DS    C                   LGTH OF CORR'N RECORD NUMBER
+NTRYPBN1 DS    C                   POSN OF 1ST SEGMENT OF BATCH NO.
+NTRYLBN1 DS    C                   LGTH OF 1ST SEGMENT OF BATCH NO.
+NTRYPBN2 DS    C                   POSN OF 2ND SEGMENT OF BATCH NO.
+NTRYLBN2 DS    C                   LGTH OF 2ND SEGMENT OF BATCH NO.
+NTRYPBN3 DS    C                   POSN OF 3RD SEGMENT OF BATCH NO.
+NTRYLBN3 DS    C                   LGTH OF 3RD SEGMENT OF BATCH NO.
+NTRYPBN4 DS    C                   POSN OF 4TH SEGMENT OF BATCH NO.
+NTRYLBN4 DS    C                   LGTH OF 4TH SEGMENT OF BATCH NO.
+NTRYPBN5 DS    C                   POSN OF 5TH SEGMENT OF BATCH NO.
+NTRYLBN5 DS    C                   LGTH OF 5TH SEGMENT OF BATCH NO.
+NTRYPSR1 DS    CL1                 POSN OF 1ST DETAIL SORT FIELD
+NTRYLSR1 DS    CL1                 LGTH OF 1ST DETAIL SORT FIELD
+NTRYPSR2 DS    CL1                 POSN OF 2ND DETAIL SORT FIELD
+NTRYLSR2 DS    CL1                 LGTH OF 2ND DETAIL SORT FIELD
+NTRYPSR3 DS    CL1                 POSN OF 3RD DETAIL SORT FIELD
+NTRYLSR3 DS    CL1                 LGTH OF 3RD DETAIL SORT FIELD
+NTRYSW   DS    CL1                 SWITCH BYTE
+NTRYLGTH EQU   *-MS2NTRY           LENGTH OF DSECT
+         SPACE 5
+SWLSR    EQU   1                   DETAIL CARD SORT FIELDS EXIST
+         EJECT
+***********************************************************************
+*        FORMAT OF INTERMEDIATE RECORD PASSED TO SORT                 *
+***********************************************************************
+         SPACE 1
+SORTRECD DSECT
+SRECFLAG DS    CL1                 D/B/A - DELETE BATCH/BATCH/DATA
+SRECBNO  DS    CL16                BATCH NUMBER (LEFT ADJUSTED)
+SRECRNO  DS    CL6                 RECORD NO WITHIN BATCH (PACKED)
+SRECBSNO DS    PL3                 POSN OF BATCH IN INPUT
+SRECDATA DS    CL80                INPUT RECORD IMAGE (VARIABLE LGTH)
+*                                  FOLLOWED BY ANY DETAIL SORT FIELDS
+SRECLGTH EQU   *-SORTRECD          LENGTH OF DSECT
+BUDGIE1  CSECT
+         SPACE 5
+*    NOTES :-
+         SPACE 1
+*        1.    SRECFLAG DISTINGUISHES BETWEEN 'DELETE BATCH' CARDS,
+*              BATCH CARDS AND DATA CARDS IN ORDER TO ALLOW A BATCH
+*              TO BE DELETED AND ADDED IN ONE PASS, AND IN ORDER TO
+*              ENSURE THAT DATA CARDS FOLLOW BATCH CARDS EVEN IF AN
+*              INVALID RECORD NUMBER IS FORCED TO ZERO.
+*        2.    SRECBNO CATERS FOR A COMPOSITE BATCH NUMBER LENGTH OF
+*              16 BYTES, A LIMITATION IMPOSED ELSEWHERE BY BUDGIE.
+*        3.    SRECRNO CATERS FOR A MAXIMUM OF 9999 CARDS IN A BATCH,
+*              AND A MAXIMUM OF 9999 CARDS ADDED IN ONE PLACE.
+*        4.    SRECBSNO ENSURES THAT IF TWO IDENTICAL BATCH NUMBERS
+*              ARE ENTERED, EACH BATCH ACRD RETAINS ITS OWN DATA.
+         TITLE 'BUDGIE INITIATION PROCESSING'
+***********************************************************************
+*        HOUSEKEEPING                                                 *
+***********************************************************************
+         SPACE 1
+         PGMIN EQUATES=NO          ESTABLISH ADDRESSABILITY
+         ST    R13,IOERPTR         PRESERVE S/A ADDRESS LEST I/O ERROR
+         ST    R1,PARMPNTR         PRESERVE ADDRESS OF PARM
+         SPACE 5
+***********************************************************************
+*        OPEN MESSAGE AND CONTROL CARD DATA SETS                      *
+***********************************************************************
+         SPACE 1
+         LA    R2,PRINTSW          POINT AT SYSPRINT TABLE ENTRY
+         BAL   R4,OPEN             OPEN DATA SET
+         LA    R2,SYSINSW          POINT AT SYSIN TABLE ENTRY
+         BAL   R4,OPEN             OPEN DATA SET
+         SPACE 5
+***********************************************************************
+*        PRINT INITIATION MESSAGES                                    *
+***********************************************************************
+         SPACE 1
+         BAL   R4,PRINT            GET ADDRESS OF 1ST PRINT BUFFER
+         MVI   0(R5),PAGESKIP      ESTABLISH PAGE SKIP
+         BAL   R4,PRINT             AND ISSUE IT
+         MVI   0(R5),SPCE3AFT      ESTABLISH TRIPLE SPACE
+         MVC   5(L'LINE01,R5),LINE01 HEADING TO PRINT LINE
+         BAL   R4,PRINT            PRINT HEADING
+         MVI   0(R5),SPCE2AFT      ESTABLISH DOUBLE SPACE
+         BAL   R4,PARMPROC         PROCESS PARM FIELD IF ANY
+         MVC   5(L'LINE07,R5),LINE07 SUB-HEADING TO PRINT LINE
+         BAL   R4,PRINT            PRINT SUB-HEADING
+         TITLE 'CONTROL CARD PROCESSING'
+***********************************************************************
+*        READ BUDGIE CONTROL CARDS AND CREATE ELEMENTS FOR            *
+*         THE INTERNAL TABLE FROM MS02 CARDS.                         *
+***********************************************************************
+         SPACE 1
+         LA    R8,TABLEPTR         POINT AT 1ST POINTER SAVE AREA
+         SR    R11,R11             ZEROISE WORK REGISTER
+         OI    SWERROR,SW2BCTYP    ASSUME MORE THAN ONE MS02 CARD
+READCC   BAL   R4,GET              READ AND PRINT CONTROL CARDS
+         USING MS02CARD,R6         ESTABLISH ADDRESSABILITY
+         CLC   MS02ID,=C'MS02'     TEST FOR MS02 CARD
+         BNE   READCC              GET NEXT CONTROL CARD IF NOT
+         LA    R11,1(,R11)         INCREMENT MS02 COUNT
+         LA    R0,NTRYLGTH         GET LENGTH OF REQUIRED ELEMENET
+       GETMAIN R,LV=(0)            GET CORE TO BUILD ELEMENT
+         USING MS2NTRY,R8          ESTABLISH TABLE ADDRESSABILITY
+         ST    R1,NTRYNTRY         POINT PREVIOUS ELEMENT AT THIS ONE
+         ST    R1,BATCHPTR         INITIALISE 'LAST MS02 POONTER' LEST
+*                                   1ST BATCH CARD IS SPECIAL BUDGIE
+*                                   CARD FOLLOWED BY NORMAL CORR'N DATA
+         LR    R8,R1               MAKE NEW ELEMENT ADDRESSABLE
+         XC    0(NTRYLGTH,R8),0(R8) ZEROISE NEW ELEMENT
+         MVC   NTRYBCI,MS02BCI     MOVE BATCH CARD IDENTIFIER
+         MVC   NTRYCBCI,MS02CBCI   MOVE CORR'N BATCH CARD IDENTIFIER
+         LA    R2,MS02PBCI         POINT AT BACH CARD ID PPL
+         LA    R3,NTRYPBCI         POINT AT ELEMENT BATCH CARD ID PL
+         BAL   R4,MS02PPL          CONVERT EBCDIC PPL TO BINARY PL
+         LA    R10,5               ESTABLISH LOOP
+         LA    R2,MS02PBN1         POINT AT BATCH NO PART 1 PPL
+         LA    R3,NTRYPBN1         POINT AT BATCH NO PART 1 PL
+INITLOOP BAL   R4,MS02PPL          CONVERT EBCDIC PPL TO BINARY PL
+         LA    R2,3(,R2)           POINT AT NEXT BATCH NO PART # PPL
+         LA    R3,2(,R3)           POINT AT NEXT BATCH NO PART # PL
+         BCT   R10,INITLOOP        PERFORM CONVERSION FIVE TIMES
+         LA    R2,MS02PCRN         POINT AT RECORD NUMBER PPL
+         LA    R3,NTRYPCRN         POINT AT RECORD NUMBER PL
+         BAL   R4,MS02PPL          CONVERT EBCDIC PPL TO BINARY
+         ZAP   ACUMLSR,ZERO        ZEROISE LENGTH OF DETAIL CARD S FLDS
+         LA    R10,3               ESTABLISH LOOP
+         LA    R2,MS02PSR1         POINT AT 1ST DETAIL SORT FLD PPL
+         LA    R3,NTRYPSR1         POINT AT 1ST DETAIL S FLD PL
+INITLOP2 BAL   R4,MS02PPL          CONVERT ZBCDIC PPL TO BINARY PL
+         LA    R2,3(,R2)           POINT AT NEXT COMPONENT PPL
+         LA    R3,2(,R3)           POINT AT NEXT COMPONENT PL
+         EJECT
+***********************************************************************
+*        PROCESS CONTROL CARDS ( COTN'D )                             *
+***********************************************************************
+         SPACE 1
+*                                  UPON RETURN FROM MS02PPL, WORKPACK C
+*                                   CONTAINS THE LENGTH IF ANY
+         AP    ACUMLSR,WORKPACK    ACCUMULATE LENGTH OF DETAIL FIELDS
+         BCT   R10,INITLOP2        LOOP ABCK IF COMPONENTS LEDT
+         CP    ACUMLSR,STORLSR     IS THIS LENGTH > THAN ANY PREVIOUS
+         BNH   *+10                BR IF NOT
+         ZAP   STORLSR,ACUMLSR     PRESERVE THIS LENGTH
+         CP    ACUMLSR,ZERO        IS THERE A DETAIL CARD SORT FLD
+         BZ    *+8                 BR IF NO
+         OI    NTRYSW,SWLSR        FLAG THAT SORT FLDS EXIST
+         B     READCC              READ NEXT CONTROL CARD
+         DROP  R6                  DROP CONTROL CARD ADDRESSABILITY
+         SPACE 2
+EODIN    EQU   *                   EOD ON SYSIN
+         BCT   R11,*+8             BYPASS RESETTING SW IF > 1 MS02 CARD
+         NI    SWERROR,FF-SW2BCTYP ONLY 1 MS02 CARD SO RESET SW
+         BAL   R4,PRINT            PRINT BLANK LINE
+         LA    R2,SYSINSW          POINT AT SYSIN DCB TABLE ENTRY
+         BAL   R4,CLOSE            CLOSE SYSIN
+         MVI   0(R5),SPCE2AFT      ESTABLISH FOLLOWING BLNAK LINE
+         MVC   5(L'LINE08,R5),LINE08 ADD EOD MASSAGE
+         BAL   R4,PRINT            AND GO TO PRONT IT
+         TITLE 'INITIALISE SORT CONTROL INFORMATION'
+***********************************************************************
+*        SET INPUT RECORD LENGTH IN CONTROL FIELDS                    *
+***********************************************************************
+         SPACE 1
+         LA    R2,SYSUT1SW         POINT AT SYSUT1 DCB TABLE ENTRY
+         BAL   R4,OPEN             OPEN SYSUT1
+         LA    R2,SYSUT1           POINT R2 AT SYSUT1 DCB
+         USING IHADCB,R2           ESTABLISH DCB ADDRESSABILITY
+         LH    R10,DCBLRECL        RETRIEVE INPUT RECORD LENGTH
+         DROP  R2                  DROP DCB ADDRESSABILITY
+         BCTR  R10,0               DECREMENT FOR INSTRUCTION LONGTH
+         STC   R10,MOVEDATA+1      SET LGTH FOR MOVE TO INTERMEDIATE
+         LA    R10,1(,R10)         RESTORE TO ORIGINAL LENGTH
+         CVD   R10,WORKPACK        CONVERT LENGTH TO PACKED DECIMAL
+         MVC   WORKEDIT,EDITPATN   SET UP 999 EDIT PATTERN
+         ED    WORKEDIT,WORKPACK+6 EDIT INPUT RECORD LENGTH
+         OI    WORKEDIT+1,X'F0'    ZEROISE LRADING BLANK
+         MVC   RECL1(3),WORKEDIT+1 SET UP LENGTH IN RECORD STATEMENT
+         MVC   RECL3(3),WORKEDIT+1  IN INPUT & OUTPUT LENGTH FIELDS
+         LA    R10,SRECDATA-SORTRECD(,R10) ADD LGTH OF PREFIX
+         CVD   R10,WORKPACK        PACK LENGTH OF INTERMEDIATE AREA
+         AP    WORKPACK,STORLSR    ADD LGTH OF ANY DETAIL SORT FLDS
+         MVC   WORKEDIT,EDITPATN   SET UP 999 EDIT PATTERN
+         ED    WORKEDIT,WORKPACK+6 EDIT INTERMEDIATE RECORD LENGTH
+         OI    WORKEDIT+1,X'F0'    ZEROISE LRADING BLANK
+         MVC   RECL2(3),WORKEDIT+1 SET INT LGTH IN RECORD STATEMENT
+         SP    WORKPACK,STORLSR    REDUCE TO LGTH OF BASIC INTERMED REC
+         ST    R10,POSNDSR         PRESERVE LENTH OF BASIC INTERMED REC
+         CP    STORLSR,ZERO        TEST IF DETAIL CARD FLDS EXIST
+         BNZ   *+14                BR IF FIELD(S) EXIST
+         MVC   SORTDSR,SORTDSRN    NULLIFY SORT FIELDS FOR DETAIL CARDS
+         B     SETON2              BYPASS DETAIL CARD SORT CODING
+         CVB   R10,WORKPACK        CONVERT DISPLACEMENT TO BUNARY
+         ST    R10,DSFPOSN         PRESERVE DISPLACEMENT OF SORT FIELD
+         CVB   R10,STORLSR         CONVERT LENGTH TO BINARY
+         BCTR  R10,0               DECREMENT TO EXECUTABLE LENGTH
+         STC   R10,DSFLGTH         PRESERVE LENGTH OF SORT FIELD
+         AP    WORKPACK,ONE        INCREMENT TO POSN OF EXTRA SORT FIEL
+         MVC   WORKEDIT,EDITPATN   SET UP 999 EDIT PATTERN
+         ED    WORKEDIT,WORKPACK+6 EDIT START POSITIIN
+         OI    WORKEDIT+1,X'F0'    ZEROISE LEADING BLLANK
+         MVC   SORTDSR+1(3),WORKEDIT+1 ADD START POSN TO SORT C/C
+         AP    WORKPACK,STORLSR    INCREMENT BY LENGTH OF FILED
+         SP    WORKPACK,ONE        DECREMENT FOR EARLIER INCREMENT
+         CVB   R10,WORKPACK        SET NEW INTERNAL LENGTH IN R10
+         MVC   WORKEDIT,EDITPATN   SET UP 999 EDIT MASK
+         ED    WORKEDIT,STORLSR+6  EDIT LENGTH OF FILED
+         MVC   SORTDSR+5(2),WORKEDIT+2 ADD LENGTH TO SORT C/C
+         EJECT
+***********************************************************************
+*        ACQUIRE CORE FOR INTERMEDIATE WORK AREA                      *
+***********************************************************************
+         SPACE 1
+SETON2   LR    R0,R10              SET INTERMEDIATE LENGTH IN R0
+       GETMAIN R,LV=(0)            ACQUIRE CORE FOR INTERMEDIATE AREA
+         LR    R7,R1               PRESERVE AREA ADDRESS
+         ZAP   SRECRNO-SORTRECD(L'SRECRNO,R7),ZERO ZEROISE RECORD NO
+         ZAP   SRECBSNO-SORTRECD(L'SRECBSNO,R7),ZERO ZEROISE B/C SEQ NO
+         LA    R2,SYSUT2SW         POINT AT SYSUT2 DCB TABLE ENTRY
+         BAL   R4,OPEN             OPEN OUTPUT DATA SET
+         TITLE 'INVOKE THE SORT'
+***********************************************************************
+*        INVOKE THE SORT                                              *
+***********************************************************************
+         SPACE 1
+         STM   R5,R12,40(R13)      PRESERVE BUDGIE'S REGISTERS
+*                                   (SOME VERSIONS OF THE SORT DO NOT)
+         LA    R1,SORTPARM         ESTABLISH PARAMETER LINKAGE
+         LINK  EP=SORT             DYNAMICALLY INVOKE THE SORT
+         LTR   R15,R15             TEST FOR 0 COMPLETION CODE
+         BZ    PRINTCDE            GOOD END SO PRINT COMPLETION CODE
+         MVC   5(L'LINE06,R5),LINE06 SET UP ERROR MESSAGE
+         BAL   R4,PRINT            TELL OF BAD SORT
+         ABEND 16,DUMP             DUMP TO FLAG ERROR
+         TITLE 'E15 SORT EXIT - ADD RECORD PREFIX'
+***********************************************************************
+*        SORT EXIT E15                                                *
+***********************************************************************
+         SPACE 1
+         USING *,R15               ESTABLISH TEMPORATY ADDRESSABILITY
+E15      SUBIN ,                   ENTER E15 SORT EXIT
+         STM   R14,R12,12(R13)     SAVE SORT'S REGISTERS
+         ST    R13,E15R13S2        SAVE SORT'S SAVE AREA ADDRESS
+         L     R13,E15R13S1        RETRIEVE BUDGIE'S SAVE AREA ADDRESS
+         MVC   E15REGSV(64),12(R13)    SAVE REGS FOR RET. FROM SORT
+         LM    R5,R12,40(R13)      RETRIEVE BUDGIE'S REGISTERS
+         B     E15CONT             BRANCH AROUND SAVE AREAS
+E15R13S1 DC    A(SAVEFLD)          SAVE AREA FOR BUDGIE'S R13
+E15R13S2 DS    F                   SAVE AREA FOR SORT'S R13
+E15REGSV DS    16F                 REGS SAVE AREA FOR RET. FROM SORT
+E15CONT  EQU   *                   CONTINUE
+         DROP  R15                 DROP TEMPORARY ADDRESSABILITY
+         USING SORTRECD,R7         INTERMEDIATE AREA ADDRESSABILITY
+         USING MS2NTRY,R8          MS02-TABLE ELEMENT ADDRESSABILITY
+         SPACE 5
+***********************************************************************
+*        ACQUIRE NEXT RECORD                                          *
+***********************************************************************
+         SPACE 1
+         BAL   R4,READ             GET RECD & MOVE TO INTERMED AREA
+         NC    DSFPOSN,DSFPOSN     TEST IF DETAIL SORT FIELD EXISTS
+         BZ    E15TEST1            BR IF NO TO 1ST CARD TEST
+         L     R14,DSFPOSN         RETRIEVE DISPLACEMENT OF FIELD
+         AR    R14,R7              POINT R14 AT FIELD
+         SR    R1,R1               ZEROISE WORK REGISTER
+         IC    R1,DSFLGTH          RETRIEVE EXECUTABLE LNGTH
+         EX    R1,DSFSPCE          BLANK OUT DETAIL SORT DIELD
+         EJECT
+***********************************************************************
+*        SORT EXIT E15   ( CONT'D )                                   *
+***********************************************************************
+         SPACE 1
+***********************************************************************
+*        TEST FOR & PROCESS SPECIAL DELETE BATCH CARDS                *
+***********************************************************************
+         SPACE 1
+E15TEST1 CLC   0(L'BUDGDB,R6),BUDGDB TEST FOR SPECIAL DELETE BATCH CARD
+         BNE   E15TEST2            BRANCH IF NOT
+         MVI   SRECFLAG,C'D'       SHOW SPECIAL DELETE BATCH CARD
+         XC    SWCARD,SWCARD       SET ALL SWITCHES OFF
+         MVC   SRECBNO,L'BUDGDB(R6) MOVE BATCH NO. TO INTERMED AREA
+         ZAP   SRECRNO,ZERO        ZEROISE RECORD NUMBER
+         AP    SRECBSNO,ONE        INCREMENT BATCH SEQUENCE NUMBER
+         B     E15EXIT             GO PASS RECORD TO SORT
+         SPACE 5
+***********************************************************************
+*        TEST FOR & PROCESS SPECIAL BATCH CARDS                       *
+***********************************************************************
+         SPACE 1
+E15TEST2 CLC   0(L'BUDGBC,R6),BUDGBC TEST FOR SPECIAL BATCH CARD
+         BNE   E15TEST3            BRANCH IF NOT
+         XC    SWCARD,SWCARD       SET OFF ALL SWITCHES
+         OI    SWCARD,SWSPECLB+SWSPECB1 SHOW SPEC B/C & FIRST TIME
+         OI    SWERROR,SWSPECLB    ... ALSO SHOW IN ERROR/STATUS BYTE
+         ZAP   SRECRNO,ZERO        ZEROISE RECORD NUMBER
+         AP    SRECBSNO,ONE        INCREMENT BATCH SEQUENCE NUMBER
+         MVC   SRECBNO,L'BUDGBC(R6) MOVE BATCH NO. TO INTERMED. AREA
+         B     E15EXIT             GO PASS RECORD TO SORT
+         EJECT
+***********************************************************************
+*        SORT EXIT E15   ( CONT'D )                                   *
+***********************************************************************
+*        TEST FOR & PROCESS NORMAL & CORRECTION BATCH CARDS           *
+***********************************************************************
+         SPACE 1
+E15TEST3 L     R8,TABLEPTR         POINT R8 AT 1ST TABLE ELEMENT
+         B     *+8                 BYPASS LOAD 1ST TIME
+E15TST3A L     R8,NTRYNTRY         POINT AT NEXT TABLE ELEMENT
+         LTR   R8,R8               TEST FOR END OF CHAIN
+         BZ    E15TEST4            BRANCH IF YES
+         LA    R2,WORKAREA         POINT R2 AT WORK AREA
+         LA    R3,NTRYPBCI         POINT R3 AT BATCH CARD ID PL
+         BAL   R4,EXTRACT          MOVE BATCH CARD ID TO WORK AREA
+         SR    R15,R15             ZEROISE WORK REGISTER
+         IC    R15,NTRYLBCI        LENGTH OF ID     INTO R15
+         LTR   R15,R15             VERIFY LENGTH SUPPLIED
+         BZ    E15TEST4            EXIT IF NOT
+         BCTR  R15,0               DECREMENT LENGTH FOR EXECUTE
+         CLC   NTRYBCI,SPACES      IS THERE A B/C ID
+         BE    *+12                BYPASS TEST IF NOT
+         EX    R15,CLCBCI          TEST IF FIELD IS BATCH CARD ID
+         BE    E15TST3B            BRANCH IF YES
+         CLC   NTRYCBCI,SPACES     IS CORECTION B/C ID SUPPLIED
+         BE    E15TST3A            BR IF NOT TO GET NEXT C/X
+         EX    R15,CLCCBCI         TEST IF FIELD IS CORR'N BATCH CARD
+         BNE   E15TST3A            BRANCH IF NOT TO TRY NEXT MS02 NTRY
+         XC    SWCARD,SWCARD       SET OFF ALL SWITCHES
+         OI    SWCARD,SWNORMLR     SHOW REPLACEMENT DATA
+         B     E15TST3D            GO SET REMAINING FLAG
+E15TST3B ZAP   SRECRNO,CNTUT1      SET TO PLACE AFTER PRECEDING SPECIAL
+*                                   BATCH CARD ( IF PRESENT )
+         TM    SWCARD,SWSPECLB+SWSPECB1 TEST IF PRECEDING CARD WAS
+*                                   SPECIAL BATCH CARD
+         BO    E15EXIT             RETURN RECORD TO SORT IF YES
+         XC    SWCARD,SWCARD       SET OFF ALL SWITCHES
+E15TST3D OI    SWCARD,SWNORMLB     SHOW NORMAL BATCH CARD
+         AP    SRECBSNO,ONE        INCREMENT BATCH SEQUENCE NUMBER
+         ST    R8,BATCHPTR         PRESERVE ADDRESS OF TABLE ELEMENT
+         LA    R2,SRECBNO          POINT AT START OF BATCH NO IN INTER.
+         MVC   SRECBNO,SPACES      BLANK OUT BATCH NUMBER
+         LA    R3,NTRYPBN1         POINT AT 1ST BATCH NO. COMPONENT PL
+         LA    R9,5                ESTABLISH LOOP FOR 5 COMPONENTS
+E15TST3C BAL   R4,EXTRACT          MOVE BATCH NO. COMPONENT TO INTER.
+         LA    R3,2(,R3)           POINT AT NEXT COMPONENT PL
+         BCT   R9,E15TST3C         LOOP BACK FOR NEXT COMPONENT
+         ZAP   SRECRNO,ZERO        ZEROISE RECORD NUMBER
+         B     E15EXIT             GO PASS RECORD TO THE SORT
+         SPACE 1
+CLCBCI   CLC   WORKAREA(0),NTRYBCI TEST FOR BATCH CARD ID
+CLCCBCI  CLC   WORKAREA(0),NTRYCBCI TEST FOR CORR'N BATCH CARD ID
+DSFSPCE  MVC   0(0,R14),SPACES     BLANK OUT DETAIL SORT FIELD
+         EJECT
+***********************************************************************
+*        SORT EXIT E15   ( CONT'D )                                   *
+***********************************************************************
+         SPACE 1
+***********************************************************************
+*        TEST FOR & PROCESS SPECIAL BUDGIE RECORD CARDS               *
+***********************************************************************
+         SPACE 1
+E15TEST4 CLC   0(L'BUDGCR,R6),BUDGCR    FOR SPECIAL CHANGE RECORD CARD
+         BNE   E15TEST5            BRANCH IF NOT
+         NI    SWCARD,FF-SWSPECLD-SWSPECLI SET OFF DELETE & INSERT FLAG
+         OI    SWCARD,SWSPECLC     SHOW CHANGE RECORD
+         B     E15SPECL            GO TO COMMON CODING
+         SPACE 5
+E15TEST5 CLC   0(L'BUDGDR,R6),BUDGDR TEST FOR SPECIAL DELETE CARD
+         BNE   E15TEST6            BRANCH IF NOT
+         NI    SWCARD,FF-SWSPECLC-SWSPECLI SET OFF CHANGE & INSERT FLAG
+         OI    SWCARD,SWSPECLD     SHOW DELETE RECORD
+         B     E15SPECL            GO TO COMMON CODING
+         SPACE 5
+E15TEST6 CLC   0(L'BUDGIR,R6),BUDGIR TEST FOR SPECIAL INSERT CARD
+         BNE   E15TEST7            BRANCH IF NOT
+         NI    SWCARD,FF-SWSPECLC-SWSPECLD SET OFF CHANGE & DELETE FLAG
+         OI    SWCARD,SWSPECLI     SHOW INSERT RECORD
+         SPACE 5
+E15SPECL ZAP   SRECRNO,CNTUT1      SET TO RECORD NO. IN INPUT STREAM,
+*                                   LEST REC NO NON-NUMERIC, TO PLACE
+*                                   RECORD IN CORRECT RELATIVE SEQUENCE
+         BAL   R4,LOCATE           LOCATE RECORD NUMBER
+         TM    SWERROR,SWNOSUB     TEST IF RECORC NMMBER SUPPLIED
+         BO    E15EXIT             PASS STRAIGHT TO SORT IF NOT
+         BAL   R4,SFVERIFY         VERIFY NO. NUMERIC & PACK
+         LTR   R2,R2               TEST IF NUMBER IS NUMERIC
+         BZ    E15EXIT             PASS STRAIGHT TO SORT IF NOT
+         ZAP   SRECRNO,WORKPACK    MOVE RECD NO TO INTERMED AREA
+         MP    SRECRNO,HUNDRED     MULTIPLY REC NO BY 10000
+         B     E15EXIT             GO PASS RECORD TO SORT
+         EJECT
+***********************************************************************
+*        SORT EXIT E15   ( CONT'D )                                   *
+***********************************************************************
+         SPACE 1
+***********************************************************************
+*        TEST FOR & PROCESS DATA FOLLOWING SPECIAL CARDS              *
+***********************************************************************
+         SPACE 1
+E15TEST7 TM    SWCARD,SWSPECLC+SWSPECLI TEST IF SPECIAL CARD PRECEDED
+         BZ    E15TEST8            BRANCH IF NOT
+         AP    SRECRNO,ONE         INCREMENT RECORD NUMBER
+         B     E15EXIT             GO PASS RECORD TO SORT
+         SPACE 5
+***********************************************************************
+*        TEST FOR & PROCESS DATA IN A CORRECTION BATCH                *
+***********************************************************************
+         SPACE 1
+E15TEST8 TM    SWCARD,SWNORMLR+SWSPECLB TEST IF CORRECTION BATCH
+         L     R8,BATCHPTR         RETRIEVE MS02 ELEMENT ADDRESS
+         BZ    E15TEST9            BRANCH IF NOT
+         ZAP   SRECRNO,CNTUT1      SET TO PLACE CARD AT START OF BATCH
+*                                   IN SAME RELATIVE SEQUENCE, LEST
+*                                   NUMBER NON-NUMERIC.
+         LA    R3,NTRYPCRN         POINT AT RECORD NO PL
+         BAL   R4,SFVERIFY         ISOLATE & VALIDATE RECORD NO.
+         CP    WORKPACK,ZERO       VERIFY RECORD NO VALID
+         BZ    E15EXIT             PASS RECORD STRAIGHT TO SORT IF NOT
+         MP    WORKPACK,HUNDRED    MULTIPLY REC NO BY 10000
+         ZAP   SRECRNO,WORKPACK    SET UP REC NO IN INTERMED AREA
+         B     E15EXIT             GO PASS RECORD TO SORT
+         EJECT
+***********************************************************************
+*        SORT EXIT E15 ( CONT'D )                                     *
+***********************************************************************
+         SPACE 1
+***********************************************************************
+*        PROCESS NORMAL DATA CARD                                     *
+***********************************************************************
+         SPACE 1
+*        NOTE - IF CONTROL REACHES HERE THE RECORD IS EITHER
+*         A DATA CARD WITHIN A BATCH, OR IS UNRECOGNISABLE.
+         SPACE 1
+E15TEST9 AP    SRECRNO,HUNDRED     INCREMENT REC NO BY 10000
+         TM    NTRYSW,SWLSR        ARE ANY DETAIL SORT FIELDS REQUIRED
+         BZ    E15TESTA            BR IF NOT
+         ZAP   SRECRNO,ZERO        NULLIFY RECORD NUMBER WITHIN BATCH
+         LA    R9,3                ESTABLISJ LOOP OF 3 COMPONENTS
+         LA    R3,NTRYPSR1         POINT AT 1ST SORT FIELD PL
+         L     R2,POSNDSR          GET LENGTH OF BASIC INTERNAL RECORD
+         AR    R2,R7               POINT R2 AT START OF EXTRACTED DETAI
+         BAL   R4,EXTRACT          EXTRACT DETAIL FIELD
+         LA    R3,2(,R3)           INCREMENT TO NEXT COMPONENT PL
+         BCT   R9,*-8              LOOP BACK IF ANY LEFT
+E15TESTA TM    SWCARD,SWNORMLB     VERIFY RECORD IS WITHIN BATCH
+         BO    E15EXIT             PASS RECORD TO SORT IF YES
+         MVI   SRECFLAG,C'U'       FLAG AS UNRECOGNISABLE
+         MVC   SRECBNO,SPACES      BLANK OUT SPURIOUS BATCH NO
+         ZAP   SRECRNO,CNTUT1      SET TO INP REC NO TO KEEP SEQUENCE
+          TM   PROCESS,SWPRDEL     DO WE DELETE UNKNOWN RECORDS
+         BO    E15CONT             GO READ NEXT RECORD IF YES
+         B     E15EXIT             GO PASS RECORD TO THE SORT
+         EJECT
+***********************************************************************
+*        SORT EXIT E15   ( CONT'D)                                    *
+***********************************************************************
+         SPACE 1
+***********************************************************************
+*        EOD ON SYSUT1                                                *
+***********************************************************************
+         SPACE 1
+EODUT1   EQU   *                   EOD ON SYSUT1
+         LA    R2,SYSUT1SW         POINT AT SYSUT1 DCB TABLE ENTRY
+         BAL   R4,CLOSE            CLOSE SYSUT1
+         LR    R0,R10              LENGTH OF INTERMEDIATE AREA TO R0
+         LR    R1,R7               ADDRESS OF INTERMEDIATE AREA TO R1
+      FREEMAIN R,LV=(0),A=(1)      FREE ACQUIRED INTERMEDIATE AREA
+         L     R8,TABLEPTR         POINT R8 AT 1ST TABLE ELEMENT
+FREELOOP LTR   R8,R8               VERIFY TABLE EXISTS OR NOT FINISHED
+         BZ    FREESTOP            BYPASS FREEMAIN IF NOT
+         LR    R1,R8               POINT R1 AT TABLE ELEMENT
+         LA    R0,NTRYLGTH         PLACE ELEMENT LENGTH IN R0
+         L     R8,NTRYNTRY         POINT R8 AT NEXT ELEMENT
+      FREEMAIN R,LV=(0),A=(1)      FREE THIS ELEMENT
+         B     FREELOOP            GO FREE NEXT ELEMENT
+FREESTOP LA    R15,NORETURN        TELL SORT NOT TO RETURN TO E15
+         B     *+8                 AVOID ALTERING RETURN CODE
+         SPACE 5
+***********************************************************************
+*        RETURN CONTROL TO THE SORT                                   *
+***********************************************************************
+         SPACE 1
+E15EXIT  LA    R15,INSERT          TELL SORT TO INSERT RECORD
+         TM    SWCARD,SWSPECLB+SWSPECB1 TEST FOR SPEC B/C & FIRST TIME
+         BNO   E15EXIT2            BRANCH IF NOT
+         CLI   SRECFLAG,C'B'       TEST IF THIS SPEC B/C
+         BE    E15EXIT2            BRANCH IF YES ( FOR 1ST TIME)
+         NI    SWCARD,FF-SWSPECB1  SET OFF FIRST TIME SW
+E15EXIT2 LR    R1,R7               POINT R1 AT INTERMEDIATE RECORD
+         MVC   12(64,R13),E15REGSV     RESTORE REGS FOR RET. FROM SORT
+         STM   R5,R12,40(R13)      PRESERVE BUDGIE'S REGISTERS
+         L     R13,E15R13S2        RETRIEVE SORT'S SAVE AREA POINTER
+         LM    R2,R12,28(R13)      RESTORE THE
+         L     R0,20(R13)           SORT'S GENERAL
+         L     R14,12(R13)          PURPOSE REGISTERS
+         BR    R14                 RETURN TO THE SORT
+         SPACE 1
+         DROP  R7,R8               DROP TABLE & INT. AREA ADDRESSAB'Y
+         TITLE 'E35 SORT EXIT - REMOVE RECORD PREFACE AND WRITE'
+***********************************************************************
+*        SORT EXIT E35                                                *
+***********************************************************************
+         SPACE 1
+         USING *,R15               ESTABLISH TEMPORARY ADDRESSABILITY
+E35      SUBIN ,                   ENTER E35 SORT EXIT
+         STM   R14,R12,12(R13)     SAVE SORT'S REGISTERS
+         ST    R13,E35R13S2        SAVE SORT'S SAVE AREA ADDRESS
+         L     R13,E35R13S1        RETRIEVE BUDGIE'S SAVE AREA ADDRESS
+         MVC   E35REGSV(64),12(R13)    SAVE REGS FOR RET. FROM SORT
+         LM    R5,R12,40(R13)      RETRIEVE BUDGIE'S REGISTERS
+         B     E35CONT             BRANCH AROUND SAVE AREAS
+E35R13S1 DC    A(SAVEFLD)          ADDRESS OF BUDGIE'S SAVE AREA
+E35R13S2 DS    F                   ADDRESS OF SORT'S SAVE AREA
+E35REGSV DS    16F                 REGS SAVE AREA FOR RET. FROM SORT
+E35CONT  EQU   *                   CONTINUE
+         DROP  R15                 DROP TEMPORARY ADDRESSABILITY
+         SPACE 1
+         L     R7,0(,R1)           GET ADDRESS OF RECORD FROM SORT
+         LA    R7,0(,R7)           PURIFY HIGH ORDER BYTE
+         LTR   R7,R7               TEST FOR END OF DATA
+         BZ    E35EXIT             GO END SORT IF EOD
+         LA    R7,SRECDATA-SORTRECD(,R7) POINT PAST SORT PREFIX
+         BAL   R4,WRITE            WRITE OUTPUT RECORD
+         LA    R15,DELETE          TELL SORT TO DELETE THE RECORD
+         B     *+8                 BYPASS REG 15 LOAD
+         SPACE 1
+E35EXIT  LA    R15,NORETURN        TELL SORT NOT TO RETURN
+         MVC   12(64,R13),E35REGSV     RESTORE REGS FOR RET. FROM SORT
+         STM   R5,R12,40(R13)      PRESERVE BUDGIE'S REGISTERS
+         L     R13,E35R13S2        RETRIEVE SORTS SAVE AREA ADDRESS
+         LM    R0,R12,20(R13)      RETRIEVE THE
+         L     R14,12(R13)          SORT'S REGISTERS
+         BR    R14                 RETURN TO THE SORT
+         TITLE 'JOB TERMINATION ROUTINES'
+***********************************************************************
+*        PRINT CONDITION CODE                                         *
+***********************************************************************
+         SPACE 1
+PRINTCDE TM    SWERROR,SWSPECLB+SW2BCTYP TEST FOR SPECIAL CORR'N BATCHS
+*                                   AND MORE THAN ONE BATCH CARD TYPE
+         BNO   PRINTCD2            BYPASS WARNING MESSAGES IF NOT
+         MVC   5(L'LINE10,R5),LINE10 SET UP 1ST LINE OF MESSAGE
+         BAL   R4,PRINT             AND PRINT THE 1ST LIBE
+         MVC   5(L'LINE11,R5),LINE11 SET UP 2ND LINE OF MESSAGE
+         BAL   R4,PRINT             AND PRINT 2ND LINE
+         MVC   5(L'LINE12,R5),LINE12 SET UP LAST LINE OF MESSAGE
+         MVI   0(R5),SPCE2AFT      ESTABLISH DOUBLE SPACE
+         BAL   R4,PRINT            PRINT LAST LINE OF WARNING
+         CLC   COMPCODE,COND8      TEST IF COND CODE > 8
+         BNL   *+10                BYPASS SETTING COND CODE IF HIGHER
+         MVC   COMPCODE,COND8      SET COMPLETION CODE TO 8
+PRINTCD2 TM    SWERROR,SWNONNUM    TEST FOR NON-NUMERIC RECORD NUMBERS
+         BZ    PRINTCD3            BYPASS ERROR MESSAGE IF NOT
+         MVC   5(L'LINE13,R5),LINE13 SET UP 1ST LINE OF MESSAGE
+         BAL   R4,PRINT             AND PRINT THE MESSAGE
+         MVI   0(R5),SPCE2AFT      ESTABLISH DOUBLE SPACE
+         MVC   5(L'LINE14,R5),LINE14 SET UP 2ND LINE OF MESSAGE
+         BAL   R4,PRINT            PRINT LAST LINE OF WRRNING
+PRINTCD3 MVI   0(R5),SPCE2AFT      ESTABLISH DOUBLE SPACE
+         MVC   5(L'LINE02,R5),LINE02 ADD MESSAGE
+         LH    R2,COMPCODE         GET CONDITION CODE
+         CVD   R2,WORKPACK         CONVERT IT TO DECIMAL
+         MVC   WORKEDIT,EDITCOND   SET UP EDIT PATTERN
+         ED    WORKEDIT,WORKPACK+6 EDIT CONDITION CODE
+         MVC   L'LINE02+6(2,R5),WORKEDIT+2 ADD CODE TO MESSAGE
+         BAL   R4,PRINT            PRINT CONDITION CODE
+         MVC   5(L'LINE03,R5),LINE03 MOVE TERM'N MESSAGE TO LINE
+         EJECT
+***********************************************************************
+*        JOB TERMINATION ROUTINE - CLOSE ANY OPEN DATA SETS,          *
+*         SET A COMPLETION CODE IN REGISTER 15, AND RETURN.           *
+***********************************************************************
+         SPACE 1
+JOBEND   LA    R10,MAXDS           ESTABLISH LOOP
+         LA    R2,DCBTABLE         POINT AT AD-CON TABLE
+         BAL   R4,CLOSE            CLOSE DATA SET IF OPEN
+         LA    R2,DCBNTRY(,R2)     POINT AT NEXT TABLE ENTRY
+         BCT   R10,*-8             CLOSE NEXT DATA SET
+        PGMOUT RC=COMPCODE         SET COND CODE AND RETURN
+         TITLE 'PATCH AREA'
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         B     *
+         TITLE 'VERIFY THAT A FIELD IS NUMERIC'
+***********************************************************************
+*        THIS SUBROUTINE VERIFIES THAT AN EBCDIC SUB-FIELD            *
+*         IS NUMERIC - LEADING BLANKS AND ALL BLANK FIELDS            *
+*         ARE CONSIDERED VALID, BUT SIGN OVER-PUNCHES ARE             *
+*         NOT.  ON ENTRY, R1 POINTS AT THE START OF THE               *
+*         FIELD, AND R15 CONTAINS THE LENGTH OF THE FIELD.            *
+*         ON EXIT, THE CONDITION CODE IS SET SVCH THAT THE            *
+*         CALLER CAN MAKE THE FOLLOWING TESTS -                       *
+*                                                                     *
+*              BL   -    FIELD IS ALL BLANK                           *
+*              BE   -    FIELD IS NUMERIC                             *
+*              BH   -    FIELD IS NON-NUMERIC                         *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+NUMERIC  SUBIN PREFIX=N,SAVE=(R1,R15)  ?FIELD FOR NUMERIC
+         NI    NUMERICB+1,0        SET OFF EMBEDDED BLANK TEST
+         MVI   NUMERICT+1,C'Z'     ASSUME FIELD ALL BLANK
+NUMERIC1 CLI   0(R1),C' '          TEST FOR BLANK
+NUMERICB BC    0,NUMERIC2          BRANCH IF EMBEDDED BLANK
+         BE    NUMERIC3            BRANCH IF BLANK TO INCREMENT
+         CLI   0(R1),C'0'          TEST FOR LESS THAN ZERO
+         BL    NUMERIC2            BRANCH IF LESS THAN ZERO
+         CLI   0(R1),C'9'          TEST IF GREATER THAN 9
+         BH    NUMERIC2            BRANCH IF GREATER THAN 9
+         OI    NUMERICB+1,X'80'    SET ON EMBEDDED BLANK TEST
+         MVI   NUMERICT+1,C'Y'     ASSUME FIELD VALID
+NUMERIC3 LA    R1,1(,R1)           INCERMENT POINTER TO NEXT CHARACTER
+         BCT   R15,NUMERIC1        TEST CHARACTER IF IN SUB-FIELD
+         B     NUMERICT            GO SET COND CODE
+NUMERIC2 MVI NUMERICT+1,C'X'       SHOW FIELD NON-NUMERIC
+         OI    SWERROR,SWNONNUM    SET ON NON-NUMERIC ERRROR SW
+         CLC   COMPCODE,COND4      TEST IF COMPLETION CODE >= 4
+         BNL   *+10                AVOID SETTING IF YES
+         MVC   COMPCODE,COND4      SET COMPLETION CODE TO 4
+NUMERICT CLI   NUMERICY,C' '       SET CONDITION CODE
+        SUBOUT PREFIX=N,RESTORE=(R1,R15) RETURN TO CALLER
+         SPACE 1
+NUMERICY DC    C'Y'                TEST FIELD TO SET COBD CODE
+         TITLE 'CONVERT CONTROL CARD DATA TO BINARY'
+***********************************************************************
+*        THIS SUBROUTINE CONVERTS A TWO-BYTE POSITION AND             *
+*         ONE-BYTE LENGTH INTO TWO ONE-BYTE BINARY FIELDS.            *
+*         IF AN INPUT FIELD IS NON-NUMERIC - LEADING BLANKS           *
+*         AND ALL BLANK FIELDS ARE VALID - AN ERROR MESSAGE           *
+*         IS WRITTEN AND THE JOB TERMINATED.  ON ENTRY R2             *
+*         POINTS AT THE INPUT 'PPL' AND R3 POINTS AT THE              *
+*         OUTPUT 'PL'.                                                *
+***********************************************************************
+         SPACE 1
+MS02PPL  SUBIN PREFIX=M,SAVE=R4    CONVERT EBDDIC PPL TO BINARY PL
+         XC    0(2,R3),0(R3)       SET TO ZERO LEST BLANK
+         LA    R1,0(,R2)           POINT R1 AT PP
+         LA    R15,2               SET R15 TO LENGTH OF PP
+         BAL   R4,NUMERIC          VERIFY FIELD NUMERIC
+         BH    MS02PPLE            BRANCH IF NON-NUMERIC
+         BL    *+18                BYPASS MATHS IF BLANK
+         PACK  WORKPACK,0(2,R2)    PACK PP
+         CVB   R1,WORKPACK         CONVERT PP TO BINARY
+         STC   R1,0(R3)            STORE BINARY P
+         ZAP   WORKPACK,ZERO       ZEROISE WORK FIELD LEDT NO LENGTH
+         LA    R1,2(,R2)           POINT R1 AT L
+         LA    R15,1               SET R15 TO LENGTH OF L
+         BAL   R4,NUMERIC          VERIFY FIELD NUMERIC
+         BH    MS02PPLE            BRANCH IF NON-NUMERIC
+         BL    *+18                BYPASS MATHS IF BLANK
+         PACK  WORKPACK,2(1,R2)    PACK L
+         CVB   R1,WORKPACK         CONVERT L TO BINARY
+         STC   R1,1(R3)            STORE BINARY L
+        SUBOUT PREFIX=M,RESTORE=R4 RETURN TO CALLER
+         SPACE 1
+MS02PPLE MVC   1(L'LINE09,R5),LINE09 SET UP ERROR MESSAGE
+         MVI   0(R5),SPCE2AFT      ESTABLISH FOLLOWING BLANK LINE
+         MVC   COMPCODE,COND16     SET COMPLETION CODE TO 16
+         NI    SWERROR,FF-SWNONNUM SET OFF TO AVOID SUPERFLOUS MESSAGE
+         LA    R4,PRINTCDE         SET R4 TO END-OF-JOB ROUTINE
+         B     PRINT               GO PRINT ERROR MESSAGE
+         TITLE 'ROUTINE TO EXTRACT AND MOVE SUBFIELD'
+***********************************************************************
+*        THIS SUBROUTINE EXTRACTS A SUB-FIELD FROM THE INPUT          *
+*         RECORD AND MOVES IT TO THE REQUESTED DESTINATION            *
+*         FIELD.  ON INPUT, R2 POINTS AT THE DESTINATION              *
+*         FIELD, RJ POINTS AT TWO 1-BYTE BINARY FIELDS                *
+*         CONTAINING THE POSITION AND LENGTH OF THE SUB-FIELD         *
+*         TO BE EXTRACTED, AND R6 POINTS AT THE RECORD THAT           *
+*         CONTAINS THE SUB-FIELD.  ON EXIT, R2 POINTS AT THE          *
+*         BYTE FOLLOWING THE EXTRACTED AND MOVED SUB-FIELD.           *
+***********************************************************************
+         SPACE 1
+EXTRACT  SUBIN ,                   EXTRACT SUB-FIELD
+         SR    R1,R1               ZEROISE WORK REGISTER
+         IC    R1,0(,R3)           OBTAIN SUB-FIELD OFFSET
+         LTR   R1,R1               VERIFY OFFSET SUPPLIED
+         BZ    EXTRACTX            EXIT IF NOT
+         BCTR  R1,0                DECREMENT (OFFSET - 1 = DISPLACEMNT)
+         AR    R1,R6               POINT R1 AT SUB-FIELD
+         SR    R15,R15             ZEROISE WORK REGISTER
+         IC    R15,1(,R3)          OBTAIN SUB-FIELD LENGTH
+         LTR   R15,R15             VERIFY LENGTH SUPPLIED
+         BZ    EXTRACTX            EXIT IF NOT
+         BCTR  R15,0               DECREMENT FOR EXECUTE
+         EX    R15,EXTRACTM        MOVE SUB-FIELD TO DESTINATION
+         AR    R2,R15              ADD LGTH TO DESTINATION ADDRESS
+         LA    R2,1(,R2)           POINT AT BYTE AFTER SUB-FIELD
+EXTRACTX SUBOUT ,                  RETURN TO CALLER
+         SPACE 1
+EXTRACTM MVC   0(0,R2),0(R1)       EXECUTED MOVE INSTRUCTION
+         TITLE 'TEST FIELD FOR NUMERIC, PACK IT AND CONVERT IT TO BIN'
+***********************************************************************
+*        THIS SUB-ROUTINE VERIFIES THAT A SUB-FIELD IS NUMERIC        *
+*         AND, IF IT IS, PACKS THE FIELD INTO THE WORK AREA           *
+*         WORKPACK, AND CONVERTS IT TO BINARY IN R2.  ON INPUT,       *
+*         R3 POINTS AT TWO 1-BYTE BINARY FIELDS CONTAINING THE        *
+*         POSITION AND LENGTH OF THE SUB-FIELD, AND R6 POINTS         *
+*         AT THE RECORD THAT CONTAINS THE SUB-FIELD.                  *
+***********************************************************************
+         SPACE 1
+SFVERIFY SUBIN PREFIX=S,SAVE=R4    TEST FIELD FOR NUMERIC
+         SR    R2,R2               ZEROISE DESTINATION FIELDS
+         ZAP   WORKPACK,ZERO        LEST NO FIELD OR NON-NUMERIC
+         SR    R1,R1               ZEROISE WORK REGISTER
+         IC    R1,0(,R3)           OBTAIN SUB-FIELD OFFSET
+         LTR   R1,R1               VERIFY OFFSET SUPPLIED
+         BZ    NUMERICX            EXIT IF NOT
+         BCTR  R1,0                DECREMENT (OFFSET - 1 = DISPLACEMNT)
+         AR    R1,R6               POINT R1 AT SUB-FIELD
+         SR    R15,R15             ZEROISE WORK REGISTER
+         IC    R15,1(,R3)          RETRIEVE SUB-FIELD LENGTH
+         LTR   R15,R15             VERIFY LENGTH SUPPLIED
+         BZ    NUMERICX            EXIT IF NOT
+         BAL   R4,NUMERIC          TEST IF SUBFIELD NUMERIC
+         BL    NUMERICX            FIELD BLANK - DEFAULT TO ZERO
+         BH    NUMERICX            FIELD NON-NUMERIC - FORCE TO ZERO
+         BCTR  R15,0               DECREMENT LENGTH FOR EXECUTE
+         EX    R15,SFPACK          PACK SUB-FIELD IN WORK AREA
+         CVB   R2,WORKPACK         CONVERT VALUE TO BINARY
+NUMERICX SUBOUT PREFIX=S,RESTORE=R4 RETURN TO CALLER
+         SPACE 1
+SFPACK   PACK  WORKPACK,0(0,R1)    EXECUTED PACK INSTRUCTION
+         TITLE 'LOCATE SUB-FIELDS IN SPECIAL (***) CARDS'
+***********************************************************************
+*        THIS SUB-ROUTINE SCANS THE SPECIAL BUDGIE INPUT              *
+*         STREAM CONTROL CARDS TO LOCATE THE SUB-FIELD                *
+*         FOLLOWING THE '=' SIGN.  ON INPUT, R6 POINTS AT             *
+*         THE RECORD TO BE SCANNED.  ON OUTPUT, FLDP CONTAINS         *
+*         THE OFFSET OF THE SUB-FIELD AND FLDL CONTAINS THE           *
+*         LENGTH, AND R3 POINTS AT FLDP.  IF NO SUB-FIELD IS          *
+*         FOUND, FLDP & FLDL ARE SET TO ZERO AND SWNOSUB IS           *
+*         SET ON.                                                     *
+***********************************************************************
+         SPACE 1
+LOCATE   SUBIN ,                   LOCATE SUB-FIELD FOLLOWING KEY-WORD
+         XC    FLDP(2),FLDP        ZEROISE OFFSET AND LENGTH
+         LH    R15,SYSUT1+DCBLRECL-IHADCB GET INPUT RECORD LENGTH
+         SR    R2,R2               ZEROISE WORK REGISTER
+         LA    R3,FLDP             POINT R3 AT OFFSET AND LENGTH
+         OI    SWERROR,SWNOSUB     ASSUME NO SUB-FIELD PRESENT
+         LR    R1,R6               POINT R1 AT START OF RECORD
+LOCATE1  CLI   0(R1),C'='          TEST FOR EQUAL SIGN
+         BE    LOCATE2             BRANCH IF YES
+         LA    R1,1(,R1)           INCREMENT POINTER TO NEXT CHARACTER
+         BCT   R15,LOCATE1         TEST CHARACTER IF WITHIN RECORD
+         B     LOCATEX             EXIT WITHOUT SUB-FIELD
+LOCATE2  LA    R1,1(,R1)           POINT AT CHARACTER AFTER '=' SIGN
+         LR    R3,R1               POINT R3 AT START OF SUB-FIELD
+         SR    R3,R6               DETERMINE SUB-FIELD OFFSET
+         LA    R3,1(,R3)           ALTER OFFSET TO DISPLACEMENT
+         STC   R3,FLDP              AND STORE IT
+         LA    R3,FLDP             POINT R3 AT OFFSET AND LENGTH
+         NI    SWERROR,FF-SWNOSUB  SET OFF NO SUBFIELD SWITCH
+LOCATE3  LA    R2,1(,R2)           INCREMENT LENGTH COUNTER
+         CLI   0(R1),C' '          TEST FOR DELIMITING BLANK
+         BE    LOCATE4             BRANCH IF YES
+         LA    R1,1(,R1)           INCREMENT POINTER TO NEXT CHARACTER
+         BCT   R15,LOCATE3         TEST CHARACTER IF WITHIN RECORD
+LOCATE4  BCTR  R2,0                DECREMENT  TO GET LENGTH
+         LTR   R2,R2               VERIFY SUB-FIELD EXISTS
+         BZ    LOCATEX             EXIT IF NOT
+         STC   R2,FLDL             STORE SUB-FIELD LENGTH
+LOCATEX  SUBOUT ,                  RETURN TO CALLER
+         TITLE 'PARM FIELD PROCESSING'
+***********************************************************************
+*        PROCESS PARM                                                 *
+***********************************************************************
+         SPACE 1
+PARMPROC SUBIN SAVE=R4             PRESERVE RETURN ADDRESS
+         SPACE 1
+PARM01   BAL   R4,PARMGET          RETRIEVE PARM SUBFIELD
+         BNE   EOPARM              BRANCH IF PARM EXHAUESTED
+         CLC   0(6,R2),=C'DELETE'  IS IT A DELETE REQUEST
+         BE    PARMDEL
+PARM02   MVC   5(L'PARMESS3,R5),PARMESS3 UNRECOGNISABLE MESSAGE TO LINE
+         MVC   5+L'PARMESS3(80,R5),TESTAREA ADD PARM TO MESSAGE
+         BAL   R4,PRINT            PRINT MESSAGE
+         B     PARM01              GO GET NEXT SUBFIEOLD
+         SPACE 5
+EOPARM  SUBOUT RESTORE=R4          RETURN FROM WHENCE WE CAME
+         EJECT
+***********************************************************************
+*        PROCESS PARM ( CONT'D ) - DELETE UNKNOWN RECORDS             *
+***********************************************************************
+         SPACE 1
+PARMDEL  OI    PROCESS,SWPRDEL     SET ON FLAG TO DELETE RECORDS
+         B     PARM01              GO GET NEXT SUBFIELD
+         EJECT
+***********************************************************************
+*        THIS SUB-ROUTINE RETRIEVES SUB-FIELDS FROM THE PARM          *
+*         FIELD IN THE EXEC STATEMENT.  ON RETURN, R2 CONTAINS THE
+*         SUB-FIELD ADDRESS AND R3 CONTAINS THE LENGTH.  THE CONDITION
+*         CODE IS SET SUCH THAT THE USER CAN MAKE THE FOLLOWING TESTS -
+*              BE  - PARM SUB-FIEOLD FOUNF
+*              BNE - PARM IS EXHAUSTED
+***********************************************************************
+         SPACE 1
+PARMGET  SUBIN SAVE=(R7,R8,R9,R4)  PRESEVRE REGISTERS
+         MVI   PARMTSTX,C'Y'       ASSUME PARM EXHUASTED
+         LM    R7,R9,PARMR7R9      RETRIEVE R7 AND R8 VALUES & R9
+PARM1TME CBAL  R4,PARMINIT         1ST TIME ONLY, INITIALISE POINTERS
+PARMGET2 LA    R8,1                ESTABLISH BXLE INCREMENT
+         CR    R7,R9               TEST IF PARM EXHAUSTED
+         BNL   PARMGX1             EXIT IF PARM EXHAUSTED
+PARMGET3 LR    R2,R7               POINT R2 AT START OF SUBFIELD
+PARMLOOP CLI   0(R7),C','          TEST FOR COMMA
+PARMT1   BE    PARMLGTH            BRANCH IF YES UNLESS WAITING FOR '
+         CLI   0(R7),C'('          TEST FOR START OF PARENTHESIS
+         BNE   *+8                 BR IF NOT
+         NI    PARMT1+1,X'0F'      NULLIFY ','TEST UNTIL END PARENTHESI
+         CLI   0(R7),C')'          TEST FOR       PARENTHESIS
+         BNE   *+8                 BRANCH IF NOT
+         OI    PARMT1+1,X'80'      ALLOW SCAN FOR COMMA
+         BXLE  R7,R8,PARMLOOP      TEST NEXT CHARACTER UNLESS END
+         SPACE 3
+***********************************************************************
+*        CONT'D OVERLEAF                                              *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        RETRIEVE PARM SUB-FIELDS ( CONT'D )                          *
+***********************************************************************
+         SPACE 1
+PARMLGTH LR    R3,R7               POINT AT END OF SUBFIELD
+         SR    R3,R2               DETERMINE SUBFIELD LENGTH
+         LA    R7,1(,R7)           POINT AT START OF NEXT SUBFIELD
+         STM   R7,R9,PARMR7R9      PRESERVE WORK REGISTERS
+         MVI   PARMTSTX,C'X'       SET TO SHOW SUB-FIELD FOUND
+         MVI   TESTAREA,C' '       INSERT LEADING BLANK
+         MVC   TESTAREA+1(L'TESTAREA-1),TESTAREA & PROPAGATE
+         BCTR  R3,0                DECREMENT LENFTH FOR EXECUTE
+         LTRR  R3,R3               ENSURE NOT -VE (INPLIES ',,')
+         BM    *+8                 BYPASS EX IF -VE
+         EX    R3,PARMMVC          MOVE SUB-PARM TO WORKAREA
+         LA    R3,1(,R3)           RE-ESTABLISH PARM FIELD LENGTH
+PARMGX1  CLI   PARMTSTX,C'X'       SE  CONDITION CODE
+        SUBOUT RESTORE=(R7,R8,R9,R4) RESTORE & RETURN
+         EJECT
+***********************************************************************
+*        INITIALISE PARM ROUTINE POINTERS                             *
+***********************************************************************
+         SPACE 1
+PARMINIT SUBIN SAVE=(R4)           PRESERVE REGISTERS
+         MVC   PARM1TME(2),=X'4700' CONVERT CBALTO NOP
+         L     R9,PARMPNTR         RETRIEVE PARM POINTER
+         L     R9,0(,R9)           POINT R9 AT PARAMETER AREA
+         LH    R8,0(R9)            RETRIEVE COUNT FIELD
+         LA    R7,2(,R9)           POINT R7 AT START OF DATA
+         MVC   5(L'PARMESS0,R5),PARMESS0 STE UP 'NO PARM'
+         LTR   R8,R8               TEST IF PARM SUPPLIED
+         BZ    PARMP1              BRANCH IF NOT
+         BCTR  R8,0                DECREMENT R8 FOR EXECUTE
+         MVC   5(L'PARMESS1,R5),PARMESS1 SET UP 'THE CONTENTS ARE'
+         EX    R8,PARMPMVC         ADD PARM TO MESSAGE
+         LA    R8,1(,R8)           RESET R8 AFTER EXECUTE
+PARMP1   CBAL  R4,PRINT            PRINT LINE
+         LTR   R8,R8               TEST IF PARM SUPPLIED
+         BZ    PARMGX1             EXIT IF NOT
+         LA    R9,2(,R9)           POINT R9 AT START OF DATA
+         AR    R9,R8               POINT R9 AT EOD
+         BCTR  R9,0                DECREMENT R9 FOR USE AS BXLE COMPARE
+        SUBOUT RESTORE=(R4)        RETURN TO CALLER
+         SPACE 1
+PARMPMVC MVC   L'PARMESS1+5(0,R5),0(R7) ADD PARM TO PRINT LINE
+PARMMVC  MVC   TESTAREA(0),0(R2)   MOVE PARM TO TEST AREA
+PARMR7R9 DS    3F                  REGISTER SAVE AREA
+PARMTSTX DC    C' '                COMPARAND TO SET CONDITION CODE
+PARMESS0 DC    C'THERE IS NO PARM FIELD'
+PARMESS1 DC    C'THE CONTENTS OF THE PARM FIELD ARE - '
+PARMESS2 DC    C'PARM SUBFIELD IS NON-NUMERIC - DEFAULT VALUE USED - '
+PARMESS3 DC    C'UNRECOGNISABLE OR INVALID SUBFIELD IN THE PARM - '
+         TITLE 'I/O SUB-ROUTINES'
+***********************************************************************
+*        READ SUBROUTINE FOR SYSIN                                    *
+***********************************************************************
+         SPACE 1
+GET      SUBIN SAVE=R4,PREFIX=G    READ BUDGIE CONTROL CARDS
+         GET   SYSIN               GET NEXT RECORD
+         LR    R6,R1               SAVE BUFFER ADDRESS
+         MVC   10(80,R5),0(R6)     MOVE CONTROL CARD TO PRINTLINE
+         BAL   R4,PRINT             AND PRINT CARD IMAGE
+        SUBOUT RESTORE=R4,PREFIX=G RETURN TO CALLER
+         SPACE 4
+***********************************************************************
+*        READ SUBROUTINE FOR SYSUT1                                   *
+***********************************************************************
+         SPACE 1
+READ     SUBIN                     READ INPUT DATA
+         GET   SYSUT1              GET NEXT INPUT RECORD
+         LR    R6,R1               SAVE BUFFER ADDRESS
+MOVEDATA MVC SRECDATA-SORTRECD(0,R7),0(R6) MOVE TO INTERMED AREA
+         MVI   SRECFLAG-SORTRECD(R7),C'A' ASSUME NORMAL DATA CARD
+         AP    CNTUT1,ONE          INCREMENT RECORD COUNTER
+        SUBOUT ,                   RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        PRINT SUBROUTINE FOR SYSPRINT                                *
+***********************************************************************
+         SPACE 1
+PRINT    SUBIN ,                   PRINT MESSAGE
+         PUT   SYSPRINT            PRINT LINE
+         LR    R5,R1               SAVE BUFFER ADDRESS
+         MVI   0(R5),SPCE1AFT      INSERT DEFAULT SINGLE SPACE
+         MVI   1(R5),C' '          MOVE SPACE TO START OF LINE
+         MVC   2(131,R5),1(R5)      AND PROPACATE THROUGH
+        SUBOUT ,                   RETURN TO CALLER
+         SPACE 4
+***********************************************************************
+*        WRITE SUBROUTINE FOR SYSUT2                                  *
+***********************************************************************
+         SPACE 1
+WRITE    SUBIN ,                   WRITE SORTED OUTPUT
+         PUT   SYSUT2,0(R7)        WRITE OUTPUT RECORD
+        SUBOUT ,                   RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        SUPPLY DEFAULT BLOCK SIZE IF NOT CODED                       *
+***********************************************************************
+         SPACE 1
+BLKSZRTN SUBIN ,                   SUPPLY DEFAULT BLOCK SIZE
+         USING IHADCB,R1           ESTABLISH DCB ADDRESSABILITY
+         CLI   DCBRECFM,X'00'      WAS RECFM SUPPLIED
+         BNE   *+8                 BR IF RECFM SUPPLIED
+         OI    DCBRECFM,DCBRECF+DCBRECBR FORCE 'RECFM=FB'
+         CLC   DCBLRECL,ZEROWORD   TEST IF LRECL SUPPLIED
+         BNE   *+8                 BYPASS DEFAULT IF YES
+         MVI   DCBLRECL+1,80       FORCE LRECL TO 80
+         CLC   DCBBLKSI,ZEROWORD   TEST IF BLKSIZE SUPPLIED
+         BNE   0(R14)              RETURN TO OPEN IF YES
+         MVC   DCBBLKSI,DCBLRECL   FORCE SINGLE BLOCKING
+         DROP  R1                  DROP DCB ADDRESSABILITY
+        SUBOUT RETURN=(R14)        RETURN TO OPEN ROUTINES
+         EJECT
+***********************************************************************
+*        I/O ERROR ROUTINE                                            *
+***********************************************************************
+         SPACE 1
+IOERROR  SUBIN ,                   ANALYSE I/O ERROR
+         USING IOERROR,R15         ESTABLISH TEMPORARY ADDRESSABILITY
+        SYNADAF ACSMETH=QSAM       CALL ANALYSIS ROUTINE
+         L     R13,IOERPTR         GET ADDRESS OF PROGRAM SAVE AREA
+*                                   AND IGNORE SYNADAF'S REG S/A
+         DROP  R15                 DROP TEMPORARY ADDRESSABILITY
+         MVC   LINE05+12(86),50(R1) ADD RESULT OF ANALYSIS TO LINE
+         WTO   MF=(E,LINE04)       TELL OPERATOR OF ERROR
+         MVI   0(R5),SPCE2AFT      ESTABLISH DOUBLE BLANK LINE
+         BAL   R4,PRINT             AND WRITE THEM
+         MVI   0(R5),SPCE3AFT      ESTABLISH DOUBLE SPACE FOLLOWING
+         MVC   5(L'LINE05,R5),LINE05 MOVE IN ERROR MESSAGE
+         BAL   R4,PRINT            WRITE ERROR MESSAGE
+         BAL   R4,PRINT            ISSUE BLANK LINE TO ENSURE ERROR PRI
+         ABEND 8                   DUMP TO FLAG ERROR
+         SPACE 1
+IOERPTR  DS    F                   ADDRESS OF PROGRAMS SAVE AREA
+         EJECT
+***********************************************************************
+*        OPEN ROUTINE                                                 *
+***********************************************************************
+         SPACE 1
+OPEN     SUBIN ,                   OPEN DATA SET
+         L     R3,0(,R2)           GET DCB ADDRESS
+         CLC   12(L'INPUT,R2),INPUT TEST FOR INPUT DATA SET
+         BE    OPEN2               BRANCH IF INPUT
+         OPEN  ((R3),(OUTPUT))     OPEN OUTPUT DATA SET
+         B     OPEN3               GO SET SWITCH
+OPEN2    OPEN  ((R3),(INPUT))      OPEN INPUT DATA SET
+OPEN3    OI    0(R2),DDOPEN        INDICATE DATA SET OPEN
+        SUBOUT ,                   RETURN TO CALLER
+         SPACE 5
+***********************************************************************
+*        CLOSE ROUTINE                                                *
+***********************************************************************
+         SPACE 1
+CLOSE    SUBIN ,                   CLOSE DATA SET
+         TM    0(R2),DDOPEN        TEST IF DATA SET OPEN
+         BZ    CLOSEX              EXIT IF NOT
+         L     R3,0(,R2)           GET DCB ADDRESS FROM TABLE ENTRY
+         CLOSE ((R3))              CLOSE DATA SET
+         NI    0(R2),FF-DDOPEN     SET OFF 'OPEN' SWITCH
+CLOSEX  SUBOUT ,                   RETURN TO CALLER
+         TITLE 'MISCELLANEOUS EQUATES, CONSTANTS AND WORK AREAS'
+*        EQUATES
+         SPACE 1
+SWNORMLB EQU   1                   NORMAL BATCH CARD
+SWNORMLR EQU   2                   REPLACEMENT DATA BATCH CARD
+SWSPECLB EQU   4                   SPECIAL (***) BATCH CARD
+SWSPECLC EQU   8                   SPECIAL (***) CHANGE RECORD CARD
+SWSPECLD EQU   16                  SPECIAL (***) DELETE RECORD CARD
+SWSPECLI EQU   32                  SPECIAL (***) INSERT RECORD CARD
+SWSPECB1 EQU   64                  ON FOR FIRST CARD AFTER SPECIAL B/C
+SWNONNUM EQU   1                   SUB-FIELD NOT NUMERIC
+FF       EQU   255                 ALL-1 MASK
+SWNOSUB EQU    2                   NO SUB-FIELD FOUND
+SW2BCTYP EQU   8                   MORE THAN 1 TYPE OF BATCH CARD
+SPCE1AFT EQU   X'09'               SPACE 1 AFTER PRINTING
+SPCE2AFT EQU   X'11'               SPACE 2 AFTER PRINTING
+SPCE3AFT EQU   X'19'               SPACE 3 AFTER PRINTING
+PAGESKIP EQU   X'8B'               SKIP TO NEW PAGE
+MAXDS    EQU   4                   NUMBER OF DCB'S USED BY BUDGIE1
+DELETE   EQU   4                   TELL SORT TO DELETE RECORD
+NORETURN EQU   8                   TELL SORT NOT TO RETURN
+INSERT   EQU   12                  TELL SORT TO INSERT RECORD
+DDOPEN   EQU   1                   DATA SET IS OPEN
+SWPRDEL  EQU   1                   DELETE UNKNOWN RECORDS
+         TITLE 'MISCELLANEOUS CONSTANTS AND WORK AREAS'
+LINE01   DC    C'BUDGIE1 - MESSAGE DATA SET'
+LINE02   DC    C'CONDITION CODE = '
+LINE03   DC    C'END OF BUDGIE1'
+LINE04   DS    0F
+         DC    AL2(WTOEND-*),H'0',C'BUDGIE1 - '
+LINE05   DC    CL98'I/O ERROR -'
+WTOEND   EQU   *
+LINE06   DC    C'BAD END OF THE SORT'
+LINE07   DC    C'BUDGIE CONTROL CARDS ARE -'
+LINE08   DC    C'END OF BUDGIE CONTROL CARDS'
+LINE09   DC    C'THE PREVIOUS CARD CONTAINS NON-NUMERIC DATA'
+LINE10   DC    C'MORE THAN 1 TYPE OF BATCH CARD WAS SPECIFIED,'
+LINE11   DC    C' AND SPECIAL (***) CORRECTION BATCH CARDS ENTERED.'
+LINE12   DC   C' RECORD SEQUENCE WITHIN THESE BATCHES IS UNPREDICTABLE'
+LINE13   DC    C'NON-NUMERIC RECORD NUMBER ENCOUNTERED IN CORRECTION BA*
+               TCH'
+LINE14   DC    C' BAD RECORD(S) FORCED TO THE FRONT OF THE BATCH(ES)'
+         SPACE 5
+SORTPARM DS    0F                  ADDRESS OF SORT PARAMETERS
+         DC    X'80',AL3(SORTLIST) ADDRESS OF SORT PARAMETERS
+         DC    X'0000'             FILLER
+SORTLIST DC    X'0028'             LENGTH OF PARAMETER AREA
+         DC    A(SORTSTRT)         START OF SORT STATEMENT
+         DC    A(SORTEND)          END   OF SORT STATEMENT
+         DC    A(RECSTART)         START OF RECORD STATEMENT
+         DC    A(RECEND)           END   OF RECORD STATEMENT
+         DC    A(E15)              ADDRESS OF E15 SORT EXIT
+         DC    A(E35)              ADDRESS OF E35 SORT EXIT
+         DC    X'00',C'MAX'        REQUEST CORE OPTIMISATION
+         DC    X'01',AL3(1028)     RESERVE 1K FOR SAFETY
+         DC    X'03',AL3(SYSLIST)  SPECIFY MESSAGE DD NAME
+         DC    X'FF',X'00',C'AP'   SPECIFY ALL MESSAGES TO PRINTER
+         SPACE 1
+SYSLIST  DC    CL8'SYSLIST'        SORT MESSAGE DS DDNAME
+         SPACE 1
+SORTSTRT DC    C' SORT FIELDS=(2,16,CH,A,'   BATCH NUMBER
+         DC    C'1,1,CH,D,'        Z/D/A FLAG
+         DC    C'24,3,PD,A,'       POSN OF BATCH WITHIN INPUT
+         DC    C'18,6,PD,A'        CARD NUMBER WITHIN BATCH
+SORTDSR  DC    C',   ,  ,CH,A)'    DETAIL CARD SORT FIELDS
+SORTEND  DC    C' '                          END OF SORT STATEMENT
+         SPACE 1
+RECSTART DC    C' RECORD LENGTH=(' RECORD STATEMENT
+RECL1    DC    C'   ,'             INPUT RECORD LENGTH
+RECL2    DC    C'   ,'             INTERMEDIATE RECORD LENGTH
+RECL3    DC    C'   ),TYPE=F'      OUTPUT RECORD LENGTH
+RECEND   DC    C' '                END OF RECORD STATEMENT
+         EJECT
+MAXLBN   DS    C                   LARGEST LGTH OF BATCH NO (FROM MS02)
+FLDP     DS    C                   POSN OF LOCATED FIELD
+FLDL     DS    C                   LGTH OF LOCATED FIELD
+WORKPACK DS    D                   WORK AREA FOR DECIMAL MATHS
+STORLSR  DC    PL8'0'              MAXINUM LGTH OF DETAIL CARD SORT FLD
+ACUMLSR  DC    PL4'0'              CURRENT LGTH OF DETAIL CARD SORT FLD
+DSFPOSN  DC    F'0'                DISPLACEMENT OF DETAIL SORT FIELD
+DSFLGTH  DC    X'00'               EXECUTABLE LGTH OF DETAIL SORT FIELD
+ZERO     DC    PL1'0'              PACKED CONSTANT OF ZERO
+HUNDRED  DC    PL3'10000'          PACKED CONSTANT OF 10000
+ONE      DC    PL1'1'              PACKED CONSTANT OF 1
+CNTUT1   DC    PL6'0'              COUNT OF INPUT RECORDS
+SWCARD   DC    X'00'               8 SWITCHES REFLECTING CARD STATUS
+SWERROR  DC    X'00'               8 SWITCHES OF ERROR-STATUS
+PROCESS  DC    X'00'               PROCESSING SWITCH
+TESTAREA DS     CL2                MULTI-PURPOSE WORK RREA
+SIGNPOSN DC    CL20'0'             MASK TO 'OR' SIGNS TO X'F'
+ZEROWORD DC    F'0'                BINARY ZERO FULLWORD FOR TESTS
+POSNDSR  DS    F                   DISP OF START OF EXTRACTED FIELDS
+PARMPNTR DS    F                   ADDRESS OF PARM FIELD
+COMPCODE DC    H'0'                CONDITION CODE
+COND4    DC    H'4'                COMPLETION CODE OF 4
+COND8    DC    H'8'                COMPLETION CODE OF 8
+COND16   DC    H'16'               COMPLETION CODE OF 16
+INPUT    DC    CL8'INPUT'          USED BY OPEN ROUTINE
+WORKEDIT DS    CL4                 WORK AREA FOR EDITING
+EDITPATN DC    X'40212020'         EDIT PATTERN FOR 999
+EDITCOND DC    X'40202120'         EDIT PATTERN FOR ZZ9
+TABLEPTR DC    A(0)                ADDRESS OF 1ST MS02-TABLE ENTRY
+BATCHPTR DC    A(0)                ADDRESS OF LAST MATCHED TABLE ENTRY
+WORKAREA DS    CL16
+BUDGDB   DC    C'***DELETE BATCH='
+BUDGCR   DC    C'***CHANGE RECORD='
+BUDGDR   DC    C'***DELETE RECORD='
+BUDGIR   DC    C'***INSERT RECORD='
+BUDGBC   DC    C'***BATCH='
+SPACES   DC    CL16' '
+SORTDSRN DC    C')            '    NULLIFY DETAIL CARD SORT FIOEDS
+         TITLE 'DCB''S AND I/O CONTROL TABLES'
+         PRINT NOGEN               SUPPRESS DCB EXPANSION
+DCBTABLE DS    0F
+PRINTSW  DC    X'00',AL3(SYSPRINT),CL8'SYSPRINT',CL8'OUTPUT'
+SYSINSW  DC    X'00',AL3(SYSIN),CL8'SYSIN',CL8'INPUT'
+SYSUT1SW DC    X'00',AL3(SYSUT1),CL8'SYSUT1',CL8'INPUT'
+SYSUT2SW DC    X'00',AL3(SYSUT2),CL8'SYSUT2',CL8'OUTPUT'
+TABLESIZ EQU   *-DCBTABLE
+DCBNTRY  EQU   TABLESIZ/MAXDS
+         SPACE 1
+EXITLIST DC    X'85',AL3(BLKSZRTN) ENTRY FOR DCB MODIFICATION
+         SPACE 3
+SYSPRINT DCB   DDNAME=SYSPRINT,                                        *
+               DSORG=PS,                                               *
+               MACRF=PL,                                               *
+               RECFM=FBM,                                              *
+               LRECL=133,                                              *
+               SYNAD=IOERROR,                                          *
+               EXLST=EXITLIST
+         SPACE 3
+SYSIN    DCB   DDNAME=SYSIN,                                           *
+               DSORG=PS,                                               *
+               MACRF=GL,                                               *
+               RECFM=FB,                                               *
+               LRECL=80,                                               *
+               EODAD=EODIN,                                            *
+               SYNAD=IOERROR,                                          *
+               EXLST=EXITLIST
+         SPACE 3
+SYSUT1   DCB   DDNAME=SYSUT1,                                          *
+               DSORG=PS,                                               *
+               MACRF=GL,                                               *
+               RECFM=FB,                                               *
+               EODAD=EODUT1,                                           *
+               SYNAD=IOERROR,                                          *
+               EXLST=EXITLIST
+         SPACE 3
+SYSUT2   DCB   DDNAME=SYSUT2,                                          *
+               DSORG=PS,                                               *
+               MACRF=PM,                                               *
+               SYNAD=IOERROR,                                          *
+               EXLST=EXITLIST
+         EJECT
+         PRINT GEN                 ALLOW DCB DSECT EXPANSION
+         DCBD  DSORG=PS            GENERATE DCB DSECT
+BUDGIE1  CSECT
+         PRINT NOGEN               SUPPRESS MACRO EXPANSION
+         SPACE 1
+         LTORG
+         SPACE 1
+$L       EQU   *-BUDGIE1
+$L1      EQU   $L/100000*100000
+$L2      EQU   ($L-$L1)/10000*10000
+$L3      EQU   ($L-$L1-$L2)/1000*1000
+$L4      EQU   ($L-$L1-$L2-$L3)/100*100
+$L5      EQU   ($L-$L1-$L2-$L3-$L4)/10*10
+$L6      EQU   ($L-$L1-$L2-$L3-$L4-$L5)
+         SPACE 1
+$LENGTH  EQU   $L1/100000*1048576+$L2/10000*65536+$L3/1000*4096+$L4/100*
+               256+$L5/10*16+$L6
+         SPACE 1
+         END

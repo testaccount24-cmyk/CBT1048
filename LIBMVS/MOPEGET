@@ -1,0 +1,149 @@
+***********************************************************************
+*                         M O P E G E T
+*
+*            THIS ROUTINE READS THE TCAM INPUT Q DIRECTLY AND TRIES
+*        TO MATCH INCOMING MESSAGES WITH PARTICULAR USERS ALREADY
+*        LOGGED ON TO MOPE. IF NO MATCHING USER IS FOUND, THE ROUTINE
+*        CREATES A NEW ENTRY IN THE TERMINAL USER TABLE AND INITIALISES
+*        IT READY FOR USE. WHEN A MESSAGE IS PLACED ON THE STACK FOR A
+*        MOPE USER, HIS INPUT ECB IS POSTED FOR TGET TO RECOGNISE THE
+*        CONDITION.
+*
+***********************************************************************
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING
+***********************************************************************
+         SPACE 2
+MOPEGET  ZCSECT 12,GETMAIN=1
+         LR    REG10,REG1          ADDRESS OF COMMON WORK AREA
+         USING TCAMWORK,REG10      ADDRESSABILITY FOR WORK AREA
+         EJECT
+***********************************************************************
+*        INITIALISE THE EODAD ADDRESS FOR THE INPUT QUEUE
+***********************************************************************
+         SPACE 2
+         LA    REG1,MOPEINQ        ADDRESS OF THE DCB
+         USING IHADCB,REG1         ADDRESSABILITY FOR IT
+         LA    REG2,TCAMEOF        ADDRESS OF SIGN-OFF ROUTINE
+         STCM  REG2,7,DCBEODA      STORE IN THE DCB
+         DROP  REG1                RELEASE ADDRESSABILITY
+         EJECT
+***********************************************************************
+*        LOCATE THE NEXT INPUT RECORD FROM TCAM
+***********************************************************************
+         SPACE 2
+MAINLOOP DS    0H
+         LA    REG1,MOPEINQ        ADDRESS OF THE DCB
+         USING IHADCB,REG1         ADDRESSABILITY FOR IT
+         LH    REG2,DCBBLKSI       LOAD LENGTH OF WORK AREA
+         DROP  REG1                RELEASE ADDRESSABILITY
+         GETMAIN R,LV=(2)          GETMAIN A BUFFER
+         LR    REG3,REG1           SAVE ADDRESS OF THE AREA
+         USING INBLOCK,REG3        ADDRESSABILITY FOR IT
+         ST    REG2,INGETMN        SAVE GETMAINED LENGTH OF AREA
+         GET   MOPEINQ,INBUFF      READ THE NEXT MESSAGE
+         EJECT
+***********************************************************************
+*        LOCATE THE MATCHING TERMINAL STACK ENTRY
+***********************************************************************
+         SPACE 2
+         LA    REG4,STAKADDR       ADDRESS OF ADDRESS OF TOP OF STACK
+         USING TERMENTY,REG4       ADDRESSABILITY FOR STACK ENTRIES
+USERLOOP EQU   *
+         L     REG4,TERMCHN        ADDRESS OF FIRST/NEXT ENTRY
+         NC    TERMNAME,TERMNAME   IS THIS AN EMPTY SLOT ALREADY ?
+         BZ    NEWUSER             YES. MUST BE A LOGON
+         CLC   TERMNAME,INUSERID   CORRECT USER ID ?
+         BNE   USERLOOP            NO. GO TRY NEXT ENTRY
+         NC    TERMTCB,TERMTCB     IS HE ACTIVE ?
+         BZ    NEWUSER             NO. START AGAIN WITH HIM
+         EJECT
+***********************************************************************
+*        USER ENTRY IS FOUND. CHAIN THE DATA
+***********************************************************************
+         SPACE 2
+FOUNDHIM DS    0H
+         XC    INCHAIN,INCHAIN     CLEAR THE CHAIN POINTER
+         LA    REG6,TERMISTK       ADDRESS OF HEAD OF INPUT STACK
+RETRYIT  EQU   *                   LOOP DOWN ENTRIES FOR END OF CHAIN
+         LR    REG5,REG6           RETRY ON NEXT ENTRY
+         XR    REG6,REG6           CLEAR A WORK REGISTER
+         CS    REG6,REG3,0(REG5)   TRY FOR THE CHAIN
+         BNE   RETRYIT             FAILED. GO TRY AGAIN
+         EJECT
+***********************************************************************
+*        POST THE USER THAT DATA HAS ARRIVED
+***********************************************************************
+         SPACE 2
+         LA    REG1,TERMIECB       ADDRESS OF INPUT ECB
+         POST  (1)                 TELL HIM OF THE EVENT
+         B     MAINLOOP            AND CONTINUE
+         EJECT
+***********************************************************************
+*        A NEW TERMINAL HAS BEEN OPENED UP. CREATE TABLE ENTRY
+***********************************************************************
+         SPACE 2
+NEWUSER  DS    0H
+         MVC   TERMNAME,INUSERID   INITIALISE HIS NAME FIELD
+         XC    TERMISTK,TERMISTK   CLEAR THE STACK AND ECB FIELDS
+         XC    TERMOSTK,TERMOSTK   CLEAR THE STACK AND ECB FIELDS
+         XC    TERMIECB,TERMIECB   CLEAR THE STACK AND ECB FIELDS
+         XC    TERMOECB,TERMOECB   CLEAR THE STACK AND ECB FIELDS
+         LR    REG1,REG4           ADDRESS OF HIS PARM AREA
+         ATTACH EP=MOPE,ETXR=GETETXR ATTACH A MOPE SUBTASK
+         ST    REG1,TERMTCB        SAVE HIS TCB ADDRESS
+         B     FOUNDHIM            AND CARRY ON AS NORMAL
+         EJECT
+***********************************************************************
+*        RETURN TO THE MAIN CONTROL TASK
+***********************************************************************
+         SPACE 2
+TCAMEOF  DS    0H
+         POST  MAINWAIT            POST MAIN TASK'S ECB
+         ZRETURN RC=0              AND RETURN TO THE SYSTEM
+         EJECT
+***********************************************************************
+*        FAILURE AND ERROR ROUTINES
+***********************************************************************
+         SPACE 2
+         EJECT
+***********************************************************************
+*        CONSTANTS NOT CHANGED BY THIS PROGRAM
+***********************************************************************
+         SPACE 2
+         LTORG
+         EJECT
+***********************************************************************
+*        END OF TASK EXIT ROUTINE
+***********************************************************************
+         SPACE 2
+GETETXR  ZCSECT GETMAIN=1
+         EJECT
+***********************************************************************
+*        LOCATE HIS INDIVIDUAL ENTRY IN THE TERMINAL STACK
+***********************************************************************
+         SPACE 2
+         USING TCB,REG1            ADDRESSABILITY FOR TCB
+         L     REG2,TCBFSA         ADDRESS OF HIS SAVE AREA
+         L     REG4,24(REG2)       ADDRESS OF HIS TABLE ENTRY
+         DETACH TERMTCB            AND DETACH THE SUBTASK
+         XC    TERMTCB,TERMTCB     CLEAR THE TCB ADDRESS FIELD
+         EJECT
+***********************************************************************
+*        RETURN TO THE DISPATCHER
+***********************************************************************
+         SPACE 2
+         ZRETURN RC=0              RETURN TO SYSTEM
+         EJECT
+***********************************************************************
+*        WORK AREAS AND DSECTS USED IN THIS ROUTINE
+***********************************************************************
+         SPACE 2
+         TCAMWORK
+         SPACE 2
+         PRINT NOGEN
+         DCBD DSORG=QS
+         IKJTCB
+         PRINT GEN
+         END

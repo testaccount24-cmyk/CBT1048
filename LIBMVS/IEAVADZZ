@@ -1,0 +1,310 @@
+//IEAVADZZ JOB (1586,5),'** FOR J. NOLS **',CLASS=N
+//********************   PRODN JOB ABEND HNDR   ***********************
+//STEP01       EXEC GENASMOD,AOS=C5
+         TITLE 'ABEND IN PRODUCTION JOB HANDLING ROUTINE'
+***********************************************************************
+*                        I E A V A D Z Z                              *
+*                                                                     *
+*        THIS MODULE IS INVOKED BY THE DRIVER 'XEAVAD02' AS PART OF   *
+*              ABEND PROCESSING. ITS PURPOSE IS TO ANALYSE THE        *
+*              ACCOUNTING INFORMATION FOR THE ABENDING JOB AND SO     *
+*              DETERMINE WHETHER IT IS PRODUCTION OR NOT. IF IT IS,   *
+*              A MESSAGE IS WRITTEN TO THE OPERATOR ASKING WHAT HE    *
+*              INTENDS TO DO ABOUT IT. HIS REPLY IS RECORDED ON THE   *
+*              DUMP DATA SET.                                         *
+*                                                                     *
+*        PARAMETERS. THE ABDUMP WORK AREA IS PASSED IN & OUT VIA R1   *
+*                                                                     *
+*        EXITS. THE ROUTINE RETURNS CONTROL TO THE CALLER             *
+*                                                                     *
+*        REGISTER USAGE.                                              *
+*        REG1  PARAMETER REGISTER, WORK REGISTER                      *
+*        REG2  WORK REGISTER                                          *
+*        REG3  ADDRESS OF ABDUMP WORK AREA                            *
+*        REG4  ADDRESS OF ABENDING TASK CONTROL BLOCK                 *
+*        REG5  ADDRESS OF JOB STEP CONTROL BLOCK                      *
+*        REG6  ADDRESS OF JOB CONTROL TABLE IN SWA                    *
+*        REG7  ADDRESS OF ACCOUNTING CONTROL TABLE IN SWA             *
+*        REG8  LENGTH & COUNT WORK REGISTER                           *
+*        REG9  ADDRESS OF CURRENT OPERAND                             *
+*        REG10 ADDRESS OF INTERNAL WORK AREA                          *
+*        REG11 INTERNAL LINKAGE REGISTER BETWEEN SEGMENTS             *
+*        REG12 BASE ADDRESS REGISTER                                  *
+*        REG13 ADDRESS OF DYNAMIC SAVE AREA                           *
+*        REG14 RETURN ADDRESS & WORK REGISTER                         *
+*        REG15 ENTRY POINT ADDRESS & WORK REGISTER                    *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        DSECTS                                                       *
+***********************************************************************
+         SPACE 2
+         PRINT NOGEN
+         IHAABDA
+         IEZJSCB
+         IKJTCB
+         PRINT GEN
+         SPACE 2
+JCT      DSECT
+JCTPRFX  DS    4A                  PREFIX TO CONTROL BLOCK
+JCTMYADD DS    AL3                 REFER BACK ADDRESS OF JCT
+         DS    X                   UNUSED
+JCTFLGS  DS    XL4                 FLAG FIELDDS
+JCTJOBNM DS    CL8                 JOB NAME
+JCTFLGS2 DS    XL16                FLAG FIELDS
+JCTSCT   DS    AL3                 ADDRESS OF FIRST STEP CONTROL TABLE
+         DS    X                   UNUSED
+JCTJCTX  DS    AL3                 ADDRESS JCT EXTENSION
+         DS    X                   UNUSED
+JCTACT   DS    AL3                 ADDRESS ACCOUNT CONTROL TABLE
+         DS    X                   UNUSED
+         DS    11A                 UNUSED
+JCTDSENQ DS    AL3                 ADDRESS DATA SET ENQ TABLE
+         DS    X                   UNUSED
+         DS    XL4                 FLAGS
+         DS    4A                  UNUSED
+JCTCSCT  DS    AL3                 ADDRESS CURRENT SCT
+         DS    X                   UNUSED
+         SPACE 2
+ACT      DSECT
+ACTPRFX  DS    4A                  ACT PREFIX
+ACTACT   DS    A                   ACT BACK REFERENCE POINTER
+ACTX     DS    A                   UNKNOWN
+ACTPGMR  DS    CL20                PROGRAMMER NAME FIELD
+ACTOPCNT DS    F                   NUMBER ACCT FILEDS
+ACTPLEN  DS    X                   LENGTH FIRST ACCOUNTING FIELD
+ACTPARM1 DS    C                   FIRST ACCT PARM FIELD
+         SPACE 2
+SCT      DSECT ,                   STEP CONTROL TABLE
+SCTPRFX  DS    4A                  SWA PREFIX FOR THIS BLOCK
+         DS    5F                  NOT USED IN THIS MODULE
+SCTSCT   DS    A                   ADDRESS OF NEXT SCT ON CHAIN
+         DS    21F                 NOT USED IN THIS MODULE
+SCTPGM   DS    CL8                 NAME OF PROGRAM EXECUTED THIS STEP
+         SPACE 2
+WKAREA   DSECT ,                   INTERNAL WORK AREA
+GETMNADD DS    F                   ADDRESS OF THIS AREA
+GETMNLEN DS    F                   LENGTH & SUBPOOL THIS GETMAIN
+WTORECB  DS    F                   WAIT ECB FOR OPERATOR REPLIES
+DBLWORD  DS    D                   WORK AREA FOR CONVERSIONS
+WTORPARM DS    0CL120              PARAMETER LIST FOR WTOR MACRO
+WTORFLGS DS    3F                  FLAGS & PARAMETERS
+WTORMSG  DS    0CL108              WTO MESSAGE
+         DS    CL11                MESSAGE ID
+WTOJNAME DS    CL8                 NAME OF ABENDING JOB
+         DS    C
+WTOPNAME DS    CL8                 NAME OF PROCEDURE STEP
+         DS    C
+WTOSNAME DS    CL8                 NAME OF STEP
+         DS    C
+         DS    CL9                 PADDING
+DUMPTYPE DS    CL1                 TYPE OF ABEND
+DUMPCODE DS    CL4                 ABEND CODE
+         DS    CL57                REST OF MESSAGE
+OPNAME   DS    CL3                 NAME (INITIALS) OF OPERATOR
+RESPONSE DS    CL100               OPERATORS INTENDED ACTION
+WKHALF   DS    H                   WORK AREA FOR ABEND CODE
+         DS    C                   ALLOW OVERFLOW OF WKHALF
+APCODE   DS    PL8                 USED TO HOLD ACCT APPLICATION CODE
+WKAREND  EQU   *                   END OF WORK AREA
+WKARELEN EQU   WKAREND-WKAREA      LENGTH OF WORK AREA FOR GETMAIN
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING                                   *
+***********************************************************************
+         SPACE 2
+IEAVADZZ ZCSECT GETMAIN=1
+         EJECT
+***********************************************************************
+*        LOAD UP WORKING ADDRESS OF CONTROL BLOCKS NEEDED             *
+***********************************************************************
+         LR    REG3,REG1           LOAD ADDRESS ABDUMP WORK AREA
+         USING ABDAREA,REG3        ADDRESSABILITY FOR WORK AREA
+         L     REG4,ABDTCB         LOAD ADDRESS FAILING TCB
+         USING TCB,REG4            ADDRESSABILITY FOR TCB
+         L     REG5,TCBJSCB        LOAD ADDRESS JOB STEP CONTROL BLOCK
+         USING IEZJSCB,REG5        ADDRESSABILITY TO JSCB
+         L     REG6,JSCBJCT        LOAD ADDRESS JOB CONTROL TABLE
+         USING JCT,REG6            ADDRESSABILITY TO JCT
+         L     REG7,JCTACT         LOAD ADDRESS ACCOUNT CONTROL TABLE
+         SRL   REG7,8              MOVE ADDRESS TO RIGHT OF REG 7
+         USING ACT,REG7            ADDRESSABILITY ACCOUNT CONTROL TABLE
+         EJECT
+***********************************************************************
+*        GETMAIN & INITIALISE WORK AREAS                              *
+***********************************************************************
+         SPACE 2
+         LA    REG0,WKARELEN       LOAD LENGTH CORE FOR WORK AREA
+         GETMAIN R,LV=(0)          GETMAIN CORE FOR WORK AREA
+         LR    REG10,REG1          BASE ADDRESS FOR WORK AREA
+         USING WKAREA,REG10        ADDRESSABILITY TO WORK AREA
+         ST    REG1,GETMNADD       SAVE ADDRESS FOR FREEMAIN
+         ST    REG0,GETMNLEN       SAVE LENGTH FOR FREEMAIN
+         EJECT
+***********************************************************************
+*        TEST JCL ACCOUNTING INFORMATION FOR PRODUCTION JOB           *
+***********************************************************************
+         SPACE 2
+         CLC   ACTOPCNT,TWO        TEST FOR MORE THAN 1 ENTRY
+         BL    EXITPGM             NO GOOD. NO FUNCTION CODE
+         XR    REG8,REG8           CLEAR REG 8
+         IC    REG8,ACTPLEN        LOAD LENGTH FIRST PARM FIELD
+         LA    REG9,ACTPARM1(REG8) LOAD ADDRESS SECOND PARM FIELD
+         IC    REG8,0(REG9)        LOAD LENGTH SECOND OPERAND
+         BCT   REG8,*+10           SUBTRACT 1 FROM LENGTH
+         PACK  APCODE,1(0,REG9)    PACK IT TO WORK AREA
+         EX    REG8,*-6            EXECUTE THE PACK
+         LA    REG8,NOCODES        LOAD NUMBER CODES TO TEST
+         LA    REG9,CODETBLE       LOAD ADDRES TABLE OF CODES
+LOOP     CP    APCODE,0(L'TBLENTRY,REG9) TEST THE CODE
+         BE    TESTPROG            THIS ONE NEEDS PROCESSING
+         LA    REG9,L'TBLENTRY(REG9) STEP TO NEXT CODE
+         BCT   REG8,LOOP           LOOP ROUND ALL CODES
+         B     EXITPGM             BRANCH TO NEXT ROUTINE
+         EJECT
+***********************************************************************
+*        COMMON CLEANUP & PROGRAM EXIT ROUTINE                        *
+***********************************************************************
+         SPACE 2
+EXITPGM  DS    0H
+         L     REG1,GETMNADD       LOAD ADDRESS OF GETMAINED AREA
+         L     REG0,GETMNLEN       LOAD LENGTH OF GETMAINED AREA
+         FREEMAIN R,LV=(0),A=(1)   FREE UP THE WORK AREA
+         ZRETURN RC=0              RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        THIS JOB IS A PRODUCTION JOB - TEST FOR PRESCENCE OF UT457   *
+***********************************************************************
+         SPACE 2
+         USING SCT,REG2            ADDRESSABILITY FOR STEP CONTROL TBLE
+TESTPROG DS    0H
+*
+*        THIS TEST TEMPORARILY REMOVED AT REQUEST OF DEAN MOORCROFT
+*        2ND JUNE '77. J ABBEY
+*
+         B     IEAVWTOR            GO STRAIGHT TO OPERATOR QUERY SECTN
+*
+         L     REG2,JCTCSCT        LOAD ADDRESS CURRENT STEP CTL TABLE
+         SRL   REG2,8              MOVE ADDRESS OVER TO CORRECT PLACE
+LOOPSCT  L     REG2,SCTSCT         LOAD ADDRESS OF NEXT STEP CTL TAB
+         SRL   REG2,8              MOVE ADDRESS OVER TO CORRECT PLACE
+         LTR   REG2,REG2           TEST FOR END OF JOB
+         BZ    IEAVWTOR            NO SPECIAL PGMS. WTOR NEEDED
+         CLC   SCTPGM,MODULE1      IS THE STEP FOR A SPECIAL PRGM
+         BE    EXITPGM             YES. NO ACTION ON OUR PART
+         CLC   SCTPGM,MODULE2      IS THE STEP FOR A SPECIAL PGM
+         BE    EXITPGM             YES. NO ACTION ON OUR PART
+         B     LOOPSCT             LOOP ROUND ALL JOB STEPS
+         SPACE 2
+MODULE1  DC    CL8'WARNING'
+MODULE2  DC    CL8'UT457'
+         EJECT
+***********************************************************************
+*        INFORM OPERATOR OF ABEND AND ELICIT A RESPONSE               *
+***********************************************************************
+         SPACE 2
+IEAVWTOR DS    0H
+         MVC   WTORPARM(L'WTORPARM),WTORLIST SET UP WTO PARM LIST
+         L     REG15,TCBTIO        LOAD ADDRESS OF TIOT
+         L     REG1,TCBCMP         LOAD COMPLETION CODE
+         LA    REG1,0(REG1)        CLEAR TOP BYTE
+         CH    REG1,=H'4095'       TEST LEVEL OF ABEND
+         BH    SYSABND             SYSTEM ABEND CODE ISSUED.
+         MVI   DUMPTYPE,C'U'       SIGNAL USER ABEND
+         CVD   REG1,DBLWORD        USER ABEND CODE IS CONVERTED
+         L     REG1,DBLWORD+4      RELOAD DECIMAL EQUIVALENT
+         SRL   REG1,4              REMOVE THE SIGN
+         B     CONT001             CONTINUE
+SYSABND  MVI   DUMPTYPE,C'S'       INDICATE SYSTEM ABEND
+         SRL   REG1,12             MOVE ABEND CODE TO END OF REG
+CONT001  STH   REG1,WKHALF         STORE OUT ABEND CODE
+         UNPK  DUMPCODE(L'DUMPCODE+1),WKHALF(L'WKHALF+1)
+         TR    DUMPCODE,TABLE-240  MAKE IT PRINT
+         MVI   DUMPCODE,C' '       BLANK OUT LEADING ZERO
+         MVI   DUMPCODE+L'DUMPCODE,C'.' OVERWRITE SIGN BYTE WITH PERIOD
+         MVC   WTOJNAME,0(REG15)   MOVE JOBNAME TO MESSAGE
+         MVC   WTOPNAME,8(REG15)   MOVE PROCSTEP NAME TO WTO
+         MVC   WTOSNAME,16(REG15)  MOVE STEPNAME TO WTOR
+RETRY1   MVC   OPNAME,=C'   '      BLANK OUT 3 BYTES OP INITIALS
+         MVI   WTORECB,X'00'       RESET THE ECB
+         WTOR  ,OPNAME,3,WTORECB,MF=(E,WTORPARM) ASK HIM FOR HIS NAME
+         WAIT  ECB=WTORECB         WAIT FOR A RESPONSE
+         CLI   OPNAME,C'U'         TEST FOR REFLEX RESPONSE
+         BE    RETRY1              YES. GO RETRY THE MESSAGE
+         CLC   OPNAME,=C'   '      TEST FOR NUL RESPONSE
+         BE    RETRY1              ASK HIM AGAIN
+         CLC   OPNAME,=C'YES'      TEST FOR OBSCURE REACTION
+         BE    RETRY1              GO ASK HIM AGAIN
+         B     NEXTWTOR            GO ASK HIM WHAT HES GOING TO DO
+         SPACE 2
+WTORLIST WTOR  'IEAVADZZ - JOBNAME  PROCSTEP STEPNAME  ABENDED         X
+               REPLY WITH YOUR INITIALS TO ACKNOWLEDGE',ROUTCDE=1,MF=L
+TABLE    DC    C'0123456789ABCDEF'
+         EJECT
+***********************************************************************
+*        OPERATOR HAS RESPONDED. ASK HIM WHAT HE INTENDS TO DO        *
+***********************************************************************
+         SPACE 2
+NEXTWTOR DS    0H
+         MVC   WTORPARM,WTORLST2   SET UP WTOR PARM LIST
+RETRY2   MVI   RESPONSE,C' '       CLEAR RESPONSE AREA
+         MVC   RESPONSE+1(L'RESPONSE-1),RESPONSE PROPAGATE
+         MVI   WTORECB,X'00'       RESET COMPLETE BIT IN ECB
+         WTOR  ,RESPONSE,100,WTORECB,MF=(E,WTORPARM) ASK HIM. !
+         WAIT  ECB=WTORECB         WAIT FOR REPLY
+         CLI   RESPONSE,C'U'       FIRST BYTE OF RESPONSE NON-ZERO
+         BE    NEXTTEST            YES. CANNOT BE NULL INPUT
+         CLC   RESPONSE+1(L'RESPONSE-1),RESPONSE CHECK REST OF LINE
+         BE    RETRY2              NULL RESPONSE ENTERED. RETRY
+NEXTTEST CLI   RESPONSE,C'U'       TEST FOR REFLEX REACTION ('U')
+         BNE   WRITEIT             ASSUME HE'S ENTERED SOMETHING USEFUL
+         CLI   RESPONSE+1,0        NEXT CHARACTER AFTER 'U' = BLANK
+         BNE   RETRY2              JUST A U ENTERED. NO GOOD.
+         B     WRITEIT             GO OUTPUT RESPONSES
+         SPACE 2
+WTORLST2 WTOR  'IEAVADZZ:- INDICATE YOUR INTENDED ACTION FOR THIS ABEND'
+               ',ROUTCDE=1,MF=L
+         EJECT
+***********************************************************************
+*        WRITE THE OPERATORS RESPONSES TO THE DUMP OUTPUT             *
+***********************************************************************
+         SPACE 2
+WRITEIT  MVI   ABDCC,C'0'          FORCE DOUBLE SPACING OUTPUT
+         LR    REG1,REG3           LOAD ADDRESS OF ABDUMP WORK AREA
+         MVC   ABDLINE(L'OPNMTEXT),OPNMTEXT MOVE IN IDENTIFYING TEXT
+         MVC   ABDLINE+L'OPNMTEXT(L'OPNAME),OPNAME MOVE OPERATOR NAME
+         L     REG15,IEAVAD11      LOAD ADDRESS OF OUTPUT ROUTINE
+         BALR  REG14,REG15         GO OUTPUT THIS LINE
+         MVC   ABDLINE(L'ACTNTEXT),ACTNTEXT MOVE IN IDENTIFYING TEXT
+         MVC   ABDLINE+L'ACTNTEXT(L'RESPONSE),RESPONSE MOVE INTENTION
+         L     REG15,IEAVAD11      LOAD ADDRESS OUTPUT ROUTINE
+         BALR  REG14,REG15         GO OUTPUT OPERATOR INTENTION LINE
+         B     EXITPGM             RETURN TO CALLER
+         SPACE 2
+OPNMTEXT DC    C'OPERATOR AT TIME OF ABEND: - '
+ACTNTEXT DC    C'INTENDED ACTION AS A RESULT OF THE ABEND - '
+         EJECT
+***********************************************************************
+*        TABLE OF CODES INDICATING PRODUCTION JOBS                    *
+***********************************************************************
+         SPACE 2
+CODETBLE DS    0D
+TBLENTRY DS    0PL2
+         DC    PL2'9'
+         DC    PL2'11'
+         DC    PL2'12'
+         DC    PL2'13'
+NOCODES  EQU   (*-CODETBLE)/2      NUMBER ENTRIES IN TABLE
+         EJECT
+***********************************************************************
+*        LITERALS & CONSTANTS                                         *
+***********************************************************************
+         SPACE 2
+TWO      DC    F'2'                USED TO TEST NUMBER ACCT PARMS
+IEAVAD11 DC    V(IEAVAD11)         ADDRESS OF OUTPUT PROCESSOR
+         LTORG
+         END
+//LKED.SYSIN   DD   *
+ NAME IEAVADZZ(R)
+/*

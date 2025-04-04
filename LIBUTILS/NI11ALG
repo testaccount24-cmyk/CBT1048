@@ -1,0 +1,375 @@
+*       PGM=NI11ALG VER=003 VOL=NIBS05 TIME/DATE=68030 11:32:18 BAL
+NI11ALG  CSECT
+         TITLE  '**NIBSIO SUB-SYSTEM**  MODULE=NI11ALG. V-2'
+   USING  *,15
+    B   22(0,15)
+   DC  FL1'18'
+     DC   CL9'NI11ALG '
+   DC  CL8'V002'
+   STM  14,12,12(13)
+   ST   13,SAVEAREA+4
+    CNOP  0,4
+   BAL  13,SAVEAREA+72
+   DROP  15
+   USING  *,13
+SAVEAREA  DC  18F'0'
+  L  15,SAVEAREA+4
+   ST  13,8(0,15)
+*
+*
+  ST  5,CIDSAVE
+  MVC  ALGSWICH(1),0(1)
+*        TEST3  ROUTINE   THIS ROUTINE  BUILDS AND
+*        --------------   INITIALIZES CCBS AND DCBS
+*                         IF NECESSARY. OTHERWISE
+*                         TEST4 ROUTINE IS ENTERED.
+*
+*  ALGA  QSAM  M1 A=DCB ADDR(MODEL).
+*  ------------M2 B=DCBEQU TRAILER (MODEL).
+*                 B-A+56=LEN PARM FOR GETMAIN.
+*                 GETMAIN ADDR+(B-A)=CCBADDR.
+*                 GETMAIN ADDR=DCBADDR.
+*  ALGB  QISAM M3 A=DCB1ADDR (MODEL).
+*        BISAM M4 B=DCB2ADDR (MODEL).
+*  ------------M5 C=DCBEQU TRAILER (MODEL).
+*                 C-A+56=LEN PARM FOR GETMAIN.
+*                 GETMAIN ADDR+(C-A)=CCBADDR.
+*                 GETMAIN ADDR=DCB1ADDR.
+*                 GETMAIN+(B-A)=DCB2ADDR.
+*  ALGC  QISAM M6 A=DCBADDR (MODEL).
+*        LOAD  M7 B=DCBEQU TRAILER (MODEL).
+*  ------------   B-A+56=LEN PARM FOR GETMAIN.
+*                 GETMAIN ADDR+(B-A)=CCBADDR
+*                 GETMAIN ADDR=DCBADDR
+*  ALGSWICH       A=QSAM. B=QISAM-BISAM. C=QISAM-LOAD.
+         USING CCBGRID,2           R1=GETMAIN ADDR,DCB ADDR.
+         USING IHADCB,1            R2=CCBDSECT
+*                                  R3=ADDR TO PLUG NEW CCB ADDR.
+*                                  R4=PARAMETER ADDR.
+*                                  R5=MOD ADDR.
+*                                  R6=MOD ADDR.
+*                                  R7=MOD ADDR.
+*                                  R8=USER AREA ADDR.
+*
+*
+   BC  15,PREALG
+*
+ALGCHK   CLI   ALGSWICH,C'A'
+         BC    8,ALGA
+         CLI   ALGSWICH,C'B'
+         BC    8,ALGB
+         CLI   ALGSWICH,C'C'
+         BC    8,ALGC
+         BC    15,ALGERR
+ALGERR   WTO   ' '
+         WTO   'NIBSIO TERMINAL ERROR=10'
+         WTO   'NIBSIO ABEND=404'
+         WTO   ' '
+         CNOP  0,4
+         BAL   5,*+12
+         DC    A(0)
+         DC    AL2(404)
+         DC    AL1(10)
+         DC    C'?'
+  L  15,CIDSAVE
+  L  15,68(0,15)
+         BR    15
+*
+PREALG  L  5,CIDSAVE
+         L     6,0(0,5)            NEW CCB ADDR IS TO BE STORED.
+         LTR   6,6                 (EITHER CID ADDR OR ADDR OF
+         BC    7,SCANCCB           CCBECBA FIELD OF TRAILER CCB.
+         LR    3,5                 ADDR TO PLUG THE NEW CCB ADDR.
+         BC    15,ALGCHK
+SCANCCB  LR    2,6
+SCANCXB  TM    CCBECBA,X'FF'       IS THIS THE LAST CCB?
+         BC    8,SCSTP
+         LA    3,CCBECBA           ADDR TO PLUG THE NEW CCB ADDR.
+         BC    15,ALGCHK
+SCSTP    L     2,CCBECBA           LOAD ADDR OF NEXT CCB.
+         BC    15,SCANCXB
+*
+*
+         EJECT
+ALGA     LA    5,M1                ALGA ROUTINE BUILDS AND INITS
+         LA    6,M2                A CCB AND DCB FOR A QSAM
+         SR    6,5                 REQUEST.
+         AH    6,=H'72'
+  N  6,SIXAND
+  LA  6,8(0,6)
+         LR    0,6
+         ST    0,GETMNT
+         GETMAIN R,LV=(0)          GET DCB-CCB AREA.
+         MVC   0(125,1),M1
+         MVC   DCBDDNAM(7),0(8)    MOVE IN DDNAME.
+  L  15,CIDSAVE
+  MVC  DCBSYNAD(4),76(15)
+  MVC  DCBEODAD+1(3),89(15)
+         LR    7,1
+         LA    6,M2
+         SR    6,5
+         AR    1,6
+         LR    2,1
+         ST    2,0(0,3)            STORE CCB ADDR INTO CID OR LAST CCB
+         MVI   0(3),X'00'
+         MVI   CCBDDNM,X'00'
+         MVC   CCBDDNM+1(55),CCBDDNM    CLEAR OUT THE CCB.
+         MVC   CCBDDNM(7),0(8)          MOVE IN DDNAME.
+         MVC   CCBCREQ(1),7(8)          POST CURRENT REQUEST.
+         MVI   CCBECBA,X'FF'
+         LA    8,8(0,8)
+         OI    CCBSWCH+1,X'0A'          OPEN REQ+DSOPEN SWITCH.
+         ST    8,CCBLRCA                STORE USER LOGREC ADDR.
+         ST    7,CCBDCBA                STORE DCB ADDR.
+         MVI   CCBPREQ,C'T'
+         MVI   CCBPRET,C'0'
+         MVC   CCBFUNA(4),GETMNT
+         LR    1,7
+         CLI   CCBCREQ,C'Z'   SET OUTPUT OPTION IN OPEN GEN CODE.
+         BC    7,SETOUT
+         MVI   OPTION,128     SET INPUT OPTION IN  OPEN GEN CODE.
+PLUGDB   MVC   OPDCBAD(3),CCBDCBA+1     PLUG DCBADDR INTO OPEN.
+  CNOP 0,4
+OPIN EQU *
+         BAL   1,*+8        *
+OPTION   DC    AL1(0)       *   OPEN MACRO GENERATION
+OPDCBAD  DC    AL3(0)       *
+         SVC   19           *
+         L     1,CCBDCBA                CHECK FOR MISSING DDCARD.
+         TM    DCBOFLGS,X'10'
+         BC    8,SETOPRR
+         TM    DCBRECFM,X'C0'      CHECK FOR UNSUPPORTED RECFM.
+         BC    1,NOSUPP
+  BC  15,OUTS
+OUTS  EQU  *
+   L  13,SAVEAREA+4
+   LM  2,12,28(13)
+  L  14,12(13)
+   MVI  12(13),X'FF'
+  BR  14
+SETOUT   MVI   OPTION,143
+         BC    15,PLUGDB
+GETMNT   DC    F'0'
+SIXAND DC X'FFFFFFF0'
+         EJECT
+ALGB     LA    6,M3           CREATE AND INITIALIZE A CCB AND
+         LA    5,M5           TWO DCBS FOR BISAM-QISAM PROCESSING.
+         SR    5,6
+         AH    5,=H'72'
+  N 5,SIXAND
+  LA  5,8(0,5)
+         LR    0,5
+         ST    0,GETMNT
+         GETMAIN R,LV=(0)     GET AREA FOR CCB-DCB.
+         MVC   0(256,1),M3    MOVE IN THE DCB.(QISAM)
+  L  15,CIDSAVE
+   MVC  DCBSYNAD(4),72(15)
+  MVC  DCBEODAD+1(3),85(15)
+         LA    5,M4
+         SR    5,6
+         AR    5,1
+         AH    5,=H'4'
+         MVC   0(256,5),M4
+         LA    7,M4
+         LA    9,M5
+         SR    9,7
+         AR    9,5            GET CCB ADDR
+         MVI   0(9),X'00'     CLEAR OUT THE CCB.
+         MVC   1(55,9),0(9)
+         LR    2,9
+         MVI   CCBECBA,X'FF'
+         ST    9,0(0,3)         SAVE CCBADDR IN CID OR PREVIOUS CCB.
+         MVI   0(3),X'00'
+         MVC   CCBDDNM(7),0(8)
+         MVI   CCBBKTP,X'FF'    INDICATE ISAM  BLOCKTYPE.
+         MVC   CCBCREQ(1),7(8)  POST CURRENT REQUEST.
+         LA    8,8(0,8)
+         ST    8,CCBLRCA        POST USER LOGICAL RECORD ADDR.
+         OI    CCBSWCH+1,X'0A'   POST REQ PEND AND DSOPEN BITS.
+         ST    1,CCBDCBA         STORE DCB1 ADDR  QISAM.
+         ST    5,CCBDCBB         STORE DCB2 ADDR  BISAM.
+         MVC   DCBDDNAM(7),CCBDDNM  PLUG DDNAME INTO DCB. QISAM
+  ST  1,DIRTS
+  L  1,CCBDCBB
+     MVC  DCBDDNAM(7),CCBDDNM
+      L  1,DIRTS
+         MVC   CCBFUNA+2(2),GETMNT+2
+         MVI   CCBPREQ,C'T'
+         MVI   CCBPRET,C'0'
+         CLI   CCBCREQ,C'L'
+         BC    8,OZAG
+         MVC   DCADX(3),CCBDCBA+1
+         CNOP  0,4             *
+         BAL   1,*+8           *OPEN CODE GENERATION. DCB1.
+OPTIOX   DC    AL1(128)        *
+DCADX    DC    AL3(0)          *
+         SVC   19              *
+         MVI   CCBFBNM,C'Q'
+         L     1,CCBDCBA           CHECK FOR MISSING DDCARD.
+OZAG1    TM    DCBOFLGS,X'10'
+         BC    8,SETOPRR
+         TM    DCBRECFM,X'80'      CHECK FOR SUPPORTED AND
+         BC    8,NOSUPP            UNSUPPORTED RECORD FORMATS.
+         TM    DCBRECFM,X'40'
+         BC    1,NOSUPP
+         TM    DCBRECFM,X'10'
+         BC    8,NOSUPP
+         OI    CCBFUNA,X'80'
+   BC  15,OUTS
+OZAG     LR    1,5
+         MVC   DCBDDNAM(7),CCBDDNM   PLUG DDNAME INTO DCB BISAM.
+         MVC   DCADZ(3),CCBDCBB+1
+         CNOP  0,4             *
+         BAL   1,*+8           *   OPEN CODE GENERATION. DCB2.
+         DC    AL1(128)        *
+DCADZ    DC    AL3(0)
+         SVC   19
+         MVI   CCBFBNM,C'B'
+         L     1,CCBDCBB
+         BC    15,OZAG1
+DIRTS DC F'0'
+         EJECT
+ALGC     LA    5,M6            CREATE A CCB-DCB FOR QISAM
+         LA    6,M7            LOAD BLOCK.
+         SR    6,5
+         AH    6,=H'72'
+  N  6,SIXAND
+  LA  6,8(0,6)
+         LR    0,6
+         ST    0,GETMNT
+         GETMAIN R,LV=(0)      GET CCB-DCB CORE.
+         SH    6,=H'72'
+         LR    2,6
+         AR    2,1
+         MVC   0(256,1),M6     MOVE IN THE QISAM LOAD DCB.
+  L  15,CIDSAVE
+  MVC  DCBSYNAD(4),72(15)
+         MVI   0(2),X'00'      CLEAR OUT THE CCB.
+         MVC   1(55,2),0(2)
+         MVI   CCBECBA,X'FF'
+         ST    2,0(0,3)
+         MVI   0(3),X'00'
+         MVC   CCBDDNM(7),0(8)  MOVE USER DDNAME INTO CCB.
+         MVI   CCBBKTP,X'FF'    MOVE IN ISAM TYPE SWITCH.
+         MVC   CCBCREQ(1),7(8)
+         MVC   CCBFUNA(4),GETMNT
+         MVI   CCBPREQ,C'T'
+         MVI   CCBPRET,C'0'
+         LA    8,8(0,8)
+         ST    8,CCBLRCA        STORE USER LOGREC ADDR.
+         ST    1,CCBDCBA        STORE DCBADDR.
+         OI    CCBSWCH+1,X'0A'
+         MVC   DCBDDNAM(7),CCBDDNM   PLUG DDNAME INTO DCB.
+   MVI  OPTT,143
+         MVC   DCXAB(3),CCBDCBA+1  PLUG DCBADDR INTO THE OPEN.
+         CNOP  0,4        *
+         BAL   1,*+8      *
+OPTT     DC    AL1(0)     *  OPEN MACRO GENERATION.
+DCXAB    DC    AL3(0)     *
+         SVC   19         *
+         L     1,CCBDCBA           CHECK FOR MISSING DDCARD.
+         TM    DCBOFLGS,X'10'
+         BC    8,SETOPRR
+         TM    DCBRECFM,X'80'      CHECK FOR SUPPORTED AND
+         BC    8,NOSUPP            UNSUPPORTED RECORD FORMATS.
+         TM    DCBRECFM,X'40'
+         BC    1,NOSUPP
+         TM    DCBRECFM,X'10'
+         BC    8,NOSUPP
+   BC  15,OUTS
+SETOPRR  WTO   ' '
+         WTO   'NIBSIO TERMINAL ERROR=01'
+         WTO   'NIBSIO ABEND=408'
+         WTO   ' '
+         MVC   AB408(4),0(4)
+         CNOP  0,4
+         BAL   5,*+12
+AB408    DC    A(0)
+         DC    AL2(408)
+         DC    AL1(1)
+         DC    C'?'
+  L  15,CIDSAVE
+   L  15,68(0,15)
+         BR    15
+         DS    0D
+EXAXRX   DC    CL9'       ?1'
+ERARA    DC    CL39' '
+*
+NOSUPP   WTO   ' '
+         WTO   'NIBSIO TERMINAL ERROR=02'
+         WTO   'NIBSIO ABEND=412'
+         WTO   ' '
+         MVC   AB412(4),0(4)
+         CNOP  0,4
+         BAL   5,*+12
+AB412    DC    A(0)
+         DC    AL2(412)
+         DC    AL1(2)
+         DC    C'?'
+  L  15,CIDSAVE
+  L  15,68(0,15)
+         BR    15
+  DS  0H
+QSEOD  BCR  0,0
+QSYNAD   BCR  0,0
+QIEOD   BCR  0,0
+QISYNAD  BCR  0,0
+         EJECT
+*
+ALGSWICH DC    C' '
+CIDSAVE  DC  F'0'
+         EJECT
+*        MODEL DCB AND EQUPOINTER FOR ALGA.
+*        ---------------------------------
+M1       DCB   DSORG=PS,MACRF=(GM,PM),DDNAME=XYZABC,BFTEK=S,EROPT=SKP, X
+               EODAD=QSEOD,SYNAD=QSYNAD
+         DS    0D
+M2       EQU   *
+*
+         EJECT
+*        MODEL DCB FOR QISAM/BISAM SCAN MODE.
+*        -------------------
+M3       DCB   DSORG=IS,MACRF=(GL,SK,PU),DDNAME=ABCXXZ,EODAD=QIEOD,    X
+               SYNAD=QISYNAD,BUFNO=1
+         EJECT
+M4       DCB   DSORG=IS,MACRF=(RUS,WUA),DDNAME=AABB,NCP=2,BUFNO=1
+         DS    0D
+M5       EQU   *
+         EJECT
+*
+*        MODEL DCB FOR QISAM LOAD MODE.
+M6       DCB   DSORG=IS,MACRF=(PM),DDNAME=AXYZ,SYNAD=QISYNAD
+         DS    0D
+M7       EQU   *
+*
+         EJECT
+         LTORG
+         EJECT
+CCBGRID  DSECT
+CCBDDNM  DS    CL7  DDNAME.
+CCBBKTP  DS    CL1  BLOCK TYPE. FF=QISAM 00=QSAM.
+CCBLRCA  DS    F    LOGICAL RECORD ADDR IN PROGRAM.
+CCBBUFA  DS    F    LOGICAL RECORD ADDR IN BUFFER.
+CCBPREQ  DS    CL1  PREVIOUS REQUEST.
+CCBCREQ  DS    CL1  CURRENT REQUEST.
+CCBPRET  DS    CL1  PREVIOUS RETURN CODE.
+CCBCRET  DS    CL1  CURRENT RETURN CODE.
+CCBFUNA  DS    F    FUNCTION BLOCK ADDR. (GETMAIN FOR BISAM)
+CCBECBA  DS    F    CHAIN TO NEXT COORDINATION BLOCK.
+CCBREAD  DS    F    RECORD COUNT INPUT.
+CCBNEWR  DS    F    RECORD COUNT NEW OUTPUT RECORDS.
+CCBDELT  DS    F    RECORD COUNT DELETED RECORDS.
+CCBUPDT  DS    F    RECORD COUNT UPDATED RECORDS.
+CCBSWCH  DS    H    2 BYTES OF SWITCHES (SEE COMMENTS).
+CCBFBNM  DS    H
+CCBDCBA  DS    F    DCB1 ADDRESS.
+CCBDCBB  DS    F    DCB2 ADDRESS.
+         EJECT
+CIDGRID  DSECT
+ACCBTAB  DS    F   ADDR OF FIRST CCB.
+ASWCHA   DS    F  ADDR OF USER CCA.
+ASWCHB   DS    F
+APARMS   DS    F   ADDR OF CURRENT PARAMETER LIST.
+         EJECT
+         DCBD  DSORG=(IS)
+         END

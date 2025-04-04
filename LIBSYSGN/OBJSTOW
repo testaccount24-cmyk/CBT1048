@@ -1,0 +1,1653 @@
+STOW     TITLE 'AIDSSTOW - STOW ROUTINE'
+         MACRO
+&NAME    STERCD &CODE
+         GBLA  &INTER
+&INTER   SETA  &CODE
+         MEND
+         SPACE 2
+         MACRO
+&NAME    AGET  &DTFN
+         LCLB  &DTF
+         LCLA  &AS
+&AS      SETA  10
+         AIF   ('&DTFN' EQ '').AGERR
+         AIF   ('&DTFN'(1,1) NE '(').AG02
+&DTF     SETB  1
+.AG02    ANOP
+         CNOP  2,4
+         AIF   ('&NAME' EQ '').AG03
+&NAME    DS    0H
+.AG03    ANOP
+         AIF   (NOT &DTF).AG04
+         ST    &DTFN(1),*+&AS
+.AG04    ANOP
+         L     RGO,=A(AGET)
+         BALR  RLNK,RGO
+         AIF   (&DTF).AG06
+         DC    A(&DTFN)
+         AGO   .AG08
+.AG06    ANOP
+         DC    A(0)
+.AG08    ANOP
+         MEXIT
+.AGERR   MNOTE 'DTF ADDRESS MISSING. EXPANSION TERMINATED'
+.END     MEND
+         SPACE 4
+         MACRO
+&NAME    RELREC &T=,&DSECT=
+         AIF   ('&DSECT' EQ 'YES').TGL2
+&NAME    DS    0CL80
+         AGO   .TGL3
+.TGL2    ANOP
+&NAME    DSECT
+.TGL3    ANOP
+&T.TYP   DS    CL4
+         DS    CL1
+&T.LOC   DS    CL3
+         DS    CL2
+&T.LEN   DS    CL2
+         DS    CL2
+&T.ID    DS    CL2
+&T.DATA  DS    0CL56
+         DS    CL38
+&T.MM    DS    CL3
+&T.DD    DS    CL3
+&T.YY    DS    CL3
+&T.HH    DS    CL3
+&T.MIM   DS    CL3
+&T.SS    DS    CL3
+&T.TID   DS    CL4
+&T.SEQ   DS    CL4
+         AIF   ('&DSECT' NE 'YES').TGL6
+&SYSECT  CSECT
+.TGL6    ANOP
+         MEND
+         SPACE 4
+         MACRO
+&NAME    GENER &ER,&DUMP=YES
+         GBLA  &INTER
+         LCLC  &QTE
+&QTE     SETC  ''''
+&INTER   SETA  &INTER+1
+*                                                          *
+************************************************************
+         MNOTE 0,'*******   ERROR CODE   ****** &INTER *****'
+*                                                          *
+************************************************************
+*                                                          *
+&NAME    LA    R14,X&QTE.&INTER.&QTE
+         AIF   ('&DUMP' EQ 'NO').TGL2
+         O     R14,=X'80000000'
+.TGL2    ANOP
+         L     R15,=A(ERRPNTS)
+         ST    R14,8(R15)
+         MVC   0(8,R15),=A(&ER,L&QTE.&ER-1)
+         ZSCALL ERRPRT
+         MEND
+         SPACE 4
+         MACRO
+&NAME    WMSG  &WMSG,&WTXT
+         ENTRY &WMSG
+         DS    0H
+&WMSG    EQU   *+2
+         DC    Y(&WMSG.X-&WMSG)
+         DC    X'FF'
+         DC    C&WTXT
+&WMSG.X  EQU   *-1
+         MEND
+         SPACE 2
+         MACRO
+&NAME    SWARN &WMSG
+&NAME    MVI   &WMSG,X'09'
+         MEND
+         EJECT
+AIDSSTOW CSECT
+         SPACE
+         ENTRY NEWBLKS,BLKSI
+         ENTRY LOADDCB,DSNAME
+         ENTRY FILE2
+         ENTRY JFCBA,DIAGFLG
+         EXTRN SYSGOEOF
+         EXTRN FLE2EOF,FL1BPOOL,PCHBPOOL
+         EXTRN MNAME,USEDATA
+         EXTRN STOWDIR
+         EXTRN STOWUSP
+         ENTRY TRKDEAD,FRAGS,ERRPNTS
+         ENTRY DEVCODE
+         SPACE
+         ZREG
+R12      EQU   12
+         SPACE 2
+         ZSTART
+         SPACE
+         L     RDAT,=A(CONSTNTS)
+         USING CONSTNTS,RDAT     SET COVERAGE FOR CONSTANTS
+         SPACE 2
+*********************************************************************
+*                                                                   *
+*    THE CSECT NAME TABLE OVERLAYS THE CODE OF THIS PROGRAM        *
+*    FROM CSTABLE TO CSTRHE                                        *
+*                                                                   *
+         B     FULLALGN
+CSTABLE  DS    0F
+         SPACE
+FULLALGN DS    0H
+*********************************************************************
+         SPACE
+         STERCD 20               INIT ERROR RETURN CODE             P
+         SPACE 5
+         ST    R1,PSAVE        SAVE PARM FIELD POINTER
+         OPEN  (SYSPRT,OUTPUT)   OPEN SYSPRINT FILE                 I
+         L     R1,PSAVE
+         L     1,0(1)            LOAD ADDR OF PARM FIELD INTO 1     P
+         LH    RWK,0(1)          AND LOAD LEN OF PARM FIELD INTO RWK  C
+         LTR   RWK,RWK           ARE THERE ANY PARAMETERS           DY
+         BZ    NOPARM                                               C
+         LA    RW1,2(1)          LOAD PARM FIELD LHE AND            P
+         LA    RW2,1
+         LR    RW3,RW1
+         AR    RW3,RWK           RHE ADDRS FOR PARM LOOKUP          C
+         SR    RW3,RW2
+PARM1    CLEAR PARMFLD           CLEAR PARM FIELD WORK AREA         P
+         LA    RA,PARMFLD        AND LOAD 6 WITH PARMFLD ADDR       C
+         SPACE 2
+PARM2    DS    0H
+         CLI   0(RW1),C','       IS THIS END OF PARMAMETER          DN
+         BE    PARM4                                                CN
+         MVC   0(1,RA),0(RW1)    MOVE PARM FIELD TO PARM WORK       P
+         AR    RA,RW2
+         BXLE  RW1,RW2,PARM2     HAS ENTIRE PARM FIELD BEEN SCANNED  DY
+         SET   ENDPARM           SET END OF PARM SCAN FLAG          P
+         SPACE 2
+PARM4    LM    RA1,RB1,PTLST     LOAD PARM TBL PARM LIST FOR LOOKUP  P
+PARM4A   DS    0H
+         CLC   PARMFLD,0(RA1)    IS THIS A VALID PARAMETER          DN
+         BE    PARM6                                                C
+         BXLE  RA1,RB,PARM4A     ALL VALID PARMS BEEN CHECKED      DY
+         GENER ER12,DUMP=NO      INVALID PARAMETER                 S
+         SPACE 2
+PARM6    DS    0H
+         MVI   7(RA1),X'FF'      SET PARM OPTION INDICATOR          P
+         AR    RW1,RW2
+         IFN   PARM1,ENDPARM   HAS ENTIRE PARM FIELD BEEN SCANNED  DYV
+         B     DPARM                                               B
+         SPACE 4
+NOPARM   DS    0H                ASSUME DEFAULTS                   N
+         MVI   LDIND,X'FF'       SET LOAD MODE INDICATOR AND       P
+         MVI   NDIND,X'FF'       NODECK MODE INDICATOR             C
+         SPACE 2
+DPARM    DS    0H
+         IFN   DPARM2,CMPIND     COMPILE RUN                        DY
+         ZSCALL SORTER           SORT ASSEMBLY OUTPUT               S
+         LTR   R15,R15
+         BZ    DPARM2
+         GENER ER8               SORT ROUTINE PROBLEMS             S
+         SPACE 2
+DPARM2   DS    0H
+         SEGWT STOWSUBR          LOAD NEXT SEGMENT                  I
+         L     RWK,=A(PCHBPOOL)
+         BUILD (RWK),2,400       BUILD SYSPCH BUFFER POOL           I
+         OPEN  (SYSPCH,OUTPUT,FILE2,OUTPUT,INDCB,INPUT)  OPEN FILES I
+*                                OPEN FILES                         I
+         SPACE
+*    COMPUTE NUMBER OF RECORDS/BLK FOR INDCB (SYSIN)               T
+         SR    RWK,RWK
+         LA    RA,80
+         LH    RW1,INDCB+62      SET BLOCKSIZE                     P
+         DR    RWK,RA
+         STH   RW1,IRPBLK        SAVE RECS/BLK                     P
+         SPACE
+*                                OPEN ALL FILES                    I
+         SPACE
+         IFN   NODECK,DKIND      IS THIS DECK MODE                  DY
+         IFN   NOLOAD,LDIND      IS THIS LOAD MODE                 DY
+         SPACE 3
+*    DECK AND LOAD ARE SPECIFIED PARMS                             T
+         MVI   DKMSG,X'03'       NO-OP PUNCH MESSAGE               P
+         MVI   LDDKMSG,X'09'     SET LOAD AND PUNCH CONBO TO PRINT  P
+         B     CKNAME            GO READ JFCB                      B
+         SPACE 3
+*    DECK AND NOLOAD ARE SPECIFIED PARMS                           T
+NOLOAD   DS    0H
+         MVI   LDMSG,X'03'       NO-OP STOW MESSAGE                P
+         MVC   DKMOD,=C'MODULE'
+         B     GTXT
+         SPACE 3
+*    NODECK AND LOAD SPECIFIED PARMS                                T
+NODECK   DS    0H
+         MVI   DKMSG,X'03'       NO-OP PUNCH MSG                   P
+         IF    CKNAME,LDIND      IS THIS LOAD MODE                 DY
+         SPACE 3
+*    NODECK AND NOLOAD ARE SPECIFIED PARMS                         T
+         MVI   NLNDMSG,X'09'     SET NOLOAD/NODECK MSG TO PRINT    P
+NODECK1  MVI   LDMSG,X'03'       NO-OP STOW AND                    P
+         MVI   DKMSG,X'03'       PUNCH MESSAGES                    C
+         MVI   MLN3,X'03'
+         MVI   PACKMSG,X'03'
+         B     EXIT                                                B
+         SPACE 4
+CKNAME   CALL  IAJDDCHK,(DDPARM)    READ JFCB FOR SYSGO            S
+* BRANCH BASED ON RETURN CODE                                        P
+         B     *+4(R15)                                             BT
+         B     GDRTN                                                BT
+         B     DUMMY                                                 BT
+         B     NODDNAME                                              BT
+* TAKE ONE OF THREE POSSIBLE BRANCHES                                B
+         SPACE 4
+*    IAJDDCHK RETURNS THE JFCB ADDR IN R0
+         SPACE
+GDRTN    DS    0H
+         LR    RWK,R0   R0 HAS STARTING LOC OF JFCB                  P
+         ST    RWK,JFCBA         SAVE JFCB ADDRESS                  P
+         MVI   JFCBA,X'87'
+         MVC   LDDSN,0(RWK)      MOVE DSN TO MESSAGE                P
+         CLC   44(8,RWK),=CL8' '    COMPARE FOR MEMBER NAME          DN
+         BE    NOMEM                                                 C
+         MVC   LDMEM,44(RWK)     MOVE MEMBER NAME TO MESSAGE        P
+         L     R14,=A(MNAME)
+         MVC   0(8,R14),44(RWK)     AND STOW LIST                  C
+         MVC   44(8,RWK),=CL8' ' CLEAR MEMBER NAME FIELD            P
+         BAL   RW1,CKORG  BRANCH TO CHECK ORGANIZATION ROUTINE       B
+         TM    38(RW2),X'02'    TEST FOR PARTITIONED DATA SET        DN
+         BO    GTXT                                                C
+         SWARN WARN7             SET WARNING MESSAGE TO PRINT       P
+         SWARN WARN5
+         MVC   DKMOD-1(8),LDMEM  SET MEMBER NAME IN MESSAGE
+         B     NODDN2                                               B
+         SPACE
+NOMEM    DS    0H
+         MVC   LDMEM+2(6),=C'MODULE'
+         MVC   DKMOD,=C'MODULE'
+         BAL   RW1,CKORG  BRANCH TO CHECK ORGANIZATION ROUTINE       B
+         TM    38(RW2),X'40'  TEST FOR SEQUENTIAL DATA SET           DN
+         BO    GTXT                                                C
+         SWARN WARN8             SET CONTROL CHAR TO PRINT          P
+         SWARN WARN5
+         B     NODDN2                                               B
+         SPACE 5
+* SUBROUTINE TO CHECK THE DATA SET ORGANIZATION                      T
+CKORG    DS    0H
+         MVC   DSNAME(44),0(RWK) MOVE IN DATA SET NAME              P
+         MVC   TXDSN,0(RWK)      MOVE DSN TO STORAGE               P
+         MVC   VOL,118(RWK)      MOVE VOL ID TO STORAGE
+         MVC   TXVOL,118(RWK)      FROM JFCB
+         OBTAIN DSCB
+         LTR   R15,R15           SUCCESSFUL RETURN                 DN
+         BZ    OKAY                                                C
+         N     R15,=X'000000FF'
+         CVD   R15,DECIMAL       CONVERT RETURN CODE TO DECIMAL     P
+         ED    ER1RC-1(4),DECIMAL+6
+         GENER ER1,DUMP=NO
+         SPACE
+OKAY     DS    0H
+         LA    RW2,WORKAREA
+         BR    RW1                                                   E
+         SPACE 5
+*    SYSGO DD DUMMY
+DUMMY    TAG
+         RES   LDIND             RESET LOAD INDICATOR               P
+         MVI   DUMMSG,X'09'      SET DUMMY MESSAGE PRINT            P
+         IFN   NODECK1,DKIND     IS THIS DECK MODE                  DY
+         MVI   LDMSG,X'03'       NO-OP STOW MESSAGE                 P
+         B     GTXT                                                 B
+         SPACE 2
+*    NO DDNAME SPECIFIED                                           T
+NODDNAME DS    0H
+         SWARN WARN2
+         SWARN WARN5
+NODDN2   MVC   RTNCD,=H'4'       SET RETURN CODE                    P
+         RES   LDIND
+         SET   DKIND
+         MVI   DKMSG,X'09'
+         MVI   LDMSG,X'03'
+         EJECT
+GTXT     DS    0H
+         IFN   CALLDTE,LDIND     IS THIS LOAD MODE                  DY
+         OPEN  (LOADDCB,OUTPUT),TYPE=J
+         LA    RW3,LOADDCB
+         USING IHADCB,RW3
+         LH    RW2,DCBBLKSI      SAVE SYSGO BLKSIZE                 P
+         STH   RW2,BLKSI
+         MVC   DEVCODE,DCBDEVT   SAVE DEVICE CODE                   P
+         CLOSE (LOADDCB)
+         SPACE
+         DROP  RW3
+         SPACE 4
+CALLDTE  DS    0H
+         CALL  IAJTODAY,(TXDATE) CALL SUB PROGRAM TO GET DATE        SV
+         MVC   LNDATE,TXDATE    MOVE TO STORAGE FOR LINE PRINT     P
+         MVC   AREA(2),TXDATE    SET UP DATE IN TAG AREA             P
+         MVC   AREA+2(2),TXDATE+3
+         MVC   AREA+4(2),TXDATE+6
+         PACK  DTFLD(4),AREA(7)      PACK DATE FOR HEX PRTOUT        P
+         L     RWK,=A(USEDATA)
+         MVC   0(3,RWK),DTFLD    SAVE DATE                          P
+         MVC   7(3,RWK),DTFLD
+         MVC   MDDTE,DTFLD       MOVE MMDD TO MDATA FIELD           P
+         TIME
+         ST    R0,TIMEID
+         MVC   4(3,RWK),TIMEID   SAVE TIME                          P
+         MVC   MDTME,TIMEID      MOVE HHMM TO MDATA FIELD           P
+         SRL   R0,4
+         ST    R0,TIMEID
+         OI    TIMEID+3,X'0F'
+         MVC   TIMEWK,EDIT    STORAGE FOR EDIT MASK
+         ED    TIMEWK,TIMEID
+         MVC   TXTIME,TIMEWK+2   MOVE TO TEXT CARD
+         MVC   LNTIME,TXTIME     MOVE TO STORAGE FOR LINE PRINT    P
+         SPACE
+CSTRHE   DS    0H                CSECT TABLE RHE                    N
+         EJECT
+*    FILE1 AND INDCB USE THE GET-LOCATE / PUT-MOVE                 T
+*    PROCESSING METHOD.
+*
+*        FOR PACKING PURPOSES
+*        RW1 IS USED TO COVER BUFFER REC 1 (RXTREC)
+*        RW2 IS USED TO COVER BUFFER REC 2 (ALTREC)
+*
+         SPACE
+         USING RXTREC,RW1        SET COVERAGE                      P
+         USING ALTREC,RW2
+         LA    R12,CSTABLE
+         USING CSDUM,R12         SET COVERAGE FOR CSECT TABLE       P
+         ZSCALL ESDRT            PROCESS ESD RECORDS                S
+         B     WRAPUP            EOF                               DN
+         SPACE
+*    SINCE WE ARE USING GET-LOCATE FOR THE INPUT FILES IT IS NECESSARY
+*    TO SAVE THE LAST RECORD OF EACH INPUT BLOCK IN A WORK AREA.
+*
+*    THIS WIIL PREVENT THE LAST BLK RECORD FROM BEING OVERLAID --
+*    THE PACKING ROUTINE USES TWO INPUT BUFFER RECORDS AND CAN
+*    ALSO USES A WORK AREA FOR TXT RECORD PACKING.
+         SPACE
+REL02    DS    0H
+         LH    R14,WRPBLK        CURRENT RECORD COUNT              P
+         LA    R14,1(R14)
+         STH   R14,WRPBLK
+         CH    R14,IRPBLK        LAST RECORD                       DY
+         BNH   REL03                                               C
+         L     R1,=A(RECSAVE)
+         MVC   0(80,R1),0(RW1)   SAVE THE RECORD                    P
+         LR    RW1,R1            AND ADDRESS                        C
+         XC    WRPBLK,WRPBLK
+         B     REL02                                               B
+         SPACE
+REL03    DS    0H
+         L     RWK,INFADR        LOAD RWK WITH INPUT DCB ADDR       P
+         AGET  (RWK)             GET INPUT RECORD                  I
+         B     WRAPUP            END OF FILE                        DN
+         LR    RW2,R1            SAVE RECORD ADDRESS               P
+         CLI   ALTTYP,X'02'      IS THIS RELOC REC                  DN
+         BNE   REL52                                                C
+         CLI   NOPKFLG,X'FF'     IS THIS NOPACK MODE                DN
+         BE    REL52                                                C
+         CLC   ALTTYP,RLD        IS THIS RLD                       DN
+         BE    REL50                                               C
+         CLC   ALTTYP,END        IS THIS END RECORD                DN
+         BE    REL55                                               C
+         IF    REL05,SETONE      IS THIS SECOND RECORD              DN
+         SET   SETONE
+         LA    RA,ALTID
+         ZSCALL CHECKID          CHECK ESDID                       S
+         LR    RW1,RW2           ADJUST BUFFER RECORD POINTERS     P
+         B     REL02                                                B
+         SPACE 2
+REL05    DS    0H
+         XC    DIFF,DIFF
+         CLC   CSESDID,ALTID     IS THIS SAME CSECT AS BEFORE       DN
+         BE    REL06                                                C
+         LR    RA1,RW1           WRITE RXTREC                      P
+         ZSCALL WRITE
+         LA    RA,ALTID
+         ZSCALL CHECKID          CHECK ESDID                        S
+         LR    RW1,RW2           ADJUST BUFFER POINTERS            P
+         B     REL02                                               B
+         SPACE 2
+REL06    DS    0H
+         IF    REL40,MDATAFLG    HAVE WE ADDED MDATA THIS RECORD    DN
+         MVC   TLEN+2(2),RXTLEN  SAVE BYTE COUNT                    P
+         MVC   TLOC+1(3),RXTLOC      AND LENGTH                     C
+         CLC   CSWLOC,TLOC       ANY UNUSED SPACE                   DY
+         BNL   REL40                                                C
+         SPACE 2
+*    WE HAVE UNUSED SPACE - LETS FIND OUT HOW MUCH                 T
+         LA    R1,12
+         L     RB,CSWLOC         LOAD RB WITH WORK LOC ADDR         P
+         L     RB1,TLOC          AND RB1 WITH TXT LOC ADDR         C
+         LR    R14,RB1
+         SR    R14,RB            COMPUTE LEN OF DS AREA            P
+         CR    R14,R1            ARE THERE AT LEAST 12 BYTES       DY
+         BL    REL40                                               C
+         SPACE 2
+*    WE HAVE AT LEAST 12 UNUSED BYTES - LETS SEE IF WE CAN         T
+*    COMPUTE A VALID DOUBLE WORD BOUNDARY ADDRESS.                 C
+         MVI   MDATAMSG,X'09'    SET PRINT CONTROL CHAR FOR MSG    P
+         SET   MDATAFLG
+         LR    R14,RB1           LOAD R14 WITH TXT LOC ADDR        P
+         SR    R14,R1            AND SUB 12                        C
+         LR    R15,R14           SAVE THE NEW TXT LOC ADDR         P
+         SRL   R14,3             ROUND OFF TO A                    P
+         SLL   R14,3             DOUBLE WORD BOUNDARY              C
+         CR    R14,R15           WAS ADDR ALREADY DOUBLE WORD      DN
+         BE    REL10                                               C
+         CR    R14,RB            IS THERE STILL ENOUGH SPACE       DY
+         BL    REL10                                               C
+         SPACE 2
+*    WE CAN SET MDATA ON DOUBLE WORD BOUNDARY                      T
+         SR    R15,R14           COMPUTE THE DIFFERENCE            P
+         STH   R15,DIFF          AND NOW SAVE THE DIFFERENCE       C
+         AR    R1,R15
+         SPACE 2
+*    LETS SEE IF MDATA CAN FIT IN THIS TXT CARD                    T
+REL10    DS    0H
+         L     RW3,TLEN          LOAD RW3 WITH DATA BYTE COUNT     P
+         LR    R15,RW3           AND SAVE IN R15                   C
+         AR    R15,R1            ADD ADDITIONAL BYTES              P
+         CH    R15,H56           WILL IT FIT                        DN
+         BNH   REL15                                                C
+         SPACE
+*    LETS SEE IF IT WILL FIT WIHTOUT DOUBLE WORD BOUNDARY
+         LH    R14,DIFF
+         SR    R15,R14
+         CH    R15,H56           WILL IT FIT NOW                    DY
+         BH    REL20                                                C
+         SR    R1,R14            SET R1 BACK TO 12
+         XC    DIFF,DIFF
+         SPACE 2
+*    MDATA CAN FIT IN TXT CARD                                     T
+REL15    DS    0H
+         ST    R15,TLEN
+         MVC   RXTLEN,TLEN+2     SET DATA BYTE COUNT                P
+         SR    RB1,R1
+         ST    RB1,WFULL
+         MVC   RXTLOC,WFULL+1    SET TXT LOC ADDR                   P
+         BCTR  RW3,0
+         EX    RW3,MVC1          MOVE TXT DATA TO HOLD AREA        P
+         CLEAR RXTDATA
+         MVC   RXTDATA(12),MDATA   MOVE MDATA TO TXT REC            P
+         LA    R14,RXTDATA+12
+         AH    R14,DIFF
+         EX    RW3,MVC2          MOVE ORG TXT DATA BACK TO TXT REC  P
+         B     REL40                                               B
+         SPACE 2
+*    MUST ADD A NEW TXT CARD                                       T
+REL20    DS    0H
+         SR    RB1,R1            COMPUTE NEX TXT LOC ADDR          P
+         ST    RB1,WFULL
+         MVC   TXTLOC,WFULL+1    AND MOVE TO TXT ADD RECORD        C
+         ST    R1,WFULL
+         MVC   TXTLEN,WFULL+2    SET BYTE COUNT                    P
+         MVC   TXTID,RXTID       AND SET ESDID                      C
+         MVC   TXTDATA(12),MDATA   SET MDATA                       P
+         MVC   TXTTID,RXTTID     SET TITLE DATA                     P
+         STM   RW1,RW2,POINTERS  SAVE BUFFER POINTERS              P
+         LR    RW2,RW1           SET NEW POINTERS FOR PACKING      P
+         LA    RW1,TXTADD        ROUTINE                           C
+         SPACE
+*    PACKING IS FROM RXTREC TO TXTADD
+         ZSCALL PACK             PACK THE RECORDS                   S
+         B     REL26             FULL PACK                          DN
+         SPACE
+*    PARTIAL PACKING PERFORMED
+         SPACE
+REL26    TAG
+         LR    RA1,RW1
+         ZSCALL WRITE            WRITE TXTADD RECORD                S
+         MVC   TLEN+2(2),TXTLEN  SAVE BYTE COUNT                    P
+         MVC   TLOC+1(3),TXTLOC    AND SAVE LOC ADDR                C
+         L     RW1,TLEN
+         L     RA1,TLEN
+         L     RB1,TLOC
+         AR    RA1,RB1
+         ST    RA1,CSWLOC        SET NEW WORK LOCATION ADDR        P
+         LM    RW1,RW2,POINTERS    RESTORE BUFFER POINTERS         P
+         B     REL40                                                B
+         SPACE 2
+*    PACKING IS FROM ALTREC TO RXTREC
+         SPACE
+REL40    DS    0H
+         ZSCALL PACK             LETS TRY TO PACK THE RECORDS       S
+         B     REL02             IS THIS FULL PACK                  DN
+         SPACE
+         LR    RA1,RW1           WRITE RXTREC                      P
+         ZSCALL WRITE
+         SPACE
+*  LETS COMPUTE A NEW WORK LOCATION ADDRESS                         P
+         MVC   TLEN+2(2),RXTLEN  SAVE BYTE COUNT                    P
+         MVC   TLOC+1(3),RXTLOC    AND LOCATION ADDR                C
+         L     RA1,TLEN
+         L     RB1,TLOC
+         AR    RA1,RB1
+         C     RA1,CSWLOC        DOES THIS EXCEED HIGH ADDR        DY
+         BNH   REL42                                                C
+         ST    RA1,CSWLOC        SAVE NEW LOCATION ADDR            P
+REL42    DS    0H
+         LR    RW1,RW2           ADJUST BUFFER POINTERS            P
+         RES   MDATAFLG
+         B     REL02                                                B
+         SPACE 2
+REL50    DS    0H
+         IF    REL52,RLDFLG
+         LR    RA1,RW1           WRITE RXTREC                      P
+         ZSCALL WRITE
+         SET   RLDFLG
+REL52    LR    RA1,RW2           WRITE ALTREC                      P
+         ZSCALL WRITE
+         B     REL02
+         SPACE 2
+REL55    DS    0H
+         IFN   REL50,RLDFLG      HAVE WE PROCESSED RLD REC          DY
+         B     REL52
+         SPACE
+MVC1     MVC   TXTDATA(*-*),RXTDATA
+         DROP  RW1,RW2
+         SPACE 4
+WRAPUP   DS    0H
+         L     RWK,INFADR
+         CLOSE ((RWK),,SYSPCH,,FILE2)
+         C     RWK,=A(INDCB)     IS INDCB THE INPUT FILE            DY
+         BNE   WRAP2                                                C
+         FREEPOOL (RWK)
+WRAP2    TAG
+         FREEPOOL FILE2
+         ED    INPCNT-1(6),INRECS       SET INPUT AND              P
+         ED    OUTPCNT-1(6),OUTRECS    OUTPUT RECORD COUNTS        C
+         OI    INPCNT+4,X'F0'
+         OI    OUTPCNT+4,X'F0'
+         IFN   EXIT,LDIND        IS THIS LOAD MODE                  DY
+         ZSCALL STOWDIR          DIRECTORY PROCESSING FOR SYSGO DSN S
+         SR    RWK,RWK
+         LA    RA,80             COMPUTE RECORDS/BLOCK             P
+         LH    RW1,BLKSI
+         DR    RWK,RA
+         LR    RA,RW1            SAVE RECORDS/BLOCK                P
+         SR    RWK,RWK
+         SPACE
+*   COMPUTE BLOCKS THIS MEMBER                                     T
+         LH    RW1,NEWRECS
+         DR    RWK,RA
+         LTR   RWK,RWK           ANY SHORT BLOCKS                  DY
+         BZ    NOSBLK                                              C
+         LA    RW1,1(RW1)        ALLOW FOR SHORT BLOCK
+NOSBLK   LA    RW1,1(RW1)        ALLOW FOR EOF BLOCK
+         STH   RW1,NEWBLKS
+USPPR    ZSCALL STOWUSP          UNUSED SPACE PROCESSING            S
+         SPACE 2
+**   CALCULATE ACTUAL NUMBER OF USED TRKS                          T
+         OBTAIN DSCB         READ DATA SET CONTROL BLOCK
+         LTR   R15,R15
+         BZ    CALTRK
+         N     R15,=X'000000FF'
+         CVD   R15,DECIMAL       CONVERT RETURN CODE TO DECIMAL     P
+         ED    ER1RC-1(4),DECIMAL+6
+         GENER ER1,DUMP=NO       OBTAIN MACRO                       S
+         SPACE
+CALTRK   DS    0H
+         MVC   TRKUSED,WORKAREA+54  TOTAL TRKS USED THIS PDS       P
+         MVC   EXTENTS+1(1),WORKAREA+15  AND EXTENTS               C
+         LH    R14,TRKUSED
+         SH    R14,TRKDEAD
+         STH   R14,TRKUSED
+         SPACE 2
+*    SET TRKS-USED TRKS-DEAD, FRAGMENTS, AND EXTENTS FOR MESSAGE   T
+*    BLOCK.                                                        C
+         SPACE
+         LA    RW2,INLIST        SET INPUT LIST POINTERS           P
+         LA    RW3,OUTLIST       OUTPUT LIST POINTERS              C
+         LA    R12,4             AND LOOP COUNTER                  C
+         SPACE
+OLOOP    L     RW1,0(RW2)
+         LH    R1,0(RW1)
+         CVD   R1,DECIMAL        CONVERT FOR MESSAGE BLOCK         P
+         L     RA1,0(RW3)        POINTER FOR MSG FIELD             P
+         BCTR  RA1,0             ADJUST FOR ED INSTR               C
+         ED    0(4,RA1),DECIMAL+6
+         LA    RW2,4(RW2)        ADVANCE LIST POINTERS             P
+         LA    RW3,4(RW3)
+         BCT   R12,OLOOP         END OLOOP                         DY
+         SPACE
+         MVC   EXT(2),EXT+1
+         MVI   EXT+2,X'40'
+         SPACE 2
+EXIT     TAG
+         ZSCALL PRINT            PRINT WARNING MESSAGES AND         S
+*                                MESSAGE BLOCK                      C
+         SPACE
+         LH    R15,RTNCD         SET RETURN CODE
+         ZEND  RC=(15)
+         SPACE 2
+MVC2     MVC   0(*-*,R14),TXTDATA
+         SPACE 2
+         LTORG
+         EJECT
+ESDRT    ZSENT ,
+         USING RXTREC,RWK
+         L     R12,=A(CSTABLE)   SET CSECT TABLE LHE AND            P
+         L     RB1,=A(CSTRHE)    RHE ADDRESSES                      C
+         SPACE
+ESDRT1   DS    0H
+         SPACE
+*    CHECK RECORDS COUNTS TO KEEP IN SYNCH. NOT NESSARY TO MOVE
+*    TO SAVE AREA.
+         SPACE
+         LH    R14,WRPBLK
+         LA    R14,1(R14)
+         STH   R14,WRPBLK
+         CH    R14,IRPBLK        LAST RECORD                       DY
+         BNH   ESDRT1B                                             C
+         XC    WRPBLK,WRPBLK
+         B     ESDRT1
+         SPACE
+ESDRT1B  DS    0H
+         AGET  INDCB             GET INPUT RECORD                  I
+         B     ESDEOF            END OF FILE                       DN
+         LR    RWK,R1
+         CLC   RXTTYP,ESD        IS THIS ESD RECORD                 DY
+FULLTSW  BNE   ESDRT20                                              C
+         SET   ESDFLG
+         MVC   WFULL+2(2),RXTLEN     SAVE BYTE COUNT                P
+         L     R15,WFULL
+         LA    R14,RXTDATA
+         USING ESDDUM,R14        SET COVERAGE FOR DSECT             P
+         SPACE 2
+ESDRT2   DS    0H
+         LM    RW1,RW3,TYPLST    LOAD TABLE TYPE LIST POINTERS      P
+ESDRT2B  CLC   ESDCD,0(RW1)      DOES THIS TYPE INCR ID COUNT       DN
+         BE    ESDRT2D                                              C
+         BXLE  RW1,RW2,ESDRT2B   END OF TABLE                       DY
+         B     ESDRT4                                               B
+         SPACE
+ESDRT2D  LH    RW2,ID            INCREMENT ESDID                    P
+         LA    RW2,1(RW2)        COUNT                              C
+         STH   RW2,ID
+         CLC   ESDLEN,SPACES     ANY DATA WITH THIS CSECT           DY
+         BE    ESDRT4                                               C
+         MVC   CSNAME,ESDNME     SAVE CSECT NAME                    P
+         XC    CSWLOC,CSWLOC
+         XC    CSMLEN,CSMLEN
+         MVC   CSWLOC+1(3),ESDADR         SAVE STARTING LOC ADDR    C
+ESDRT2F  NOP   ESDRT2M           HAVE WE SET LOC FOR TXTADD REC     DN
+         MVC   TXTLOC,ESDADR     SAVE STARTING LOCATION             P
+         MVI   ESDRT2F+1,X'F0'
+ESDRT2M  MVC   CSMLEN+1(3),ESDLEN        SAVE CSECT LENGTH          P
+         MVC   CSESDID,ID        SAVE ESDID CODE                    P
+         LA    R12,20(R12)       SET RB1 TO START OF NEXT ENTRY     P
+         AP    CSCNT,P1
+         CR    R12,RB1           TABLE OVERFLOW                     DY
+         BNH   ESDRT4                                              C
+         MVI   FULLTSW+1,X'F0'   SET BYPASS SWITCH                  P
+         SP    CSCNT,CSCNT
+         B     ESDRT6                                               B
+         SPACE
+ESDRT4   DS    0H
+         SH    R15,H16
+         LTR   R15,R15           ALL ENTRIES PROCESSED              DN
+         BZ    ESDRT6                                               C
+         LA    R14,16(R14)       SET R14 TO START OF NEXT ENTRY     P
+         B     ESDRT2                                               B
+         SPACE 2
+ESDRT6   DS    0H
+         LR    RA1,RWK           WRITE RXTREC                      P
+         LA    RA1,RXTREC
+         ZSCALL WRITE
+         B     ESDRT1                                               B
+         SPACE 2
+*    GENERATE $$$$0007 TXT ADD RECORD
+ESDRT20  DS    0H
+         CLI   RXTREC,X'02'      RELOC TYPE STATEMENT               DY
+         BNE   ESDRT6                                               C
+         IFN   ESDRT6,ESDFLG     HAVE WE PROCESSED ANY ESD RECS     DY
+         SPACE
+*    THE FOLLOWING SECTION OF CODE IS USED TO CHECK WHETHER THE
+*    MODULE ALREADY HAS A TXT ADD CARD. THIS WOULD BE THE CASE WHEN
+*    PACKING FROM A PDS AS OPPOSED TO REASSEMBLING.
+*    IF INPUT IS FROM A PDS THE OLD TXT REC IS LEFT IN TACT, AND
+*    NO NEW $$$$0007 TXT IS GENERATED.
+         SPACE
+         MVC   CSNAME,MLN1B      SET END OF TABLE DELM             P
+         IF    ESDRT22,$$BYPS    DID WE BYPASS $$$$0007 TXT ADD     DN
+         SET   NOSEQ
+         CLC   RXTTID(8),TXTTID    IS THIS TXT ADD CONTROL          DY
+         BNE   ESDRT21                                              C
+         L     R15,=A(USEDATA)
+         MVC   DTTMWK(2),RXTMM   SET MONTH                          P
+         MVC   DTTMWK+2(2),RXTDD    DAY                             C
+         MVC   DTTMWK+4(2),RXTYY    AND YEAR                        C
+         MVC   LNDATE,RXTMM   SET DATE IN MESSAGE BLOCK             C
+         PACK  DTTMPK,DTTMWK
+         L     R1,DTTMPK
+         SRL   R1,4              SHIFT OUT LOW BITS
+         ST    R1,DTTMPK
+         MVC   0(3,R15),DTTMPK+1   SET DATA                         P
+         MVC   DTTMWK(2),RXTHH     SET HOUR                         P
+         MVC   DTTMWK+2(2),RXTMIM  MINUTES                          C
+         MVC   DTTMWK+4(2),RXTSS    SECONDS                         C
+         MVC   LNTIME,RXTHH      SET TIME IN MESSAGE BLOCK          C
+         PACK  DTTMPK,DTTMWK
+         L     R1,DTTMPK
+         SRL   R1,4
+         ST    R1,DTTMPK
+         MVC   4(3,R15),DTTMPK+1   SET TIME
+         LR    RA1,RWK           WRITE RXTREC                      P
+         ZSCALL WRITE
+         SET   $$BYPS
+         RES   NOSEQ
+         B     ESDRT1                                               B
+         SPACE
+ESDRT21  DS    0H
+         LA    RA1,TXTADD
+         ZSCALL WRITE            WRITE TXT ADD RECORD               S
+         RES   NOSEQ
+         SPACE
+ESDRT22  DS    0H
+         CLC   RXTTYP,END        IS THIS END OF INPUT               DY
+         BNE   ESDRT23                                             C
+         B     ESDRT6                                              B
+         SPACE 2
+ESDRT23  DS    0H
+         CP    CSCNT,P1          HOW MANY CSECTS                    D
+         BL    NOPACK                                               C
+         BE    ESDXIT                                               C
+         SPACE
+*    MORE THAN ONE CSECT                                            N
+         SPACE
+         CLI   CMPIND,X'FF'      HAS DATA ALREADY BEEN SORTED      DN
+         BE    ESDXIT                                              C
+         ZSCALL TXTMRG           MERGE TXT RECORDS                  S
+         B     ESDXITZ                                              B
+         SPACE 2
+ESDEOF   DS    0H
+         ZSEX  0                 EOF RETURN                         E
+         SPACE 2
+NOPACK   TAG
+         SET   NOPKFLG
+         LR    RA1,RWK           WRITE RXTREC                      P
+         ZSCALL WRITE            WRITE TEXT RECORD                  S
+         SWARN WARN1             SET NO PACKING MESSAGE             P
+         B     ESDXITZ                                             B
+         SPACE
+         DROP  R14
+ESDXIT   SET   SETONE
+         LA    RA,RXTID
+         ZSCALL CHECKID          CHECK ESDID                        S
+ESDXITZ  LR    RW1,RWK
+         ZSEX  4                 RETURN TO MAIN LOGIC              E
+         SPACE 5
+CHECKID  ZSENT ,
+         L     R12,=A(CSTABLE)
+         LA    RB,20             SET ENTRY LENGTH                   P
+         L     RB1,=A(CSTRHE)    AND RHE ADDRESS                    C
+CHKID2   DS    0H
+         CLC   CSESDID,0(RA)     THIS ESDID WE WANT                DN
+         BE    CHKID4                                              C
+         CLC   CSNAME,MLN1B      END OF TABLE                      DN
+         BE    CHKERR                                              C
+         AR    R12,RB            INCREMENT TABLE LHE POINTER        P
+         CR    R12,RB1           TABLE OVERFLOW                     DY
+         BNH   CHKID2                                               C
+CHKERR   GENER ER5               CAN'T FIND CSECT ENTRY            S
+         SPACE 2
+CHKID4   DS    0H
+         MVC   MCNME,CSNAME      SAVE CSECT NAME                   P
+         ZSEX  0                 RETURN TO CALLING ROUTINE         E
+         SPACE 5
+TXTMRG   ZSENT ,
+         L     RA,=A(FL1BPOOL)
+         BUILD (RA),2,7280       BUILD FILE1 BUFFER POOL            P
+         SET   NOCOUNT
+         OPEN  (FILE1,OUTPUT)
+         TM    FILE1+48,X'10'    GOOD OPEN                          DN
+         BO    TMRG0                                                C
+         MVC   ER3DDN(8),=CL8'SYSUT1'
+         GENER ER3               UNSUCCESSFUL OPEN                  S
+         SPACE
+TMRG0    TAG
+         SPACE
+*    COMPUTE NUMBER OF RECORDS/BLK FOR FILE1                       T
+         SR    R14,R14
+         LA    RA,80
+         LH    R15,FILE1+62      SET BLOCKSIZE
+         DR    R14,RA
+         STH   R15,IRPBLK        SAVE RECS/BLK                     P
+         XC    WRPBLK,WRPBLK     CLEAR WORK COUNTER
+         L     R12,=A(CSTABLE)
+         B     TMRG2             BYPASS FIRST READ                  B
+         SPACE
+TMRG1    DS    0H
+         AGET  INDCB             GET INPUT RECORD                  I
+         B     WKEOF             END OF FILE                        DN
+         LR    RWK,R1            SAVE INPT BUFFER ADDR             P
+TMRG2    CLC   RXTTYP,ESD        ESD TYPE                           DN
+         BE    TMRG1                                                C
+         CLC   RXTTYP,TXT        IS THIS TEXT RECORD                DY
+         BNE   TMRG8                                                C
+         SET   TXTINIT           AVOID WRITING NON-RELOC           P
+*              TYPE STATEMENTS PRIOR TO FIRST TXT RECORD           C
+         CLC   RXTID,CSESDID     IS THIS SAME CSECT AS BEFORE       DY
+         BNE   TMRG1                                                C
+         SPACE 2
+TMRG4    DS    0H
+         IFN   TMRG1,TXTINIT     CAN WE WRITE NON TXT STATEMENT    DY
+         PUT   FILE1,(RWK)       WRITE TO WORK FILE                I
+         B     TMRG1                                                B
+         SPACE 2
+TMRG8    CP    CSCNT,P1          1 CSECT LEFT                       DY
+         BH    TMRG1                                                C
+         B     TMRG4                                                B
+         SPACE 2
+WKEOF    DS    0H
+         SP    CSCNT,P1
+         CP    CSCNT,P0          ALL CSECTS PROCESSED               DN
+         RES   TXTINIT
+         BE    TMRG10                                               C
+         LA    R12,20(R12)       ADVANCE TABLE POINTER              P
+         CLOSE (INDCB,REREAD)
+         FREEPOOL INDCB
+         OPEN  (INDCB,INPUT)
+         B     TMRG1             MAKE ANOTHER PASS                  B
+         SPACE 2
+TMRG10   DS    0H
+         SET   FLE1FLG
+         CLOSE (INDCB,,FILE1,REREAD)
+         FREEPOOL INDCB
+         OPEN  (FILE1,INPUT)
+         MVC   INFADR,=A(FILE1)
+         RES   NOCOUNT
+         ZSEX  0
+         DROP  RWK
+         SPACE 5
+*  ROUTINE PACKS DATA FROM FMPACK TO TOPACK                         T
+         SPACE
+PACK     ZSENT ,
+         USING RXTREC,RW1
+         USING ALTREC,RW2
+         SPACE 2
+PACK01   DS    0H
+         MVC   TLOC+1(3),RXTLOC   SAVE TO REC LOC ADDR              P
+         MVC   TLEN+2(2),RXTLEN   AND BYTE COUNT                    C
+         MVC   FLOC+1(3),ALTLOC   SAVE FROM REC LOC ADDR            P
+         LA    RB,56
+         L     R14,TLOC
+         A     R14,TLEN
+         C     R14,FLOC          CAN WE DO ANY PACKING              D
+         BE    PACK02            PACKING CAN BE DONE                C
+         BH    PACK04            NO PACKING TO BE DONE              C
+         SPACE 2
+*  WE HAVE STORAGE AREA - LETS SEE IF WE CAN GET MDATA IN THIS RECORD
+         SPACE
+         C     R14,CSWLOC        IS CURRENT ADDR HIAG               DY
+         BL    PACK04                                               C
+         L     R15,FLOC
+         SR    R15,R14           COMPUTE LEN OF STORAGE AREA        P
+         LR    RWK,R15           SAVE STORAGE AREA LENGTH           P
+         L     RA,TLEN
+         AR    R15,RA            ADD LENGTH TO DATA COUNT           P
+         CR    R15,RB            CAN STORAGE AREA FIT IN THIS REC   DY
+         BH    PACK04                                               C
+         SR    R14,R14
+         L     RB1,TLOC
+         A     RB1,TLEN          SET RB1 TO END OF DATA             P
+         A     R14,TLEN
+         LR    RB,RB1            AND SAVE THE LOC ADDR              P
+         AR    RB1,RWK           SET RB1 TO END OF STORAGE AREA     P
+         AR    R14,RWK
+         CH    RWK,H12           CAN MDATA FIT IN THIS AREA         DY
+         BL    PACK01M                                              C
+         SH    RB1,H12           SET RB1 TO MDATA LHE               P
+         SH    R14,H12
+         SPACE
+*    LETS SEE IF WE CAN DOUBLE WORD ALIGN IT
+         SPACE
+         LR    R15,RB1
+         SRL   R15,3
+         SLL   R15,3             COMPUTE DOUBLE WORK ADDR           P
+         CR    R15,RB            ARE WE STILL WITHIN DATA AREA      DY
+         BL    PACK01F                                              C
+         SR    RB1,R15           COMPUTE DIFFERENCE
+         SR    R14,RB1
+         SPACE
+PACK01F  DS    0H
+         LA    RB1,RXTDATA
+         AR    RB1,R14           SET RB1 TO MDATA LHE               P
+         MVC   0(12,RB1),MDATA   MOVE CSECT NAME, DATE AND TIME TO REC
+         MVI   MDATAMSG,X'09'
+         SPACE
+PACK01M  DS    0H
+         A     RWK,TLEN
+         ST    RWK,WFULL
+         MVC   RXTLEN,WFULL+2     SAVE TXT REC BYTE COUNT           P
+         B     PACK01                                               B
+         SPACE 2
+PACK02   DS    0H
+         L     RA1,TLEN
+         CR    RA1,RB            CAN ANY PACKING BE DONE           DY
+         BNL   PACK04                                               C
+         LR    R14,RA1           SET TO LENGTH IN R14              P
+         MVC   FLEN+2(2),ALTLEN   SET LENGTH OF FRAM RECORD         P
+         A     R14,FLEN
+         CR    R14,RB            CAN WE PACK THE WHOLE RECORD       DN
+         BNH   PACK10                                               CC
+         SPACE 2
+*    PARTIAL PACKING TO BE PERFORMED                                N
+         SPACE
+         LR    R14,RA1           SET TO LEN IN R14                 P
+         LR    R15,RB            SET R15 WITH MAX LENGTH            C
+         SR    R15,R14           COMPUTE  NO OF BYTES TO BE PACKED  P
+         BAL   RA,PACKINER       PACK THE DATA                      S
+         MVC   FLOC+1(3),ALTLOC   SET NEW LOC ADDR IN FM RECORD     P
+         L     R14,FLOC
+         AR    R14,R15
+         ST    R14,WFULL
+         MVC   ALTLOC,WFULL+1     MOVE LOC TO FM RECORD             P
+         MVC   FLEN+2(2),ALTLEN  SET NEW LEN IN FM RECORD           P
+         L     R14,FLEN
+         SR    R14,R15
+         ST    R14,WFULL
+         MVC   ALTLEN,WFULL+2     MOVE NEW LEN TO FM RECORD         P
+         LA    RA,ALTDATA
+         LR    RB1,RA
+         AR    RB1,R15           SET RB1 TO START OF  DATA NOT PACKED
+         BCTR  R14,0
+         EX    R14,MVC4          SHIFT DATA IN FM RECORD            P
+         LA    R14,1(R14)
+         AR    RA,R14            SET RA TO START OF DATA JUST SHIFTED
+         MVI   0(RA),X'40'       CLEAR FIRST BYTE                   P
+         BCTR  R15,0
+         LTR   R15,R15           ANY MORE AREA TO CLEAR             DY
+         BZ    PACK04                                               C
+         BCTR  R15,0
+         EX    R15,MVC5          CLEAR THE REST OF FM RECORD        P
+         B     PACK04
+         SPACE 2
+PACK10   DS    0H
+         L     R15,FLEN          SET LENGTH OF FROM RECORD          P
+         BAL   RA,PACKINER       PACK THE ENTIRE RECORD             S
+         B     PACK06
+         SPACE 2
+PACKINER DS    0H
+         LA    RB1,RXTDATA        SET RB1 TO TO DATA                P
+         AR    RB1,RA1
+         BCTR  R15,0
+         EX    R15,MVC3          MOVE ALTDATA TO RXTDATA            P
+         LA    R15,1(R15)
+         AR    RA1,R15           COMPUTE NEW LENGTH FOR TO RECORD  P
+         ST    RA1,WFULL
+         MVC   RXTLEN,WFULL+2     MOVE LEN TO TO RECORD             P
+         BR    RA
+         SPACE
+PACK04   ZSEX  4                 PARTIAL OR NOPACK RETURN           E
+         SPACE
+PACK06   ZSEX  0                 FULL PACK RETURN                   E
+         SPACE 2
+MVC3     MVC   0(*-*,RB1),ALTDATA
+MVC4     MVC   0(*-*,RA),0(RB1)
+MVC5     MVC   1(*-*,RA),0(RA)
+         SPACE
+         DROP  RW1,RW2,R12
+         SPACE 5
+AGET     ZSENT ,
+         L     R1,0(RLNK)        LOAD DCB ADDR IN R1 AND            P
+         GET   (R1)
+         IF    AGET2,NOCOUNT     INPUT COUNT FLAG SET              DY
+         AP    INRECS,P1
+AGET2    ZSEX  8                 NORMAL DATA RETURN                E
+         SPACE
+AGETEOF  ZSEX  4                 END OF FILE RETURN                E
+         SPACE 5
+WRITE    ZSENT
+         CLI   0(RA1),X'02'      OBJECT DECK TYPE RECORD           DY
+         BNE   WRT1                                                C
+         IF    WRT1,NOSEQ        DOES THIS RECORD GET SEQUENCED    DY
+         AP    SEQNO,P1          ADD 1 TO SEQNO                     P
+         UNPK  76(4,RA1),SEQNO   RESEQUENCE THE RECORD             P
+         OI    79(RA1),X'F0'
+         SPACE
+WRT1     DS    0H
+         AP    OUTRECS,P1        INCREMENT OUTPUT COUNT            P
+         IFN   WRT4,LDIND        IS THIS LOAD MODE                  DY
+         PUT   FILE2,(RA1)       WRITE TO WORK FILE                I
+         LH    R15,NEWRECS
+         LA    R15,1(R15)        INCREMENT OUTPUT RECORD COUNT     P
+         STH   R15,NEWRECS
+         SPACE 2
+WRT4     DS    0H
+         IFN   WRT6,DKIND        IS THIS DECK MODE                  DY
+         IF    WRT6,LPSIND       HAS LAST RECORD BEEN PUNCHED      DN
+         LR    0,RA1
+         PUT   SYSPCH,(0)        PUNCH OBJECT CARD                  I
+         SPACE 2
+WRT6     DS    0H
+         IFN   WRT8,LSTIND       IS LIST OPTION SPECIFIED           DY
+         CP    LNCNT,LNTOT       PAGE OVERFLOW                      DY
+         BNH   WRT6B                                                C
+         LA    R14,EJECT
+         BAL   R12,WRT6F         PAGE EJECT                         S
+         SP    LNCNT,LNTOT       RESET LINE COUNTER                 P
+WRT6B    AP    LNCNT,P1
+         L     R14,=A(PRTLNE)
+         MVI   0(R14),X'09'      SET CONTROL CHARACTER              P
+         MVC   1(80,R14),0(RA1)  PRINT LINE
+         BAL   R12,WRT6F         PRINT A LINE                       S
+         B     WRT8                                                 B
+         SPACE
+WRT6F    TAG
+         PUT   SYSPRT,(R14)
+         BR    R12
+         SPACE
+WRT8     ZSEX  0                 RETURN TO MAIN ROUTINE             E
+         SPACE 5
+         ENTRY ERRPRT
+ERRPRT   ZSENT ,                 ERROR MESSAGE PRINT ROUTINE       N
+         PUT   SYSPRT,EJECT      PAGE EJECT                        I
+         CLEAR ELINE
+         MVI   ELINE,X'09'       SET PRINT CONTROL CHAR             P
+         L     R15,ERRPNTS+4     SET MESSAGE LENGTH                 P
+         STC   R15,PRTMVC+1
+         L     R15,ERRPNTS       MESSAGE ADDRESS                    P
+PRTMVC   MVC   ELINE+10(*-*),0(R15)
+         PUT   SYSPRT,ELINE
+         CLOSE (SYSPRT)
+         L     R15,ERRPNTS+8     RETURN CODE                        P
+         LTR   R15,R15           ABEND WITH CORE DUMP               DN
+         BM    ERRDUMP                                             C
+         ZBEND 2010,DUMP=NO
+         SPACE
+ERRDUMP  ZBEND 2020              FULL CORE DUMP                    H
+         ZSEX  0
+         SPACE 5
+PRINT    ZSENT
+         SPACE
+*    SET SPACING FOR OPTIONAL MESSAGES                              T
+         SR    R15,R15
+         CLI   LDDKMSG,X'09'     DO WE PRINT LOAD/DECK COMBO        DY
+         BNE   PRT2                                                 C
+         MVI   PMOD2,X'00'
+         MVI   PMOD2+4,X'00'
+         LA    R15,1(R15)
+PRT2     CLI   MDATAMSG,X'09'    DO WE PRINT MDATA MSG              DY
+         BNE   PRT4                                                 C
+         MVI   PMOD4,X'00'
+         MVI   PMOD4+4,X'00'
+         LA    R15,1(R15)
+PRT4     LTR   R15,R15           WERE ANY OPT MSGS PRINTED          DY
+         BZ    PRT6                                                 C
+         MVI   PMOD,X'80'
+         SPACE
+PRT6     DS    0H
+         LM    RW1,RW3,WLST      SET WARNING MESSAGES IN PRINT LIST
+         L     RA1,PLST1
+         LA    RA1,4(RA1)        SET PAST EJECT CONTROL
+PRT7     L     R1,0(RW1)
+         CLI   0(R1),X'09'       MESSAGE FLAG SET TO PRINT          DY
+         BNE   PRT7B                                                C
+         ST    R1,0(RA1)
+         LA    RA1,4(RA1)        ADVANCE PRINT LIST POINTER
+PRT7B    BXLE  RW1,RW2,PRT7      END OF WARNING MSG SCAN            DY
+         LM    RW1,RW3,PLST1     LOAD MSG LIST FOR PRINT LOOP      P
+PRT8     L     R1,0(RW1)         LOAD MESSAGE ADDR FOR PRINT TEST   P
+         LTR   R1,R1             DO WE PRINT THIS MESSAGE-          DY
+         BM    PRT10                                                C
+         SH    R1,=H'2'          SET POINTER TO LENGTH FIELD        P
+         LH    RWK,0(R1)         SET LENGTH IN RWK                  C
+         CLEAR ELINE
+         STC   RWK,PMVC+1
+PMVC     MVC   ELINE+6(*-*),3(R1)
+         MVC   ELINE(1),2(R1)    SET PRINT CONTROL CHARACTER        P
+         PUT   SYSPRT,ELINE
+PRT10    BXLE  RW1,RW2,PRT8      HAVE ALL LINES BEEN PRINTED        DY
+         CLOSE (SYSPRT)
+         ZSEX  0                 RETURN TO MAIN ROUTINE             E
+         SPACE 5
+*              ROUTINE TO PRESORT THE OBJECT INPUT.
+         SPACE
+SORTER   ZSENT
+         SET   NOCOUNT
+         OPEN  (INDCB)
+         TM    INDCB+48,X'10'    GOOD OPEN
+         BZ    SERR1             NO.
+         MVI   SORTFLG,0         INIT.
+         SEGWT IAJSORTI          LOAD SORT
+         CALL  IAJSORTR,(CORERES)  RESERVE 2K NOT TO BE USED BY SORT
+         CALL  IAJSORTI,(SPARMS,SPARMS+4,SPARMS+8,SPARMS+12) INIT.
+*    SET SORT KEY ACCORDING TO TYPE                                T
+*        ESD = 2
+*        TXT = 3
+*        RLD = 4
+*        OTHER = 5
+*        END = 6
+         SR    RA,RA             SET INDEX FOR BATCH MODE
+         LA    RW1,SRTREC
+         USING RXTREC,RW1
+         SPACE
+SLUP1    DS    0H
+         AGET  INDCB
+         B     SORTEOF           END OF FILE                        DN
+         MVC   SRTREC(80),0(R1)  MOVE TO SORT BUFFER               P
+         OI    SORTFLG,SGET1     SAY AT LEAST 1 SUCCESSFUL GET.
+         IFN   SLUP1B,SEND       PROCESSED AN END CARD             DY
+         RES   SEND
+         LA    RA,1(RA)
+SLUP1B   TAG
+         CLI   RXTTYP,X'02'      OBJECT TYPE RECORD                DY
+         BNE   SRTOTH                                              C
+         CLC   RXTTYP,END        IS THIS END REC
+         BE    SRTEND
+         CLC   RXTTYP,RLD        RLD RECORD
+         BE    SRTRLD
+         CLC   RXTTYP,TXT        TXT RECORD
+         BE    SRTTXT
+         CLC   RXTTYP,ESD        ESD RECORD
+         BE    SRTESD
+         GENER IERR              INTERNAL ERROR                    S
+SRTESD   DS    0H
+         LH    R0,X2000
+         B     SETKEY
+SRTTXT   LH    R0,X3000
+         B     SETKEY
+SRTRLD   LH    R0,X4000
+         B     SETKEY
+SRTOTH   LH    R0,X5000
+         LH    R14,SOTHER
+         LA    R14,1(R14)
+         STH   R14,SOTHER
+         AR    R0,R14
+         B     SETKEY
+SRTEND   LH    R0,X6000
+         SET   SEND
+         SPACE
+SETKEY   DS    0H
+         STC   RA,SRTKEY         MOD COUNT
+         STH   R0,SRTKID         RECORD ID
+         MVC   SRTRID(2),RXTID   ESDID
+         MVC   SRTLOC(3),RXTLOC  TXT LOCATION
+         CALL  IAJSORTP,(SORTBUF) FEED REC TO SORT ROUTINE.
+         B     SLUP1             GET NEXT REC, IF ANY.
+SORTEOF  DS    0H                EOF ON SYSIN.
+         TM    SORTFLG,SGET1     AT LEAST 1 SUCCESSFUL GET?
+         BNO   SERR2             NO.
+         CLOSE (INDCB,REREAD)    NEXT USE WILL BE OUTPUT.
+         FREEPOOL INDCB
+         CALL  IAJSORTX          EXECUTE THE SORT.
+         OPEN  (INDCB,(OUTPUT))  I TOLD YOU SO.
+         TM    INDCB+48,X'10'    GOOD OPEN
+         BZ    SERR3             NO.
+*        NOW GET THE OUTPUT FROM THE SORT AND PUT IT BACK ONTO
+*        SYSIN SO THAT AIDSMDAT THINKS IT WAS IN SORTED ORDER
+*        TO BEGIN WITH.
+SLUP2    DS    0H
+         CALL  IAJSORTG,(SORTBUF,SORTEOD) GET A REC.
+         CLI   SORTEOD,C'E'      EOD SET?
+         BE    SORTEND           YES.
+         PUT   INDCB,SRTREC      PUT IN BACK INTO SYSIN            I
+         B     SLUP2             GET THE NEXT REC, IF ANY.
+SORTEND  DS    0H                EOD FROM THE SORT ROUTINE.
+         CLOSE (INDCB,REREAD)    NEXT USE WILL BE INPUT.
+         FREEPOOL INDCB
+         XR    R15,R15           SET 'GOOD' RETURN CODE.
+SORTXIT  DS    0H
+         RES   NOCOUNT
+         ZSEX  0
+SERR1    DS    0H
+         LA    R15,4
+         B     SORTXIT
+SERR2    DS    0H
+         LA    R15,8
+         B     SORTXIT
+SERR3    DS    0H
+         LA    R15,12
+         B     SORTXIT
+CORERES  DC    F'2000'
+         SPACE
+         SPACE 2
+SPARMS   DS    0CL13
+         DC    C'0088'
+         DC    C'0000'           KEY START
+         DC    C'0008'
+         DC    C'A'              TYPE SORT
+SORTEOD  DS    X
+SORTFLG  DS    X
+SGET1    EQU   1                 ON = AT LEAST 1 GOOD SYSIN GET.
+         DROP  RW1
+         SPACE 2
+         LTORG
+         EJECT
+CONSTNTS DS    0H
+DECIMAL  DC    D'0'
+ERRPNTS  DS    3F
+WFULL    DC    F'0'
+TLOC     DC    F'0'
+TLEN     DC    F'0'
+FLEN     DC    F'0'
+FLOC     DC    F'0'
+TIMEID   DC    F'0'
+DIFF     DC    H'0'
+BLKSI    DC    H'0'
+TOPACK   DC    F'0'
+FMPACK   DC    F'0'
+ENDADR   DC    F'0'
+PSAVE    EQU   TOPACK
+POINTERS DS    2F
+INFADR   DC    A(INDCB)
+DTTMPK   DC    F'0'
+DTTMWK   DC    CL6' '
+         SPACE 2
+JFCBA    DC    A(0)
+         DC    X'00'             *****  TEMP
+NEWBLKS  DC    H'0'
+NEWRECS  EQU   NEWBLKS
+WRPBLK   DC    H'0'
+IRPBLK   DC    H'0'
+ID       DC    H'0'
+H12      DC    H'12'
+H16      DC    H'16'
+H56      DC    H'56'
+SOTHER   DC    H'0'
+RTNCD    DC    H'0'
+         SPACE
+*  FOLLOWING MUST BE ON HALF-WORD BOUNDARY
+         DS    0H
+X2000    DC    X'2000'
+X3000    DC    X'3000'
+X4000    DC    X'4000'
+X5000    DC    X'5000'
+X6000    DC    X'6000'
+         SPACE
+RLD      DS    0CL4
+         DC    X'02'
+         DC    C'RLD'
+ESD      DS    0CL4
+         DC    X'02'
+         DC    C'ESD'
+TXT      DS    0CL4
+         DC    X'02'
+         DC    C'TXT'
+END      DS    0CL4
+         DC    X'02'
+         DC    C'END'
+         SPACE 2
+TXTADD   DS    0CL80
+         DC    X'02'
+         DC    CL4'TXT'
+TXTLOC   DC    XL3'000000'
+         DC    CL2' '
+TXTLEN   DC    XL2'0000'
+         DC    CL2' '
+TXTID    DC    X'0001'
+TXTDATA  DS    0CL56
+         DC    C' '
+TXDSN    DC    CL30' '
+TXVOL    DC    CL6' '
+         DC    C' '
+TXDATE   DC    CL8' '
+         DC    C' '
+TXTIME   DC    CL8' '
+         DC    X'D5'
+TXTTID   DC    CL4'$$$$'
+PRTLNE   EQU   SORTER+85
+TXTSEQ   DC    CL4'0007'
+         SPACE 2
+RECSAVE  EQU   SORTER
+         SPACE 2
+RXTREC   RELREC T=RXT,DSECT=YES
+         SPACE 2
+ALTREC   RELREC T=ALT,DSECT=YES
+         SPACE 2
+DTFLD    DC    CL4' '
+AREA     DC    7C'0'
+         SPACE 2
+SEQNO    DC    PL3'0'
+INRECS   DC    PL3'0'
+OUTRECS  DC    PL3'0'
+LNCNT    DC    PL2'58'
+LNTOT    DC    PL2'57'
+EDIT     DC    X'402120204B20204B2020'
+TIMEWK   DC    CL10' '
+SPACES   DC    CL3' '
+         SPACE
+DSCB     CAMLST SEARCH,DSNAME,VOL,WORKAREA
+DSNAME   DC    CL44' '
+VOL      DC    CL6' '
+WORKAREA DS    0D
+         DS    148C
+SORTBUF  EQU   WORKAREA+1
+SRTKEY   EQU   WORKAREA+1
+SRTKID   EQU   WORKAREA+2
+SRTRID   EQU   WORKAREA+4
+SRTLOC   EQU   WORKAREA+6
+SRTREC   EQU   WORKAREA+9
+DDPARM   DC    CL8'SYSGO'
+P0       DC    PL1'0'
+P1       DC    PL1'1'
+CSCNT    DC    PL2'0'
+         SPACE 3
+PARMFLD  DS    CL7
+         SPACE 1
+PTLST    DC    A(PARMLHE)
+         DC    A(L'PARMFLD+1)
+         DC    A(PARMRHE)
+         SPACE 2
+PARMLHE  DS    0C
+         DC    CL7'DECK'
+DKIND    DC    XL1'00'
+         DC    CL7'NODECK'
+NDIND    DC    XL1'00'
+         DC    CL7'NOLOAD'
+NLIND    DC    XL1'00'
+         DC    CL7'COMPILE'
+CMPIND   DC    X'00'
+         DC    CL7'LOAD'
+LDIND    DC    XL1'00'
+         DC    CL7'LIST'
+LSTIND   DC    X'00'
+PARMRHE  EQU   *-1-L'PARMFLD
+         SPACE
+DEVCODE  DC    X'00'
+         SPACE 3
+*    INDICATORS
+ENDPARM  DC    X'00'
+NOCOUNT  DC    X'00'
+LPSIND   DC    X'00'
+ESDFLG   DC    X'00'
+SETONE   DC    X'00'
+TXTINIT  DC    X'00'
+NOPKFLG  DC    X'00'
+RLDFLG   DC    X'00'
+$$BYPS   DC    X'00'
+FLE1FLG  DC    X'00'
+MDATAFLG DC    X'00'
+NOSEQ    DC    X'00'
+SEND     DC    X'00'
+         SPACE 2
+*********************************************************************
+*                                                                   *
+*  DIAGFLG BIT SETTINGS
+*    2-7 THRU 2-2 NOT USED                                          *
+*                2-1  PDS HAS NON RELOCATABLE MEMBER
+*                2-0 PDS HAS EXCESSIVE MEMBERS FOR UNUSED SPACE     *
+*                  PROCESSING
+*                                                                   *
+DIAGFLG  DC    X'00'
+*********************************************************************
+         SPACE 2
+TYPLST   DC    A(TYPTBL,1,TYPEND)
+         SPACE 2
+MDATA    DS    0CL12
+MCNME    DC    CL8' '            CSECT NAME
+MDDTE    DC    CL2' '
+MDTME    DC    CL2' '
+         SPACE 2
+CSDUM    DSECT
+CSNAME   DS    CL8
+CSWLOC   DS    CL4
+CSMLEN   DS    CL4
+CSESDID  DS    CL2
+AIDSSTOW CSECT
+         SPACE 2
+ESDDUM   DSECT
+ESDNME   DS    CL8
+ESDCD    DS    CL1
+ESDADR   DS    CL3
+         DS    CL1
+ESDLEN   DS    CL3
+AIDSSTOW CSECT
+         SPACE 2
+*    ERROR MESSAGES                                                T
+         SPACE
+ER1      DS    0CL30
+         DC    C'OBTAIN MACRO - RETURN CODE '
+ER1RC    DC    X'202120'
+ER3      DC    C'DDNAME          -- UNABLE TO OPEN FILE'
+ER3DDN   EQU   ER3+7
+         SPACE
+ER5      DC    C'UNABLE TO FIND ESD ENTRY FOR CONTROL SECTION'
+         SPACE
+ER8      DC    C'ERROR IN SORT PROCESSING FOR COMPILE RUN'
+ER12     DC    C'INVALID PARAMETER SPECIFIED IN PARM FIELD'
+IERR     DC    C'*****  INTERNAL ERROR  *****'
+         SPACE 2
+         SPACE 2
+TRKUSED  DC    H'0'
+TRKDEAD  DC    H'0'
+FRAGS    DC    H'0'
+EXTENTS  DC    H'0'
+         SPACE
+INLIST   DC    A(TRKUSED,TRKDEAD,FRAGS,EXTENTS)
+OUTLIST  DC    A(TKU,TKD,FRG,EXT)
+         SPACE 5
+*    MESSAGE ADDRESS LISTS, BLOCK MESSAGE, AND CONTROL CHARACTERS
+         SPACE
+PLST1    DC    A(PLNE1,4,PLNE2)
+         SPACE 2
+PLNE1    DC    A(EJECT)
+         DC    9A(LNSP1)     WARNING MESSAGE SLOTS
+PMOD     DC    A(LNSP3)
+         DC    A(LNSP3)
+         DC    A(TTRSMSG)
+         DC    A(LNSP3)
+         DC    3A(MLN1)
+         DC    4A(MLN2)
+         DC    A(LDMSG)
+         DC    A(DKMSG)
+         DC    2A(MLN2)
+         DC    A(DUMMSG,NLNDMSG)
+         DC    A(MLN3)
+         DC    2A(MLN2)
+         DC    A(LDDKMSG)
+PMOD2    DC    AL1(128)
+         DC    AL3(MLN2)
+         DC    AL1(128)
+         DC    AL3(MLN2)
+         DC    A(MDATAMSG)
+PMOD4    DC    AL1(128)
+         DC    AL3(MLN2)
+         DC    AL1(128)
+         DC    AL3(MLN2)
+         DC    A(PACKMSG)
+         DC    4A(MLN2)
+         DC    2A(MLN1)
+PLNE2    DC    A(MLN1)
+         SPACE 2
+WLST     DC    A(WRNLST,4,WRNLSTX)
+         SPACE
+WRNLST   DC    A(WARN7,WARN8,WARN9)
+         DC    A(WARN2,WARN3,WARN4)
+         DC    A(WARN6,WARN1,WARN5)
+WRNLSTX EQU *-4
+         SPACE 3
+         DS    0H
+EJECT    EQU   *+2
+         DC    XL2'00'
+         DC    X'8B'
+ SPACE
+         DS    0H
+LNSP1    EQU   *+2
+         DC    XL2'00'
+         DC    X'0B'
+         SPACE
+         DS    0H
+LNSP3    EQU   *+2
+         DC    XL2'00'
+         DC    X'1B'
+         SPACE 2
+*    WARNING MESSAGES
+         SPACE
+         WMSG  WARN1,'NO TXT RECORD PACKING PERFORMED'
+         SPACE 2
+         WMSG  WARN2,'LOAD SPECIFIED AND NO SYSGO DD STATEMENT SUPPLIEDX
+               '
+         SPACE 2
+         WMSG  WARN3,'SYSGO DIRECTORY ENTRIES EXCEEDS TABLE LIMITS WHICX
+               H ARE 800'
+         SPACE 2
+         WMSG  WARN4,'MEMBERNM - SYSGO LIBRARY CONTAINS AT LEAST 1 NON-X
+               RELOCATABLE MEMBER'
+         SPACE 2
+         WMSG  WARN5,'MODULE WAS NOT STOWED'
+         SPACE 2
+         WMSG  WARN6,'NO UNUSED SPACE PROCESSING PERFORMED'
+         SPACE 2
+         WMSG  WARN7,'SYSGO IS A SEQUENTIAL DATA SET AND A MEMBER NAME X
+               IS SPECIFIED'
+         SPACE 2
+         WMSG  WARN8,'SYSGO IS A PARTITIONED DATA SET AND NO MEMBER NAMX
+               E IS SPECIFIED'
+         SPACE 2
+         WMSG  WARN9,'MEMBERNM HAS A DIRECTORY ENTRY BUT OCCUPIES NO DAX
+               TA SET SPACE'
+         SPACE
+ELINE    DS    0CL133
+         DC    X'00'             PRINT CONTROL CHARAXTER
+         DS    CL132
+         SPACE 2
+         DS    0H
+MLN1     EQU   *+2
+         DC    Y(MLN1X-MLN1)
+         DC    X'09'
+MLN1B    DC    121C'*'
+MLN1X    EQU   *-1
+         SPACE
+         DS    0H
+MLN2     EQU   *+2
+         DC    Y(MLN2X-MLN2)
+         DC    X'09'
+         DC    CL117'****'
+         DC    4C'*'
+MLN2X    EQU   *-1
+         SPACE
+         DS    0H
+LDMSG    EQU   *+2
+         DC    Y(LDMSGX-LDMSG)
+         DC    X'09'
+         DC    CL40'****'
+LDMEM    DC    CL8' '
+         DC    CL20' HAS BEEN STOWED IN '
+LDDSN    DC    CL44' '
+         DC    CL5' '
+         DC    4C'*'
+LDMSGX   EQU   *-1
+         SPACE
+         DS    0H
+MLN3     EQU   *+2
+         DC    Y(MLN3X-MLN3)
+         DC    X'09'
+         DC    CL42'****'
+         DC    CL4'ON--'
+LNDATE   DC    CL8' '
+         DC    CL10' '
+         DC    CL4'AT--'
+LNTIME   DC    CL8' '
+         DC    CL41' '
+         DC    4C'*'
+MLN3X    EQU   *-1
+         SPACE
+         DS    0H
+MDATAMSG EQU   *+2
+         DC    Y(MDMSGX-MDATAMSG)
+         DC    X'03'
+         DC    CL35'****'
+         DC    CL82'CSECT NAME, DATE, AND TIME HAVE BEEN ADDED TO MODULX
+               E'
+         DC    4C'*'
+MDMSGX   EQU   *-1
+         SPACE
+         DS    0H
+PACKMSG  EQU   *+2
+         DC    Y(PACKMSGX-PACKMSG)
+         DC    X'09'
+         DC    CL40'****'
+NOPKSTR  DC    CL11'IN RECORDS '
+INPCNT   DC    XL5'2020202120'
+         DC    CL10' '
+         DC    CL12'OUT RECORDS '
+OUTPCNT  DC    XL5'2020202120'
+         DC    CL34' '
+         DC    4C'*'
+PACKMSGX EQU   *-1
+         SPACE
+         DS    0H
+DKMSG    EQU   *+2
+         DC    Y(DKMSGX-DKMSG)
+         DC    CL47'****'
+DKMOD    DC    CL6' '
+         DC    C' HAS BEEN PUNCHED'
+         DC    CL47' '
+         DC    4C'*'
+DKMSGX   EQU   *-1
+         SPACE
+         DS    0H
+LDDKMSG  EQU   *+2
+         DC    Y(LDDKMSGX-LDDKMSG)
+         DC    X'03'
+         DC    CL45'****'
+         DC    CL72'MODULE HAS ALSO BEEN PUNCHED'
+         DC    4C'*'
+LDDKMSGX EQU   *-1
+         SPACE
+         DS    0H
+NLNDMSG  EQU   *+2
+         DC    Y(NLNDMSGX-NLNDMSG)
+         DC    X'03'
+         DC    CL42'****'
+         DC    CL75'NOLOAD/NODECK SPECIFIED IN PARM FIELD'
+         DC    4C'*'
+NLNDMSGX EQU   *-1
+         SPACE
+         DS    0H
+DUMMSG   EQU   *+2
+         DC    Y(DUMMSGX-DUMMSG)
+         DC    X'03'
+         DC    CL42'****'
+         DC    C'MODULE WAS NOT STOWED'
+         DC    C' - SYSGO DD DUMMY'
+         DC    CL37' '
+         DC    4C'*'
+DUMMSGX  EQU   *-1
+         SPACE 2
+         DS    0H
+TTRSMSG  EQU   *+2
+         DC    Y(TTRMSGX-TTRSMSG)
+         DC    X'09'
+         DC    CL27' '
+         DC    C'TRK USED '
+TKU      DC    X'202120'
+         DC    CL6' '
+         DC    C'TRK DEAD '
+TKD      DC    X'202120'
+         DC    CL6' '
+         DC    C'FRAGMENTS '
+FRG      DC    X'202120'
+         DC    CL6' '
+         DC    C'EXTENTS '
+EXT      DC    X'202120'
+TTRMSGX  EQU   *-1
+         SPACE 2
+FILE1    DCB   DSORG=PS,MACRF=(GL,PM),DDNAME=SYSUT1,EODAD=AGETEOF,     X
+               LRECL=80,RECFM=FB,BLKSIZE=7280,BUFNO=2,                 X
+               BUFCB=FL1BPOOL,BUFL=7280
+         SPACE 2
+FILE2    DCB   DSORG=PS,MACRF=(GM,PM),DDNAME=SYSUT2,                   X
+               EODAD=FLE2EOF,RECFM=FB,LRECL=80,BLKSIZE=7280
+         SPACE 2
+LOADDCB  DCB   DSORG=PO,MACRF=(R,W),DDNAME=SYSGO,BUFNO=1,              X
+               EODAD=SYSGOEOF,EXLST=JFCBA
+         SPACE 2
+INDCB    DCB   DSORG=PS,MACRF=(GL,PM),DDNAME=SYSIN,EODAD=AGETEOF,      X
+               LRECL=80
+         SPACE 2
+SYSPCH   DCB   DSORG=PS,MACRF=(PM),DDNAME=SYSPUNCH,LRECL=80,           X
+               BLKSIZE=80,RECFM=F,BUFCB=PCHBPOOL,BUFNO=2,BUFL=80
+         SPACE 2
+SYSPRT   DCB   DSORG=PS,MACRF=PM,RECFM=FBM,LRECL=133,                  X
+               BLKSIZE=665,DDNAME=SYSPRINT
+         SPACE 2
+TYPTBL   DC    X'00'             SD TYPE
+         DC    X'02'             ER TYPE
+         DC    X'04'             PC TYPE
+         DC    X'05'             CM TYPE
+TYPEND   DC    X'06'             XD (PR) TYPE
+         SPACE
+         PRINT GEN
+         SPACE
+         DCBD  DSORG=PO
+AIDSSTOW CSECT
+         END

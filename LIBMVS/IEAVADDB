@@ -1,0 +1,464 @@
+//IEAVADDB JOB (1586,5),'** FOR J. NOLS**',CLASS=N
+//STEP01       EXEC GENASMOD,AOS=C5
+         TITLE 'DEBUGGING INFORMATION FORMATTING ROUTINE'
+***********************************************************************
+*                                                                     *
+*        IEAVADDB: THIS MODULE IS EXECUTED AS PART OF 'SNAP'.         *
+*              IT IS INVOKED BY THE ROUTINE XEAVAD02 WHICH            *
+*              IS LINK EDITED INTO IGC0005A IN SUCH A WAY AS TO       *
+*              STEAL THE EXTERNAL REFERENCE OF THE REAL IEAVADDB.     *
+*                                                                     *
+*        ATTRIBUTES: REENTRANT, AUTHORISED, SUPERVISOR MODE.          *
+*                                                                     *
+*        MACROS: ZCSECT,ZRETURN,IHAABDA,IKJTCB                        *
+*                                                                     *
+*        PARAMETERS: ON ENTRY, REG1 POINTS TO THE ABDUMP WORK AREA    *
+*                                                                     *
+*        EXITS: PASSES CONTROL BACK TO THE CALLER                     *
+*                                                                     *
+*        REGISTER USAGE                                               *
+*              REG0  WORK REGISTER                                    *
+*              REG1  PARAMETER REGISTER, WORK REGISTER                *
+*              REG2  WORK REGISTER                                    *
+*              REG3  ADDRESS OF ABDUMP WORK AREA.                     *
+*              REG4  WORK REGISTER                                    *
+*              REG5  ADDRESS OF ABENDING TASKS TCB                    *
+*              REG6  WORK REGISTER                                    *
+*              REG7  WORK REGISTER                                    *
+*              REG8  ADDRESS OF GETMAINED WORK AREA                   *
+*              REG9  WORK REGISTER                                    *
+*              REG10 WORK REGISTER                                    *
+*              REG11 LINK REGISTER BETWEEN ROUTINES                   *
+*              REG12 BASE ADDRESS REGISTER                            *
+*              REG13 ADDRESS OF REGISTER SAVE AREA                    *
+*              REG14 WORK REGISTER, RETURN LINK REGISTER              *
+*              REG15 WORK REGISTER, RETURN CODE TO CALLER             *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        DSECTS                                                       *
+***********************************************************************
+         SPACE 2
+         PRINT NOGEN
+         IHAABDA ,                 ABDUMP WORK AREA
+         SPACE 2
+         IKJTCB
+         SPACE 2
+WKAREA   DSECT ,                   INTERNAL WORK AREA
+GETMNADD DS    A                   ADDRESS OF THIS GETMAINED AREA
+GETMNLEN DS    F                   LENGTH OF THIS GETMAINED AREA
+MEMCHAIN DS    F                   ADDRESS OF MEMBER NAME CHAIN
+LOADR11  DS    F                   SAVE AREA FOR LINK REGISTER
+DBLWORD  DS    D                   DOUBLE WORD WORK AREA
+ALLSTRNG DS    F                   ADDRESS OF ALLOCATION TEXT STRING
+DELSTRNG DS    F                   ADDRESS OF DEALLOCATION TEXT STRING
+UT501    DS    F                   ENTRY POINT ADDRESS OF UT501
+UT501PRM DS    5F                  PARAMETER LIST FOR UT501
+CTLSAVE  DS    5F                  SAVE AREA FOR CTLCARD
+CHAIN    DS    20D                 WORK AREA FOR SCAN MACRO
+VERB     DS    0D                  SAVE AREA FOR VERB CODES
+NAME     DS    0CL8                NAME OF MEMBER BUILT HERE
+NAMETEXT DS    0CL4                FIRST PART OF NAME
+         DS    C                   PADDING
+NAMECODE DS    0CL7                UNPACK AREA FOR ABEND CODE
+         DS    CL3                 PADDING
+NAMETYPE DS    C                   TYPE OF ABEND CODE
+         DS    CL3                 ABEND CODE PROPER
+RETCODE  DS    X                   RETURN CODE FROM UT501
+OPENLIST DS    F                   PARAMETER LIST FOR OPEN
+DBDCB    DS    24F                 DCB FOR SYS1.DEBUGING
+DECB1    DS    5F                  IO DECB
+DECB2CHN DS    F                   CHAIN FIELD FOR DECBS
+DECB2    DS    5F                  IO DECB
+DECB1CHN DS    F                   CHAIN FIELDS FOR DECBS
+WKAREND  EQU   *                   END OF DSECT
+WKARELEN EQU   WKAREND-WKAREA      LENGTH OF THE DSECT
+         PRINT GEN
+         EJECT
+***********************************************************************
+*        EQUATES                                                      *
+***********************************************************************
+         SPACE 2
+PRTOFFS  EQU   26                  OFFSET TO PRINT POSITION FOR CARD
+PROCESSD EQU   X'80'               FLAG SETTING. MEMBER IS PROCESSED
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING                                   *
+***********************************************************************
+         SPACE 2
+IEAVADDB ZCSECT GETMAIN=1
+         EJECT
+***********************************************************************
+*        INITIALISE WORK AREAS ETC.                                   *
+***********************************************************************
+         SPACE 2
+         USING ABDAREA,REG3
+         USING WKAREA,REG8
+         LR    REG3,REG1           LOAD ADDRESS OF ABDUMP WORK AREA
+         LA    REG0,WKARELEN       LOAD LENGTH FOR GETMAIN
+         GETMAIN R,LV=(0)          GETMAIN CORE FOR WORK AREA
+         LR    REG8,REG1           LOAD ADDRESS OF WORK AREA
+         ST    REG1,GETMNADD       SAVE ADDRESS FOR FREEMAIN
+         ST    REG0,GETMNLEN       SAVE FOR FREEMAIN
+         EJECT
+***********************************************************************
+*        PREPARE A SUITABLE HEADING FOR THE TEXT                      *
+***********************************************************************
+         SPACE 2
+HEADING  DS    0H
+         LA    REG1,HEADTAB        LOAD ADDRESS OF HEADING TEXT
+         BAL   REG11,LOADTEXT      GO OUTPUT THE HEADING INFORMATION
+         B     OPEN                BRANCH TO NEXT ROUTINE
+         SPACE 2
+HEADTAB  DS    0F                  TABLE OF HEADING TEXT
+         DC    A(HEADLIN1,L'HEADLIN1,HEADLINZ)
+HEADLIN1 DS    0CL80
+         DC    CL80'0    EXTRACT FROM THE DEBUGGING MANUAL.            X
+               **** MONSANTO.IEAVADDB.V1.0'
+HEADLINZ DC    CL80'0 '
+         EJECT
+***********************************************************************
+*        ALLOCATE THE DEBBUGING TEXT FILE AND OPEN IT                 *
+***********************************************************************
+         SPACE 2
+OPEN     DS    0H
+         LOAD  EP=UT501            LOAD THE DYNAMIC ALLOCATION RTN.
+         ST    REG0,UT501          SAVE ADDRESS OF THE ROUTINE
+         LA    REG14,JCLCARD       UT501 PARAMETER1
+         LA    REG15,ALLCODE       PARAMETER 2
+         LA    REG0,RETCODE        PARAMETER 3
+         LA    REG1,ALLSTRNG       PARAMETER 4
+         LA    REG2,DELSTRNG       PARAMETER 5
+         STM   REG14,REG2,UT501PRM CREATE PARAMETER LIST
+         LA    REG1,UT501PRM       LOAD PARAMETER REGISTER 1
+         L     REG15,UT501         LOAD ENTRY POINT ADDRESS
+         BALR  REG14,REG15         CALL DYNAMIC ALLOCATION ROUTINE
+         LTR   REG15,REG15         ALLOCATION O.K. ?
+         BNZ   ALLCFAIL            GOODNESS ! BETTER GET OUT OF HERE
+         MVC   DBDCB(96),DBDCBXX   MOVE DCB TO WORK AREA
+         MVC   OPENLIST,DMYOPEN    INITIALISE OPEN PARAMETERS
+         OPEN  (DBDCB,INPUT),MF=(E,OPENLIST) OPEN THE LIBRARY OF TEXT
+         B     BLDNAME            GO LOCATE REQUIRED MEMBER
+         SPACE 2
+JCLCARD  DC    AL2(L'JCLCARDX)     LENGTH OF JCL CARD
+JCLCARDX DC    C'//DEBUGING DD DSN=SYS1.DEBUGING,DISP=SHR   '
+ALLCODE  DC    C'A'
+         SPACE 2
+         PRINT NOGEN
+DMYOPEN  OPEN  (DBDCBXX,INPUT),MF=L CREATE OPEN PARAMETER LIST
+DBDCBXX  DCB   DDNAME=DEBUGING,DSORG=PO,MACRF=R,EODAD=DBEODAD,         X
+               LRECL=80,NCP=2,BUFNO=2
+         PRINT GEN
+         EJECT
+***********************************************************************
+*        BUILD THE NAME OF REQUIRED MEMBER                            *
+***********************************************************************
+         SPACE 2
+BLDNAME  DS    0H
+         L     REG5,ABDTCB         LOAD ADDRESS OF FAIL TCB
+         USING TCB,REG5            ADDRESSABILITY FOR SAME
+         L     REG15,TCBCMP        LOAD COMPLETION CODE
+         LA    REG15,0(REG15)      STRIP OFF TOP BYTE
+         LR    REG14,REG15         LOAD IT INTO A SECOND REGISTER
+         SRL   REG14,12            STRIP OUT ANY USER ABEND CODES
+         SLL   REG14,4             MOVE LEFT AGAIN FOR SIGN FIELD
+         ST    REG14,DBLWORD       STORE OUT INTO WORK AREA
+         LTR   REG14,REG14         USER OR SYSTEM ABEND
+         BNZ   CARRYON             SYSTEM. CARRY STRAIGHT ON WITH IT
+         CVD   REG15,DBLWORD       USER ABENDS ARE CONVERTED
+         MVC   DBLWORD(4),DBLWORD+4 SHIFT RESULT TO TOP OF AREA
+CARRYON  UNPK  NAMECODE,DBLWORD(4) CONVERT TO EBCDIC
+         OI    NAMECODE+L'NAMECODE-1,X'F0' MAKE SIGN USABLE
+         TR    NAMECODE,TRTABLE-C'0' MAKE WHOLE THING PRINTABLE
+         MVC   NAMETEXT,=C'CODE'   STORE START OF MEMBER NAME
+         LTR   REG14,REG14         SYSTEM CODE ?
+         BZ    *+8                 NO. NAME IS READY FOR USE
+         MVI   NAMETYPE,C'S'       SHOW THAT CODE IS SYSTEM CODE
+         GETMAIN R,LV=12,SP=2      GETMAIN CORE FOR NAME ELEMENT
+         ST    REG1,MEMCHAIN       LOAD ELEMENT ON MEMBER CHAIN
+         XC    0(4,REG1),0(REG1)   CLEAR CHAIN FIELD
+         MVC   4(8,REG1),NAME      SAVE NAME OF FIRST MEMBER IN ELEMENT
+         B     TSTCHAIN            GO START PROCESSING
+         SPACE 2
+TRTABLE  DC    C'0123456789ABCDEF'
+         EJECT
+***********************************************************************
+*        READ IN THE TEXT AND WRITE IT TO THE DUMP DATA SET           *
+***********************************************************************
+         SPACE 2
+IO       DS    0H
+IOLOOP   BAL   REG11,GET           OBTAIN THE FIRST RECORD
+         CLI   0(REG6),C'&&'       FIRST CHARACTER AN AMPERSAND ?
+         BNE   IODATA              NO. TREAT IT AS A DATA CARD
+         BAL   REG11,CTLCARD       MUST BE A CONTROL CARD
+         B     IOLOOP              FETCH NEXT RECORD
+IODATA   TR    0(1,REG6),ASATABLE  CONVERT FIRST CHARACTER TO ASA CODE
+         MVC   ABDLINEA+PRTOFFS(79),1(REG6) MOVE IT TO OUTPUT AREA
+         MVC   ABDCC,0(REG6)       MOVE ASA CODE TO OUTPUT LINE
+         BAL   REG11,PRINTER       GO OUTPUT THE LINE
+         B     IOLOOP              PROCESS ALL RECORDS IN MEMBER
+DBEODAD  B     TSTCHAIN            GO SEE IF ANY INCLUDED MEMBERS LEFT
+         SPACE 2
+ASATABLE DC    256C' '             USED TO CONVERT CC TO ASA
+         ORG   ASATABLE+C'E'
+         DC    C'0'
+         ORG   ASATABLE+C'1'
+         DC    C'0'
+         ORG   ASATABLE+C'2'
+         DC    C'0'
+         ORG   ASATABLE+C'0'
+         DC    C'0'
+         ORG
+         EJECT
+***********************************************************************
+*        EXAMINE THE CHAIN OF 'INCLUDED' MEMBERS FOR ANY UNPROCESSED  *
+***********************************************************************
+         SPACE 2
+TSTCHAIN DS    0H
+         L     REG1,MEMCHAIN       LOAD AFFRESS OF MEMBER NAME CHAIN
+TSTLOOP  LA    REG1,0(REG1)        CLEAR TOP BYTE
+         LTR   REG1,REG1           ANY/ANY MORE PRESENT
+         BZ    CLOSE               NO. TERMINATE PROCESSING
+         TM    0(REG1),PROCESSD    HAS THIS ENTRY BEEN PROCESSED
+         BZ    TSTGOT1             NO. GO PROCESS IT THEN
+         L     REG1,0(REG1)        LOAD ADDRESS OF NEXT ENTRY
+         B     TSTLOOP             SCAN DOWN THE CHAIN BY ENTRY
+TSTGOT1  LA    REG0,4(REG1)        LOAD ADDRESS OF MEMBER NAME
+         OI    0(REG1),PROCESSD    SIGNAL THAT MEMBER IS PROCESSED
+         BAL   REG11,SETUPIO       GO INITIALISE CONTROL BLOCKS
+         B     IO                  GO OUTPUT THIS MEMBER
+         EJECT
+***********************************************************************
+*        ANALYSE THE CONTROL CARD AND SPLIT IT INTO PARTS             *
+***********************************************************************
+         SPACE 2
+CTLCARD  DS    0H
+         STM   REG2,REG6,CTLSAVE   SAVE INCOMING REGISTERS
+         PRINT NOGEN
+         SCAN  DATA=(REG6),LENGTH=71,DELIM=(' ',','),RETAREA=CHAIN
+         PRINT GEN
+         L     REG2,CHAIN          LOAD ADDRESS OF FIRST BLOCK
+         XR    REG3,REG3           CLEAR LENGTH REGISTER
+         IC    REG3,4(REG2)        LOAD LENGTH OF VERB
+         L     REG4,4(REG2)        LOAD ADDRESS OF VERB
+         MVC   VERB,=8C' '         CLEAR THE VERB SAVE AREA
+         BCT   REG3,*+10           SUBTRACT 1 FROM LENGTH
+         MVC   VERB(0),0(REG4)     MOVE VERB TO VERB SAVE AREA
+         EX    REG3,*-6            EXECUTE THE MOVE
+         LA    REG4,VERBTLEN       LOAD LENGTH OF EACH ENTRY IN TABLE
+         LA    REG6,VERBTABL       LOAD START ADDRESS OF TABLE
+         LA    REG5,VERBTEND       LOAD ADDRESS OF END OF TABLE
+VERBLOOP CLC   VERB,0(REG6)        VERB IS THIS ENTRY IN TABLE ?
+         BE    VERBFND             YES. CALL PROCESSOR
+         BXLE  REG6,REG4,VERBLOOP  PROCESS THE WHOLE TABLE
+         LM    REG2,REG6,CTLSAVE   RESTORE REGISTERS
+         BR    REG11               VERB NOT FOUND. IGNORE IT
+VERBFND  L     REG15,8(REG6)       LOAD ADDRESS OF PROCESSOR
+         L     REG14,0(REG2)       LOAD ADDRESS OF NEXT SCAN BLOCK
+         LM    REG2,REG6,CTLSAVE   RESTORE REGISTERS
+         BR    REG15               BRANCH TO CORRECT ROUTINE
+         SPACE 2
+VERBTABL DS    0F                  START OF VERB TABLE
+         DC    CL8'&&INCLUDE'      INCLUDE ANOTHER MEMBER FOR PRINTING
+         DC    A(INCLUDE)          ADDRESS OF PROCESSOR
+VERBTLEN EQU   *-VERBTABL          MUST BE AFTER FIRST ENTRY
+VERBTEND EQU   *-VERBTLEN          MUST BE AT END OF TABLE
+         EJECT
+***********************************************************************
+*        OTHER MEMBERS ARE TO BE INCLUDED. GENERATE CTL BLOCKS        *
+***********************************************************************
+         SPACE 2
+INCLUDE  DS    0H
+INCLOOP2 LTR   REG14,REG14         ANY/ANY MORE MEMBER NAMES ?
+         BZ    INCLEXIT            NO. RETURN TO CALLER
+         XR    REG10,REG10         CLEAR LENGTH REGISTER
+         IC    REG10,4(REG14)      LOAD LENGTH OF OPERAND
+         L     REG1,4(REG14)       LOAD ADDRESS OF OPERAND
+         MVC   VERB,=8C' '         CLEAR THE WORK AREA
+         BCT   REG10,*+10          SUBTRACT ONE FOR ECECUTE
+         MVC   VERB(0),0(REG1)     MOVE MEMBER NAME TO WORK AREA
+         EX    REG10,*-6           EXECUTE THE MOVE
+         LA    REG9,MEMCHAIN       LOAD ADDRESS OF CHAIN OF ENTRIES
+INCLOOP1 NC    1(3,REG9),1(REG9)   ANYTHIN CHAINED ON TO THIS ONE
+         BZ    INCLENDC            NO. GO ADD NEW ENTRY TO IT
+         L     REG9,0(REG9)        LOAD ADDRESS OF NEXT ELEMENT
+         CLC   VERB,4(REG9)        THIS MEMBER ALREADY INCLUDED ?
+         BNE   INCLOOP1            NO. TRY NEXT ENTRY
+         L     REG14,0(REG14)      LOAD ADDRESS OF NEXT SCAN BLOCK
+         B     INCLOOP2            LOOP FOR ALL MEMBERS SPECIFIED
+INCLENDC GETMAIN R,LV=12,SP=2      GETMAIN SOME CORE TO SAVE NAME
+         MVC   4(8,REG1),VERB      SAVE NAME OF MEMBER IN ELEMENT
+         XC    0(4,REG1),0(REG1)   CLEAR THE CHAINING FIELD
+         STCM  REG1,7,1(REG9)      CHAIN THIS ELEMENT TO LAST
+         L     REG14,0(REG14)      LOAD ADDRESS OF NEXT SCAN BLOCK
+         B     INCLOOP2            PROCESS ALL NAMES ON CARD
+INCLEXIT BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        CLOSE THE LIBRARY FILE AND FREE IT                           *
+***********************************************************************
+         SPACE 2
+CLOSE    DS    0H
+         MVC   OPENLIST,DMYCLOSE   SET UP OPEN/CLOSE PARM LIST
+         CLOSE (DBDCB),MF=(E,OPENLIST) CLOSE THE DEBUGING FILE
+         FREEPOOL DBDCB            FREE UP THE BUFFERS
+         L     REG15,UT501         LOAD ENTRY POINT ADDRESS OF UT501
+         LA    REG1,DELCODE        LOAD ADDRESS OF OPERATION CODE
+         ST    REG1,UT501PRM+4     STORE IN PARAMETER LIST
+         LA    REG1,UT501PRM       LOAD PARAMETER REGISTER
+         BALR  REG14,REG15         CALL DYNAMIC DEALLOCATION ROUTINE
+         DELETE EP=UT501           RELEASE DYNAMIC ALLOCATION ROUTINE
+         B     TERMIN              BRANCH TO NEXT ROUTINE
+         SPACE 2
+DMYCLOSE CLOSE (DBDCBXX),MF=L      CLOSE PARAMETER LIST
+DELCODE  DC    C'D'                CODE FOR UT501. DEALLOCATE FILE
+         EJECT
+***********************************************************************
+*        PRINT A TERMINATION MESSAGE                                  *
+***********************************************************************
+         SPACE 2
+TERMIN   DS    0H
+         LA    REG1,TERMTAB        LOAD ADDRESS OF TERMINATE TEXT
+         BAL   REG11,LOADTEXT      GO OUTPUT FINAL TEXT
+         B     EXITPGM             BRANCH TO NEXT ROUTINE
+         SPACE 2
+TERMTAB  DS    0F                  TABLE OF TERMINATION TEXT
+         DC    A(TERMLIN1,L'TERMLIN1,TERMLINZ)
+TERMLIN1 DC    CL80'0****  THE ABOVE NOTES ARE AN EXTRACT FROM ''MORRCRO
+               OFT''S GUIDE TO DEBUGGING''. IF'
+         DC    CL80'       YOU HAVE ANY SUGGESTIONS FOR IMPROVEMENTS ORX
+                ALTERATIONS, PLEASE CONTACT'
+         DC    CL80'       EITHER D. MORRCROFT OR J. ABBEY.'
+TERMLINZ DC    CL80'1'
+         EJECT
+***********************************************************************
+*        OUTPUT A PREPARED BLOCK OF TEXT TO THE DUMP DATA SET         *
+***********************************************************************
+         SPACE 2
+LOADTEXT DS    0H
+         ST    REG11,LOADR11       SAVE LINK REGISTER
+         STM   REG4,REG7,CTLSAVE   SAVE REGISTERS
+         LM    REG5,REG7,0(REG1)   LOAD BXLE REGISTERS PROVIDED
+         LR    REG4,REG6           LOAD EXECUTE LENGTH REGISTER
+         BCTR  REG4,0              SUBTRACT ONE FOR EXECUTE
+         BCTR  REG4,0              SUBTRACT ONE FOR ASA CHARACTER
+LOADLOOP MVC   ABDCC,0(REG5)       MOVE ASA CHARACTER TO BUFFER
+         EX    REG4,LOADMVC        MOVE DATA TO BUFFER
+         BAL   REG11,PRINTER       OUTPUT THE LINE
+         BXLE  REG5,REG6,LOADLOOP  OUTPUT ALL LINES PRESENTED
+         LM    REG4,REG7,CTLSAVE   RESTORE REGISTERS
+         L     REG11,LOADR11       RELOAD LINK REGISTER
+         BR    REG11               RETURN TO CALLER
+         SPACE 2
+LOADMVC  MVC   ABDLINE+PRTOFFS(0),1(REG5) MOVE DATA TO PRINT BUFFER
+         EJECT
+***********************************************************************
+*        ERROR ROUTINES                                               *
+***********************************************************************
+         SPACE 2
+ALLCFAIL DS    0H                  DYNAMIC ALLOCATION FAILED
+         MVC   ABDLINEA(L'ALLCLINE),ALLCLINE MOVE IN ERROR MESSAGE
+         BAL   REG11,PRINTER       OUTPUT THE ERROR LINE
+         B     EXITPGM             RETURN TO CALLER
+         SPACE 2
+FINDFAIL DS    0H                  MEMBER IS NOT ON THE FILE
+         MVC   ABDLINEA(L'FINDLINE),FINDLINE MOVE IN ERROR MESSAGE
+         MVC   ABDLINEA+FINDNAME(8),VERB MOVE FAIL MEMBER NAME TO O/PUT
+         BAL   REG11,PRINTER       OUTPUT THE ERROR LINE
+         B     TSTCHAIN            SEE IF ANY MORE MEMBERS PRESENT
+         SPACE 2
+ALLCLINE DC    C'0*** ALLOCATION FAILURE FOR ''SYS1.DEBUGING''   NO DIAG
+               GNOSTIC INFORMATION AVAILABLE AT PRESENT'
+FINDLINE DC    C'0*** NO INFORMATION FOR ''        '' AVAILABLE. PLEASEX
+                INFORM D. MOORCROFT OR J. ABBEY.'
+FINDNAME EQU   25
+         EJECT
+***********************************************************************
+*        COMMON PROGRAM EXIT ROUTINE                                  *
+***********************************************************************
+         SPACE 2
+EXITPGM  DS    0H                  NORMAL EXIT FROM PROGRAM
+         NC    MEMCHAIN,MEMCHAIN   ANYTHING ON MEMBER CHAIN
+         BZ    FREEWORK            NO. GO FREE WORK AREA
+         FREEMAIN R,SP=2           FREE UP THE MEMBER NAME CHAIN
+FREEWORK L     REG1,GETMNADD       LOAD ADDRESS GETMAINED AREA
+         L     REG0,GETMNLEN       LOAD LENGTH GETMAINED AREA
+         FREEMAIN R,LV=(0),A=(1)   FREEMAIN THE WORK AREA
+         ZRETURN RC=0               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        COMMON INPUT DEBLOCKING ROUTINE                              *
+***********************************************************************
+         SPACE 2
+GET      DS    0H
+         BXLE  REG6,REG4,0(REG11)  LOOP DOWN AN ENTIRE BLOCK
+         READ  (7),SF,MF=E         READ IN NEXT BLOCK
+         L     REG7,20(REG7)       LOAD ADDRESS OF NEXT DECB
+         CHECK (7)                 WAIT FOR BLOCK TO ARRIVE
+         L     REG6,12(REG7)       LOAD ADDRESS OF BUFFER
+         L     REG1,16(REG7)       LOAD ADDRESS OF IOB FOR BLOCK
+         LR    REG5,REG6           LOAD ADDRESS INTO BXLE REGISTER
+         AH    REG5,DBDCB+X'3E'    AND CALCULATE END ADDRESS OF BLOCK
+         SH    REG5,14(REG1)       SUBTRACT LENGTH DATA GONE MISSING
+         SR    REG5,REG4           AND ALLOW FOR ACTION OF BXLE
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        INITIALISE THE INPUT IO FILE                                 *
+***********************************************************************
+         SPACE 2
+SETUPIO  DS    0H
+         FIND  DBDCB,(0),D         POINT DCB AT REQUIRED MEMBER
+         LTR   REG15,REG15         IS MEMBER PRESENT ?
+         BNZ   FINDFAIL            NO. REPORT ON ERROR
+         LA    REG5,DBDCB          LOAD ADDRESS OF THE DCB
+         GETBUF DBDCB,6            LOAD ADDRESS OF A BUFFER
+         LTR   REG6,REG6           BUFFER POOL ALREADY EMPTIED ?
+         BZ    SETUPIO2            YES. CARRY ON FOR SUBSEQUENT ENTRY
+         MVC   DECB1(20),DECBXX    SET UP DECB IN WORK AREA
+         ST    REG5,DECB1+8        SAVE DCB ADDRESS IN DECB
+         ST    REG6,DECB1+12       SAVE ADDRESS IN DECB
+         GETBUF DBDCB,6            LOAD ADDRESS OF ANOTHER BUFFER
+         MVC   DECB2(20),DECBXX    SET UP SECOND DECB IN WORK AREA
+         ST    REG5,DECB2+8        SAVE DCB ADDRESS IN DECB
+         ST    REG6,DECB2+12       SAVE THAT ONE ALSO
+         LA    REG1,DECB1          LOAD ADDRESS OF FIRST DECB
+         ST    REG1,DECB1CHN       CHAIN DECB TO SECOND ONE
+         LA    REG1,DECB2          LOAD ADDRESS OF SECOND DECB
+         ST    REG1,DECB2CHN       CHAIN THIS BACK TO FIRST
+SETUPIO2 LH    REG4,DBDCB+X'52'    LOAD THE LENGTH OF A RECORD
+         LR    REG5,REG4           PREPARE BXLE REGISTER
+         LA    REG7,DECB1          LOAD DECB CONTROL REGISTER
+         READ  DECB2,SF,MF=E       START READ IN OF FIRST BLOCK
+         BR    REG11               RETURN TO CALLER
+         SPACE 2
+         READ  DECBXX,SF,MF=L
+         EJECT
+***********************************************************************
+*        COMMON PRINT LINKAGE ROUTINE                                 *
+***********************************************************************
+         SPACE 2
+PRINTER  DS    0H
+         LR    REG1,REG3           LOAD ADDRESS OF ABDUMP WORK AREA
+         L     REG15,IEAVAD11      LOAD ADDRESS OF PRINT MODULE
+         BALR  REG14,REG15         BRANCH TO HAVE LINE PRINTED
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        CONSTANTS AND LITERALS                                       *
+***********************************************************************
+         SPACE 2
+IEAVAD11 DC    V(IEAVAD11)         ADDRESS OF COMMON PRINT MODULE
+         EJECT
+         LTORG
+         EJECT
+         END
+//LKED.SYSIN   DD   *
+ NAME IEAVADDB(R)
+/*

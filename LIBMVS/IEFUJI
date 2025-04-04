@@ -1,0 +1,738 @@
+//IEFUJI JOB (5860,5),'** FOR J. NOLS **',CLASS=N
+//LIBRA EXEC LIBRARYN,FILE=MVS
+//SYSIN DD *
+-OPT
+-SEL IEFUJI,LPMX,LIST,EXEC,VERS=1013 VERS=1013
+-HST JN - ADD COMPARE IPL DATE WITH VALUE PRESERVED IN THE CATALOG
+-HST JN -  LAST TIME. WARN OPERATOR IF NEW DATE IS LESS THAN OLD,
+-HST JN -  OTHERWISE PRESERVE NEW DATE.
+-HST DHC-  ATTEMPTED TO FACTORISE ESTIMATED EXECUTION TIME
+-REP ALL
+         TITLE 'JOB AND JOB STEP INITIATION - SMF EXITS IEFUJI AND IEFU*E0000000
+               SI'                                                      E0001000
+* WRITTEN BY D. R. HURTGEN                                              E0010000
+         SPACE 1                                                        E0011000
+* MONSANTO COMPANY - GENERAL OFFICES                                    E0012000
+         SPACE 1                                                        E0013000
+* SEPTEMBER,1976                                                        E0014000
+         SPACE 1                                                      +
+* MODIFIED IN AUGUST, 1978 BY J. NOLS - TSG MONSANTO BRUSSELS         +
+         SPACE 2                                                        E0099000
+* THE PURPOSE OF THIS MODULE IS TO VALIDATE CERTAIN USER SUPPLIED       E0100000
+* ACCOUNTING INFORMATION AND TO INITIALIZE ACCOUNTING CONTROL BLOCKS    E0101000
+* USED BY OTHER COMPONENTS OF THE ACCOUNTING SYSTEM.                    E0102000
+         SPACE 2                                                        E0199000
+* ENTRY -                                                               E0200000
+*        FROM AN UNCONDITIONAL BRANCH IN MODULE IEFSMFIE                E0201000
+         SPACE 2                                                        E0219000
+* ATTRIBUTES -                                                          E0220000
+*        ENABLED, REFRESHABLE, REENTRANT, SUPERVISOR STATE, PROTECT KEY E0221000
+*        ZERO, PAGEABLE LINK PACK AREA                                  E0222000
+         SPACE 2                                                        E0239000
+* REGISTERS UPON ENTRY -                                                E0240000
+*                             1    ADDRESS OF SMF ADDRESS LIST          E0241000
+*                            13    ADDRESS OF CALLERS SAVE AREA         E0242000
+*                            14    RETURN ADDRESS                       E0243000
+*                            15    ADDRESS OF THIS MODULE               E0244000
+         TITLE 'INTERNAL MACROS'                                      +
+         SPACE 2
+         MACRO
+&NAME    CSID  &NONAME
+         LCLC  &NAME1
+&NAME1   SETC  '&NAME'
+         AIF   ('&NONAME' EQ 'NONAME').A01
+&NAME1   DC    CL8'&SYSECT'        NAME OF CSECT
+&NAME1   SETC  ' '
+.A01           ANOP
+&NAME1   DC    CL8'&SYSDATE'       DATE OF ASSEMBLY
+         DC    CL8'&SYSTIME'       TIME OF ASSEMBLY
+         MEND
+         EJECT
+         MACRO
+&LABL    TPRM  &LEN=,&OPTION=NO,&NEXT=,&MORE=NO,&NAME=,&NUMERIC=
+         LCLA  &N,&LOOP
+         LCLC  &L
+.*
+.*       THE PURPOSE OF THIS MACRO IS TO GENERATE CODE TO VALIDATE
+.*        AN ACCOUNTING FIELD.  ALL THREE KEYWORDS ARE OPTIONAL, AND
+.*        IN THEIR ABSENCE, THE MACRO MERELY GENERATES THE CODE TO
+.*        SET UP THE REGISTERS AS NECESSARY, AND TO DETREMINE IF THE
+.*        PARAMETER EXISTS.  THE PURPOSE OF THE KEYWORDS IS :-
+.*             LEN=                ALLOWABLE LENGTH(S)
+.*                                 E.G. LEN=3
+.*                                      LEN=(1,2)
+.*             OPTION=YES          PARAMETER IS OPTIONAL.  IF THIS
+.*                                  KEYWORD IS OMITTED, PARM MANDATORY
+.*             NEXT=ADDR           ADDRESS OF NEXT TEST ( BRANCHED TO
+.*                                 IF OPTIONAL PARM IS OMITTED ).
+.*             MORE=YES            FURTHER SPECIFIC VALIDATION MUST
+.*                                 BE PERFORMED, SO DO NOT GENERATE
+.*                                 THE NUMERIC TEST.  IF OMITTED, OR
+.*                                 MORE=NO CODED, BAL TO NUMTEST MADE.
+.*             NAME=ASA-EQUATE     NAME OF THE ASA EQUATE ( FOR FIELD
+.*                                 ASAPINER ) IDENTIFYING PARM.
+.*             NUMERIC=NO          PARAMETER NEED NOT BE NUMERIC, SO
+.*                                 BYPASS NUMERIC TEST
+.*
+&LABL    BXH   R15,R8,0(LINK)      EXIT IF PARMS EXHAUSTED
+         LA    WA,1(,WA)           INCREMENT TO POINT AT PARM LENGTH
+         IC    WB,0(WA)            SET LENGTH FOR SUBSEQUENT TEST
+         AIF   ('&NAME' NE '').N01
+         MNOTE *,'NAME OF FIELD OMITTED: IEFACTRT WILL NOT IDENTIFY'
+         MVI   ASAPINER,0          NULLIFY NAME OF FIELD IN ASA
+         AGO   .N02
+.N01     MVI   ASAPINER,&NAME      ASSUME FIELD IN ERROR & SET NAME
+.N02     ANOP
+         AIF   ('&OPTION' NE 'YES').A00
+         AIF   ('&NEXT' EQ '').A01
+         CLI   0(WA),0             TEST IF PARM IS PRESENT
+         BE    &NEXT               BR TO NEXT IF PARM OMITTED
+         AGO   .A01
+.A00     ANOP
+         CLI   0(WA),0             TEST IF MANDATORY PARM EXISTS
+         BNE   *+14                BRANCH IF PARM EXISTS
+         MVI   ASAPERRF,ASAMMAND   FLAG THAT MANDATORY PARM OMITTED
+         CLI   *,0                 SET COND CODE UNEQUAL
+         BR    LINK                RETURN WITH ERROR INDICATION
+.A01     ANOP
+         AIF   ('&LEN' EQ '').NOLEN
+&N       SETA  N'&LEN
+&LOOP    SETA  0
+         AIF   (&N GT 1).LENLOOP
+         MVI   ASAPERRF,ASAINVLN   ASSUME LENGTH IS INVALID
+         CLI   0(WA),&LEN          TEST IF PARM CORRECT LENGTH
+         BNER  LINK                EXIT IF PARM WRONG LENGTH
+         MVI   ASAPERRF,0          RESET ERROR FLAG
+         AGO   .NOLEN
+.LENLOOP ANOP
+&LOOP    SETA  &LOOP+1
+         AIF   (&LOOP GT &N).ENDLEN
+&L       SETC  '&LEN(&LOOP)'
+         CLI   0(WA),&L            TEST IF PARM LENGTH IS VALID
+         BE    TPRM&SYSNDX         BRANCH IF LENGTH IS VALID
+         AGO   .LENLOOP
+.ENDLEN  ANOP
+         MVI   ASAPERRF,ASAINVLN   FLAG THAT PARM HAS WRONG LENGTH
+         BR    LINK                EXIT ( WITH UNEQUAL C/C ):WRONG LEN
+TPRM&SYSNDX EQU *                  CONTINUE PROCESSING
+.NOLEN   ANOP
+         AIF   ('&MORE' EQ 'YES').MORE
+         AIF   ('&OPTION' NE 'YES').A02
+         AIF   ('&NEXT' NE '').A02
+         CLI   0(WA),0             TEST IF OPTIONAL PARM PRESENT
+         BE    *+8                 BYPASS NUMERIC TEST IF NOT PRESENT
+.A02     ANOP
+         AIF   ('&NUMERIC' NE 'NO').A03
+         LA    WA,0(WB,WA)         POINT AT END OF PARAMETER
+         AGO   .A04
+.A03     ANOP
+         BAL   WD,AUDIT            ENSURE PARM IS NUMERIC
+.A04     ANOP
+.MORE    ANOP
+         MEND
+         TITLE 'JFCB DSECT'
+JFCB     DSECT
+        IEFJFCBN ,                 GENERATE JFCB DSECT
+         TITLE 'ACCOUTING ROUTINE CONTROL BLOCK DSECT''S'             +
+         $MVT
+         EJECT
+         $MCA
+         EJECT
+         $MASA
+         EJECT
+         $MAEQU
+         TITLE 'JOB AND STEP INITIATION - SMF EXITS IEFUJI AND IEFUSI'  E0799000
+***********************************************************************
+*        INITIALIZATION                                               * E0800000
+***********************************************************************
+         SPACE 2                                                        E0801000
+         SPACE 2
+IEFUJI   CSECT
+IEFUSI   EQU   IEFUJI                                                   E0804000
+         ENTRY IEFUSI                                                   E0803000
+         USING *,BASEREG           ESTABLISH ADDRESSABILITY             E0805000
+         USING ASADSECT,ASA                                             E0806000
+         USING CADSECT,R7          ESTABLISH COMMON AREA ADDRESSABILITY
+         B     36(R15)             BRANCH OVER IDENTIFYING CONSTANT
+         DC    CL16'IEFUJI/IEFUSI' IDENTIFY MODULE IN DUMP
+         CSID  NONAME              IDENTIFY DATE & TIME OF ASSEMBLY
+         STM   14,12,12(SAVEREG)   SAVE REGISTERS                       E0820000
+         LR    BASEREG,R15                                              E0821000
+         LR    WD,10               SAVE LCT ADDRESS                   +
+         LR    APL,R1                                                   E0822000
+         LR    R7,R13              PRESERVE SAVE AREA ADDRESS         +
+         L     R0,GETMAIN1         PREPARE FOR GETMAIN                +
+        GETMAIN R,LV=(0)           ASK CORE FOR SAVE AREA             +
+         LR    R13,R1              POINT R13 TO GETMAINED CORE        +
+         ST    R13,8(R7)           PRESERVE CUR. S/A AD.IN PREVIOUS   +
+         ST    R7,4(R13)           PRESERVE PRV. S/A AD.IN CURRENT    +
+         EJECT                                                          VNP02460
+*********************************************************************** VNP02470
+*        ESTABLISH ESTAE ENVIRONMENT                                  * VNP02480
+*********************************************************************** VNP02490
+         SPACE 1                                                        VNP02500
+         TFRR  ,                   ESTABLISH ESTAE ENVIRONMENT
+         EJECT                                                          VNP02460
+*********************************************************************** VNP02470
+*        TEST IF MVT EXISTS AND IF IPL DATE HAS BEEN VERIFIED         * VNP02480
+*********************************************************************** VNP02490
+         SPACE 1                                                        VNP02500
+         L     WA,FLCCVT           GET ADDRESS OF MVT
+         L     WA,CVTUSER-CVTMAP(,WA) VIA THE CVT                     +
+         LTR   WA,WA               TEST IF MVT ADDRESS EXISTS
+         BZ    GETOUT              RETURN TO CALLER IF NO MVT
+         USING MVTDSECT,WA         ESTABLISH MVT ADDRESSABILITY       +
+         TM    MVTFLAG2,MVTIPLDT   IS IPL DATE VERIFIED ?             +
+         BO    NOIPLTST            BRANCH IF YES                      +
+         OI    MVTFLAG2,MVTIPLDT   NO, TELL WILL BE AFTER THIS        +
+         EJECT                                                          VNP02460
+*********************************************************************** VNP02470
+*        COMPARE CURRENT IPL DATE WITH PREVIOUS ONE                   * VNP02480
+*********************************************************************** VNP02490
+         SPACE 1                                                        VNP02500
+         UT458 ,                   ASK FOR CURRENT IPL DATE           +
+         EJECT
+***********************************************************************
+*        COMPARE CURRENT IPL DATE WITH PREVIOUS ONE (CONT'D).         *
+***********************************************************************
+         SPACE 1
+         LOCATE IPLDATE            ASK FOR PREVIOUS IPL DATE          +
+         SPACE 1                                                      +
+         MVC   MSGPD,PREVDATE      MOVE PREVIOUS AND CURRENT DATES    +
+         MVC   MSGCD,UTYYDDD        INTO WTO MSGS (IN CASE OF ERROR). +
+         CLC   UTYYDDD,PREVDATE    COMPARE CURRENT WITH PREVIOUS      +
+         BL    WRONG               IF CURRENT DATE LESS THAN PREVIOUS +
+REPLACE  MVC   PREVDATE,UTYYDDD    REPLACE PREVIOUS BY CURRENT        +
+         CATALOG RECATALO G 'IPLDATE' DATA SET WITH CURRENT DATE AS   +
+*                 VOLUME SERIAL NUMBER.                               +
+         B     NOIPLTST                                               +
+         SPACE 1                                                      +
+IPLDATE  CAMLST NAME,DSNAME,,LOCAREA                                  +
+         SPACE 1                                                      +
+RECATALO CAMLST RECAT,DSNAME,,LOCAREA                                 +
+         SPACE 1                                                      +
+         DS    0D                                                     +
+DSNAME   DC    CL44'SYS2.IPLDATE'                                     +
+         DS    0D                                                     +
+LOCAREA  DC    265X'FF'      WA FOR LOCATE AND CATALOG MACROS         +
+PREVDATE EQU   LOCAREA+2+5,5   PREVIOUS DATE (IN VOLSER FIELD)        +
+         EJECT
+***********************************************************************
+*        COMPARE CURRENT IPL DATE WITH PREVIOUS ONE (CONT'D).         *
+***********************************************************************
+         SPACE 1
+WRONG    DS    0H                  CURRENT IPL DATE LESS THAN PREVIOUS+
+         WTO   '$PI'               STOP INITIATORS IMMEDIATELY        +
+         LA    WB,10               ESTABLISH LOOP                     +
+TELLOPR  WTO   'IEAVNPMC : CURRENT IPL DATE LESS THAN PREVIOUS'       +
+         BCT   WB,TELLOPR          REPEAT MESSAGE (10 TIMES)          +
+MPDATE   WTO   'IEAVNPMC : PREVIOUS DATE IS YYDDD'                    +
+MCDATE   WTO   'IEAVNPMC : CURRENT DATE IS  YYDDD'                    +
+         WTO   'IEAVNPMC : IF CURRENT DATE IS WRONG; POWER OFF, POWER O+
+               N AND RE-IMPL TO ENTER A NEW DATE'                     +
+         WTOR  'IEAVNPMC : IF YOU WANT TO CONTINUE WITH CURRENT DATE, R+
+               EPLY : GOSIR',REPLY,5,WDATECB                          +
+         WAIT  ECB=WDATECB,LONG=YES     WAIT REPLY (IF ANY)           +
+         XC    WDATECB,WDATECB     CLEAR IN CASE OF BAD REPLY         +
+         CLC   REPLY,=C'GOSIR'     IS REPLY CORRECT ?                 +
+         BE    REPLACE             YES, GO REPLACE DATE IN THE CATALOG+
+         WTO   'IEAVNPMC : BAD REPLY - BAD REPLY - BAD REPLY - BAD REPL+
+               Y'                  NO, TELL HIM AND GO REPEAT         +
+         LA    WB,1                 PRECEDING                         +
+         B     TELLOPR               MESSAGES.                        +
+         SPACE 1                                                      +
+MSGPD    EQU   MPDATE+36,5   TO MOVE PREVIOUS DATE INTO WTO MSG       +
+MSGCD    EQU   MCDATE+36,5   TO MOVE CURRENT DATE INTO WTO MSG        +
+REPLY    DS    CL5                 REPLY WORK AREA                    +
+WDATECB  DC    F'0'                PRECEDING WTOR ECB WA              +
+         EJECT
+NOIPLTST DS    0H
+         L     R7,MVTMCA           GET COMMON AREA ADDRESS            +
+         L     WB,PSAAOLD          WB = ADDRESS OF CURRENT ASCB         E0826000
+         LH    WB,ASCBASID-ASCB(,WB) GET ASID FOR INDEXING            + E0827000
+         SLL   WB,2                  INTO THE MVT                       E0828000
+         L     ASA,0(WA,WB)        NOW SHOULD HAVE THE ASA              E0829000
+         LTR   ASA,ASA             Q.-IS THERE ONE                      E0830000
+         BNZ   GOON                B.-YES                               E0831000
+         OI    MVTFLAG1,MVTFUJIE   FLAG THAT IEFUJI FOUND ERROR
+         TM    MVTFLAG1,MVTFDUMP   SHOULD WE DUMP IF ERROR FOUND
+         BZ    GETOUT              NO DUMP: RETURN TO CALLER
+         DROP  WA                  DROP MVT ADDRESSABILITY
+         L     R1,ABENDCOD         SET CODE AND ABEND BECAUSE           E0832000
+         ABEND (1),,,SYSTEM          A ZERO VALUE SHOULD NEVER OCCUR    E0833000
+GOON     L     WA,APLACCTG(,APL)   GET ADDRESS OF ACCTG. PARAMETERS AND E0834000
+         L     WE,APLEPARM(,APL)     THE SMF COMMON EXIT AREA           E0835000
+         CLI   JMRSTEP(WE),0       Q.-IS THIS STEP START                E0836000
+         BNE   STEPSTRT            B.-YES                               E0837000
+         EJECT                                                          E0999000
+*                             JOB INITIATION                            E1000000
+         SPACE 1                                                        E1001000
+* FUNCTIONS -                                                           E1002000
+*        1) INITIALIZE OUR CONTROL BLOCKS.                              E1003000
+*        2) VALIDATE THE ACCOUNTING PARAMETERS IN THE JOB CARD AND      E1004000
+*           FLUSH THE JOB IF ANY ARE INCORRECT.                         E1005000
+*        3) COMMUNICATE WITH TMS TO PASS IT ACCOUNTING INFORMATION.     E1006000
+*        4) RETURN TO CALLER.                                           E1007000
+         SPACE 2                                                        E1019000
+         CLC   JMRJNAME(8,WE),=C'JEA$$ATT' IS CONTROLLER TO BE ATTACHED
+         BNE   NOATT               BYPASS ATTACH IF NOT REQUIRED
+         ATTACH EP=IEFMASC,        MONSANTO ADDRESS SPACE CONTROLLER   *
+               GSPV=120,           ASSIGN SUBPOOL 120 TO CONTROLLER    *
+               SHSPV=100,          SHARE SUBPOOL 100 WITH JOB          *
+               SZERO=YES,          SHARE SUBPOOL ZERO WITH JOB         *
+               JSTCB=YES,          NEW JOB STEP                        *
+               SM=SUPV,            RUN IN SUPERVISOR MODE              *
+               SVAREA=YES,         SUPPLY SAVE AREA                    *
+               KEY=ZERO,           PROTECT KEY ZERO                    *
+               DISP=YES,           TASK IS DISPATCHABLE                *
+               TID=200             TASK IDENTIFIER
+NOATT    EQU   *                   CONTINUE PROCESSING
+         SPACE 2
+*        ICM   WB,7,LCTJCTAD+1(WD) GET ADDRESS OF JCT                 +
+*        BZ    NOFACTDW            DON'T FACTOR DOWN IF NO JCT        +
+*        L     WD,JCTETIME(,WB)    GET JOB TIME ESTIMATED FROM JCT    +
+*        M     WC,AWBDECPT         FACTOR DOWN THE TIME LIMIT TO      +
+*        A     WD,AWBFACHA          THE BASE VALUE WHICH WILL STILL   +
+*        D     WC,AWBFACTR           IN SECONDS                       +
+*        ST    WD,JCTETIME(,WB)    SAVE IT IN JCT                     +
+NOFACTDW EQU   *                                                      +
+         MVI   ASAFLAGS,0          CLEAR ALL FLAGS AND                  E1020000
+         OI    ASAFLAGS,ASACTIVE   INDICATE THIS ASA IS ACTIVE        +
+         ZAP   ASACPUTM,=P'0'        ALL JOB TOTAL FIELDS               E1021000
+         MVC   ASAIOTM(ASAPDEND-ASAIOTM),ASACPUTM .. PROPAGATE
+         XC    ASAWORKS(ASAWORKE-ASAWORKS),ASAWORKS CLEAR ASA WA      +
+         MVC   ASACLASS,JMRJCLAS(WE) MOVE JOB CLASS TO ASA
+         MVC   ASAJNAME,JMRJNAME(WE) MOVE JOB NAME TO ASA             +
+         TIME  DEC                 GET TIME AND DATE OF JOB START
+         SRL   R0,4                REMOVE HUNDREDTHS OF SECONDS
+         ST    R0,ASADWORD         STORE TIME ( 0HHMMSST ) IN WORK AREA
+         OI    ASADWORD+3,X'0F'    ALTER TENTHS OF SECONDS TO SIGN
+         UNPK  ASATIME-1(7),ASADWORD(4) UNPACK HHMMSS INTO ASA
+         ST    R1,ASADWORD         STORE 00YYDDDF IN WORK AREA
+         UNPK  ASADATE,ASADWORD+1(3) UNPACK JULIAN DATE INTO ASA
+ADDJNO   L     R1,AWBJOBNO         GET CURRENT JOB NO COUNTER + 2 MISC
+         LR    WB,R1               MOVE TO WORK REGISTER
+         SRL   WB,16               ISOLATE JOB NUMBER COUNTER
+         LA    WB,1(,WB)           INCREMENT COUNTER OF JOB NO.
+         CH    WB,=H'999'          CHECK IF VALUE EXCEEDS LIMIT
+         BNH   *+8                 BRANCH IF VALUE ACCEPTABLE
+         LA    WB,1                RESET COUNTER TO 1
+         CVD   WB,ASADWORD         CONVERT NUMBER TO PACKED DECIMAL
+         UNPK  ASAJOBNO,ASADWORD   UNPACK NUMBER INTO ASA
+         OI    ASAJOBNO+2,X'F0'    ENSURE SIGN IS X'F'
+         SLL   WB,16               MOVE JOB NO. TO HIGH-ORDER HALF
+         ICM   WB,3,AWBJOBNO+2     RETRIEVE MISCELLANEOUS BYTES
+         CS    R1,WB,AWBJOBNO      REPLACE UPDATED COUNTER
+         BNZ   ADDJNO              LOOP BACK IF WE FAILED
+         L     WA,APLACCTG(,APL)   GET ADDRESS OF ACCTG. PARAMS AGAIN
+         BAL   LINK,CHECKEM        GO CHECK ACCOUNTING PARAMETERS       E1040000
+         BZ    JOBOK               B.-IF PARAMETERS ARE VALID           E1041000
+         OI    ASAFLAGS,ASAJCAP    INDICATE BAD JOB CARD ACCTG. PARMS.  E1042000
+         LA    R15,4               INDICATE JOB IS TO BE FLUSHED
+         B     GETOUT2             GO TO PROGRAM EXIT
+JOBOK    BAL   LINK,CLASSP         TEST FOR UNAUTHORISED CLASS P JOBS
+         BO    GETOUT2             EXIT IF UNAUTHORISED CLASS P JOB
+         B     GETOUT              EXIT SHOWING JOB MAY CONTINUE
+         SPACE 1
+*        NOTE THAT THIS TMS CODE IS UNCONDITIONALLY BYPASSED
+         SPACE 1
+         L     R0,TMSGMSIZ         SET SIZE AND SUB-POOL FOR TMS SVC    E1050000
+         GETMAIN R,LV=(0)            AND ACQUIRE TEMPORARY STORAGE      E1051000
+         LR    WA,R1               SAVE ADDRESS OVER TMS SVC            E1052000
+         USING TMSACCT,WA                                               E1053000
+         L     WB,APLPGMR4(,APL)   GET NECCESSARY ADDRESSES TO GET    + E1054000
+         MVC   MONNAME,0(WB)         PROGRAMMER NAME AND ACCOUNTING     E1055000
+         L     WB,APLACCTG(,APL)     PSEUDO CODE FOR TMS                E1056000
+         MVC   MONCHRG,2(WB)                                            E1057000
+         ST    WA,TMSSVCCD         PASS ADDRESS OF DATA AND             E1058000
+         MVI   TMSSVCCD,4            SET ENTRY CODE                     E1059000
+         LR    WB,R13              DONT TRUST TMS NOT USING R13         E1060000
+         SR    R13,R13                                                  E1061000
+         LA    R1,TMSSVCCD                                              E1062000
+         DROP  WA                                                       E1063000
+         SVC   TMS                 GO TO TMS SVC                        E1064000
+         LR    R13,WB              RESTORE R13                          E1065000
+         LR    R1,WA               SET UP REGISTERS TO                  E1066000
+         L     R0,TMSGMSIZ           RELEASE STORAGE ACQUIRED           E1067000
+         FREEMAIN R,LV=(0),A=(1)   DONE WITH TMS                        E1068000
+GETOUT   LA    R15,0               INDICATE JOB/STEP CAN CONTINUE
+GETOUT2  LR    R7,R15              PRESERVE R15                       +
+         ESTAE 0                   DISENGAGE INTERACTIVE ESTAE EXIT
+         L     R0,GETMAIN1         PREPARE FOR FREEMAIN               + E1190000
+         LR    R1,R13              PREPARE FOR FREEMAIN               + E1190000
+         L     R13,4(,R13)         RETRIEVE ADDRESS OF CALLER'S S/A   + E1190000
+        FREEMAIN R,LV=(0),A=(1)    FREE THIS SAVE AREA                + E1190000
+         L     R14,12(SAVEREG)     RESTORE REGISTER  14               + E1190000
+         LR    R15,R7              RESTORE REGISTER  15               + E1190000
+         LM    R0,R12,20(SAVEREG)  RESTORE REGISTERS  0 - 12          + E1190000
+         BR    LINK                RETURN                               E1192000
+         EJECT                                                          E1199000
+*                                  STEP INITATION                       E1200000
+         SPACE 2                                                        E1219000
+STEPSTRT XC    ASADDTAB(ASADDTBL),ASADDTAB ZEROISE STATIC TABLE       +
+         L     WE,PSAAOLD          GET ADDRESS OF CURRENT ASCB        +
+         ICM   WD,7,LCTTSTL4+1(WD) GET STEP TIME LIMIT FROM LCT       +
+         LA    WD,0(,WD)           PURIFY HIGH ORDER BYTE             +
+         M     WC,AWBDECPT         FACTOR DOWN THE TIME LIMIT TO      +
+         A     WD,AWBFACHA          THE BASE VALUE WHICH WILL STILL   +
+         D     WC,AWBFACTR           BE HUNDREDTHS OF A SECOND        +
+         M     WC,=F'10000'        CONVERT TO MICRO-SECONDS           +
+         SLDL  WC,12               NOW PUT THE VALUE IN THE TIME-OF-  +
+         LTR   WD,WD                -DAY CLOCK FORMAT - ONLY THE FIRST+
+         BNM   *+8                   WORD OF THE DW IS USED AS THE    +
+         LA    WC,1(,WC)              LIMIT SO HALF-ADJUST IS NECESSRY+
+         ST    WC,ASCBJSTL-ASCB(,WE) SET THE LIMIT IN THE ASCB        +
+         XC    ASASRCPU(ASACPUTM-ASASRCPU),ASASRCPU RESET STEP FIELDS +
+         CLI   0(WA),0             Q.-ANY STEP ACCOUNTING PARAMETERS  + E1220000
+         BE    GETOUT              B.-NO                                E1221000
+         BAL   LINK,CHECKEM        GO SEE IF THEY ARE VALID             E1222000
+         BZ    GETOUT              B.-THEY ARE                          E1223000
+         OI    ASAFLAGS,ASAECAP    INDICATE BAD PARAMETERS              E1224000
+         B     GETOUT              DONE WITH STEP INITIALIZATION        E1225000
+         EJECT                                                          E3999000
+*     SUBROUTINE TO CHECK THE VALIDITY OF THE ACCOUNTING PARAMETERS     E4000000
+         SPACE 2                                                        E4001000
+*        NOTE THAT THIS ROUTINE VALIDATES ALL THE POSSIBLE ACCOUNTING
+*         FIELDS, AND NOT MERELY THOSE CONNECTED WITH CHARGE-OUT.
+*         THIS IS TO AVOID THE ANOMOLOUS SITUATION WHEREBY JES2 MIGHT
+*         REJECT ONE OF THE FIELDS, THEREBY FLUSHING THE JOB AND
+*         SUPPLYING A MOST UNINFORMATIVE MESSAGE.  CONSEQUENTLY, ALL
+*         VALIDATION HAS BEEN MOVED HERE, SO THAT FOR ALL POSSIBLE
+*         ERRORS THE SUBMITTOR WILL RECEIVE A MEANINGFUL EXPLANATION.
+*        OUR JES2 MODIFICATION ROUTINE B401 ANALYSES THE ACCOUNTING
+*         FIELDS AS WELL, BUT ONLY TO EXTRACT THOSE IN WHICH IT IS
+*         INTERESTED FOR PLACING THEM IN THE (JES2) JCT.  IT DOES
+*         VERIFY THAT NUMERIC FIELDS ARE NUMERIC, BUT ONLY TO AVOID
+*         0C7 ABENDS WITHIN ITSELF.  UNDER NO CIRCUMSTANCES WILL JES2
+*         REJECT A JOB CARD BECAUSE OF THE CONTENTS OF THE ACCOUNTING
+*         DATA.
+*        THIS DOES MEAN THAT INVALID ACCOUNTING DATA WILL NOT CAUSE THE
+*         JOB TO FAIL UNTIL IT IS SELECTED FOR EXECUTION ( INSTEAD
+*         OF AT READ TIME ), BUT THIS IS OFFSET BY THE MORE DETAILED
+*         ERROR EXPLANATIONS.
+* THE EDITING DONE IS AS FOLLOWS -                                      E4002000
+         SPACE 1                                                        E4003000
+*        1. THERE MUST BE AT LEAST TWO PARAMETERS.
+*        2. THE 1ST IS MANDATORY, MUST BE 4 NUMERIC CHARACTERS, AND
+*           MUST BE ON 'CHRGCTAB'. ( CHARGE CODE ).
+*        3. THE 2ND IS MANDATORY, MAY BE 1 OR 2 CHARACTERS LONG,
+*           AND MUST BE NUMERIC.   ( CATEGORY CODE ).
+*        4. THE 3RD IS OPTIONAL, BUT IF PRESENT MUST BE 3 NUMERIC
+*           CHARACTERS.            ( MAJOR COST CENTRE ).
+*        5. THE 4TH IS OPTIONAL, BUT IF PRESENT MUST BE AT TW0
+*           CHARACTERS AND ALL NUMERIC. ( MINOR COST CENTRE ).
+*        6. THE 5TH IS OPTIONAL, AND ALSO DUAL PURPOSE.  UNDER MFT/
+*           HASP IT WAS THE PARTITION SIZE, AND A VARIABLE-LENGTH
+*           NUMERIC FIELD.  UNDER MVS/JES WE DON'T NEED THIS PARTITION
+*           SIZE, AND SO THE FIELD IS AVAILABLE FOR OTHER PURPOSES.
+*           IT HAS BEEN ASSIGNED TO A NEW ACCOUNTING FIELD ( ENTITY ),
+*           AND IS IDENTIFIED AS BEING THE ENTITY IF THE FIRST
+*           CHARACTER IS 'E'.  THUS, FOR VALIDATION AND ACCOUNTING
+*           PURPOSES, THIS OPTIONAL FIELD IS ONLY RELEVANT IF IT
+*           STARTS WITH 'E', IN WHICH CASE IT SHOULD BE FOLLOWED BY
+*           TWO NUMERIC CHARACTERS.
+*        7. THE SIXTH IS OPTIONAL, AND CONTAINS THE FORMS TYPE IF THE
+*           ENTIRE JOB IS  TO BE PLACED ON A SPECIAL FORMS QUEUE.  IF
+*           PRESENT, IT MUST BE 4 NUMERIC CHARACTERS.
+*        8. THE SEVENTH IS OPTIONAL, AND CONTAINS THE NUMBER OF COPIES
+*           REQUIRED OF THE TOTAL JOB'S OUTPUT.  IF PRESENT, IT MUST
+*           BE NUMERIC, AND NO MORE THAN 4 DIGITS.
+*        9. THE EIGHTH IS OPTIONAL, AND CONTAINS THE ESTIMATED CPU
+*           TIME OF THE JOB IN MINTES.  IF PRESENT, IT MUST BE NUMERIC
+*           AND NO MORE THAN 4 DIGITS.
+*       10. THE NINTH IS OPTIONAL, AND CONTAINS THE ESTIMATED NUMBER
+*           OF LINES ( IN THOUSANDS ).  IF PRESENT, IT MUST BE NUMERIC
+*           AND NO MORE THAN 4 DIGITS.
+*       11. THE TENTH IS OPTIONAL, AND CONATINS THE ESTIMATED NUMBER OF
+*           CARDS.  IF PRESENT, IT MUST BE NUMERIC AND NO MORE THAN
+*           7 DIGITS.
+*       12. THE ELEVENTH IS OPTIONAL, AND IF IT IS 'N' THEN IT IS A
+*           REQUEST TO SUPPRESS THE JOB LOG ON THE OUTPUT LISTING.
+*       13. THE TWELVTH IS OPTIONAL, AND CONTAINS THE NUMBER OF LINES
+*           TO BE PRINTED PER PAGE IF THE OUTPUT DOES NOT CONTAIN
+*           CARRIAGE CONTROL INFORMATION.  IF PRESENT, IT MUST BE
+*           NUMERIC, AND NO MORE THAN 4 DIGITS.
+         SPACE 1                                                        E4019000
+* INPUT -                                                               E4020000
+*        WA - POINTING TO THE ACCOUNTING PARAMETERS                     E4021000
+         SPACE 1                                                        E4029000
+* OUTPUT -                                                              E4030000
+*        IF NO ERRORS, THE CONDITION CODE IS SET TO ZERO. OTHERWISE,    E4031000
+*        IT IS SET TO NON-ZERO.                                         E4032000
+         SPACE 1                                                        E4033000
+* ONLY THE CONTENTS OF REGISTERS WA, WB, AND WD ARE ALTERED. THEY ARE   E4034000
+* NOT SAVED AND RESTORED.                                               E4035000
+         SPACE 2                                                        E4039000
+CHECKEM  EQU   *                   VALIDATE ACCOUNTING DATA
+         MVI   ASAPINER,0          NULLIFY NAME OF FIELD IN ERROR
+         MVI   ASAPERRF,0          NULLIFY ERROR REASON CODE
+         BAL   WE,CHCKCHRG         VALIDATE CHARGE CODE
+*                                  IF WE RETURN HERE, EITHER THE CHARGE
+*                                  CODE IS VALID, OR VALIDATION HAS NOT
+*                                  BEEN REQUESTED IN THE MVT.
+         MVI   ASAPINER,0          NULLIFY NAME OF FIELD IN ERROR
+         L     WE,APLEPARM(,APL)   RESTORE SMF COMMON AREA ADDRESS
+         XR    WB,WB               CLEAR ...
+         XR    R15,R15              ... ALL ...
+         XR    R9,R9                ... WORK REGISTERS
+         IC    R9,0(WA)            GET NUMBER OF PARMS TO TEST
+         LA    R8,1                SET INCREMENT FOR 'BXH'
+*
+*        PARM FIELD PROCESSING IS CONTROLLED BY 'BXH'.
+*         R8 IS SET TO A VALUE OF 1 ( INCREMENT VALUE )
+*         R9 IS SET WITH THE NUMBER OF PARMS TO TEST
+*         R15 IS SET TO ZERO, AND IS USED AS THE INDEX
+*
+         MVI   ASAPERRF,ASAMMAND   ASSUME MAND PARAMETER IS MISSING
+         CLI   0(WA),2             ENSURE AT LEAST TWO PARAMETERS.
+         BL    CKFORTSO            *TEMPORARY* REMOVE AFTER TSO FIXED
+         BLR   LINK                EXIT IF NOT BECAUSE WRONG
+         MVI   ASAPERRF,0          NULLIFY ERROR REASON CODE
+         SPACE 1
+PARM1    EQU   *                   CHARGE CODE (MANDATORY, 4-NUMERICS)
+         TPRM  LEN=4,NAME=ASACHRGC VALIDATE CHARGE CODE
+         SPACE 1
+PARM2    EQU   *                   CATEGORY CODE (MANDATORY, 1/2-NUM)
+         TPRM  LEN=(1,2,3,4),NAME=ASACATCD VALIDATE CATEGORY CODE
+         SPACE 1
+PARM3    EQU   *                   MAJOR COST CENTRE (OPTIONAL, 3-NUM)
+         TPRM  LEN=3,OPTION=YES,NEXT=PARM4,NAME=ASAMAJCC COST CENTRE
+         SPACE 1
+PARM4    EQU   *                   MINOR COST CENTRE (OPTIONAL, 2-NUM)
+         TPRM  LEN=2,OPTION=YES,NEXT=PARM5,NAME=ASAMINCC COST CENTRE
+         SPACE 1
+PARM5    EQU   *                   ENTITY CODE (OPTIONAL, SPECIAL)
+         TPRM  OPTION=YES,NEXT=PARM6,MORE=YES,NAME=ASAENTCD ENTITY CODE
+         CLI   1(WA),C'E'          TEST IF IT IS NETITY CODE
+         BNE   PARM5X              IGNORE IT IF NOT
+         MVI   ASAPERRF,ASAINVLN   ASSUME PARAMETER HAS INVALID LENGTH
+         CLI   0(WA),3             ENSURE LENGTH IS THREE CHARACTERS
+         BNER  LINK                EXIT IF NOT BECAUSE ERROR
+         MVI   ASAPERRF,0          NULLIFY ERROR REASON FLAG
+         LA    WB,2                SET LENGTH TO TEST NUMERIC
+         LA    WA,1(,WA)           INCREMENT PAST 'E'
+         BAL   WD,AUDIT            TEST IF ENTITY CODE IS NUMERIC
+         B     PARM6               BYPASS UNNECESSARY 'LA'
+PARM5X   LA    WA,0(WB,WA)         POINT AT END OF THIS FIELD
+         SPACE 1
+PARM6    EQU   *                   FORMS TYPE
+         CLI   *,X'95'             SET COND CODE EQUAL (LEST BRANCHED
+*                                  TO BECAUSE PREV NOT ENTITY CODE )
+         TPRM  LEN=4,OPTION=YES,NEXT=PARM7,NAME=ASAFORMS
+PARM7    EQU   *                   NUMBER OF COPIES
+         TPRM  LEN=(1,2,3,4),OPTION=YES,NEXT=PARM8,NAME=ASACOPYS
+PARM8    EQU   *                   ESTIMATED CPU TIME
+         TPRM  LEN=(1,2,3,4),OPTION=YES,NEXT=PARM9,NAME=ASAECPU
+PARM9    EQU   *                   ESTIMATED LINES ( IN THOUSANDS )
+         TPRM  LEN=(1,2,3,4),OPTION=YES,NEXT=PARM10,NAME=ASALINES
+PARM10   EQU   *                   ESTIMATED CARDS
+         TPRM  LEN=(1,2,3,4,5,6,7),OPTION=YES,NEXT=PARM11,NAME=ASACARDS
+PARM11   EQU   *                   JOB LOG REQUEST
+         TPRM  LEN=1,OPTION=YES,NEXT=PARM12,NAME=ASALOG,NUMERIC=NO
+PARM12   EQU   *                   LINES/PAGE
+         TPRM  LEN=(1,2,3,4),OPTION=YES,NEXT=PARM13,NAME=ASALNCNT
+PARM13   EQU   *                   END OF PARMS TO TEST
+         TPRM  MORE=YES,OPTION=YES DUMMY ENTRY
+*                                  IF WE GET HERE, TOO MANY PARMS SUPPL
+         MVI   ASAPERRF,ASA2MANY   INDICATE TOO MANY PARAMETERS
+         CLI   *,0                 SET COND CODE UNEQUAL FOR ERROR
+         BR    LINK                RETURN SHOWING TOO MANY PARMS
+         SPACE 5
+AUDIT    BCTR  WB,0                DECREMENT LENGTH FOR EXECUTE
+         MVI   ASAPERRF,ASANNUM    ASSUME FIELD IS NOT NUMERIC
+         EX    WB,TESTNUM          VERIFY IF FIELD IS NUMERIC
+         BNZR  LINK                EXIT IF FIELD NOT NUMERIC
+         MVI   ASAPERRF,0          NULLIFY ERROR REASON CODE
+         LA    WA,1(WB,WA)         POINT AT END OF THIS PARM
+         BR    WD                  RETURN TO CALLER
+         SPACE 1
+TESTNUM  TRT   1(0,WA),NUMTABLE    EXECUTED NUMERIC TEST
+         EJECT
+*        TEMPORARY ADDITION TO BYPASS CURRENT TSO LIMITATION WHEREBY
+*         ONLY 1 ACCOUNTING PARM MAY BE SUPPLIED.
+         SPACE 1
+CKFORTSO TM    JMRINDC(WE),JMRFIND IS IT FOREGROUND ( TSO ) JOB/STEP
+         BO    PARM1               YES: GO VALIDATE ACCOUNTING DATA
+         CLI   *,X'00'             SET NON-ZERO COND CODE
+         BR    LINK                RETURN SHOWING ERROR
+         SPACE 5
+*        TABLE FOR VALIDATING NUMERICS ( VIA 'TRT' )
+         SPACE 1
+NUMTABLE DC    256X'01'
+         ORG   NUMTABLE+C'0'
+         DC    10X'00'
+         ORG
+         EJECT
+***********************************************************************
+*        VALIDATE CHARGE CODE ( AGAINST TABLE WITHIN CSECT CHRGCTAB ) *
+***********************************************************************
+         SPACE 1
+CHCKCHRG DS    0H                  ENETR ROUTINE
+         L     WB,FLCCVT           GET ADDRESS OF CVT
+         L     WB,CVTUSER-CVTMAP(,WB) GET ADDRESS OF MVT              +
+         TM    MVTFLAG1-MVTDSECT(WB),MVTFVCC ARE CHARGE CODES TO BE CHE
+         BZR   WE                  RETURN IF CHARGE CODES NOT TO BE CHE
+         MVI   ASAPINER,ASACHRGC   ASSUME CHARGE CODE IS IN ERROR
+         MVI   ASAPERRF,ASAMMAND   ASSUME CHARGE CODE IS OMITTED
+         CLI   0(WA),1             ENSURE CHARGE CODE EXISTS
+         BLR   LINK                RETURN SHOWING ERROR IF NOT
+         CLI   1(WA),0             TEST IF CHARGE CODE OMITTED
+         BNE   *+10                BRANCH IF NOT OMITTED
+         CLI   *,0                 SET COND CODE UNEQUAL
+         BR    LINK                RETURN:MAND PARAMETER MISSING
+         MVI   ASAPERRF,ASAINVLN   ASSUME CHARGE CODE HAS WRONG LENGTH
+         CLI   1(WA),4             ENSURE CHARGE CODE IS 4 BYTES LONG
+         BNER  LINK                RETURN SHOWING ERROR IF NOT
+         MVI   ASAPERRF,0          NULLIFY ERROR REASON FLAG
+         LOAD  EP=CHRGCTAB         LOAD CHARGE CODE TABLE
+         LR    R15,R0              POINT R15 AT CHARGE CODE TABLE CSECT
+         LM    WB,WD,0(R15)        RETRIEVE VALUES TO CONTROL LOOP
+         CLC   0(4,WB),2(WA)       IS THIS TAB ENTRY THE CODE SUPPLIED
+         BE    CHRGCOK             CHARGE CODE IS VALID, SO BRANCH
+         BXLE  WB,WC,*-10          POINT TO NEXT TABLE ENTRY & LOOP
+        DELETE EP=CHRGCTAB         DELETE THE CHARGE CODE TABLE
+         MVI   ASAPERRF,ASAINVCC   FLAG THAT CHARGE CODE NOT ON TABLE
+         CLI   *,0                 SET COND CODE UNEQUAL TO SHOW ERROR
+         BR    LINK                RETURN SHOWING ILLEGAL CHARGE CODE
+         SPACE 2
+CHRGCOK DELETE EP=CHRGCTAB         DELETE THE CHARGE CODE TABLE
+         BR    WE                  CODE IS VALID, SO RETURN TO CHECKEM
+         SPACE 5
+*        NOTE THAT THE PROCESSING IN THE ABOVE ROUTINE IS CONTROLLED
+*         BY VALUES RETRIEVED FROM THE MODULE 'CHRGCTAB'.  THE FIRST
+*         FOUR FULL-WORDS OF THIS ( UNEXECUTABLE ) ROUTINE ARE
+*              DC   A(FIRST-TABNTRY)  ADDRESS OF FIRST TABLE ENTRY
+*              DC   A(4)              LENGTH OF TABLE ENTRY
+*              DC   A(LAST-TABNTRY)   ADDRESS OF LAST TABLE ENTRY
+*              DC   A(NUMBER-OF-ENTRIES) NUMBER OF ENTRIES IN THE TABLE
+         EJECT
+***********************************************************************
+*        VALIDATE NAMES OF CLASS P JOBS TO ENSURE AUTHORISATION       *
+***********************************************************************
+         SPACE 1
+*        THIS ROUTINE VERIFIES THAT, IF THE JOB IS CLASS P, THEN THE
+*         JOB NAME IS ON THE TABLE OF AUTHORISED CLASS P JOBS.
+         SPACE 1
+*        ON RETURN, THE COND CODE IS SET SUCH THAT :-
+*              BZ  - NOT CLASS P, OR AUTHORISED JOB NAME
+*              BO  - UNAUTHORISED USE OF CLASS P
+         SPACE 1
+CLASSP   DS    0H                  ENTER ROUTINE
+         MVI   ASAPINER,0          NULLIFY NAME OF ACCTNG FIELD IN ERRO
+         MVI   ASAPERRF,0          NULLIFY REASON OF ERROR
+         L     WE,APLEPARM(,APL)   REFRESH ADDRESS OF COMMON AREA
+         CLI   JMRJCLAS(WE),C'P'   IS IT A CLASS P JOB
+         BNE   CLASSPX             EXIT FROM RTN IF NOT CLASS P
+         LOAD  EP=CLASPTAB         LOAD TABLE OF VALID NAMES
+         LR    R15,R0              POINT R15 AT CSECT CONTAINING TABLE
+         LM    WB,WD,0(R15)        RETRIEVE VALUES TO CONTROL LOOP
+         CLC   0(8,WB),JMRJNAME(WE) IS THIS ENTRY THE JOB NAME
+         BE    CLASSPD             NAME VALID: GO DELETE TABLE
+         BXLE  WB,WC,*-10          INCREMENT TO NEXT ENTRY & LOOP BACK
+*                                  NAME NOT FOUND SO KILL JOB
+         OI    ASAFLAGS,ASAJCAP    LIE: INDICATE BAD JOBCARD ACCTG DATA
+         OI    ASAPERRF,ASACLASP   FLAG THAT ERROR IS USE OF CLASS P
+         LA    R15,4               INDICATE JOB IS TO BE FLUSHED
+CLASSPD  DELETE EP=CLASPTAB        DELETE TABLE OF VALID JOB NAMES
+CLASSPX  TM    ASAFLAGS,ASAJCAP    SET COND CODE FOR CALLER
+         BR    LINK                RETURN TO CALLER
+         SPACE 5
+*        NOTE THAT THE PROCESSING IN THE ABOVE ROUTINE IS CONTROLLED
+*         BY VALUES RETRIEVED FROM THE MODULE 'CLASPTAB'.  THE FIRST
+*         FOUR FULL-WORDS OF THIS ( UNEXECUTABLE ) ROUTINE ARE
+*              DC   A(FIRST-TABNTRY)  ADDRESS OF FIRST TABLE ENTRY
+*              DC   A(8)              LENGTH OF TABLE ENTRY
+*              DC   A(LAST-TABNTRY)   ADDRESS OF LAST TABLE ENTRY
+*              DC   A(NUMBER-OF-ENTRIES) NUMBER OF ENTRIES IN THE TABLE
+         EJECT                                                          E5999000
+*                        EQUATES USED IN THIS MODULE                    E6004000
+         SPACE 3                                                        E6005000
+*                                  REGISTERS                            E6100000
+         SPACE 1                                                        E6101000
+R0       EQU   0                   WORK AND SVC LINKAGE                 E6102000
+R1       EQU   1                   WORK AND SVC LINKAGE                 E6103000
+WA       EQU   2                   WORK                                 E6104000
+WB       EQU   3                   WORK                                 E6105000
+WC       EQU   4                   WORK                                 E6106000
+WD       EQU   5                   WORK                                 E6107000
+WE       EQU   6                   WORK                                 E6108000
+R7       EQU   7                   ADDRESS OF COMMON AREA
+R8       EQU   8                   CONTROL LOOP IN CHECKEM
+R9       EQU   9                   CONTROLS LOOP IN 'CHECKEM'
+APL      EQU   10                  ACCOUNTING PARAMETER LIST
+*                                  ( ON INPUT, CONTAINS THE LCT ADDRESS
+ASA      EQU   11                  ADDRESS OF ACCOUNTING SERVICE AREA   E6113000
+R12      EQU   12                  BASE REGISTER                        E6114000
+BASEREG  EQU   12                  BASE REGISTER                        E6114000
+R13      EQU   13                  ADDRESS OF REGISTER SAVE AREA        E6115000
+SAVEREG  EQU   13                  ADDRESS OF REGISTER SAVE AREA        E6115000
+R14      EQU   14                  LINKAGE                              E6116000
+LINK     EQU   14                  LINKAGE                              E6116000
+R15      EQU   15                  WORK AND SVC LINKAGE                 E6117000
+         SPACE 3                                                        E6119000
+*                             MISCELLANEOUS                             E6200000
+         SPACE 1                                                        E6201000
+TMS      EQU   248                 TMS SVC NUMBER                       E6202000
+         EJECT                                                          E6999000
+*                        CONSTANTS AND WORK AREAS                       E7000000
+         SPACE 1                                                        E7001000
+         LTORG *                                                        E7002000
+TMSGMSIZ DC    0F'0',AL1(230),AL3(TMSWKEND-TMSACCT)    SUB-POOL & SIZE  E7100000
+GETMAIN1 DC    0F'0',AL1(230),AL3(18*4)                SUB-POOL & SIZE  E7100000
+GETMAIN2 DC    0F'0',AL1(245),AL3(ASADDTBL)            SUB-POOL & SIZE  E7100000
+ABENDCOD DC    A(X'7FE')           ABEND CODE                           E7101000
+         SPACE 5                                                        E7999000
+TMSACCT  DSECT                                                          E8000000
+* THE FOLLOWING SIMULATE THE TMS MACRO -TMACCT-                         E8001000
+MONNAME  DS    CL6                 PROGRAMMER NAME                      E8002000
+MONCHRG  DS    CL4                 CHARGE (PSEUDO) CODE                 E8003000
+         DS    CL4,2PL3,3C,CL4,PL3,CL6  NOT USED BY THIS MODULE         E8004000
+* END OF MACRO SIMULATION                                               E8005000
+TMSSVCCD DS    F                                                        E8006000
+TMSWKEND DS    0D                  END IT ON A DOUBLE WORD              E8007000
+         EJECT                                                          E9002000
+IEFUJI   CSECT
+DECLEN   $MDLENTH                                                       E9004000
+         END   IEFUJI                                                   E9999000
+-EMOD
+-END
+/*
+//COMPILE EXEC GENASMOD
+//ASM.SYSIN DD DSN=&&OSJOB,DISP=(OLD,DELETE)
+//LKED.SYSIN DD *
+ NAME IEFUJI(R)
+ INCLUDE MLPALIB(IEFUJI)
+ INCLUDE MLPALIB(IEFUTL)
+ INCLUDE LPALIB(IEFSD060)
+ ORDER IEFIIC
+ ORDER IEFSD060
+ ORDER IEFIB620
+ ORDER IEFIB621
+ ORDER IEFI922B
+ ORDER IEFIB650
+ ORDER IEFSD061
+ ORDER IEFDSTBL
+ ORDER IEFDSLST
+ ORDER IEFICPUA
+ ORDER IEFIMASK
+ ORDER IEFSD101
+ ORDER IEFSMFIE
+ ORDER IEFUJI
+ ORDER IEFSDPPT
+ ORDER IEFSD102
+ ORDER IEFSD062
+ ORDER IEFICATL
+ ORDER IEFQB585
+ ORDER IEFXB604
+ ORDER IEFXB500
+ ORDER IEFSD103
+ ORDER IEFSD263
+ ORDER IEFAB820
+ ORDER IEFIB660
+ ORDER IEFUTL
+ ORDER IEFSD064
+ ORDER IEFSD066
+ ALIAS IEFIIC
+ ENTRY IEFSD060
+ NAME IEFSD060(R)
+/*

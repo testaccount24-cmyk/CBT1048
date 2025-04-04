@@ -1,0 +1,511 @@
+         TITLE 'T158P030 - EXIT TO UPDATE RECORDS'
+T158P030 CSECT
+         SPACE
+*    INPUT   - ADDR OF FROM FIELD
+*            - ADDR OF TO FIELD
+*            - ADDR OF OPERATION FIELD (DSECT = OPCDDS)
+*            THE ADDR. OF THESE 3 FIELDS ARE GIVEN BY 3 'DC V' CONST.
+*    PROCESSING
+*            4 OPERATIONS MAY BE REQUESTED
+*            - MOVE      THE DATA ARE MOVED FROM THE FROM FIELD TO THE
+*                         TO FIELD WITH CONVERSION IF NEEDED
+*            - ADD       THE DATA OF THE FROM FIELD IS ADDED TO THE
+*                         DATA OF THE TO FIELD AND THE RESULT OVERLAYS
+*                         THE DATA OF THE TO FIELD. THE DATA FORMATS
+*                         ALLOWED ARE ZONED AND PACKED. THE DATA MAY
+*                         BE OF THE SAME, OR OF DIFFERENTS FORMATS.
+*            - SUBTRACT  SAME AS ADD, BUT THE DATA OF THE FROM FIELD
+*                         IS SUBTRACTED FROM THE DATA OF THE TO FIELD.
+*            - CLEAR     THE TO FIELD IS CLEARED ACCORDING HIS FORMAT.
+*    OUTPUT    A RETURN CODE IS GIVEN BACK TO THE CALLER IN THE
+*               FIRST POSITION OF THE OPERATION FIELD
+*              - 'O'  OPERATION SUCCESSFULL
+*              - '1'  INVALID COMBINATION OF OPERATION AND FORMATS
+*              - '2'  INVALID DATA LENGTH ACCORDING HIS FORMAT :
+*                            *  >15 FOR NUM. DATA
+*                            *  >08 FOR PACKED DATA
+*                            *  >04 FOR BINARY DATA
+         EJECT
+*
+***  OPERATION FIELD DSECT
+*
+OPCDDS   DSECT
+OPCD     DS    CL1                 OP.CODE   ' '= MOVE
+*                                            '+'= ADD
+*                                            '-'= SUBTRACT
+*                                            '*'= CLEAR
+DISPFR   DS    CL3                 DATA DISPL. IN FROM FIELD (RIGHT AL)
+LGFR     DS    CL2                 DATA LENGTH IN FROM FIELD (RIGHT AL)
+FRMF     DS    CL1                 DATA FORMAT ' '= CHARACTER
+*                                              'B'= ZONED
+*                                              'N'= ZONED
+*                                              'P'= PACKED
+DISPTO   DS    CL3                 DATA DISPL. IN TO FIELD (RIGHT AL.)
+LGTO     DS    CL2                 DATA LENGTH IN TO FIELD (RIGHT AL.)
+FRMT     DS    CL1                 DATA FORMAT ' '= CHARACTER
+*                                              'N'= ZONED
+*                                              'P'= PACKED
+RTCD     DS    CL1                 RT.CD. '0'=SUCCESSFULL
+*                                         '1'=INV.COMB. OF OP & FORMATS
+*                                         '2'=INV. DATA LENGTH
+         EJECT
+*
+***  DRIVING TABLE DSECT
+*
+DRVTDS   DSECT
+DRVTKEY  DS   0CL3                 KEY TO SCAN DRIVING TABLE
+DRVTOC   DS    CL1                  - OPERATION CODE
+DRVTFF   DS    CL1                  - FORMAT OF DATA IN FROM FIELD
+DRVTFT   DS    CL1                  - FORMAT OF DATA IN TO FIELD
+         DS    CL1                  - NOT USED (ALIGN ON FW BNDRY)
+DRVTEXAD DS   0A                   ADDR OF CORRESPONDING PROCESSING
+DRVTEXSW DS   0XL1                 SW USED IN PROCESSING SEGMENT
+DRVTEND  DS    XL1                 END OF TABLE FLAG
+         DS    AL3                 ADDR OF PROCESSING SEGMENT
+$DRVT    EQU   *-DRVTDS
+         EJECT
+T158P030 CSECT
+*
+***  USE OF REGISTERS
+*
+R0       EQU   0         WORK
+R1       EQU   1         WORK
+R2       EQU   2         WORK
+R3       EQU   3         WORK
+R4       EQU   4         LINK REGISTER (1ST LEVEL)
+R5       EQU   5         LINK REGISTER (2ND LEVEL)
+R6       EQU   6         NOT USED
+R7       EQU   7         NOT USED
+R8       EQU   8         NOT USED
+R9       EQU   9         NOT USED
+R10      EQU   10        NOT USED
+R11      EQU   11        NOT USED
+R12      EQU   12        NOT USED
+R13      EQU   13        PTS TO CALLER SAVE AREA
+R14      EQU   14        RETURN TO CALLER ADDR
+R15      EQU   15        BASE REG.
+         EJECT
+*
+***  HOUSE KEEPING
+*
+         USING T158P030,R15        ESTABLISH ADDRESSABILITY
+         STM   14,5,12(13)         SAVE REGS IN CALLER SAVE AREA
+         B     START               BRANCH AROUND PGM NAME
+         DC    CL8'T158P030'       EXIT IDENTIFICATION
+*
+START    DS    0H
+         MVC   OPCODE,0(R1)        GET ADDR OF OP.CODE FIELD
+         MVC   ADDRFR,4(R1)        GET ADDR OF FROM FIELD
+         MVC   ADDRTO,8(R1)        GET ADDR OF TO FIELD
+*
+***  MAIN SEGMENT
+*
+         BAL   R4,GPARM            GET PARAMETERS
+*                                  SCAN DRIVING TABLE
+         LA    R1,DRVTABLE         GET DRVTABLE ADDR.
+         USING DRVTDS,R1
+SCANDRVT EQU   *
+         CLC   DRVTKEY,OC          COMPARE KEY IN TABLE WITH PARAMS
+         BE    EXEC                BRANCH IF FOUND
+         LA    R1,$DRVT(R1)        PTS TO NEXT ENTRY IN DRIVING TABLE
+         CLI   DRVTEND,X'FF'
+         BNE   SCANDRVT            LOOP IF NOT END OF TABLE
+EXEC     EQU   *
+         MVC   FILLCHAR,DRVTEXSW   MOVE FILL CHAR.
+         L     R1,DRVTEXAD         GET ADDR OF PROCESSING SEGMENT
+         DROP  R1
+         BR    R1                  BRANCH TO EXEC PROCESSING
+         EJECT
+*
+***  ERROR AND RETURN PROCESSINGS
+*
+ERR01    DS    0H        INVALID COMBINATION OF OP.CODE AND FORMATS
+*
+         MVI   OC,C'1'             SET RETURN CODE
+         B     EXIT
+*
+ERR02    DS    0H        INVALID DATA LENGTH ACCORDING FORMAT
+*
+         MVI   OC,C'2'             SET RETURN CODE
+         B     EXIT
+*
+OUT      MVI   OC,C'0'   OPERATION SUCCESSFULL
+*
+EXIT     L     R1,OPCODE
+         USING OPCDDS,R1
+         MVC   RTCD,OC   MOVE RETURN CODE TO CALLER
+         DROP  R1
+         LM    14,5,12(13)
+         BR    14
+         EJECT
+*
+***  PROCESSING SEGMENTS
+*
+*
+CASE01   DS    0H        MOVE CHAR. DATA TO CHAR. FIELD WITH TRUNCATION
+*                         OR PADDING
+         L     R0,AF               GET FROM ADDR
+         LH    R1,LF               GET FROM LENGTH
+         L     R2,AT               GET TO ADDR
+         LH    R3,LT               GET TO LENGTH
+         ICM   R1,8,=C' '          INSERT PADDING CHAR.
+         MVCL  R2,R0               MOVE DATA TO TO FIELD
+         B     OUT                 GO TO RETURN
+*
+CASE02   DS    0H        MOVE  NUM. DATA TO NUM.FIELD
+*
+         BAL   R4,EXIT01           COMPRESS RIGHT,EXPAND AND PACK DATA
+         BAL   R4,EXIT05           MOVE NUM.DATA TO TO FIELD
+         B     OUT                 GO TO RETURN
+*
+CASE03   DS    0H        MOVE PACKED DATA TO NUM.FIELD
+*
+         BAL   R4,EXIT02           EXPAND PACKED DATA AND UNPACK IT
+         BAL   R4,EXIT05           MOVE NUM.DATA TO TO FIELD
+         B     OUT                 GO TO RETURN
+*
+CASE04   DS    0H        MOVE NUM. DATA TO PACKED FIELD
+*
+         BAL   R4,EXIT01           COMPRESS RIGHT,EXPAND AND PACK DATA
+         BAL   R4,EXIT06           MOVE PACKED DATA TO TO FIELD
+         B     OUT
+*
+CASE05   DS    0H        MOVE PACKED DATA TO PACKED FIELD
+         BAL   R4,EXIT02           EXPAND PACKED DATA AND UNPACK IT
+         BAL   R4,EXIT06           MOVE PACKED DATA TO TO FIELD
+         B     OUT
+*
+CASE06   DS    0H        ADD OR SUBTRACT NUM.DATA TO OR FROM NUM.DATA
+*
+         BAL   R4,EXIT01           COMPRESS,EXPAND AND PACK FROM DATA
+         BAL   R4,EXIT03           COMPRESS,EXPAND AND PACK TO DATA
+         BAL   R4,EXIT07           ADD OR SUBTRACT DATA,UNPACK RESULT
+         BAL   R4,EXIT05           MOVE NUM.DATA TO TO FIELD
+         B     OUT                 GO TO RETURN
+*
+CASE07   DS    0H        ADD OR SUBTRACT PACK. TO OR FROM NUM.DATA
+*
+         BAL   R4,EXIT02           EXPAND PACKED DATA AND UNPACK IT
+         BAL   R4,EXIT03           COMPRESS,EXPAND AND PACK TO DATA
+         BAL   R4,EXIT07           ADD OR SUBTRACT DATA,UNPACK RESULT
+         BAL   R4,EXIT05           MOVE NUM.DATA TO TO FIELD
+         B     OUT                 GO TO RETURN
+*
+CASE08   DS    0H        ADD OR SUBTRACT NUM. TO OR FROM PACK. DATA
+*
+         BAL   R4,EXIT01           COMPRESS,EXPAND AND PACK FROM DATA
+         BAL   R4,EXIT04           EXPAND AND UNPACK TO DATA
+         BAL   R4,EXIT07           ADD OR SUBTRACT DATA, UNPACK RESULT
+         BAL   R4,EXIT06           MOVE PACK.DATA TO TO FIELD
+         B     OUT                 GO TO RETURN
+*
+CASE09   DS    0H        ADD OR SUBTRACT PACK. TO OR FROM PACK. DATA
+*
+         BAL   R4,EXIT02           EXPAND AND UNPACK FROM DATA
+         BAL   R4,EXIT04           EXPAND AND UNPACK TO DATA
+         BAL   R4,EXIT07           ADD OR SUBTRACT DATA, UNPACK RESULT
+         BAL   R4,EXIT06           MOVE PACK.DATA TO TO FIELD
+         B     OUT                 GO TO RETURN
+*
+CASE10   DS    0H        CLEAR TO FIELD (CHAR.,NUM. OR PACKED FIELD)
+*
+         SR    R1,R1               ZERO REG 1
+         ICM   R1,8,FILLCHAR       AND INSERT FILL CHAR.
+         L     R2,AT               GET ADDR OF TO FIELD
+         LH    R3,LT               GET LENGTH OF TO FIELD
+         MVCL  R2,R0               CLEAR TO DATA
+         CLI   FT,C'P'             CHECK IF TO DATA IS PACKED
+         BNE   CASE1001            BRANCH IF NO
+         BCTR  R2,0                PTS TO LAST BYTE OF TO DATA
+         MVI   0(R2),X'0F'         SET LAST BYTE TO X'0F'
+CASE1001 EQU   *
+         B     OUT                 GO TO RETURN
+*
+CASE11   DS    0H       MOVE BINARY DATA TO PACKED DATA
+*
+         BAL   R4,EXIT08           GET AND EXPAND BINARY FIELD
+         BAL   R4,EXIT09           CONVERT BINARY TO  PACKED DECIMAL
+         BAL   R4,EXIT06           MOVE PAC.DATA TO TO FIELD
+         B     OUT                 GO TO RETURN
+         EJECT
+*
+***  EXIT01    EXPAND 'FROM' TO A 15 BYTES RIGHT COMPRESSED FIELD
+*               AND PACK IT TO A 8 BYTES FIELD.
+*              NO CHECK IS MADE TO VERIFY IF THE FIELD IS NUM.
+*
+EXIT01   EQU   *
+         L     R1,AF               R1 PTS TO 1ST BYTE OF FROM FIELD
+         LH    R3,LF               R3 = LENGTH OF FROM FIELD
+         LA    R2,FN               R2 PTS TO 1ST BYTE OF NUM. FIELD
+         BAL   R5,MOVENUM          MOVE FROM FIELD TO NUM FIELD
+*                                    COMPRESSING RIGHT
+         PACK  FP,FN               PACK NUM.FIELD TO PACK FIELD
+         BR    R4                  RETURN
+*
+***  EXIT02    EXPAND 'FROM' FIELD TO A 8 BYTES PACKED FIELD
+*               AND UNPACK IT TO A 15 BYTES NUM. FIELD
+*              NO CHECK ON THE FIELD IS MADE
+*
+EXIT02   EQU   *
+         L     R0,AF               R0 PTS TO 1ST BYTE OF FROM FIELD
+         LH    R1,LF               R1 = LENGTH OF FROM FIELD
+         LA    R2,FP               R2 PTS TO 1ST BYTE OF PACK FIELD
+         BAL   R5,MOVEPACK         MOVE FROM FIELD TO PACK FIELD
+*
+         UNPK  FN,FP               UNPACK TO NUM.FIELD
+         BR    R4                  RETURN
+*
+***  EXIT03    EXPAND 'TO' DATA TO A 15 BYTES RIGHT COMPRESSED FIELD
+*               AND PACK IT TO A 8 BYTES FIELD.
+*              NO CHECK IS MADE TO VERIFY IF THE FIELD IS NUM.
+*
+EXIT03   EQU   *
+         L     R1,AT               R1 PTS TO 1ST BYTE OF TO FIELD
+         LH    R3,LT               R3 = LENGTH OF TO FIELD
+         LA    R2,TN               R2 PTS TO 1ST BYTE OF NUM,FIELD
+         BAL   R5,MOVENUM          MOVE TO FIELD TO NUM.FIELD
+*                                    COMPRESSING RIGHT
+         PACK  TP,TN               PACK NUM.FIELD TO PACK.FIELD
+         BR    R4                  RETURN
+*
+***  EXIT04    EXPAND 'TO' FIELD TO A 8 BYTES PACKED FIELD
+*                AND UNPACK IT TO A 15 BYTES NUM. FIELD
+*              NO CHECK ON THE FIELD IS MADE
+*
+EXIT04   EQU   *
+         L     R0,AT               R0 PTS TO 1ST BYTE OF TO FIELD
+         LH    R1,LT               R1 = LENGTH OF TO FIELD
+         LA    R2,TP               R2 PTS TO 1ST BYTE OF PACK FIELD
+         BAL   R5,MOVEPACK         MOVE TO FIELD TO PACK FIELD
+*
+         UNPK  TN,TP               UNPACK TO NUM. FIELD
+         BR    R4                  RETURN
+*
+***  EXIT05    MOVE NUM.FIELD TO TO FIELD
+*
+EXIT05   EQU   *
+         LA    R0,FN+15
+         LH    R1,LT               R1 = LENGTH OF TO FIELD
+         SR    R0,R1               R1 PTS IN NUM. FIELD
+         L     R2,AT               R2 PTS TO TO FIELD
+         LR    R3,R1               R3 = LENGTH OF TO FIELD
+         MVCL  R2,R0               MOVE NUM.FIELD TO TO FIELD
+         BR    R4                  RETURN
+*
+***  EXIT06    MOVE PACK.FIELD TO TO FIELD
+*
+EXIT06   EQU   *
+         LA    R0,FP+8
+         LH    R1,LT               R1 = LENGTH OF TO FIELD
+         SR    R0,R1               R0 PTS IN PACK. FIELD
+         L     R2,AT               R2 PTS TO TO FIELD
+         LR    R3,R1               R3 = LENGTH OF TO FIELD
+         MVCL  R2,R0               MOVE PACK.FIELD TO TO FIELD
+         BR    R4                  RETURN
+*
+***  EXIT07    ADD OR SUBTRACT FROM FIELD TO OR FROM TO FIELD
+*
+EXIT07   EQU   *
+         CLI   OC,C'+'             CHECK IF ADD
+         BNE   EXIT0701            BRANCH IF NO
+         AP    TP,FP               ADD FROM FIELD TO TO FIELD
+         B     EXIT0702
+EXIT0701 EQU   *
+         SP    TP,FP               SUBTRACT FROM FIELD FROM TO FIELD
+EXIT0702 EQU   *
+         MVC   FP,TP               MOVE RESULT
+         UNPK  FN,FP               UNPACK RESULT
+         BR    R4                  RETURN
+*
+***  EXIT08    EXPAND 'FROM' FIELD TO A 4 BYTES BINARY FIELD
+*
+EXIT08   EQU   *
+         L     R1,AF               GET FROM FIELD ADDRESS
+         LH    R2,LF               GET FROM FIELD LENGTH
+         LA    R3,EXIT08MK-1(R2)   GET MASK ADDR FOR 'ICM' INSTRUC.
+         NI    EXIT0801+1,X'F0'    RESET 'ICM' INSTRUC.
+         OC    EXIT0801+1(1),0(R3) INSERT MASK IN 'ICM' INSTR.
+         SR    R2,R2               RESET  REG
+EXIT0801 ICM   R2,0,0(R1)          GET FROM DATA
+         ST    R2,FB               AND SAVE IT
+         BR    R4                  RETURN
+*
+EXIT08MK DC    X'00'               TO INSERT 0 BYTE
+         DC    X'01'               TO INSERT 1 BYTE
+         DC    X'03'               TO INSERT 2 BYTES
+         DC    X'07'               TO INSERT 3 BYTES
+         DC    X'0F'               TO INSERT 4 BYTES
+         DS    0H
+*
+***  EXIT09    CONVERT BINARY TO PACKED
+*
+EXIT09   EQU   *
+         L     R0,FB               GET BINARY DATA
+         CVD   R0,FP               AND CONVERT IT TO PACKED
+         BR    R4                  RETURN
+         EJECT
+*
+***  GET AND CONVERT PARAMETERS
+*
+GPARM    DS    0H
+         L     R3,OPCODE           R3 PTS TO PARAM. AREA
+         USING OPCDDS,R3
+         MVC   OC,OPCD             GET OP.CODE
+         PACK  FP,DISPTO           PACK DISPL. OF DATA (TO FIELD)
+         OI    FP+7,X'0F'
+         CVB   R0,FP               CONVERT DISPL. AND
+         A     R0,ADDRTO           ADD START ADDR OF TO FIELD
+         BCTR  R0,0
+         ST    R0,AT               SAVE ADDR OF TO DATA
+         MVC   FT,FRMT             GET DATA FORMAT OF TO FIELD
+         PACK  FP,LGTO             PACK LENGTH OF DATA (TO FIELD)
+         OI    FP+7,X'0F'
+         CVB   R0,FP               CONVERT LENGTH (TO FIELD)
+         LA    R1,FT               R1 PTS TO DATA FORMAT
+         BAL   R5,VRFYLG           CHECK DATA LENGTH ACCORDING FORMAT
+         STH   R0,LT               SAVE DATA LENGTH (TO FIELD)
+*
+         CLI   OC,C'*'             IS IT A 'CLEAR' OPERATION
+         BNE   GPARM01             BRANCH IF NOT
+         MVI   FF,C' '             SET FROM FORMAT TO CHAR.
+         B     GPARM05
+GPARM01  EQU   *
+         PACK  FP,DISPFR           PACK DISPL. OF DATA (FROM FIELD)
+         OI    FP+7,X'0F'
+         CVB   R0,FP               CONVERT DISPL. AND
+         A     R0,ADDRFR           ADD START ADDR OF FROM FIELD
+         BCTR  R0,0
+         ST    R0,AF               SAVE ADDR OF FROM DATA
+         MVC   FF,FRMF             GET DATA FORMAT OF FROM DATA
+         CLI   FF,C' '             CHECK IF IT IS DEFINED
+         BNE   GPARM02             BRANCH IF YES
+         MVC   FF,FT               TAKE FORMAT OF TO DATA AS DEFAULT
+GPARM02  EQU   *
+         CLC   LGFR,=CL2' '        CHECK IF FROM DATA LENGTH IS DEFINED
+         BNE   GPARM03             BRANCH IF YES
+         LH    R0,LT               TAKE TO DATA LENGTH AS DEFAULT
+         B     GPARM04
+GPARM03  EQU   *
+         PACK  FP,LGFR             PACK LENGTH OF DATA (FROM FIELD)
+         OI    FP+7,X'FF'
+         CVB   R0,FP               CONVERT LENGTH (FROM FIELD)
+GPARM04  EQU   *
+         LA    R1,FF               R1 PTS TO DATA FORMAT
+         BAL   R5,VRFYLG           CHECK DATA LENGTH ACCORDING FORMAT
+         STH   R0,LF               SAVE DATA LENGTH (FROM FIELD)
+GPARM05  EQU   *
+         BR    R4                  RETURN TO MAIN
+*
+***  VERIFY DATA LENGTH ACCORDING DATA FORMAT
+*
+VRFYLG   DS    0H
+         LA    R2,LGREFTBL         R2 PTS TO THE'LENGTH REF. TABLE'
+VRFYLG01 EQU   *
+         CLC   0(1,R1),0(R2)
+         BE    VRFYLG02            BRANCH TO CHECK LENGTH
+         CLI   1(R2),X'FF'         CHECK IF END OF REF TABLE
+         BE    VRFYLG03            GO TO RETURN
+         LA    R2,4(R2)            PTS TO NEXT ENTRY IN REF. TABLE
+         B     VRFYLG01            GO TO LOOP
+VRFYLG02 EQU   *
+         CH    R0,2(R2)            CHECK DATA LENGTH
+         BH    ERR02               BRANCH IF GREATER THAN MAX.VALUE
+VRFYLG03 EQU   *
+         BR    R5                  RETURN
+LGREFTBL DS    0F
+         DC    C'B',X'00',AL2(04)  BIN.DATA
+         DC    C'N',X'00',AL2(15)  NUM.DATA
+         DC    C'P',X'FF',AL2(08)  PACKED DATA
+         EJECT
+*
+***  MOVENUM   COMPRESS RIGHT AND EXPAND NUM.DATA TO A 15 BYTES DATA
+*                NO VALIDITY CHECK OF THE DATA IS MADE
+*
+*
+MOVENUM  DS    0H
+         MVI   0(R2),C'0'
+         MVC   1(14,R2),0(R2)      FILL NUM.FIELD WITH ZEROS
+         LA    R2,14(R2)           R2 PTS TO LAST BYTE OF NUM.FIELD
+         AR    R1,R3
+         BCTR  R1,0                R1 PTS TO LAST BYTE OF FROM FIELD
+MVNM01   EQU   *
+         CLI   0(R1),C' '          CHECK CHAR OF FROM FIELD
+         BE    MVNM02              SKIP MOVE IF CHAR.IS BLANK
+         MVC   0(1,R2),0(R1)       MOVE CHAR. TO NUM. FIELD
+         BCTR  R2,0                DECREMENT PTR IN NUM. FIELD
+MVNM02   EQU   *
+         BCTR  R1,0                DECREMENT PTR IN FROM FIELD
+         BCT   R3,MVNM01           DECREMENT LOOP CTR.BRANCH IF NZERO
+         BR    R5                  RETURN
+         SPACE
+*
+***  MOVEPACK  EXPAND PACKED DATA TO A 8 BYTES DATA
+*                NO VALIDITY CHECK OF THE DATA IS MADE
+*
+*
+MOVEPACK DS    0H
+         XC    0(8,R2),0(R2)       FILL PACKED FIELD WITH ZERO PACKED
+         MVI   7(R2),X'0F'
+         LA    R2,8(R2)            R2 PTS TO LAST BYTE OF PACK.FIELD
+         SR    R2,R1               R2 PTS IN PACKED FIELD
+         LR    R3,R1               R3 = R1 = LENGTH OF PACKED DATA
+         MVCL  R2,R0               MOVE PACKED DATA IN EXPANDED FIELD
+         BR    R5                  RETURN
+         EJECT
+*
+***  ADDRESSES OF INPUT PARAMETERS
+*
+OPCODE   DS    A
+ADDRFR   DS    A
+ADDRTO   DS    A
+         SPACE
+*
+***  DRIVING TABLE TO GET ADDRESS OF PROCESSING SEGMENT
+*
+* FORMAT .CL1  OP.CODE
+*        .CL1  FORMAT OF 'FROM' DATA
+*        .CL1  FORMAT OT 'TO' DATA
+*        .CL1  NOT USED
+*        .XL1  SW USED IS SOME PROCESSING
+*        .AL3  PROCESSING SEGMENT ADDR.
+DRVTABLE DS    0F
+         DC    C'    ',A(CASE01)   MOVE CHAR. TO CHAR.
+         DC    C' NN ',A(CASE02)        NUM.  TO NUM.
+         DC    C' PN ',A(CASE03)        PACK. TO NUM.
+         DC    C' NP ',A(CASE04)        NUM.  TO PACK.
+         DC    C' PP ',A(CASE05)        PACK. TO PACK.
+         DC    C' BP ',A(CASE11)        BIN.  TO PACK.
+         DC    C'+NN ',A(CASE06)   ADD  NUM.  TO NUM.
+         DC    C'+PN ',A(CASE07)        PACK. TO NUM.
+         DC    C'+NP ',A(CASE08)        NUM.  TO PACK.
+         DC    C'+PP ',A(CASE09)        PACK  TO PACK
+         DC    C'-NN ',A(CASE06)   SUB. NUM. FROM NUM.
+         DC    C'-PN ',A(CASE07)        PACK FROM NUM.
+         DC    C'-NP ',A(CASE08)        NUM. FROM PACK
+         DC    C'-PP ',A(CASE09)        PACK FROM PACK
+         DC    C'*   ',X'40',AL3(CASE10)     CLEAR CHAR.FIELD
+         DC    C'* N ',X'F0',AL3(CASE10)     CLEAR NUM. FIELD
+         DC    C'* P ',X'00',AL3(CASE10)     CLEAR PACK.FIELD
+         DC    X'FF000000',A(ERR01)
+         EJECT
+*
+***  WORK AREAS
+*
+         DS    0D
+FP       DS    PL8       FROM DATA PACKED
+TP       DS    PL8       TO   DATA PACKED
+FB       DS    F         FROM DATA BINARY
+TB       DS    F         TO   DATA BINARY
+AF       DS    A         ADDR OF FROM DATA
+AT       DS    A         ADDR OF  TO  DATA
+LF       DS    H         LGTH OF FROM DATA
+LT       DS    H         LGTH OF  TO  DATA
+FN       DS    CL15      FROM DATA NUM.RIGHT COMPRESSED
+TN       DS    CL15      TO   DATA NUM.RIGHT COMPRESSED
+OC       DS    CL1       OP.CODE  (' ','+','-'OR'*')
+FF       DS    CL1       FROM DATA FORMAT  (' ','N'OR'P')
+FT       DS    CL1       TO   DATA FORMAT  (' ','N'OR'P')
+FILLCHAR DS    XL1       FILLING CHAR. TO CLEAR TO FIELD
+*
+         LTORG
+         END

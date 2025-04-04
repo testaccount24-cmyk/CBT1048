@@ -1,0 +1,139 @@
+ /*       SELECT IEBUPDTE MEMBER                                      */
+ UT452:   PROC OPTIONS(MAIN);
+ /* *************** IDENTIFICATION SECTION ************************** */
+ /*       TITLE     - SELECT IEBUPDTE MEMBER                          */
+ /*       AUTHOR    - R E BAITY                                       */
+ /*       LOCATION  - MISD SYSTEMS PROGRAMMING, GENERAL OFFICES       */
+ /*       WRITTEN   - AUGUST 1972                                     */
+ /*       COMPUTER  - IBM 370                                         */
+ /*       FILES     - SYSIN             INPUT DATA: MEMBERS TO BE     */
+ /*                 -                   SELECTED IN COL 1-8.          */
+ /*                 - SYS001            INPUT IEBUPDTE TAPE.          */
+ /*                 - SYS002            OUTPUT SELECTED MEMBERS       */
+ /*                 - SYSPRINT          PROGRAM MESSAGES              */
+ /*       SUBPROGS  - INDEX             BUILT IN FUNCTION.  LOCATES   */
+ /*                 -                   A SPECIFIC STRING.            */
+ /*                 - SUBSTR            BUILT IN FUNCTION.  HANDLES   */
+ /*                 -                   SUBSTRINGS.                   */
+ /*                 - MIN               BUILT IN FUNCTION.  EXTRACTS  */
+ /*                 -                   MINIMUM VALUE.                */
+ /*                                                                   */
+ /*                                                                   */
+ /*                                                                   */
+ /*                                                                   */
+ /*                                                                   */
+ /*                                                                   */
+ /* *** ABSTRACT ***                                                  */
+ /*                                                                   */
+ /*       THIS PROGRAM SELECTS MEMBERS FROM AN IEBUPDTE FORMAT        */
+ /*       TAPE AND PLACES THEM IN AN OUTPUT SEQUENTIAL DATASET.       */
+ /*       THE SELECTION IS CONTROLLED BY AN INPUT CARD DECK.          */
+ /*                                                                   */
+ /* **************  DEFINITION SECTION  ***************************** */
+ /*       RECHOLD   - I/O AREA                                        */
+ /*       TEMPSTR   - WORKAREA TO FIND MEMBER NAME                    */
+ /*       NAMEHOLD  - FOUND MEMBER NAME                               */
+ /*       KEYSTART  - BEGINNING OF KEYWORD                            */
+ /*       KEYEND    - END OF KEYWORD OR PARAMETER                     */
+ /*       NAMETBL   - TABLE OF REQUESTED MEMBERS                      */
+ /*       NONAME    - LENGTH OF NAMETBL                               */
+ /*       I         - OUTER DO LOOP INDEX                             */
+ /*                                                                   */
+ /*                                                                   */
+ /*                                                                   */
+ /*                                                                   */
+ /*                                                                   */
+ /*                                                                   */
+ /*                                                                   */
+ /*                                                                   */
+ /*                                                                   */
+ /*                                                                   */
+ /* **************  FILE SECTION  *********************************** */
+          DCL SYSIN FILE RECORD SEQUENTIAL INPUT;
+          DCL SYSPRINT FILE STREAM OUTPUT PRINT;
+          DCL SYS001 FILE RECORD SEQUENTIAL INPUT;
+          DCL SYS002 FILE RECORD SEQUENTIAL OUTPUT;
+ /* **************  DECLARATIVE SECTION  **************************** */
+          DCL RECHOLD         CHAR(80);
+          DCL TEMPSTR         CHAR(80);
+          DCL NAMEHOLD        CHAR(8);
+          DCL KEYSTART        FIXED BIN(31);
+          DCL KEYEND          FIXED BIN(31);
+          DCL NAMETBL(50)     CHAR(8);
+          DCL NONAME          FIXED BIN(31)       INIT(0);
+          DCL I               FIXED BIN(31);
+ /*                                                                   */
+ /* **************  MAIN PROGRAM  *********************************** */
+ /*                                                                   */
+ /*       OPEN FILES SECTION                                          */
+ /*                                                                   */
+          OPEN FILE (SYSIN),
+               FILE (SYS001),
+               FILE (SYS002),
+               FILE (SYSPRINT);
+ /*                                                                   */
+ /*       SET SYSIN EOF TO PROCESS IEBUPDTE TAPE                      */
+ /*                                                                   */
+          ON ENDFILE (SYSIN) GO TO READ2;
+ /*                                                                   */
+ /*       READ INPUT MEMBERS TO BE SELECTED INTO TABLE                */
+ /*                                                                   */
+ READ1:   READ FILE (SYSIN) INTO (RECHOLD);       /* GET NEXT CARD    */
+          NONAME = NONAME + 1;                    /* INCR TBL COUNTER */
+          IF NONAME > 50 THEN DO;                 /* TOO MANY NAMES   */
+               PUT FILE (SYSPRINT) EDIT
+                    ('MORE THAN 50 REQUESTED MEMBERS--JOB ABORTED')
+                    (A);
+               GO TO ENDJOB;
+               END;
+          NAMETBL(NONAME) = SUBSTR(RECHOLD,1,8);  /* NAME TO TABLE    */
+          GO TO READ1;                            /* GET NEXT CARD    */
+ /*                                                                   */
+ /*       PROCESS TAPE SECTION                                        */
+ /*       SET SYS001 EOF FOR END OF JOB                               */
+ /*                                                                   */
+ READ2:   ON ENDFILE (SYS001) GO TO ENDJOB;
+ READ3:   READ FILE (SYS001) INTO (RECHOLD);      /* GET INPUT REC    */
+          IF SUBSTR(RECHOLD,1,2) ^= './'          /* LOOK FOR ./ CARD */
+               THEN GO TO READ3;
+          KEYSTART = INDEX(RECHOLD,' ADD ');      /* LOOK FOR ADD     */
+          IF KEYSTART = 0 THEN GO TO READ3;       /* NOT ADD CARD     */
+ LOC1:    KEYSTART = INDEX(RECHOLD,'MEMBER=');    /* LOOK FOR KEYWORD */
+          IF KEYSTART ^= 0 THEN DO;               /* FOUND KEY WORD   */
+               TEMPSTR = SUBSTR(RECHOLD,KEYSTART+7,74-KEYSTART);
+               GO TO FOUNDNEWMEMBER;
+               END;
+          KEYSTART = INDEX(RECHOLD,'NAME=');      /* LOOK FOR KEYWORD */
+          IF KEYSTART = 0 THEN DO;                /* FORMAT ERROR     */
+               PUT FILE (SYSPRINT) EDIT
+               ('INPUT (SYS001) FORMAT ERROR--JOB ABORTED')(A);
+               GO TO ENDJOB;
+               END;
+          TEMPSTR= SUBSTR(RECHOLD,KEYSTART+5,76-KEYSTART);
+ FOUNDNEWMEMBER:
+ /*       CHECK TABLE SECTION                                         */
+          SUBSTR(TEMPSTR,80,1) = ',';             /* INSURE COMMA     */
+          KEYEND = MIN(INDEX(TEMPSTR,' '),INDEX(TEMPSTR,','))-1;
+          NAMEHOLD = SUBSTR(TEMPSTR,1,KEYEND);    /* HOLD NAME        */
+          DO I=1 TO NONAME;                       /* SEARCH TABLE     */
+          IF NAMEHOLD = NAMETBL(I) THEN GO TO COPYMEMBER;
+          END;
+          PUT FILE (SYSPRINT) EDIT ('MEMBER ',NAMEHOLD,' FOUND')
+               (SKIP,3(A));                       /* NO COPY REQUEST  */
+          GO TO READ3;                            /*    THIS MEMBER   */
+ /*                                                                   */
+ /*       COPY MEMBER SECTION                                         */
+ /*                                                                   */
+ COPYMEMBER: PUT FILE (SYSPRINT) EDIT ('MEMBER ',NAMEHOLD,' FOUND/COPIED
+ ')            (SKIP,3(A));
+ COPY1:   WRITE FILE (SYS002) FROM (RECHOLD);     /* COPY MEMBER      */
+ READ4:   READ FILE (SYS001) INTO (RECHOLD);      /* GET NEXT RECORD  */
+          IF SUBSTR(RECHOLD,1,2) ^= './' THEN GO TO COPY1;
+          KEYSTART = INDEX(RECHOLD,' ADD ');      /* CONTROL REC FND  */
+          IF KEYSTART ^= 0 THEN GO TO LOC1;       /* ADD CARD FOUND   */
+          KEYSTART = INDEX(RECHOLD,' ENDUP ');    /* LOOK FOR ENDUP   */
+          IF KEYSTART ^= 0 THEN GO TO READ3;      /* IGNORE ENDUP     */
+          GO TO COPY1;                            /* COPY CONTROL CRD */
+ /*                                                                   */
+ /*       END OF JOB;                                                 */
+ ENDJOB:  END UT452;

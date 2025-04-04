@@ -1,0 +1,603 @@
+         TITLE 'UT457 - INTERNAL READER INTERFACE'
+UT457    CSECT
+         PRINT ON,GEN,NODATA
+         SPACE 1
+*        REGISTER EQUATES AND USAGE
+         SPACE 1
+R0       EQU   0
+R1       EQU   1
+R2       EQU   2         WORK REGISTER
+R3       EQU   3         WORK REGISTER
+R4       EQU   4         BAL RETURN ADDRESS
+R5       EQU   5         ADDRESS OF SYSPRINT BUFFER
+R6       EQU   6         ADDRESS OF SYSUT1 BUFFER
+R7       EQU   7         ADDRESS OF SYSUT2 BUFFER
+R8       EQU   8         ADDRESS OF SYSIN BUFFER
+R9       EQU   9         PARM SUB-FIELD POINTER
+R10      EQU   10        BXLE INCREMENT / WORK REGISTER
+R11      EQU   11        BXLE COMPARAND (END OF PARM FIELD)
+R12      EQU   12        BASR REGISTER 2
+R13      EQU   13        SAVE AREA POINTER / BASE REGISTER 1
+R14      EQU   14        BALR RETURN ADDRESS
+R15      EQU   15        BALR ROUTINEADDRESS
+         EJECT
+***********************************************************************
+*        HOUSEKEEPING                                                 *
+***********************************************************************
+         SPACE 1
+         PGMIN EQUATES=NO          ESTABLISH ADDRESSABILITY
+         PRINT NOGEN               SUPPRESS MACRO EXPANSION
+         LR    R9,R1               PRESERVE PARM POINTER
+         L     R15,DATEADDR        GET ADDRESS OF DATERTN
+         LA    R1,ADATEFLD         POINT R1 AT ADDRESS OF DATE FIELD
+         BALR  R14,R15             PASS CONTROL TO DTERTN
+         SPACE 5
+***********************************************************************
+*        OPEN DATA SETS                                               *
+***********************************************************************
+         SPACE 1
+         LA    R10,MAXDS           ESTABLISH LOOP
+         LA    R2,DCBTABLE         POINT AT AD-CON TABLE
+LOOP1    BAL   R4,DDFIND           VERIFY DD STATEMENT EXISTS
+         BAL   R4,OPEN             OPEN DATA SET IF PRESENT
+         LA    R2,NTRYSIZE(,R2)    POINT AT NEXT TABLE ENTRY
+         BCT   R10,LOOP1           PROCESS NEXT DATA SET
+         BAL   R4,PUTOUT           GET ADDRESS OF FIRST SYSOUT BUFFER
+         BAL   R4,HEADING          WRITE SYSOUT HEADINGS
+         EJECT
+***********************************************************************
+*                                                                     *
+*        THIS ROUTINE PUTS OUT INITIAL INFORMATORY MESSAGES           *
+*         TO SYSPRINT ( IF PRESENT ).                                 *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+         TM    PRINTSW,DDOPEN      TEST FOR SYSPRINT DATA SET
+         BZ    TESTUT2             BRANCH IF NOT PRESENT
+         BAL   R4,PRINT            GET FIRST SYSPRINT BUFFER ADDRESS
+         MVI   0(R5),PAGESKIP      ESTABLISH PAGE SKIP
+         BAL   R4,PRINT            SKIP TO NEW PAGE
+         MVI   0(R5),SPCE3AFT      ESTABLISH TRIPLE SPACE
+         MVC   5(L'LINE01,R5),LINE01 ADD HEADING LINE
+         BAL   R4,PRINT            WRITE HEADING LINE
+         MVC   5(L'LINE02,R5),LINE02 ADD SUB-HEADING
+         BAL   R4,PRINT            WRITE SUB-HEADING
+         LA    R10,MAXDS           ESTABLISH DETAIL LOOP
+         LA    R2,DCBTABLE         POINT AT AD-CON TABLE
+LOOP2    TM    0(R2),DDSTAT        TEST IF DD STATEMENT PRESENT
+         BZ    *+14                BYPASS PRINT IF NOT
+         MVC   10(8,R5),4(R2)      ADD DD NAME TO PRINT LINE
+         BAL   R4,PRINT            PRINT DETAIL LINE
+         LA    R2,NTRYSIZE(,R2)    POINT TO NEXT TABLE ENTRY
+         BCT   R10,LOOP2           PROCESS NEXT ENTRY
+         MVI   0(R5),SPCE2AFT      ESTABLISH DOUBLE BLANK LINE
+         BAL   R4,PRINT             AND WRITE THEM
+         SPACE 5
+***********************************************************************
+*        VERIFY THAT SYSUT2 DD STATEMENT EXISTS                       *
+***********************************************************************
+         SPACE 1
+TESTUT2  TM    SYSUT2SW,DDSTAT     TEST FOR SYSUT2 STATEMENT
+         BO    PROCESS             BRANCH IF ONE EXISTS
+         MVC   COMPCODE,COND16     SET CONDITION CODE TO 16
+         WTO   'UT457     ***** NO SYSUT2 STATEMENT *****'
+         WTO   'UT457     ***** PROCESSING BYPASSED *****'
+         TM    PRINTSW,DDOPEN      TEST FOR SYSPRINT
+         BZ    JOBEND              SET CONDITION CODE IF NOT
+         MVC   5(L'LINE08,R5),LINE08 ADD ERROR MESSAGE
+         BAL   R4,PRINT            WRITE ERROR MESSAGE
+         MVI   0(R5),SPCE2AFT      ESTABLISH DOUBLE SPACE
+         MVC   5(L'LINE09,R5),LINE09 TELL OF INACTION
+         BAL   R4,PRINT            WRITE MESSAGE
+         B     PRINTCDE            PRINT CONDITION CODE
+         EJECT
+***********************************************************************
+*        THIS ROUTINE READS RECORDS FROM SYSUT1 ( IF ANY ),           *
+*         AND WRITES THEM DIRECTLY TO SYSUT2.                         *
+***********************************************************************
+         SPACE 1
+PROCESS  BAL   R4,WRITE            GET FIRST SYSUT2 BUFFER ADDRESS
+READNEXT BAL   R4,READ             GET SYSUT1 RECORD
+         OI    PARMSW,JOBSTRM      INDICATE JOB STREAM
+         MVC   0(80,R7),0(R6)      MOVE TO SYSUT2 BUFFER
+         BAL   R4,WRITE            WRITE SYSUT2 RECORD
+         B     READNEXT            GET NEXT SYSUT1 RECORD
+         EJECT
+***********************************************************************
+*        THIS ROUTINE PROCESSES RECORDS FROM SYSIN ( IF ANY ).        *
+*         IF THE RECORD IS RECOGNISED AS A CONTROL RECORD, IT IS      *
+*         PROCESSED ACCORDINGLY:  IF THE FIRST TWO CHARACTERS ARE     *
+*         '.$' THE RECORD IS RE-FORMATED AS A HASP COMMAND CARD:      *
+*         IF THE FIRST TWO CHARACTERS ARE './' OR '.*' THEN           *
+*         THE CARD IS ASSUMED TO BE PSEUDO-JCL, AND THE '.'           *
+*         IS REPLACED BY A '/' BEFORE THE RECORD IS WRITTEN:          *
+*         OTHERWISE THE RECORD IS WRITTEN TO SYSUT2 WITHOUT           *
+*         ANY ALTERATION.                                             *
+***********************************************************************
+         SPACE 1
+ENDUT1   BAL   R4,GET              GET SYSIN RECORD
+         SPACE 1
+*        ADD ADDITIONAL CONTROL CARD TESTS HERE
+         SPACE 1
+         CLC   0(2,R8),=C'./'      TEST FOR PSEUDO '//'
+         BE    JCLDATA             BRANCH IF YES
+         CLC   0(2,R8),=C'.*'      TEST FOR PSEUDO '/*'
+         BE    JCLDATA             BRANCH IF YES
+         CLC   0(2,R8),HASPCOMM    TEST FOR COMMAND CARD
+         BNE   JUSTDATA            BRANCH IF NOT COMMAND
+         TM    PARMSW,JOBSTRM      TEST IF OUTPUTTING JOB STREAM
+         BZ    REFORMAT            BRANCH IF NOT
+*
+*        HASP THINKS ILLEGAL ANY COMMANDS ENCOUNTERED IN A
+*         JOB STREAM, SO IT IS NECESSARY TO END THE STREAM.
+*
+         MVC   0(L'EOF,R7),EOF     SET UP EOF CARD
+         BAL   R4,WRITE            TERMINATE JOB-STREAM
+         NI    PARMSW,255-JOBSTRM  SET OFF JOB-STREAM SWITCH
+REFORMAT MVC   0(2,R7),EOF         SET UP '/*'
+         MVC   2(78,R7),1(R8)      ADD COMMAND TEXT
+         BAL   R4,WRITE            WRITE COMMAND TO SYSUT2
+         B     ENDUT1              GET NEXT SYSIN RECORD
+         SPACE 1
+JCLDATA  MVI   0(R8),C'/'          REPLACE '.' BY '/'
+JUSTDATA MVC   0(80,R7),0(R8)      MOVE SYSIN RECORD TO SYSUT2 BUFFER
+         BAL   R4,WRITE            WRITE RECORD TO SYSUT2
+         OI    PARMSW,JOBSTRM      INDICATE PROCESSING JOB-STREAM
+         B     ENDUT1              GET NEXT SYSIN RECORD
+         EJECT
+***********************************************************************
+*        THIS ROUTINE PROCESSES SUB-FIELDS OBTAINED FROM THE          *
+*         PARM FIELD CODED IN THE EXEC STATEMENT.  IF THE             *
+*         FIRST CHARACTER OF THE SUB-FIELD IS A '$', THE              *
+*         SUB-FIELD IS RE-FORMATED AS A HASP COMMAND CARD;            *
+*         OTHERWISE THE SUB-FIELD IS ASSUMED TO BE A                  *
+*         JOB NAME, AND IT IS INSERTED IN A RELEASE                   *
+*         COMMAND OF THE FORM :-                                      *
+*              $A'JOB NAME'                                           *
+***********************************************************************
+         SPACE 1
+ENDIN    TM    PARMSW,JOBSTRM      TEST FOR OUTPUTING JOB-STREAM
+         BZ    NEXTPARM            BRNCH IF NOT
+         MVC   0(L'EOF,R7),EOF     SET UP EOF CARD
+         BAL   R4,WRITE            TERMINATE JOB-STREAM
+         NI    PARMSW,255-JOBSTRM   SET OFF JOB-STREAM SWITCH
+NEXTPARM BAL   R4,GETPARM          GET SUB-FIELD
+         B     PRINTEND            PARM EXHAUSTED, SO EXIT
+         CLI   0(R2),DOLLAR        TEST FOR COMMAND
+         BNE   JOBNAME             BRANCH IF NOT
+         MVC   0(2,R7),EOF         SET UP '/*'
+         EX    R3,MOVECOMM         ADD COMMAND TEXT
+         BAL   R4,WRITE            ADD IT TO SYSUT2
+         B     NEXTPARM            BET NEXT SUB-FIELD
+         SPACE 1
+JOBNAME  MVC   0(5,R7),RELEASE SET UP ''/*$A'''
+         EX    R3,MOVENAME         ADD JOB NAME TO COMMAND
+         AR    R7,R3               INCREMENT R7 TO
+         LA    R7,6(,R7)            POINT PAST NAME
+         MVI   0(R7),QUOTE          AND ADD CLOSING QUOTE MARK
+         BAL   R4,WRITE            WRITE TO SYSUT2
+         B     NEXTPARM            GET NEXT SUB-FIELD
+         SPACE 5
+MOVECOMM MVC   2(0,R7),0(R2)       EXECUTED MOVE INSTRUCTION
+MOVENAME MVC   5(0,R7),0(R2)       EXECUTED MOVE INSTRUCTION
+         EJECT
+***********************************************************************
+*        PUT OUT TERMINATION MESSAGES TO SYSPRINT.                    *
+***********************************************************************
+         SPACE 1
+PRINTEND MVC   0(5,R7),EOF         ADD EOF CARD TO SYSUT2
+         TM    PRINTSW,DDOPEN      TEST FOR SYSPRINT
+         BZ    JOBEND              BRANCH IF NO SYSPRINT
+         MVC   5(L'LINE03,R5),LINE03         **
+         MVC   L'LINE03+5(4,R5),EDITMASK      *
+         ED    L'LINE03+5(4,R5),CNTPARM       *
+         BAL   R4,PRINT                       *
+         MVC   5(L'LINE04,R5),LINE04          *   ** ISSUE
+         MVC   L'LINE04+5(4,R5),EDITMASK      *   *   MESSAGES
+         ED    L'LINE04+5(4,R5),CNTUT1        *   *   ANALYSING
+         BAL   R4,PRINT                       ** **   PARM
+         MVC   5(L'LINE05,R5),LINE05          *   *   AND
+         MVC   L'LINE05+5(4,R5),EDITMASK      *   *   I/O
+         ED    L'LINE05+5(4,R5),CNTIN         *   **  ACTIVITY
+         BAL   R4,PRINT                       *
+         MVC   5(L'LINE06,R5),LINE06          *
+         MVC   L'LINE06+5(4,R5),EDITMASK      *
+         ED    L'LINE06+5(4,R5),CNTUT2        *
+         BAL   R4,PRINT                      **
+         MVI   0(R5),SPCE2AFT      ESTABLISH DOUBLE SPACE
+         BAL   R4,PRINT             AND ISSUE IT
+PRINTCDE MVC   5(L'LINE07,R5),LINE07 ADD COND CODE MESSAGE
+         MVI   0(R5),SPCE2AFT      ESTABLISH DOUBLE SPACE
+         LH    R2,COMPCODE         GET CONDITION CODE
+         CVD   R2,WORKAREA         CONVERT IT TO DECIMAL
+         ED    CONDMASK,WORKAREA+6 CONVERT IT TO PRINTABLE EBCDIC
+         MVC   L'LINE07+6(2,R5),CONDMASK+2 ADD IT TO PRINT LINE
+         BAL   R4,PRINT            PRINT COND CODE MESSGAE
+         MVC   5(L'LINE10,R5),LINE10 MOVE IN FINAL MESSAGE
+         SPACE 1
+         TM    SYSOUTSW,DDOPEN     TEST FOR SYSOUT
+         BZ    JOBEND              BRANCH IF NO SYSOUT
+         L     R1,OUTBUFER         GET SYSOUT BUFFER ADDRESS
+         MVI   0(R1),SPCE2AFT      ESTABLISH DOUBLE BLANK LINE
+         BAL   R4,PUTOUT            AND ISSUE IT
+         MVC   5(L'LINE10,R1),LINE10 MOVE IN FINAL MESSAGE
+         EJECT
+***********************************************************************
+*        JOB TERMINATION ROUTINE - CLOSE ANY OPEN DATA SETS,          *
+*         SET A COMPLETION CODE IN REGISTER 15, AND RETURN .          *
+***********************************************************************
+         SPACE 1
+JOBEND   LA    R10,MAXDS           ESTABLISH LOOP
+         LA    R2,DCBTABLE         POINT AT AD-CON TABLE
+         BAL   R4,CLOSE            CLOSE DATA SET
+         LA    R2,NTRYSIZE(,R2)    POINT AT NEXT TABLE ENTRY
+         BCT   R10,*-8             CLOSE NEXT DATA SET
+        PGMOUT RC=COMPCODE         SET COND CODE AND RETURN
+         EJECT
+***********************************************************************
+*                                                                     *
+*        THIS ROUTINE SCANS THE TIOT TO DETERMINE  WHETHER            *
+*         A SPECIFIC DD STATEMENT IS PRESENT IN THE JCL.  ON          *
+*         ENTRY TO THE ROUTINE, R2 POINTS AT THE ENTRY IN             *
+*         THE DCB AD-CON TABLE OF THE REQUIRED DATA SET NAME.         *
+*         IF THE SPECIFIED DD STATEMENT IS FOUND, CONTROL IS          *
+*         RETURNED TO THE ADDRESS IN REGISTER 4, OTHERWISE            *
+*         CONTROL IS RETURNED RO R4+4.                                *
+*                                                                     *
+***********************************************************************
+         SPACE 5
+DDFIND   SUBIN PREFIX=D,SAVE=R10   ENTRY TO DD SEARCH SUB-ROUTINE
+         SR    R10,R10             ZEROISE WORK REGISTER
+         L     R3,16               GET CVT ADDRESS
+         L     R3,0(,R3)           GET ADDRESS OF TCB DISPATCH FIELDS
+         L     R3,4(,R3)           GET ADDRESS OF THIS TCB
+         L     R3,12(,R3)          GET ADDRESS OF TIOT
+         LA    R3,24(,R3)          POINT AT FIRST DD ENTRY
+DDLOOP   CLC   0(4,R3),ZEROWORD    TEST FOR END OF TIOT
+         BE    DDNOTFND            BRANCH IF YES
+         CLC   4(8,R3),4(R2)       TEST FOR DD NAME MATCH
+         BE    DDFOUND             BRANCH IF YES
+         IC    R10,0(R3)           INSERT ENTRY LENGTH
+         AR    R3,R10              INCREMENT TO NEXT ENTRY
+         B     DDLOOP              PROCESS NEXT ENTRY
+         SPACE 1
+DDFOUND  OI    0(R2),DDSTAT        INDICATE DD STATEMENT FOUND
+        SUBOUT PREFIX=D,RESTORE=R10 RETURN TO MAIN-LINE
+         SPACE 1
+DDNOTFND EQU   *                   RETURN TO R4+4
+        SUBOUT PREFIX=D,RESTORE=R10,RETURN=4(R4)
+         EJECT
+***********************************************************************
+*        OPEN / CLOSE ROUTINES                                        *
+***********************************************************************
+         SPACE 5
+OPEN     SUBIN ,                   ENTRY TO OPEN ROUTINE
+         L     R3,0(,R2)           GET DCB ADDRESS
+         CLI   9(R2),C'1'          TEST FOR SYSUT1
+         BE    OPEN2               BRANCH IF YES
+         CLI   8(R2),C'N'          TEST FOR SYSIN
+         BE    OPEN2               BRANCH IF YES
+         OPEN  ((R3),(OUTPUT))     OPEN OUTPUT DATA SET
+         B     OPEN3               SET SWITCH
+OPEN2    OPEN  ((R3),(INPUT))      OPEN INPUT DATA SET
+OPEN3    OI    0(R2),DDOPEN        INDICATE DATA SET OPEN
+        SUBOUT ,                   RETURN TO MAIN-LINE
+         SPACE 5
+CLOSE    SUBIN ,                   ENTRY TO CLOSE SUB-ROUTINE
+         TM    0(R2),DDOPEN        TEST IF DATA SET OPEN
+         BZ    0(R4)               RETURN IF NOT
+         L     R3,0(,R2)           GET DCB ADDRESS
+         CLOSE ((R3))              CLOSE DATA SET
+         NI    0(R2),255-DDOPEN    SET OFF 'OPEN' SWITCH
+        SUBOUT ,                   RETURN TO MAIN-LINE
+         SPACE 5
+BLKSZRTN SUBIN ,                   SUPPLY DEFAULT IF NO BLKSIZE
+         USING IHADCB,R1           ESTABLISH DCB ADDRESSABILITY
+         CLC   DCBBLKSI,ZEROWORD   HAS BLOCK-SIZE BEEN SUPPLIED
+         BNE   0(R14)              RETURN TO OPEN IF YES
+         MVC   DCBBLKSI,DCBLRECL   MOVE LRECL TO BLKSIZE
+        SUBOUT RETURN=(R14)        RETURN TO OPEN ROUTINES
+         DROP  R1                  DROP DCB ADDRESSABILITY
+         EJECT
+***********************************************************************
+*        READ / WRITE SUB-ROUTINES                                    *
+***********************************************************************
+         SPACE 1
+PRINT    SUBIN ,                   WRITE TO SYSPRINT
+         TM    PRINTSW,DDOPEN      TEST IF SYSPRINT OPEN
+         BZ    0(R4)               RETURN IF NOT
+         PUT   SYSPRINT            WRITE PRINT LINE
+         LR    R5,R1               SAVE NEW BUFFER ADDRESS
+         MVI   1(R5),SPACE         MOVE SPACE TO START OF PRINT LINE
+         MVC   2(131,R5),1(R5)      AND PROPAGATE THROUGH
+         MVI   0(R5),SPCE1AFT      INSERT DEFAULT SINGLE SPACE
+        SUBOUT ,                   RETURN TO MAIN-LINE
+         SPACE 5
+WRITE    SUBIN PREFIX=W,SAVE=R4    WRITE TO SYSUT2
+WRITEBR  BC    15,WRITESW          FIRST TIME BRANCH
+         BAL   R4,SETOUT           SET UP SYSOUT DETAIL LINE
+         BAL   R4,PUTOUT            AND WRITE IT
+WRITESW  NI    WRITEBR+1,15        SET OFF FIRST TIME BRANCH
+         PUT   SYSUT2              WRITE RECORD
+         LR    R7,R1               SAVE NEW BUFFER ADDRESS
+         MVI   0(R7),SPACE         MOVE SPACE TO START OF RECORD
+         MVC   1(79,R7),0(R7)       AND PROPAGATE THROUGH
+         AP    CNTUT2,ONE          INCREMENT COUNTER
+        SUBOUT PREFIX=W,RESTORE=R4 RETURN TO MAIN-LINE
+         SPACE 5
+READ     SUBIN ,                   READ FROM SYSUT1
+         TM    SYSUT1SW,DDOPEN     TEST IF DATA SET OPEN
+         BZ    ENDUT1              BRANCH TO EODAD ADDRESS IF NOT
+         GET   SYSUT1              GET NEXT RECORD
+         LR    R6,R1               SAVE BUFFER ADDRESS
+         AP    CNTUT1,ONE          INCREMENT COUNTER
+        SUBOUT ,                   RETURN TO MAIN-LINE
+         SPACE 5
+GET      SUBIN ,                   READ FROM SYSIN
+         TM    SYSINSW,DDOPEN      TEST IF DATA SET OPEN
+         BZ    ENDIN               BRANCH TO EODAD ADDRESS IF NOT
+         GET   SYSIN               GET NEXT RECORD
+         LR    R8,R1               SAVE BUFFER ADDRESS
+         AP    CNTIN,ONE           INCREMENT COUNTER
+        SUBOUT ,                   RETURN TO MAIN-LINE
+         EJECT
+***********************************************************************
+*        SYSOUT HEADING AND DETAIL ROUTINES                           *
+***********************************************************************
+         SPACE 1
+HEADING  SUBIN PREFIX=H,SAVE=R4    WRITE SYSOUT HEADINGS
+         TM    SYSOUTSW,DDOPEN     TEST FOR SYSOUT DATA SET
+         BZ    0(R4)               RETURN IF NONE
+         MVC   CNTLINE,ZERO        ZEROISE LINE COUNTER
+         AP    CNTPAGE,ONE         INCREMENT PAGE COUNT
+         L     R1,OUTBUFER         RETRIEVE BUFFER ADDRESS
+         MVI   0(R1),PAGESKIP      ESTABLISH PAGE SKIP
+         BAL   R4,PUTOUT           ISSUE CHANNEL SKIP
+         MVC   PAGENO,EDITMASK     ,OVE EDIT PATTERN TO LINE
+         ED    PAGENO,CNTPAGE      CONVERT PAGE NO. TO EBCDIC
+         MVC   0(L'LINE11,R1),LINE11 MOVE HEADING TO BUFFER
+         BAL   R4,PUTOUT           WRITE HEADING
+         MVI   0(R1),SPCE2AFT      ESTABLISH DOUBLE SPACE
+         MVC   26(L'LINE12,R1),LINE12 MOVE IN SECOND HEADING
+         BAL   R4,PUTOUT           WRITE SECOND HEADING
+         MVC   CNTLINE,FIVE        SET LINE COUNT TO FIVE
+        SUBOUT PREFIX=H,RESTORE=R4 RETURN TO MAIN-LINE
+         SPACE 5
+PUTOUT   SUBIN ,                   WRITE TO SYSOUT
+         TM    SYSOUTSW,DDOPEN     TEST FOR SYSOUT DATA SET
+         BZ    0(R4)               RETURN IF NONE
+         PUT   SYSOUT              WRITE PRINT LINE
+         ST    R1,OUTBUFER         SAVE NEW BUFFER ADDRESS
+         MVI   1(R1),SPACE         MOVE SPACE TO START OF LINE
+         MVC   2(131,R1),1(R1)      AND PROPAGATE THROUGH
+         MVI   0(R1),SPCE1AFT      ESTABLISH DEFAULT SINGLE SPACE
+         AP    CNTLINE,ONE         INCREMENT LINE COUNT
+         CP    CNTLINE,ENDOPAGE    TEST FOR END OF PAGE
+         BH    HEADING             WRITE HEADING IF YES
+        SUBOUT ,                   RETURN TO CALLER
+         SPACE 5
+SETOUT   SUBIN ,                   SET UP SYSOUT DETAIL LINE
+         TM    SYSOUTSW,DDOPEN     TEST FOR SYSOUT DATA SET
+         BZ    4(R4)               RETURN TO R4+4 IF NONE
+         CLC   0(L'EOF,R7),EOF     TEST FOR EOF CARD
+         BE    4(R4)               IGNORE IF YES
+         L     R1,OUTBUFER         RETRIEVE BUFFER ADDRESS
+         MVC   26(80,R1),0(R7)     MOVE SYSUT2 RECORD TO SYSOUT
+        SUBOUT ,                   RETURN TO CALLER
+         EJECT
+***********************************************************************
+*                                                                     *
+*        THIS SUB-ROUTINE RETRIEVES SUB-FIELDS FROM THE               *
+*         PARM FIELD IN THE EXEC STATEMENT.  CONTROL RETURNS TO       *
+*         R4+0 IF NO PARAMETER IS PRESENT, OR IF THE PARAMETER        *
+*         HAS BEEN EXHAUSDED.  CONTROL RETURNS TO R4+4 IF A           *
+*         SUB-FIELD HS BEEN LOCATED, WITH R2 CONTAINING THE           *
+*         SUB-FIELD ADDRESS AND R3 CONTAINING THE LENGTH.             *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+GETPARM  SUBIN ,                   RETRIEVE PARAMETER SUB-FIELD
+         BC    0,GETPARM2          FIRST TIME SWITCH
+         OI    *-3,X'F0'           SET UP FIRST TIME BRANCH
+         L     R11,0(,R9)          POINT R11 AT PARAMETER ARA
+         LH    R10,0(R11)          RETRIEVE COUNT FIELD
+         LTR   R10,R10             TEST IF PARM SUPPLIED
+         BZ    0(R4)               RETURN TO MAIN-LINE IF NOT
+         AR    R11,R10             POINT R11 AT END OF PARM
+         LA    R11,1(,R11)         POINT 1 PAST END OF PARM
+         L     R9,0(,R9)           POINT R9 AT PARAMETER AREA
+         LA    R9,2(,R9)           POINT PAST COUNT FIELD
+         LA    R10,1               ESTABLISH BXLE INCREMENT
+         CLI   0(R9),DOLLAR        TEST FOR COMMAND IN PARM
+         BNE   *+8                 BRANCH IF NOT
+         OI    PARMSW,$SEARCH      ESTABLISH COMMAND SEARCH
+GETPARM2 CR    R9,R11              TEST IF PARM EXHAUSTED
+         BH    0(R4)               RETURN TO MAIN-LINE IF YES
+         LR    R2,R9               POINT R2 AT START OF SUB-FIELD
+PARMLOOP CLI   0(R9),COMMA         TEST FOR COMMA
+         BNE   PARMADD             BRANCH IF NOT
+         TM    PARMSW,$SEARCH      TEST FOR COMMAND SEARCH
+         BZ    PARMLGTH            COMPUTE SUBFIELD LENGTH IF NOT
+         CLI   1(R9),DOLLAR        TEST FOR COMMAND
+         BE    PARMLGTH            COMPUTE SUBFIELD LENGHT IF YES
+PARMADD  BXLE  R9,R10,PARMLOOP     TEST NEXT CHARACTER
+PARMLGTH LR    R3,R9               POINT AT END OF SUBFIELD
+         SR    R3,R2               DETERMINE SUBFIELD LENGTH
+         LA    R9,1(,R9)           POINT AT START OF NEXT SUBFIELD
+         BCTR  R3,0                DECREMENT FOR EXECUTE
+         LTR   R3,R3               TEST IF R3 NEGATIVE
+         BM    GETPARM2            GET NEXT SUB-FIELD IF YES
+         AP    CNTPARM,ONE         INCREMENT COUNTER
+        SUBOUT RETURN=4(R4)        RETURN TO R4+4
+         EJECT
+***********************************************************************
+*        SYNAD ROUTINES FOR ALL I/O                                   *
+***********************************************************************
+         SPACE 1
+IOERROR  SUBIN ,                   PROCESS I/O ERROR
+         BAL   R4,IOERROR3         ANALYSE I/O ERROR & TELL OPERATOR
+         TM    PRINTSW,DDOPEN      TEST FOR SYSPRINT DATA SET
+         BZ    JOBEND              TERMINATE JOB IF NOT
+         BAL   R4,PRINT            PRINT BLAKK LINE
+         MVI   0(R5),SPCE2AFT      ESTABLISH DOUBLE SPACE
+         MVC   5(L'LINE15,R5),LINE15 MOVE IN ERROR MESSAGE
+         BAL   R4,PRINT            WRITE ERROR MESSAGE
+        SUBOUT RETURN=PRINTCDE     PRINT CONDITION CODE
+         SPACE 5
+IOERROR2 SUBIN ,                   PROCESS SYSPRINT I/O ERROR
+         BAL   R4,IOERROR3         ANALYSE I/O ERROR & TELL OPERATOR
+         TM    SYSOUTSW,DDOPEN     TEST FOR SYSOUT DATA SET
+         BZ    JOBEND              TERMINATE JOB IF NOT
+         BAL   R4,PUTOUT           PRINT BLANK LINE
+         MVC   5(L'LINE15,R1),LINE15 MOVE IN ERROR MESSAGE
+         BAL   R4,PUTOUT           PRINT ERROR MESSAGE
+        SUBOUT RETURN=JOBEND       TERMINATE JOB
+         SPACE 5
+IOERROR3 SUBIN ,                   ANALYSE ERROR & TELL OPERATOR
+         MVC   COMPCODE,COND12     SET CONDITION CODE
+         SYNADAF ACSMETH=QSAM      CALL O.S. ROUTINE
+         MVC   LINE15+12(86),50(R1) SAVE RESULT OF ANALYSIS
+         SYNADRLS ,                RELEASE O.S. BUFFER
+         WTO   MF=(E,LINE14)       TELL OPERATOR OF ERROR
+        SUBOUT ,                   RETURN TO CALLER
+         EJECT
+*        MISCELLANAOUS EQUATES
+         SPACE 1
+MAXDS    EQU   5                   ***** ALTER IF DD NAMES ADDED *****
+DDSTAT   EQU   1                   DD STATEMENT FOUND
+DDOPEN   EQU   2                   DATA SET OPEN
+$SEARCH  EQU   1                   SCAN PARM FOR $-SIGN
+JOBSTRM  EQU   2                   OUTPUTTING JOB STREAM
+SPCE1AFT EQU   X'09'               ADVANCE 1 AFTER PRINTING
+SPCE2AFT EQU   X'11'               ADVANCE 2 AFTER PRINTING
+SPCE3AFT EQU   X'19'               ADVANCE 3 AFTER PRINTING
+PAGESKIP EQU   X'8B'               SKIP TO NEW PAGE
+DOLLAR   EQU   C'$'                DOLLAR SIGN
+COMMA    EQU   C','                COMMA FOR PARM SCAN
+SPACE    EQU   X'40'               BLANK
+QUOTE    EQU   X'7D'               QUOTE MARK
+         SPACE 5
+LINE01   DC    C'UT457 - INTERNAL READER INTERFACE'
+LINE02   DC    C'THE FOLLOWING DD STATEMENTS WERE ENCOUNTERED -'
+LINE03   DC    C'NUMBER OF SUB-FIELDS FOUND IN THE PARM ='
+LINE04   DC    C'NUMBER OF RECORDS READ FROM SYSUT1     ='
+LINE05   DC    C'NUMBER OF RECORDS READ FROM SYSIN      ='
+LINE06   DC    C'NUMBER OF RECORDS WRITTEN TO SYSUT2    ='
+LINE07   DC    C'CONDITION CODE ='
+LINE08   DC    C'***** NO SYSUT2 STATEMENT *****'
+LINE09   DC    C'***** PROCESSING BYPASSED *****'
+LINE10   DC    C'END OF UT457'
+LINE11   DS    0CL133
+         DC    X'19'               TRIPLE SPACE
+         DC    CL2' '
+DATEFLD  DC    C'COBOLDATE'
+         DC    CL27' '
+         DC    C'UT457 ( INTERNAL READER INTERFACE ) - '
+         DC    C'LISTING OF OUTPUT'
+         DC    CL26' '
+         DC    C'PAGE'
+PAGENO   DC    CL4' '
+         DC    CL5' '
+LINE12   DS    0CL80
+         DC    C'*--------------------------------- CARD-IMAGE '
+         DC    C'---------------------------------*'
+LINE13   DC    C'***** PROCESSING TERMINATED *****'
+LINE14   DS    0F
+         DC    AL2(WTOEND-*),H'0',C'UT457 - '
+LINE15   DS    0CL98
+         DC    C'I/O ERROR - '
+         DC    CL86' '
+WTOEND   EQU   *
+         EJECT
+WORKAREA DS    D
+ZEROWORD DC    F'0'
+OUTBUFER DS    F                   SYSOUT BUFFER ADDRESS
+COMPCODE DC    H'0'
+COND12   DC    H'12'               I/O ERROR CONDITION CODE
+COND16   DC    H'16'
+         SPACE 1
+CNTPARM  DC    PL2'0'
+CNTUT1   DC    PL2'0'
+CNTUT2   DC    PL2'0'
+CNTIN    DC    PL2'0'
+CNTLINE  DC    PL2'0'              LINE COUNT FOR SYSOUT
+CNTPAGE  DC    PL2'0'              PAGE COUNT FOR SYSOUT
+ZERO     DC    PL2'0'              ZERO
+FIVE     DC    PL2'5'              FIVE
+ENDOPAGE DC    PL2'55'             END OF PAGE
+ONE      DC    PL2'1'
+         SPACE 1
+HASPCOMM DC    C'.$'
+EOF      DC    C'/*EOF'
+RELEASE  DC    C'/*$A'''
+EDITMASK DC    X'40202120'
+CONDMASK DC    X'40202120'
+         SPACE 1
+DATEADDR DC    V(DTERTN)           ADDRESS OF DATE ROUTINE
+ADATEFLD DC    A(DATEFLD)          ADDRESS OF RECEIVING AREA
+         SPACE 1
+PARMSW   DC    X'00'
+         EJECT
+DCBTABLE DS    0F
+PRINTSW  DC    X'00',AL3(SYSPRINT),CL8'SYSPRINT'
+SYSUT1SW DC    X'00',AL3(SYSUT1),CL8'SYSUT1'
+SYSUT2SW DC    X'00',AL3(SYSUT2),CL8'SYSUT2'
+SYSINSW  DC    X'00',AL3(SYSIN),CL8'SYSIN'
+SYSOUTSW DC    X'00',AL3(SYSOUT),CL8'SYSOUT'
+TABLEEND EQU   *                   END OF AD-CON TABLE
+TABLESIZ EQU   *-DCBTABLE          LENGTH OF TABLE
+NTRYSIZE EQU   TABLESIZ/MAXDS      SIZE OF TABLE ENTRY
+         SPACE 1
+EXITLIST DC    X'85',AL3(BLKSZRTN) ENTRY FOR DCB MODIFICATION
+         SPACE 4
+SYSPRINT DCB   DDNAME=SYSPRINT,                                        *
+               DSORG=PS,                                               *
+               MACRF=PL,                                               *
+               RECFM=FBM,                                              *
+               LRECL=133,                                              *
+               SYNAD=IOERROR2,                                         *
+               EXLST=EXITLIST
+         SPACE 4
+SYSOUT   DCB   DDNAME=SYSOUT,                                          *
+               DSORG=PS,                                               *
+               MACRF=PL,                                               *
+               RECFM=FBM,                                              *
+               LRECL=133,                                              *
+               SYNAD=IOERROR,                                          *
+               EXLST=EXITLIST
+         SPACE 4
+SYSUT1   DCB   DDNAME=SYSUT1,                                          *
+               DSORG=PS,                                               *
+               MACRF=GL,                                               *
+               RECFM=FB,                                               *
+               LRECL=80,                                               *
+               EODAD=ENDUT1,                                           *
+               SYNAD=IOERROR,                                          *
+               EXLST=EXITLIST
+         EJECT
+SYSUT2   DCB   DDNAME=SYSUT2,                                          *
+               DSORG=PS,                                               *
+               MACRF=PL,                                               *
+               RECFM=FB,                                               *
+               LRECL=80,                                               *
+               BUFNO=1,                                                *
+               SYNAD=IOERROR,                                          *
+               EXLST=EXITLIST
+         SPACE 4
+SYSIN    DCB   DDNAME=SYSIN,                                           *
+               DSORG=PS,                                               *
+               MACRF=GL,                                               *
+               RECFM=FB,                                               *
+               LRECL=80,                                               *
+               EODAD=ENDIN,                                            *
+               SYNAD=IOERROR,                                          *
+               EXLST=EXITLIST
+         EJECT
+         PRINT GEN                 ALLOW DCB DSECT EXPANSION
+         DCBD  DSORG=PS            GENERATE DCB DSECT
+UT457    CSECT
+         PRINT NOGEN               SUPPRESS MACRO EXPANSION
+         SPACE 1
+         LTORG
+         SPACE 1
+         END

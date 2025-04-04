@@ -1,0 +1,935 @@
+DGN1     TITLE 'MVTDEBE PROGRAM - D NORRIS'
+MVTDEBE  START 0
+         PRINT ON,NOGEN,NODATA
+         USING MVTDEBE,15
+         B     AROUND
+         DC    X'07'
+         DC    C'MVTDEBE'
+AROUND   DS    0H
+         SAVE  (14,12)
+BEGIN    BALR  12,0
+         USING *,12
+BEGIN1   EQU   *
+         USING SAVEAREA,13        ESTABLISH 13 AS BASE REG AND SAVE    X
+               AREA POINTER
+         LA    14,SAVEAREA-1
+         LA    14,1(,14)          REG 14 NOW POINTS TO SAVE AREA
+         ST    13,4(,14)          STORE BACK CHAIN POINTER
+         ST    14,8(,13)          STORE FORWARD CHAIN POINTER
+         LR    13,14              REG 13 NOW BASE AND SAVE POINTER
+         SPACE 1
+*  GET OS POINTERS
+         L     3,16               GET CVT POINTER
+         L     2,0(0,3)           GET POINTER TO TCB POINTERS
+         L     3,4(0,2)           GET TCB POINTER
+*  GET PROTECT KEY FROM TCB FOR THE DEB'S
+         OC    INDEB+24(1),28(3)
+         OC    OUTDEB+24(1),28(3)
+*  STORE TCB ADDRESS INTO DEBS
+         ST    3,INDEB
+         ST    3,OUTDEB
+*  GET TIOT ADDRESS
+         L     2,12(,3)           GET ADDRESS OF TIOT
+         ST    2,TIOTADR          STORE IT
+         WTO   'OEH800I MVTDEBE OPTIONS - BF, BS, CC, CP, CT, CTB, RW, *
+               SF, SR, TC, TCB,TD, TP, TT, WT, WTL'
+*  WRITE 'REPLY EOJ' MESSAGE
+         WTO   'OEH801I REPLY EOJ TO END MVTDEBE'
+         SPACE 1
+*  WRITE 'REPLY STOP' MESSAGE
+*     NOTE THAT NO WAIT IS ISSUED
+         SPACE 1
+TERMMSG  NI    JECB,X'00'               CLEAR ECB
+         WTOR  'OEH802I REPLY STOP TO END FUNCTION',JOB,4,JECB
+         SPACE 1
+*  ALL ROUTINES RETURN HERE WHEN THEY ARE FINISHED.
+         SPACE 1
+ASKAGN   EQU   *
+NEWNAME  NI    INIOB,X'3F'
+         NI    OUTIOB,X'3F'
+*  RESTORE TDINCCW IN CASE TP OVERLAYED IT
+         MVC   TDINCCW(8),TDRESTIN
+*  RESET TAPE DUMP SWITCHES
+         NI    TD3+1,X'0F'        SET BC 0 TO BC 15
+         NI    TD6+1,X'0F'
+*  WRITE 'REPLY PROG ID' MESSAGE
+         WTOR  'OEH803D REPLY PROG ID - XX',ID,3,REPLYECB
+         BAL   11,WAITANS         BRANCH TO WAIT ROUTINE
+         SPACE 1
+*  INTERPRET PROGRAM ID
+         SPACE 1
+         OC    ID(3),=X'404040'   CONVERT REPLY TO UPPER CASE
+         CLC   ID(3),=C'EOJ'
+         BE    EOJ
+         CLC   ID(3),=C'WTL'
+         BE    WTL
+         CLC   ID(3),=CL3'TCB'
+         BE    TCB
+         CLC   ID(3),=C'CTB'
+         BE    CTB
+         CLC   ID(2),=C'BF'
+         BE    BF
+         CLC   ID(2),=C'BS'
+         BE    BS
+         CLC   ID(2),=C'CC'
+         BE    CC
+         CLC   ID(2),=C'CP'
+         BE    CP
+         CLC   ID(2),=C'CT'
+         BE    CT
+         CLC   ID(2),=C'RW'
+         BE    RW
+         CLC   ID(2),=C'SF'
+         BE    SF
+         CLC   ID(2),=C'SR'
+         BE    SR
+         CLC   ID(2),=C'TC'
+         BE    TC
+         CLC   ID(2),=C'TD'
+         BE    TD
+         CLC   ID(2),=C'TP'
+         BE    TP
+         CLC   ID(2),=C'TT'
+         BE    TT
+         CLC   ID(2),=C'WT'
+         BE    WT
+         WTO   'OEH804I BAD ID - TRY AGAIN'
+         B     ASKAGN
+         EJECT
+*  END OF JOB ROUTINE
+         SPACE 1
+*  RELOAD SAVE AREA POINTER
+EOJ      L     13,4(0,13)
+         RETURN (14,12),RC=0
+         EJECT
+*  BACKSPACE A FILE ON TAPE
+         SPACE 1
+BF        EQU   *
+         BAL   10,TPOUTSET        GO GET OUTPUT TAPE
+         MVC   OUTCCW+8(8),BFCCW      MOVE BACKSPACE CCW TO OUTPUT IOB
+         B    SFEXCP
+         SPACE 1
+*  FORWARD SPACE A FILE ON TAPE
+         SPACE 1
+SF       EQU   *
+         BAL   10,TPOUTSET      GO GET OUTPUT TAPE
+         MVC   OUTCCW+8(8),SFCCW  MOVE FORWARD SPACE CCW TO IOB
+SFEXCP   EQU   *
+         MVC   OUTCCW+16(8),=X'0300000020000001'  MODE SET NO-OP
+         BAL   11,IOOUT           GO SPACE THE FILE
+         CLI   OUTECB,X'7F'       WAS I/O SUCCESSFUL
+         BE    ASKAGN
+         TM    OUTSTAT+4,X'02'   BACKED INTO LOAD POINT
+         BC    1,TAPERR    YES, BRANCH
+         B     ASKAGN
+         EJECT
+*  BACKSPACE NNNN RECORDS ON TAPE
+         SPACE 1
+BS       EQU   *
+         SPACE 1
+*  SKIP NNNN RECORDS ON TAPE
+         SPACE 1
+SR       EQU   *
+         BAL   10,TPOUTSET        GO GET OUTPUT TAPE
+         MVC   FINAL(10),=X'F0F0F0F0F0FFFFFFFFFF'  CLEAR REPLY AREA
+         WTOR  'OEH805D REPLY NUMBER RECS TO SKIP - XXX',              X
+               TEMP,5,REPLYECB
+         BAL   11,WAITANS         WAIT FOR REPLY
+BSREPLY  MVC   FINAL(10),FINAL+1  SHIFT REPLY ONE TO THE LEFT
+         CLI   TEMP,X'FF'         REACHED END OF REPLY
+         BNE   BSREPLY
+         PACK  TDWK,FINAL(5)      CONVERT REC NO TO BINARY
+         CVB   6,TDWK
+         CLC   ID(2),=C'SR'       WAS REQUEST SKIP RECORDS
+         BE    SREX               FALL THROUGH FOR BACKSPACE
+BSEX     MVC   OUTCCW+8(8),BSCCW  MOVE BACKSPACE CCW TO OUTPUT IOB
+BSEX2    MVC   OUTCCW+16(8),=X'0300000020000001' MODE SET NO-OP
+BSAGN    EQU   *
+         BAL   11,IOOUT           GO SPACE THE FILE
+         CLI   OUTECB,X'7F'       WAS IT A SUCCESS
+         BE    BCT6
+         TM    OUTSTAT+4,X'02'      AT LOAD POINT
+         BC    1,TAPERR      YES, BRANCH
+BCT6     EQU   *
+         BCT   6,BSAGN            DECREMENT, TEST REC NO
+         B     ASKAGN
+SREX     MVC   OUTCCW+8(8),SRCCW  MOVE FORWARD SPACE CCW TO OUTPUT IOB
+         B     BSEX2
+         EJECT
+*  CARD TO CARD REPRODUCE
+         SPACE 1
+CC       EQU   *
+         MVI   INMODSTK,X'42'     SELECT STACKER 2
+         MVI   INDEVT,X'41'   INPUT = 2540
+         MVC   DDNAME(8),=CL8'SYSIN'  MOVE DDNAME
+         BAL   6,TIOTSCAN         GET UCB ADDRESS
+         ST    2,INDEBMOD         STORE UCB ADDRESS IN DEB
+         MVI   OUTMDSTK,X'42'     SELECT STACKER 2
+         MVI   OUTDEVT,X'42'  OUTPUT = 2540
+         MVC   DDNAME(8),=C'SYSPUNCH'  MOVE DDNAME
+         BAL   6,TIOTSCAN         GO GET UCB ADDRESS
+         ST    2,OUTDEBMD         STORE UCB ADDRESS INTO DEB
+         MVC   INCCW(8),CP1CCW    MOVE READ CCW TO INPUT IOB
+         MVC   OUTCCW(8),CTCCW    MOVE PUNCH CCW TO OUTPUT IOB
+CCLOOP   EQU   *
+         BAL   11,IOIN            READ A CARD
+         CLI   INECB,X'7F'        WAS INPUT A SUCCESS
+         BE    CC1
+         TM    INSTAT+4,X'01'    EOF
+         BC    1,ASKAGN    YES
+         B     RDRERROR
+CC1      EQU   *
+         BAL   11,IOOUT           PUNCH A CARD
+         CLI   OUTECB,X'7F'       WAS OUTPUT A SUCCESS
+         BE    CCLOOP
+*
+PCHERROR EQU   *
+         WTO   'OEH806I PUNCH ERROR - STOP'
+         B     ASKAGN
+         EJECT
+*  CARD TO PRINTER - 80/80 LIST
+         SPACE 1
+CP       EQU   *
+*  SET UP READER'S DCB AND DEB
+         MVI   INMODSTK,X'42'     SELECT STACKER 2
+         MVI   INDEVT,X'41'   INPUT = 2540
+         MVC   DDNAME(8),=CL8'SYSIN'  MOVE DDNAME
+         BAL   6,TIOTSCAN         GO GET UCB ADDRESS
+         ST    2,INDEBMOD         STORE UCB ADDRESS INTO DEB
+         BAL   9,OPENPRNT         GO OPEN PRINTER
+CP2      EQU   *
+         BAL   6,SKIPTO1          SKIP PRINTER TO 1
+*  SET UP READER CCW
+CPGO     MVC   INCCW(8),CP1CCW    MOVE READ CCW TO INPUT IOB
+CPLOOP   EQU   *
+         BAL   11,IOIN            READ A CARD
+         CLI   INECB,X'7F'        INPUT A SUCCESS
+         BE    CP1
+         TM    INSTAT+4,X'01'      EOF?
+         BC    1,ASKAGN
+RDRERROR EQU   *
+         WTO   'OEH807I READER ERROR - STOP'
+         B     ASKAGN
+CP1      EQU   *
+         MVC   TDOUTAR(80),TDAREA  MOVE CARD TO PRINT AREA
+         MVC   TDOUTAR+80(52),=CL52' '  CLEAR REST OF PRINT AREA
+         BAL   9,TDPRINT          PRINT A LINE
+         B     CPLOOP
+         EJECT
+*  CARD TO TAPE
+         SPACE 1
+CT       EQU   *
+*  SET UP READER'S DCB AND DEB
+         MVI   INMODSTK,X'42'     SELECT STACKER 2
+         MVI   INDEVT,X'41'   INPUT = 2540
+         MVC   DDNAME(8),=CL8'SYSIN'  MOVE DDNAME
+         BAL   6,TIOTSCAN         GET UCB ADDRESS
+         ST    2,INDEBMOD         STORE UCB ADDRESS INTO DEB
+         MVC   INCCW(8),CP1CCW    MOVE READ CCW TO INPUT IOB
+*  SET UP TAPE'S DCB AND DEB
+         BAL   10,TPOUTSET        GO TO 'OUTPUT TAPE' MESSAGE
+         MVC   OUTCCW+8(8),CTCCW  MOVE WRITE CCW TO OUTPUT IOB
+         SR    2,2                SET CARD COUNT TO ZERO
+CTLOOP   EQU   *
+         BAL   11,IOIN            READ A CARD
+         CLI   INECB,X'7F'        READ A SUCCESS
+         BE    CT1
+         TM    INSTAT+4,X'01'     CHECK UNIT EXCAPTION - EOF
+         BC    1,CTEOJ1
+         B     RDRERROR
+CT1      EQU   *
+         LA    2,1(2)             INCREMENT CARD COUNT
+         BAL   11,IOOUT           WRITE A TAPE
+         CLI   OUTECB,X'7F'       WRITE A SUCCESS
+         BE    CTLOOP
+         B     TAPERR
+         SPACE 1
+*  DISPLAY CARD COUNT
+         SPACE 1
+CTEOJ1   EQU   *
+         MVC   COUNT(6),=X'402020202020'  MOVE IN EDIT MASK
+         CVD   2,TDWK             EDIT THE CARD COUNT
+         ED    COUNT(6),TDWK+5
+         LA    1,MESSAGE
+         SVC   35      PRINT THE NUMBER OF CARDS THAT WENT TO TAPE
+*  PREPARE TO WRITE TAPE MARK
+CTEOJ    EQU   *
+         MVC   OUTCCW+8(8),WTCCW  MOVE TAPE MARK CCW TO OUTPUT IOB
+         OI    OUTCCW+12,X'60'    TURN ON CHAIN FLAG
+         MVC   OUTCCW+16(8),=X'0300000020000001' MODE SET NO-OP
+         BAL   11,IOOUT           WRITE A TAPE MARK
+         CLI   OUTECB,X'7F'       WAS IT A SUCCESS
+         BNE   TAPERR
+         B     ASKAGN
+         EJECT
+         SPACE 1
+*  CARD TO TAPE, BLOCKED
+         SPACE 1
+CTB      EQU   *
+*  SET UP READER DCB, DEB AND IOB
+         MVI   INMODSTK,X'42'     SELECT STACKER 2
+         MVI   INDEVT,X'41'   INPUT = 2540
+         MVC   DDNAME(8),=CL8'SYSIN'  MOVE DDNAME
+         BAL   6,TIOTSCAN         GO GET UCB ADDRESS
+         ST    2,INDEBMOD         STORE UCB ADDRESS INTO DEB
+*  SET UP OUTPUT DCB, DEB AND IOB
+         BAL   10,TPOUTSET        GO TO 'OUTPUT TAPE' MESSAGE
+*  GO GET OUTPUT BLOCKSIZE
+         MVC   FINAL(10),=X'F0F0F0F0F0FFFFFFFFFF'  CLEAR REPLY AREAS
+         WTOR  'OEH810D REPLY OUTPUT BLOCK SIZE - XXXXX',TEMP,5,       X
+               REPLYECB
+         BAL   11,WAITANS         WAIT FOR REPLY
+CTBREPLY EQU   *
+         MVC   FINAL(10),FINAL+1  SHIFT REPLY ONE TO THE LEFT
+         CLI   TEMP,X'FF'         REACHED END OF REPLY
+         BNE   CTBREPLY
+         PACK  BLKSIZE(8),FINAL(5)   PACK THE REPLY
+         CVB   9,BLKSIZE          CONVERT REPLY TO BINARY
+*  INITIALIZE FOR LOOP
+         SR    2,2                SET CARD COUNT TO ZERO
+         MVC   OUTCCW+8(8),CTCCW  MOVE WRITE CCW TO IOB
+         STH   9,OUTCCW+14        STORE BLKSIZE AS BYTE COUNT
+CTB2     SR    4,4                SET BLK COUNT TO ZERO
+         MVC   INCCW(8),CTBCCW1   MOVE READ CCW TO IOB
+CTBLOOP  EQU   *
+         L     10,INCCW           LOAD FIRST WORD OF READ CCW
+         A     10,=F'80'          ADD 80 TO DATA ADDRESS
+         ST    10,INCCW           RESTORE UPDATED CCW
+         BAL   11,IOIN            READ A CARD
+         CLI   INECB,X'7F'        READ SUCCESSFUL
+         BE    CTB1
+         TM    INSTAT+4,X'01'     END OF FILE
+         BC    1,CTBEOJ0
+         B     RDRERROR
+CTB1     EQU   *
+         LA    2,1(,2)            INCREMENT CARD COUNT
+         A     4,=F'80'           ADD 80 TO BLK COUNY
+         CR    4,9                COMPARE BLK COUNT TO BLKSIZE
+         BC    4,CTBLOOP          LOOP IF BLK COUNT LESS
+CTBWRITE EQU   *
+         BAL   11,IOOUT           WRITE TAPE
+         CLI   OUTECB,X'7F'       WAS WRITE A SUCCESS
+         BNE   TAPERR
+         B     CTB2
+CTBEOJ0  EQU   *
+         STH   4,OUTCCW+14        STORE TRUNCATED BYTE COUNT
+         BAL   11,IOOUT           WRITE TRUNCATED BLOCK
+         CLI   OUTECB,X'7F'       WAS IT SUCCESSFUL
+         BNE   TAPERR
+         B     CTEOJ1             BRANCH TO CLOSING ROUTINE
+         EJECT
+*  TAPE TO CARD,  JUST PUNCH THE FIRST 80 BYTES OF THE INPUT RECORD
+         SPACE 1
+TC       EQU   *
+         BAL   10,TAPINSET        GO GET THE INPUT TAPE
+         MVC   INCCW+8(8),TDINCCW TAPE READ CCW TO IOB
+         MVI   OUTDEVT,X'42'  OUTPUT = 2540
+         MVI   OUTMDSTK,X'42'     SELECT STACKER 2
+*        MVC   DDNAME(8),=C'SYSPUNCH'   MOVE DDNAME
+         MVC   DDNAME(8),=CL8'SYSIN' USE SYSIN FOR MODEL 30 PCP
+         BAL   6,TIOTSCAN         GO GET UCB ADDRESS
+         ST    2,OUTDEBMD         STORE UCB ADDRESS INTO DEB
+         MVC   OUTCCW(8),CTCCW    MOVE PUNCH CCW TO OUTPUT IOB
+TCLOOP   EQU   *
+         BAL   11,IOIN            READ A TAPE
+         CLI   INECB,X'7F'        WAS IT A SUCCESS
+         BE    TC1
+         TM    INSTAT+4,X'01'      EOF
+         BC    1,ASKAGN
+         B     TAPERROR
+TC1      EQU   *
+         BAL   11,IOOUT           PUNCH A CARD
+         CLI   OUTECB,X'7F'       WAS IT A SUCCESS
+         BE    TCLOOP
+         B     PCHERROR
+         EJECT
+*  TAPE TO CARD, BLOCKED - IN WHICH THE ENTIRE TAPE RECORD IS PUNCHED
+         SPACE 1
+TCB      EQU   *
+*  SET UP TAPE DCB AND IOB
+         BAL   10,TAPINSET        GO TO 'INPUT TAPE' MESSAGE
+         MVC   INCCW+8(8),TDINCCW  MOVE TAPE READ CCW TO IOB
+*  SET UP PUNCH DCB, DEB AND IOB
+         MVI   OUTDEVT,X'42'  OUTPUT = 2540
+         MVI   OUTMDSTK,X'42'     SELECT STACKER 2
+         MVC   DDNAME(8),=CL8'SYSIN' USE SYSIN FOR MODEL 30 PCP
+*        MVC   DDNAME(8),=C'SYSPUNCH'   MOVE DDNAME
+         BAL   6,TIOTSCAN         GO GET UCB ARRESS
+         ST    2,OUTDEBMD         STORE UCB ADDRESS INTI DEB
+*  INITIALIZE FOR LOOP
+         SR    2,2                SET CARD COUNT TO ZERO
+TCB2     SR    4,4                SET BLK COUNT TO ZERO
+         MVC   OUTCCW(8),CTCCW    MOVE PUNCH CCW TO OUT IOB
+         SPACE 1
+TCBLOOP  EQU   *
+         BAL   11,IOIN            READ TAPE
+         CLI   INECB,X'7F'        WAS READ A SUCCESS
+         BE    TCB3
+         TM    INSTAT+4,X'01'     CHECK FOR EOF
+         BC    1,TCBEOJ
+         B     TAPERROR
+TCB3     LH    9,=H'32767'        LOAD READ CCW BYTE COUNT
+         SH    9,INSTAT+6         SUBTRACT RESIDUAL BYTE COUNT, NOW
+*                                 WE HAVE BLK SIZE IN REG 9
+TCB1     BAL   11,IOOUT           PUNCH A CARD
+         CLI   OUTECB,X'7F'       WAS IT A SUCCESS
+         BNE   PCHERROR
+         LA    2,1(,2)            INCREMENT CARD COUNT
+         A     4,=F'80'           ADD 80 TO BLK COUNT
+         CR    4,9                COMPARE BLK COUNT WITH BLK SIZE
+         BE    TCB2
+         BC    2,TCB4             BRANCH IF BLK COUNT HIGH
+         L     10,OUTCCW          LOAD FIRST WORD OF PUNCH CCW
+         A     10,=F'80'          ADD 80 TO DATA ADDRESS
+         ST    10,OUTCCW          RESTORE UPDATED CCW
+         B     TCB1
+         SPACE 1
+*   ROUTINE FOR BLK SIZE A NON MULTIPLR OF 80
+TCB4     EQU   *
+         WTO   'OEH814I LAST CARD PUNCHED NOT 80 BYTES'
+         WTOR  'EOH815D REPLY STOP OR GO',JOB,4,REPLYECB
+         BAL   11,WAITANS         GO WAIT FOR REPLY
+         CLC   JOB(4),=CL4'STOP'  ANSWER = 'STOP'
+         BNE   TCB2
+         OI    JECB,X'40'         SET TERMINATE FLAG
+         BAL   11,IOOUT           GO TERMINATE
+         SPACE 1
+*  PRINT CARD COUNT AND EXIT
+TCBEOJ   EQU   *
+         MVC   COUNT(6),=X'402020202020'  FORM EDIT MASK
+         CVD   2,TDWK             CONVERT CARD COUNT TO HEX
+         ED    COUNT(6),TDWK+5    EDIT CARD COUNT
+         LA    1,MESSAGE          LOAD MESSAGE ADDRESS
+         SVC   35                 PRINT CARD COUNT
+         B     ASKAGN
+         EJECT
+*  PRINT A TAPE
+         SPACE 1
+TP       EQU   *
+*  TP USES THE TD ROUTINE WITHOUT THE HEX-TO-CHARACTER CONVERSION
+         OI    TD3+1,X'F0'        SET BRANCHES TO BC 15
+         OI    TD6+1,X'F0'
+         MVC   TDINCCW(8),TPINCCW RESTORE CCW
+         SPACE 1
+*  PRINT A TAPE IN HEX
+         SPACE 1
+TD       EQU   *
+         BAL   9,OPENPRNT         OPEN THE PRINTER
+*  SET UP TAPE'S DCB AND DEB
+         BAL   10,TAPINSET        GO GET THE INPUT TAPE
+         MVC   INCCW+8(8),TDINCCW MOVE READ CCW TO INPUT IOB
+         BAL   6,SKIPTO1          SKIP THE PRINTER TO 1
+         SP    RECCNT(3),RECCNT(3) SET RECORD COUNT TO ZERO
+TDLOOP   EQU   *
+         BAL   11,IOIN            GO READ THE TAPE
+         CLI   INECB,X'7F'        WAS IT SUCCESSFUL
+         BE    TD1
+         TM    INSTAT+4,X'01'     TEST FOR EOF
+         BC    1,TDEOJ
+         B     TAPERROR
+TD1      LH    2,INSTAT+6          GET RESIDUAL COUNT
+         LH    3,TDINCCW+6         GET BEGINING COUNT
+         SR    3,2                 GET BYTES READ IN
+         CVD   3,TDWK             STORE RECORD LENGTH
+         MVI   TDOUTAR,C' '       CLEAR THE PRINT AREA
+         MVC   TDOUTAR+1(131),TDOUTAR
+         MVC   TDOUTAR+102(23),RECHDG MOVE EDIT MASK TO PRINT AREA
+         ED    TDOUTAR+119(6),TDWK+5 EDIT RECORD LENGTH
+         AP    RECCNT(3),COND1(1) ADD 1 TO RECORD COUNT
+         ED    TDOUTAR+105(6),RECCNT EDIT RECORD COUNT
+         LA    2,TDAREA           LOAD ADDRESS OF TAPE AREA
+         LA    5,TDAREA
+         LA    7,100              LOAD NUMBER OF TAPE CHARACTERS
+*                                 PER PRINT LINE - THIS IS 100 FOR TP
+*                                 AND 50 FOR TD
+TD6      BC    0,TD7              BC 15 FOR TP, BC 0 FOR TD
+*  FOLLOWING UNPACKS FOR TD
+*  R2 POINTS TO THE INPUT AREA
+*  R5 POINTS TO THE OUTPUT AREA
+         L     5,=A(TDAREA2)      LOAD ADDRESS OF WORK AREA
+         LA    7,50               LOAD NUMBER OF CHAR/PRINT LINE
+         BAL   14,UNPK            GO FORMAT TAPE TO HEX REPRESENTATION
+TD7      EQU   *
+         CR    3,7                COMPARE REMAINING TAPE LENGTH WITH
+*                                 PRINT WIDTH
+         BL    TD3                BRANCH IF WILL FIT INTO PRINT LINE
+         MVC   TDOUTAR(100),0(5)  MOVE RECORD TO PRINT AREA
+*                                 REG 5 POINTS TO TDAREA FOR TP
+*                                 REG 5 POINTS TO TDAREA2 FOR TD
+TDPR     EQU   *
+         BAL   9,TDPRINT          GO PRINT A LINE
+         MVI   TDOUTAR,C' '       CLEAR THE PRINT AREA
+         MVC   TDOUTAR+1(131),TDOUTAR
+         SR    3,7                SUBTRACT PRINT WIDTH FROM REMAINING
+*                                 TAPE LENGTH
+         BC    12,TD9             BRANCH IF ENTIRE TAPE REC HAS BEEN
+*                                 PRINTED
+         AR    2,7                ADD PRINT WIDTH TO INPUT AREA POINTER
+         AR    5,7                SAME FOR OUTPUT AREA POINTER
+         B     TD6
+TD3      BC    0,TD4              BC 15 FOR TP, BC 0 FOR TD
+         LR    11,3               LOAD REMAINING TAPE LENGTH
+         AR    11,3          DOUBLE IT BECAUSE IT'S UNPACKED
+         BCTR  11,0          DECREMENT ONE FOR THE MOVE
+         EX    11,MVCOML          MOVE LAST OF TAPE TO PRINT AREA
+         B     TDPR
+TD4      EQU   *
+         BCTR  3,0                DECREMENT LENGTH BY 1
+         EX    3,MVCOML           MOVE TAPE TO PRINT AREA
+         B     TDPR
+MVCOML   MVC   TDOUTAR(0),0(5)
+*  CONVERT TAPE FROM CHARACTER TO HEX
+UNPK     EQU   *
+         UNPK  0(15,5),0(8,2)
+         UNPK  14(15,5),7(8,2)
+         UNPK  28(15,5),14(8,2)
+         UNPK  42(15,5),21(8,2)
+         UNPK  56(15,5),28(8,2)
+         UNPK  70(15,5),35(8,2)
+         UNPK  84(15,5),42(8,2)
+         UNPK  98(3,5),49(2,2)
+         TR    0(100,5),TDPTABLE-240
+         BR    14
+TD9      EQU   *
+         BAL   10,SPACE1          SPACE THE PRINTER
+         B     TDLOOP
+TDEOJ    EQU   *
+         B     ASKAGN
+         EJECT
+*  TAPE TO TAPE COPY
+         SPACE 1
+TT       EQU   *
+         BAL   10,TAPINSET        GO GET INPUT TAPE
+         BAL   10,TPOUTSET        GO GET OUTPUT TAPE
+         MVC   INCCW+8(8),TDINCCW MOVE READ CCW TO INPUT IOB
+TTLOOP   EQU   *
+         BAL   11,IOIN            GO READ A RECORD
+         CLI   INECB,X'7F'        WAS IT A SUCCESS
+         BE    TT1
+         TM    INSTAT+4,X'01'     TEST FOR EOF
+         BC    1,CTEOJ
+TAPERROR EQU   *
+         WTO   'OEH808I INPUT TAPE ERROR - STOP'
+         B     ASKAGN
+TT1      LH    2,INSTAT+6         LOAD RESIDUAL BYTE COUNT
+         LH    3,TDINCCW+6        LOAD READ CCW BYTE COUNT
+         SR    3,2                DETERMINE RECORD LENGTH
+         STH   3,TTCCWOUT+6       STORE IT INTO WRITE CCW
+         MVC   OUTCCW+8(8),TTCCWOUT MOVE WRITE CCW TO OUTPUT IOB
+         BAL   11,IOOUT           WRITE TAPE
+         CLI   OUTECB,X'7F'       WAS IT A SUCCESS
+         BE    TTLOOP
+TAPERR   EQU   *
+         WTO   'OEH809I OUTPUT TAPE ERROR - STOP'
+         B     ASKAGN
+         EJECT
+*  REWIND A TAPE
+         SPACE 1
+RW       EQU   *
+         BAL   10,TPOUTSET        GO GET OUTPUT TAPE
+         MVC   OUTCCW+8(8),RWCCW  MOVE REWIND CCW TO OUTPUT IOB
+         OI    OUTCCW+12,X'60'    TURN ON CHAIN FLAG
+         MVC   OUTCCW+16(8),=X'0300000020000001' MODE SET NO-OP
+         BAL   11,IOOUT           REWIND THE TAPE
+         B     ASKAGN
+         SPACE 3
+*  WRITE A TAPE MARK
+         SPACE 1
+WT       EQU   *
+         BAL   10,TPOUTSET        GO GET OUTPUT TAPE
+         B     CTEOJ              GO WRITE THE TAPE MARK
+         EJECT
+*  WRITE A TAPE VOLUME LABEL
+         SPACE 1
+WTL      EQU   *
+*  REWIND THE TAPE
+         BAL   10,TPOUTSET        GO GET TAPE UNIT
+         MVC   OUTCCW+8(8),RWCCW  MOVE REWIND CCW TO OUT IOB
+         OI    OUTCCW+12,X'60'    SET ON COMMAND CHAIN AND SLI FLAG
+         MVC   OUTCCW+16(8),=X'0300000020000001' MODE SET NO-OP
+         BAL   11,IOOUT           REWIND THE TAPE
+*  WRITE THE VOLUME LABEL
+         MVI   TDAREA,X'40'       CLEAR THE IO AREA TO BLANKS
+         MVC   TDAREA+1(79),TDAREA
+         WTOR  'OEH816D REPLY VOLID - XXXXXX',TDAREA+4,6,REPLYECB
+         BAL   11,WAITANS         WAIT FOR REPLY
+         WTOR  'OEH817D REPLY OWNER ID - CCCCCCCCC',                   X
+               TDAREA+41,10,REPLYECB
+         BAL   11,WAITANS         WAIT FOR REPLY
+         MVC   TDAREA(4),=C'VOL1'   MOVE IN VOL1
+         MVI   TDAREA+10,X'F0'    MOVE IN 'NO SECURITY' FLAG
+         MVC   OUTCCW+8(8),CTCCW  MOVE WRITE CCW TO OUT IOB
+         BAL   11,IOOUT           WRITE THE VOLUME LABEL
+*  WRITE A DUMMY HEADER LABEL
+         MVC   TDAREA(3),=C'HDR'   MOVE IN HDR
+         MVI   TDAREA+4,X'F0'     CLEAR REST OF LABEL TO ZERO
+         MVC   TDAREA+5(75),TDAREA+4
+         BAL   11,IOOUT           WRITE THE DUMMY HEADER LABEL
+*    WRITE A ZECOND HEADER LABEL
+         MVI   TDAREA+3,C'2'  ESTABLISH HDR2 WITH REST ZEROES
+         BAL   11,IOOUT       WRITE THE DUMMY HEADER LABEL
+*  WRITE A TAPE MARK AND EXIT
+         B     CTEOJ
+         EJECT
+*  TEST TO SEE IF PRINTER HAS BEEN OPENED
+         SPACE 1
+OPENPRNT EQU   *
+         TM    OPENSW,X'FF'       IS THE PRINTER OPEN
+         BC    1,OPENOK
+         OPEN (PRINT,(OUTPUT))
+         OI    OPENSW,X'FF'       TURN ON PRINTER OPEN SWITCH
+OPENOK   BR    9
+         SPACE 3
+*  COMMON PRINT ROUTINE
+         SPACE 1
+TDPRINT  EQU   *
+         MVI   CTLCHAR,X'40'      INSERT SINGLE SPACE CONTROL CHAR
+         PUT   PRINT,CTLCHAR      PRINT A LINE
+         LH    8,LINECT           LOAD LINE COUNT
+         LA    8,1(,8)            INCREMENT LINE COUNT
+         CH    8,=H'60'           COMPARE LINE COUNT WITH 60
+         BL    TDPRINT1
+         BAL   6,SKIPTO1          EJECT PAGE IF EQUAL
+TDPRINT1 STH   8,LINECT           RESTORE UPDATED LINE COUNT
+         BR    9
+         SPACE 1
+*  SKIP PRINTER TO CHANNEL 1
+         SPACE 1
+SKIPTO1  EQU   *
+         MVI   CTLCHAR,X'F1'      INSERT SKIP TO 1 CONTROL CHAR
+         MVI   TDOUTAR,X'40'      CLEAR PRINT LINE
+         MVC   TDOUTAR+1(131),TDOUTAR
+         PUT   PRINT,CTLCHAR      SKIP TO 1
+         MVC   LINECT(2),=H'0'    SET LINE COUNT TO ZERO
+         SR    8,8                CLEAR COUNTER REG
+         BR    6
+         EJECT
+         SPACE 1
+*  SPACE PRINTER ONE LINE
+         SPACE 1
+SPACE1   EQU   *
+         MVI   CTLCHAR,X'40'      INSERT SPACE 1 CONTROL CHAR
+         MVC   TDOUTAR(132),CTLCHAR  CLEAR PRINT LINE
+         PUT   PRINT,CTLCHAR      SINGLE SPACE
+         LH    8,LINECT           LOAD LINE COUNT
+         LA    8,1(,8)            INCREMENT LINE COUNT
+         CH    8,=H'60'           COMPARE LINE COUNT WITH 60
+         BL    SPACE1A
+         BAL   6,SKIPTO1          EJECT PAGE IF EQUAL
+SPACE1A  STH   8,LINECT           RESTORE UPDATED LINE COUNT
+         BR    10
+         EJECT
+*  ROUTINE TO CONVERT MM INTO A SET MODE COMMAND
+         SPACE 1
+CONVRTMM EQU   *
+         STM   2,3,SAVEUM         STORE REGS 2 & 3
+         IC    2,MM+1             INSERT SECOND MODE BYTE INTO REG 2
+         TM    MM+1,X'F0'         IS THIS BYTE NUMERIC
+         BC    1,MMMM1            BRANCH IF NUMERIC
+         AH    2,=H'9'            ADD 9 TO CONVERT ALPHA TO HEX DIGIT
+MMMM1    SRDL  2,4                SHIFT DIGIT OF BYTE TO REG 3
+         IC    2,MM               INSERT FIRST MODE BYTE NEXT TO
+*                                 DIGIT OF SECOND
+         TM    MM,X'F0'           IS FIRST BYTE NUMERIC
+         BC    1,MMMM2            BRANCH IF NUMERIC
+         AH    2,=H'9'            ADD 9 TO CONVERT ALPHA TO HEX DIGIT
+MMMM2    SLDL  2,4                SHIFT DIGITS NEXT TO EACH OTHER
+         STC   2,MM               STORE MODE BYTE INTI MM
+         LM    2,3,SAVEUM         RESTORE REGS 2 + 3
+         BR    6
+SAVEUM   DS    2F
+         SPACE 3
+         SPACE 3
+*  ROUTINE TO ASK FOR THE INPUT TAPE
+         SPACE 1
+TAPINSET EQU   *
+         WTOR  'OEH812D REPLY INPUT TAPE - MMXXX',MM,5,REPLYECB
+         BAL   9,WAITAPE          GO WAIT FOR THE REPLY
+         MVC   INTRTCH(1),MM      MOVE MODE BYTE INTO DCB
+         MVI   INDEVT,X'81'       TAPE INDICATOR TO DCB
+         ST    2,INDEBMOD         STORE UCB ADDRESS INTO DEB
+         MVC   INDEBMOD(1),MM     MOVE MODE BYTE INTO DEB
+         OI    INIOB,X'40'         SET ON CHAINING
+         MVC   INCCW(1),MM        MOVE MODE BYTE INTO MODE SET CCW
+         MVC   INCCW+1(7),=X'00000060000001' COMPLETE MODE SET CCW
+         BR    10
+         EJECT
+*  ROUTINE TO ASK FOR THE OUTPUT TAPE
+         SPACE 1
+TPOUTSET EQU   *
+         WTOR  'OEH813D REPLY OUTPUT TAPE - MMXXX',MM,5,REPLYECB
+         BAL   9,WAITAPE
+         MVC   OUTTRTCH(1),MM     MOVE MODE TO DCB RECORDING TECHNIQUE
+         MVI   OUTDEVT,X'81'      SET TAPE INDICATOR IN DCB
+         ST    2,OUTDEBMD         STORE UCB ARRESS INTO DEB
+         MVC   OUTDEBMD(1),MM     MOVE MODE TO DEB + 32
+         OI    OUTIOB,X'40'       SET COMMAND CHAIN FLAG IN IOB
+         MVC   OUTCCW(1),MM       MOVE MODE INTO OUTPUT CCW 1
+         MVC   OUTCCW+1(7),=X'00000060000001'  COMPLETE CCW 1
+         BR    10
+         EJECT
+*  COMMON I/O ROUTINE FOR OUTPUT
+         SPACE 1
+IOOUT    EQU   *
+         TM    JECB,X'40'         HAS STOP BEEN RECEIVED
+         BO    TERMMSG
+         XC    OUTECB(4),OUTECB   SET OUT ECB TO ZEROES
+         EXCP  OUTIOB             PERFORM OUTPUT
+         WAIT  ECB=OUTECB         WAIT FOR COMPLETION
+         NI    OUTDCB+44,X'3F'    RESTORE DCB
+         BR    11
+         SPACE 3
+*  COMMON I/O ROUTINE FOR INPUT
+         SPACE 1
+IOIN     EQU   *
+         TM    JECB,X'40'         HAS STOP BEEN RECEIVED
+         BO    TERMMSG
+         XC    INECB(4),INECB     SET IN ECB TO ZEROES
+         EXCP  INIOB              PERFORM THE INPUT
+         WAIT  ECB=INECB          WAIT FOR COMPLETION
+         NI    INDCB+44,X'3F'     RESTORE THE DCB
+         BR    11
+         EJECT
+*  COMMON WAIT FOR ALL REPLIES
+WAITANS  EQU   *
+         WAIT  ECB=REPLYECB
+         XC    REPLYECB(4),REPLYECB SET ECB TO ZEROES
+         BR    11
+         SPACE 3
+*  ROUTINE TO WAIT ON THE REPLY AND CONVERT THE MM INTO A SET MODE
+WAITAPE  EQU   *
+         WAIT  ECB=REPLYECB
+         XC    REPLYECB(4),REPLYECB SET ECB TO ZERO
+         OC    MM(5),=C'     '     MAKE ALL CAPS
+         CLC   MM(4),=C'STOP'     WAS REPLY STOP
+         BE    ASKAGN
+         BAL   6,CONVRTMM         GO CONVERT MM TO MODE SET
+         OI    MM,X'03'            SET MODE COMMAND NOW IN MM
+         MVC   DDNAME(8),=CL8'IEFRDER'  MOVE DDNAME
+         BAL   6,TIOTSCAN         GO GET UCB ADDRESS
+         CLC   13(3,2),XXX        COMPARE UCB UNIT WITH REPLY UNIT
+         BCR   8,9                BRANCH IF EQUAL
+         MVC   DDNAME(8),=CL8'SYSTAPE1'  MOVE DDNAME
+         BAL   6,TIOTSCAN         GO GET UCB ADDRESS
+         CLC   13(3,2),XXX        COMPARE UCB UNIT WITH REPLY UNIT
+         BCR   8,9                BRANCH IF EQUAL
+         SPACE  3
+BADEVICE EQU   *
+         WTO   'OEH811I INVALID DEVICE'
+         B     ASKAGN
+         SPACE 1
+APPEND   BR    14
+         EJECT
+*  SCAN TIOT FOR UCB ADDRESS
+TIOTSCAN EQU   *
+         SR    2,2                CLEAR REG 2
+         L     3,TIOTADR          LOAD TIOT ADDRESS
+         LA    3,24(,3)           SKIP TO FIRST DD ENTRY
+*  SCAN FOR DDNAME
+TIOTLOOP CLC   4(8,3),DDNAME      COMPARE TO DDNAME
+         BE    TIOTUCB
+         IC    2,0(,3)            INSERT ENTRY LENGTH
+         AR    3,2                GET ADDRESS OF NEXT ENTRY
+         CLI   0(3),X'00'         END OF TIOT
+         BNE   TIOTLOOP
+         WTO   'OEH818I INVALID DDNAME - EOJ'
+         B     EOJ
+*  GET UCB ADDRESS
+TIOTUCB  LH    2,18(,3)           LOAD UCB ADDRESS
+         BR    6
+         EJECT
+*  DCB FOR INPUT DATA SET
+         SPACE 1                       INDCB    DS    0F
+         DC    4F'0'
+INTRTCH  EQU   *
+INMODSTK EQU   *
+         DC    X'00'
+INDEVT   DC    X'00'
+INDENS   DC    X'00'
+         DC    X'00'
+         DC    5F'0'
+         DC    H'0'
+         DC    BL2'1101000000001000'
+         DC    A(INDEB)
+         DC    X'10000000'
+         DC    5F'0'
+         SPACE 1                       *  DEB FOR INPUT DATA SET
+         SPACE 1                       INIOVEC  EQU   *
+         DC    A(APPEND)
+         DC    A(APPEND)
+         DC    A(APPEND)
+         DC    A(APPEND)
+         DC    A(APPEND)
+         DC    3F'0'
+         DC    X'06000000'
+INDEB    DS    0F
+         DC    F'0'
+         DC    X'04'
+         DC    AL3(OUTDEB)
+         DC    X'C0000000'
+         DC    X'30000000'
+         DC    2F'0'
+         DC    X'0F'
+         DC    AL3(INDCB)
+         DC    X'02'
+         DC    AL3(INIOVEC)
+INDEBMOD DC    X'00'
+INDEBUCB DC    X'000000'
+         DC    F'0'
+         SPACE 1                       9
+*  ECB FOR INPUT DATA SET
+         SPACE 1                       9
+INECB    DC    F'0'
+         SPACE 1
+*  IOB FOR INPUT DATA SET
+         SPACE 1
+INIOB    DS    0F
+         DC    X'0200'
+INSENS   DC    H'0'
+         DC    X'7F'
+         DC    AL3(INECB)
+INSTAT   DC    2F'0'
+         DC    A(INCCW)
+         DC    A(INDCB)
+         DC    F'0'
+         DC    H'1'
+         DC    H'0'
+INDASD   DC    X'00'
+INSEEK   DC    XL7'00'
+         SPACE 1
+*  CCW'S FOR INPUT DATA SET
+         SPACE 1
+INCCW    DS    5D
+         SPACE 3
+*  DCB FOR OUTPUT DATA SET
+         SPACE 1
+OUTDCB   DS    0F
+         DC    4F'0'
+OUTTRTCH EQU   *
+OUTMDSTK EQU   *
+         DC    X'00'
+OUTDEVT  DC    X'00'
+OUTDENS  DC    X'00'
+         DC    X'00'
+         DC    5F'0'
+         DC    H'0'
+         DC    BL2'1101000000001000'
+         DC    A(OUTDEB)
+         DC    X'10000000'
+         DC    5F'0'
+         SPACE 1
+*  DEB FOR OUTPUT DATA SET
+         SPACE 1
+OUTIOVEC EQU   *
+         DC    A(APPEND)
+         DC    A(APPEND)
+         DC    A(APPEND)
+         DC    A(APPEND)
+         DC    A(APPEND)
+         DC    3F'0'
+         DC    X'06000000'
+OUTDEB   DS    0F
+         DC    F'0'
+         DC    X'17000000'
+         DC    X'C0000000'
+         DC    X'30000000'
+         DC    2F'0'
+         DC    X'0F'
+         DC    AL3(OUTDCB)
+         DC    X'02'
+         DC    AL3(OUTIOVEC)
+OUTDEBMD DC    X'00'
+OUTDBUCB DC    X'000000'
+         DC    F'0'
+         SPACE 1
+*  ECB FOR OUTPUT DATA SET
+         SPACE 1
+OUTECB   DC    F'0'
+         SPACE 1
+*  IOB FOR OUTPUT DATA SET
+         SPACE 1
+OUTIOB   DS    0F
+         DC    XL2'0200'
+OUTSENS  DC    H'0'
+         DC    X'7F'
+         DC    AL3(OUTECB)
+OUTSTAT  DC    2F'0'
+         DC    A(OUTCCW)
+         DC    A(OUTDCB)
+         DC    F'0'
+         DC    H'1'
+         DC    H'0'
+OUTDASD  DC    X'00'
+OUTSEEK  DC    XL7'00'
+         SPACE 1
+*  CCW'S FOR OUTPUT DATA SET
+         SPACE 1
+OUTCCW   DS    5D
+         SPACE 3
+*  CONSTANTS AND CCW'S      * * * * * * * * * * * * * * * * * * * * *
+         SPACE 3
+SWIN     DC    X'00'
+SWOUT    DC    X'00'
+JECB     DC    F'0'
+JOB      DC    F'0'
+TEMPHOLD DC    F'0'
+         SPACE 3
+BFCCW    CCW   X'2F',SFCCW,X'60',1
+BSCCW    CCW   X'27',BSCCW,X'60',1
+CP1CCW   CCW   X'42',TDAREA,X'20',80
+CP2CCW   CCW   9,TDAREA,X'20',80
+CTCCW    CCW   X'41',TDAREA,X'20',80
+RWCCW    CCW   7,RWCCW,X'20',1
+SFCCW    CCW   X'3F',SFCCW,X'60',1
+SRCCW    CCW   X'37',BSCCW,X'60',1
+TDINCCW  CCW   2,TDAREA,X'20',32767
+TDRESTIN CCW   2,TDAREA,X'20',32767
+TPINCCW  CCW   2,TDAREA,X'20',32767
+TTCCWOUT CCW   1,TDAREA,X'20',32767
+WTCCW    CCW   31,TDAREA,X'20',1
+CTBCCW1  CCW   X'42',TDAREA-80,X'20',80
+         SPACE 3
+OPENSW   DC    X'00'
+         SPACE 1
+PRINT    DCB   DDNAME=SYSPRINT,MACRF=PM,DSORG=PS,RECFM=FBA,LRECL=133
+TDWK     DS    D
+SAVEAREA DC    18F'0'
+BLKSIZE  DC    D'0'
+LINECT   DC    H'0'
+FINAL    DC    CL5'0'
+TEMP     DC    CL5'0'
+         DC    X'FF'
+TDPTABLE DC    C'0123456789ABCDEF'
+         DS    0F
+MESSAGE  DC    AL2(THERE-*)     MESSAGE LENGTH
+         DC    AL2(0)
+         DC    C'OEH819I '
+COUNT    DC    C'NUMBER '
+         DC    C'RECORDS PROCESSED'
+THERE    EQU   *
+D1       DC    C'0'
+D2       DC    C'0'
+D3       DC    C'0'
+ID       DC    C'00'
+MM       DC    C'00'
+XXX      DC    C'000'
+OF       DC    F'15'
+REPLYECB DC    F'0'
+DDNAME   DC    D'0'
+TIOTADR  DC    F'0'
+CTLCHAR  DC    C' '
+TDOUTAR  DS    CL132
+RECCNT   DC    X'00000F'
+COND1    DC    X'1F'
+RECHDG   DC    C'REC '
+         DC    X'2020202020'
+         DC    C', LENGTH '
+         DC    X'2020202020'
+         SPACE 3
+         LTORG
+         SPACE 3
+TDAREA   DS    80CL250
+         DS    40CL250
+         DS    28CL100    32800 BYTES
+TDAREA2  DS    CL101
+         END   MVTDEBE

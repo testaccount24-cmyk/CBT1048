@@ -1,0 +1,713 @@
+LIBR     TITLE 'LIBRARIAN / PARTITIONED DATA SET UTILITY PROGRAM'
+LIBRPDS  CSECT
+***********************************************************************
+*                                                                     *
+*                                                                     *
+*      FUNCTION:                                                      *
+*                                                                     *
+*        LIBRPDS READS THE DIRECTORY OF A PARTITIONED DATA SET        *
+*        AND CREATES A LIBRARIAN SYSIN FILE WHICH IS USED TO ADD      *
+*        MEMBERS FROM THE PARTITIONED DATA SET TO A LIBRARIAN         *
+*        DISK OR TAPE MASTER FILE.  LIBRARIAN IS DYNAMICALLY          *
+*        INVOKED VIA THE O.S. LINK MACRO.                             *
+*                                                                     *
+*        PRIOR TO READING THE PDS DIRECTORY, THE PROGRAM CREATES A    *
+*        LIBRARIAN IN-CORE TABLE OF MODULE NAMES FROM THE LIBRARIAN   *
+*        MASTER FILE USING 'FAIR'.  EACH MEMBER NAME READ FROM THE    *
+*        PDS DIRECTORY IS COMPARED AGAINST THE IN-CORE LIBRARIAN      *
+*        MODULE NAME TABLE FOR A MATCH.  IF A MATCH IS FOUND, THE     *
+*        MEMBER IS NOT ADDED TO THE LIBRARIAN FILE.                   *
+*        THE TABLE WILL HOLD 2,000 NAMES.  THE SIZE MAY BE ADJUSTED   *
+*        BY CHANGING THE 'LV' PARAMETER OF THE GETMAIN MACRO AND      *
+*        REASSEMBLING THE PROGRAM.                                    *
+*                                                                     *
+*        -PGMR AND -HST  DATA ARE AQUIRED VIA AN INPUT STREAM.        *
+*        THE -DESC DATA IS THE MODULE NAME.                           *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+*        THE PROGRAM REQUIRES THE FOLLOWING PARAMETERS:               *
+*                                                                     *
+*        //STEPNAME  EXEC PGM=________,PARM='ABC',REGION=___K         *
+*                                                                     *
+*        WHERE-                                                       *
+*          A =  'D' FOR A LIBRARIAN DISK MASTER FILE, OR              *
+*               'T' FOR A LIBRARIAN TAPE MASTER FILE.                 *
+*                                                                     *
+*          B =  'X' IF THE SEQUENCE PARAMETERS ARE TO BE              *
+*                   EXTERNAL TO THE MODULE, I.E. SEQ=/81,6,10,10/.    *
+*                   ANY EBCDIC CHARACTER OTHER THAN AN 'X' WILL       *
+*                   GENERATE THE FOLLOWING SEQUENCE PARAMETERS,       *
+*                   SEQ=/73,8,100,100/                                *
+*                                                                     *
+*          C =  ANY 4-BYTE DECIMAL NUMBER FROM 0001 TO 9999.          *
+*               THIS FIELD MUST CONTAIN LEADING ZEROS.                *
+*               THIS VALUE IS USED TO DETERMINE THE NUMBER            *
+*               OF MEMBERS TO BE PROCESSED IN THIS RUN.  IF           *
+*               C = 9999, THE MEMBER COUNTING MECHANISM IS            *
+*               DISABLED AND THE ENTIRE PDS IS PROCESSED.             *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+*      ERROR CONDITIONS:                                              *
+*                                                                     *
+*        FTL000 INCORRECT OR MISSING PARAMETERS.                      *
+*        FTL001 LIBRARIAN MASTER FILE DD STATEMENT MISSING.           *
+*        FTL002 WRONG LIBRARIAN MASTER FILE.                          *
+*        FTL003 LIBRARIAN MASTER FILE IS ALREADY OPEN.                *
+*        FTL004 INSUFFICIENT BUFFER SPACE.                            *
+*        FTL009 ILLOGICAL CONDITION FOUND ON THE MASTER FILE.         *
+*        FTL010 LIBRARIAN MASTER FILE DID NOT OPEN SUCCESSFULLY.      *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+*      DD STATEMENTS:                                                 *
+*                                                                     *
+*        PDSDIR - PARTITIONED DATA SET                                *
+*                                                                     *
+*        SYSIN  - LIBRARIAN SYSIN FILE.                               *
+*                                                                     *
+*        CTRL   - INPUT CONTROL FILE                                  *
+*                                                                     *
+*        IN ADDITION ALL LIBRARIAN  DD STATEMENTS ARE REQUIRED.       *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+*      CONTROL STATEMENTS                                             *
+*           -OPT LIBRARIAN OPTIONS. DEFAULT: NOLIST,NOEXEC,NOPC,INDEX *
+*           -PGMR XXXXXXXXXXXXXXX (PROGRAMMER NAME). DEFAULT: ADDPDS  *
+*           -DESC MODULE DESCRIPTION. DEFAULT: MODULE NAME.           *
+*              MODULE NAME WILL ALSO BE INSERTED IF FIRST 8-CHARS     *
+*              OF DESCRIPTION ARE BLANK. E.G. -DESC        DESCRIPT...*
+*           -LANG XXX   OPTIONAL. IF NOT SUPPLIED, NONE INSERTED.     *
+*           -HST NARRATIVE UP TO 65-CHARS. OPTIONAL. NO DEFAULT.      *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+*      ILLUSTRATED BELOW ARE TWO SAMPLE JCL STREAMS.                  *
+*                                                                     *
+*        LIBRARIAN DISK MASTER FILE:                                  *
+*        //JOBNAME  JOB .....                                         *
+*        //STEPNAME EXEC PGM=LIBRPDS,REGION=150K,                     *
+*        //         PARM='D 0025'                                     *
+*        //STEPLIB  DD  ............                                  *
+*        //PDSDIR   DD  ............                                  *
+*        //MASTER   DD  ............                                  *
+*        //SYSIN    DD  UNIT=SYSDA,SPACE=(CYL,(2,2))                  *
+*        //SYSUDUMP DD  SYSOUT=A                                      *
+*        //SYSPRINT DD  SYSOUT=A                                      *
+*        //INDEX    DD  SYSOUT=A                                      *
+*        //LIST     DD  SYSOUT=A                                      *
+*        //OSJOB    DD  DUMMY                                         *
+*        //BACKUP   DD  DUMMY                                         *
+*        //SYSPUNCH DD  DUMMY                                         *
+*        //CTRL     DD  *                                             *
+*        -PGMR FTL                                                    *
+*        -HST NARRATIVE                                               *
+*        /*                                                           *
+*        //                                                           *
+*                                                                     *
+*                                                                     *
+*        LIBRARIAN TAPE MASTER FILE:                                  *
+*        //JOBNAME  JOB .....                                         *
+*        //STEPNAME EXEC PGM=LIBRPDS,REGION=150K,                     *
+*        //         PARM='TX0100'                                     *
+*        //STEPLIB  DD  ............                                  *
+*        //PDSDIR   DD  ............                                  *
+*        //CYCLE    DD  ............                                  *
+*        //MASTIN   DD  ............                                  *
+*        //MASTOUT  DD  ............                                  *
+*        //SYSAF01  DD  ............                                  *
+*        //SYSAF02  DD  ............                                  *
+*        //SYSAF03  DD  ............                                  *
+*        //SYSIN    DD  UNIT=SYSDA,SPACE=(CYL,(2,2))                  *
+*        //SYSUDUMP DD  SYSOUT=A                                      *
+*        //SYSPRINT DD  SYSOUT=A                                      *
+*        //INDEX    DD  SYSOUT=A                                      *
+*        //LIST     DD  SYSOUT=A                                      *
+*        //OSJOB    DD  DUMMY                                         *
+*        //BACKUP   DD  DUMMY                                         *
+*        //SYSPUNCH DD  DUMMY                                         *
+*        //CTRL     DD  *                                             *
+*        -PGMR FTL                                                    *
+*        -HST NARRATIVE                                               *
+*        /*                                                           *
+*        //                                                           *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+*      ENVIRONMENT:                                                   *
+*                                                                     *
+*        LIBRPDS WAS DESIGNED AND TESTED ON OS/MVT 21.7 AND           *
+*        HASP 3.1 RUNNING ON A SYSTEM/360 MODEL 65.  IT IS UP-        *
+*        WARD COMPATIBLE TO EXECUTE UNDER OS/VS AND CONTAINS          *
+*        NO SYSTEM/370 INSTRUCTIONS.                                  *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+*      INSTALLATION INSTRUCTIONS:                                     *
+*                                                                     *
+*        1. ASSEMBLE AND LINK THE ADR FAIR ROUTINES FROM FILE         *
+*           7 OF THE ADR LIBRARIAN DISTRIBUTION TAPE INTO A           *
+*           SUBROUTINE LIBRARY.  THE 'FAIR' LOAD MODULE MUST          *
+*           CONTAIN THE FOLLOWING ALIASES: MASTOPN, MASTMOD,          *
+*           MASTRCD, MASTHST, MASTCLS.                                *
+*           THE LINKAGE EDITOR 'SYSLIB' DD STATEMENT MUST POINT       *
+*           TO THE SUBROUTINE LIBRARY CONTAINING FAIR WHEN LINK       *
+*           EDITING LIBRPDS.                                          *
+*                                                                     *
+*        2. IF A DIFFERENT SIZE LIBRARIAN MODULE NAME TABLE IS        *
+*           DESIRED, CHANGE THE 'LV' PARAMETER ON THE GETMAIN         *
+*           MACRO IN LIBRPDS TO THE DESIRED SIZE.  THE DEFAULT        *
+*           IS 16,000 BYTES.  THIS AREA WILL HOLD 2,000 NAMES.        *
+*                                                                     *
+*        3. CHANGE THE 'EP' PARAMETER ON THE LINK MACROS TO           *
+*           REFLECT THE LOAD MODULE NAME OF THE LIBRARIAN.            *
+*           THE DEFAULT IS 'LIBRARY'.                                 *
+*                                                                     *
+*         4. ASSEMBLE AND LINK 'LIBRPDS'.                             *
+*                                                                     *
+*         5. CREATE JCL AND TEST.                                     *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+*       DISCLAIMER:                                                   *
+*                                                                     *
+*         THIS PROGRAM IS PROVIDED ON AN 'AS IS' BASIS WITHOUT        *
+*         ANY WARRANTY EXPRESSED OR IMPLIED AS TO IT'S ACCURACY       *
+*         OR DEPENDABILITY.  IT IS THE USERS RESPONSIBILITY TO        *
+*         EVALUATE THE USEFULLNESS OF THIS PROGRAM IN HIS OR          *
+*         HER OWN ENVIRONMENT.                                        *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+*      AUTHOR: REED E. BOLLSCHWEILER                                  *
+*              SYSTEMS PROGRAMMER                                     *
+*                                                                     *
+*                                                                     *
+*      INSTALLATION:                                                  *
+*                                                                     *
+*        THE FLYING TIGER LINE INC.                                   *
+*        COMPUTER SERVICES - A01                                      *
+*        7401 WORLD WAY WEST                                          *
+*        LOS ANGELES, CALIFORNIA 90009                                *
+*        TELEPHONE (213) 646-7047                                     *
+*                                                                     *
+*                                                                     *
+*      DATE-WRITTEN: 04/21/75.                                        *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*                                                                     *
+*                          REGISTER EQU'S                             *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+R0       EQU   0
+R1       EQU   1
+R2       EQU   2
+R3       EQU   3
+R4       EQU   4
+R5       EQU   5
+R6       EQU   6
+R7       EQU   7
+R8       EQU   8
+R9       EQU   9
+R10      EQU   10
+R11      EQU   11
+R12      EQU   12
+R13      EQU   13
+R14      EQU   14
+R15      EQU   15
+         TITLE 'PROGRAM INITIALIZATION'
+***********************************************************************
+*                                                                     *
+*                       PROGRAM INITIALIZATION                        *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+LIBRPDS  CSECT
+         DC    C'THE FLYING TIGER LINE INC.'
+         DC    C'LIBRARIAN / PDS UTILITY PROGRAM'
+         DC    C'VERSION 1  LEVEL 0'
+         ENTRY BEGIN
+         SPACE 1
+BEGIN    DS    0D                      DOUBLE-WORD ALIGNMENT
+         USING *,R15                   ESTABLISH ADDRESSABILITY
+         STM   R14,R12,12(R13)         SAVE REGISTERS
+         LA    R12,SAVE                R12 => LIBRPDS SAVE AREA
+         ST    R13,4(0,R12)            BACKWARD CHAIN
+         ST    R12,8(0,R13)            FORWARD CHAIN
+         LR    R13,R12                 R13 => LIBRPDS SAVE AREA
+         SPACE 1
+         DROP  R15
+         BALR  R12,0                   LOAD BASE REGISTER
+         USING *,R12                   DEFINE BASE REGISTER
+         SPACE 1
+         L     R2,0(0,R1)              R2 => PARAMETER DATA
+         SR    R3,R3                   ZERO REGISTER 3
+         LH    R3,0(0,R2)              R3 CONTAINS LENGTH OF PARM DATA
+         CL    R3,=F'6'                PARAMETERS PRESENT?
+         BNE   WTO                     NO...WRITE ERROR MESSAGE
+         SPACE 1
+         CLC   2(1,R2),DISK            DISK MASTER FILE?
+         BE    SETFLAGS                SET FLAGS
+         CLC   2(1,R2),TAPE            TAPE MASTER FILE?
+         BE    SETFLAGS                YES...SET FLAGS
+         SPACE 2
+WTO      EQU   *
+         WTO   'FTL000 PARAMETERS INCORRECT OR MISSING.'
+         SPACE 2
+ABEND    EQU   *
+         ABEND 16                      NO...ABEND / RETURN CODE = 16
+         SPACE 2
+SETFLAGS EQU   *
+         MVC   FLAG,2(R2)              SET MASTER FILE TYPE FLAG
+         MVC   SEQFLAG,3(R2)           SET SEQUENCE FLAG
+         PACK  PARMFLD(3),4(4,R2)      PACK MODULE COUNT IN PARMFLD
+         SP    PARMFLD(3),ONE          COMPUTE TRUE PARMFLD VALUE
+         SPACE 2
+         OPEN  (CTRL,(INPUT,DISP))     OPEN CONTROL DATA SET
+         SPACE 1
+READCTRL EQU   *
+         GET   CTRL                    READ CONTROL DATA SET
+         SPACE 1
+         SR    R7,R7                   CLEAR REGISTER 7
+         LR    R7,R1                   R7 => INPUT BUFFER
+         CLC   1(5,R7),=C'PGMR '       PGMR CONTROL STATEMENT?
+         BNE   TESTHST                 NO...TEST HISTORY
+         SPACE 1
+         MVC   PGMR,0(R7)              YES...STORE PROGRAMMER NAME
+         B     READCTRL                LOOP.....
+         SPACE 2
+TESTHST  EQU   *
+         CLC   1(4,R7),=C'HST '        HISTORY  CONTROL STATEMENT?
+         BNE   TESTOPT                 NO...TEST FOR OPT CARD
+         MVC    HST,0(R7)              YES...STORE HISTORY  PARAMETER
+         B     READCTRL                LOOP.....
+         SPACE 2
+TESTOPT  EQU   *
+         CLC   1(4,R7),=CL4'OPT '  OPT CONTROL STATEMENT.
+         BNE   TESTDESC            NO. TEST FOR DESC
+         MVC   OPT,0(R7)           STORE SUPPLIED DESC CARD
+         B     READCTRL            READ NEXT CONTROL CARD
+         SPACE 2
+TESTDESC EQU   *
+         CLC   1(5,R7),=CL5'DESC ' DESC CONTROL STATEMENT?
+         BNE   TESTLANG            NO. GO TEST FOR LANG CARD.
+         MVC   DESC,0(R7)          SAVE SUPPLIED DESC CARD.
+         B     READCTRL            READ NEXT CONTROL CARD
+         SPACE 2
+TESTLANG EQU   *
+         CLC   1(5,R7),=CL5'LANG ' LANG CARD SUPPLIED?
+         BNE   READCTRL            NO. READ NEXT CONTROL CARD.
+         MVC   LANG,0(R7)          SAVE LANG CONTROL CARD
+         B     READCTRL            READ NEXT CONTROL CARD.
+         SPACE 2
+CLOSECTL EQU   *
+         SR    R7,R7                   CLEAR REGISTER 7
+         CLOSE (CTRL)                  CLOSE CONTROL DATA SET
+         SPACE 2
+         GETMAIN EU,LV=16000,A=TBLADDR   OBTAIN CORE FOR NAME TABLE
+         SPACE 1
+         L     R11,TBLADDR             R11 => BEGINNING OF NAME TABLE
+         TITLE 'BUILD MODULE NAME TABLE'
+***********************************************************************
+*                                                                     *
+*                       BUILD MODULE NAME TABLE                       *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+         CLC   FLAG,TAPE               TAPE MASTER FILE?
+         BE    OPENTAPE                YES...OPEN TAPE MASTER FILE
+         SPACE 1
+         CALL  MASTOPN,(0,RC),VL       OPEN DISK MASTER FILE
+         SPACE 1
+         B     TESTOPEN                GO TO...TESTOPEN
+         SPACE 2
+OPENTAPE EQU   *
+         CALL  MASTOPN,(TAPEAREA,RC),VL    OPEN TAPE MASTER FILE
+         SPACE 2
+TESTOPEN EQU   *
+         CLI   RC,X'F0'                LIBRARIAN OPEN SUCCESSFUL?
+         BE    OPENOKAY                YES...CONTINUE
+         SPACE 1
+         CLI   RC,X'F1'                NO...TEST FOR ERROR CONDITION 1
+         BNE   TEST2                   NOT ERROR CONDITION 1...
+         SPACE 1
+         WTO   'FTL001 LIBRARIAN MASTER DD STATEMENT MISSING.'
+         B     ABEND                   ABEND.....
+         SPACE 2
+TEST2    EQU   *
+         CLI   RC,X'F2'                ERROR CONDITION 2?
+         BNE   TEST3                   NO.....
+         SPACE 1
+         WTO   'FTL002 WRONG LIBRARIAN MASTER FILE.'
+         B     ABEND                   ABEND.....
+         SPACE 2
+TEST3    EQU   *
+         CLI   RC,X'F3'                ERROR CONDITION 3?
+         BNE   TEST4                   NO.....
+         SPACE 1
+         WTO   'FTL003 MASTER FILE IS ALREADY OPEN.'
+         B      ABEND                  ABEND.....
+         SPACE 2
+TEST4    EQU   *
+         CLI   RC,X'F4'                ERROR CONDITION 4?
+         BNE   TEST9                   NO.....
+         SPACE 1
+         WTO   'FTL004 INSUFFICIENT BUFFER SPACE.'
+         B     ABEND                   ABEND.....
+         SPACE 2
+TEST9    EQU   *
+         WTO   'FTL009 ILLOGICAL CONDITION ON LIBRARIAN MASTER FILE.'
+         B     ABEND                   ABEND.....
+         SPACE 3
+OPENOKAY EQU   *
+         SR    R2,R2                   ZERO REGISTER 2
+         SPACE 1
+READ     EQU   *
+         CALL  MASTMOD,(NAME,RC),VL    READ LIBRARIAN MASTER FILE
+         SPACE 1
+         CLI   RC,X'F0'                LIBRARIAN READ SUCCESSFUL?
+         BE    MOVE                    YES...MOVE NAME TO NAME TABLE
+         SPACE 1
+         CLI   RC,X'F1'                END OF FILE?
+         BE    EODATA                  YES...SET END OF TABLE INDICATOR
+         SPACE 1
+         CLI   RC,X'F2'                IS THE MASTER FILE OPEN?
+         BNE   TEST9                   NO.....
+         SPACE 1
+         WTO   'FTL010 LIBRARIAN MASTER FILE DID NOT OPEN SUCCESSFULLY'
+         B     ABEND                   ABEND.....
+         SPACE 2
+MOVE     EQU   *
+         MVC   0(8,R11),NAME           MOVE MODULE NAME TO NAME TABLE
+         LA    R11,8(0,R11)            BUMP R11 BY 8
+         LA    R2,1(0,R2)              BUMP R2 BY 1
+         MVC   NAME(8),HEX40           CLEAR NAME FIELD
+         B     READ                    READ MORE MODULE NAME RECORDS
+         SPACE 2
+EODATA   EQU   *
+         MVC   0(8,R11),HEXFF          SET END OF TABLE INDICATOR
+         LA    R2,1(0,R2)              BUMP R2 BY 1
+         ST    R2,TBLCOUNT             STORE NUMBER OF TABLE ENTRIES
+         SPACE 1
+         CALL  MASTCLS                 CLOSE LIBRARIAN MASTER FILE
+         TITLE 'READ PARTITIONED DATA SET DIRECTORY'
+***********************************************************************
+*                                                                     *
+*                 READ PARTITIONED DATA SET DIRECTORY                 *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+GETMAIN  EQU   *
+         GETMAIN EU,LV=256,A=DIRADDR   OBTAIN CORE FOR PDS DIRECTORY
+         SPACE 1
+         L     R10,DIRADDR             R10 => PDS DIRECTORY AREA
+         SPACE 1
+         OPEN  (PDSDIR,(INPUT,DISP))   OPEN PARTITIONED DATA SET
+         SPACE 3
+READDIR  EQU   *
+         READ  DECB,SF,PDSDIR,(R10)    READ PDS DIRECTORY
+         SPACE 1
+         CHECK DECB                    WAIT ON EVENT COMPLETION
+         SPACE 1
+         SR    R8,R8                   ZERO REGISTER 8
+         SR    R9,R9                   ZERO REGISTER 9
+         LH    R9,0(0,R10)             DIRECTORY BLOCK LENGTH
+         AR    R9,R10                  R9 => END OF DIRECTORY AREA
+         SH    R9,=H'3'                ADJUSTED ENDING ADDRESS
+         LA    R7,2(0,R10)             R7 => FIRST MEMBER
+         SPACE 2
+DIRLOOP  EQU   *
+         MVC   NAME(8),HEX40           CLEAR NAME FIELD
+         MVC   NAME,0(R7)              STORE MODULE NAME
+         CLC   NAME(8),HEXFF           END OF PDS?
+         BE    END                     YES...EXECUTE LIBRARIAN
+         BAL   R6,LOOKUP               GO TO...TABLE LOOKUP ROUTINE
+         SR    R8,R8                   ZERO REGISTER 8
+         NI    11(R7),X'1F'            TURN OFF ALIAS & POINTER FLAGS
+         IC    R8,11(0,R7)             GET DIRECTORY ENTRY LENGTH IN HW
+         SLL   R8,1                    MULTIPLY HALFWORDS BY 2
+         LA    R8,12(0,R8)             BUMP R8 BY 12
+         BXLE  R7,R8,DIRLOOP           LOOP...IF LOW OR EQUAL
+         B     READDIR                 OTHERWISE...READ ANOTHER BLOCK
+         TITLE 'MODULE NAME LOOKUP ROUTINE'
+***********************************************************************
+*                                                                     *
+*                     MODULE NAME LOOKUP ROUTINE                      *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+LOOKUP   EQU   *
+         SR    R2,R2                   ZERO REGISTER 2
+         SR    R3,R3                   ZERO REGISTER 3
+         ST    R6,R6SAVE               SAVE REGISTER 6
+         L     R2,TBLADDR              R2 => MODULE NAME TABLE
+         L     R3,TBLCOUNT             R3 - MODULE NAME TABLE COUNTER
+         SPACE 2
+COMPARE  EQU   *
+         CLC   NAME(8),0(R2)           MODULE NAME IN TABLE?
+         BE    EXIT                    YES...EXIT
+         LA    R2,8(0,R2)              NO...BUMP R2 BY 8
+         BCT   R3,COMPARE              LOOP...IF R3 NOT ZERO
+         SPACE 1
+INIT     NOP   *+8                     BRANCH AROUND THE NEXT INST.
+         BAL   R5,LIBRINIT             INITIALIZE LIBRARIAN
+         BAL   R5,LIBRARAN             BUILD LIBRARIAN SYSIN FILE
+         SPACE 2
+EXIT     EQU   *
+         L     R6,R6SAVE               RESTORE REGISTER 6
+         BR    R6                      RETURN.....
+         TITLE 'LIBRARIAN INITIALIZATION ROUTINE'
+***********************************************************************
+*                                                                     *
+*                  LIBRARIAN INITIALIZATION ROUTINE                   *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+LIBRINIT EQU   *
+         MVI   INIT+1,X'F0'            NO-OP BRANCH INSTRUCTION
+         SPACE 1
+         OPEN  (SYSIN,(OUTPUT,DISP))   OPEN SYSIN DATA SET FOR OUTPUT
+         SPACE 1
+         MVC   IOAREA(L'OPT),OPT   MOVE OPT CARD TO IOAREA.
+         BAL   R4,WRITE                WRITE -OPT STATEMENT
+         SPACE 1
+         BR    R5                      RETURN.....
+         TITLE 'BUILD LIBRARIAN SYSIN FILE'
+***********************************************************************
+*                                                                     *
+*                     BUILD LIBRARIAN SYSIN FILE                      *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+LIBRARAN EQU   *
+         MVC   IOAREA(5),=C'-ADD '
+         MVC   IOAREA+5(8),NAME        MODULE NAME
+         SPACE 1
+         SR    R2,R2                   ZERO REGISTER 2
+         SR    R3,R3                   ZERO REGISTER 3
+         LA    R2,IOAREA+5             R2 => IOAREA+5
+         LA    R3,8                    BCT COUNT REGISTER FOR NAME SCAN
+         SPACE 1
+ADDLOOP  EQU   *
+         CLI   0(R2),X'40'             SPACE?
+         BE    SEQUENCE                YES...BUILD SEQUENCE
+         LA    R2,1(0,R2)              NO...BUMP R2 BY 1
+         BCT   R3,ADDLOOP              LOOP...IF R3 NOT ZERO
+         SPACE 1
+SEQUENCE EQU   *
+         CLI   SEQFLAG,C'X'            EXTERNAL SEQUENCE PARAMETERS?
+         BE    SEQ81                   YES...GO TO SEQ81
+         SPACE 1
+         MVC   0(19,R2),=C',SEQ=/73,8,100,100/'    NO...
+         B     ADD                     GO TO ADD...
+         SPACE 1
+SEQ81    EQU   *
+         MVC   0(17,R2),=C',SEQ=/81,6,10,10/'
+         SPACE 1
+ADD      EQU   *
+         BAL   R4,WRITE                WRITE -ADD STATEMENT
+         SPACE 2
+         CLI   PGMR,C'-'           IS PGMR INITIALISED?
+         BNE   *+14                NO.SKIP PGMR CARD.
+         MVC   IOAREA(L'PGMR),PGMR     BUILD -PGMR STATEMENT
+         BAL   R4,WRITE                WRITE -PGMR STATEMENT
+         SPACE 1
+         CLI   DESC,C'-'           DESC INITIALISED?
+         BNE   NODESC              NO. SKIP DESC PROCESSING
+         MVC   IOAREA(L'DESC),DESC MOVE DESC TO I/O AREA
+         CLC   IOAREA+6(8),=CL8' ' MODULE NAME FIELD BLANK?
+         BNE   *+10                NO. SKIP NSI
+         MVC   IOAREA+6(8),NAME        YES. MOVE MODULE NAME TO O/P
+         BAL   R4,WRITE                WRITE -DESC STATEMENT
+NODESC   EQU   *
+         SPACE 1
+         CLI   LANG,C'-'           IS LANG INITIALISED?
+         BNE   *+14                NO. SKIP LANG CARD.
+         MVC   IOAREA(L'LANG),LANG MOV LANG TO IOAREA
+         BAL   R4,WRITE            WRITE -LANG STATEMENT
+         SPACE 1
+         CLI   HST,C'-'            IS HST INITIALISED?
+         BNE   *+14                NO. SKIP HST PROCESS
+         MVC   IOAREA(L'HST),HST       BUILD -HST  STATEMENT
+         BAL   R4,WRITE                WRITE -HST  STATEMENT
+         SPACE 2
+         MVC   IOAREA(12),=C'-AUX PDSDIR('
+         MVC   IOAREA+12(8),NAME       MODULE NAME
+         SPACE 1
+         SR    R2,R2                   ZERO REGISTER 2
+         SR    R3,R3                   ZERO REGISTER 3
+         LA    R2,IOAREA+12            R2 => IOAREA+12
+         LA    R3,8                    BCT COUNT REGISTER FOR NAME SCAN
+         SPACE 1
+AUXLOOP  EQU   *
+         CLI   0(R2),X'40'             SPACE?
+         BE    CONTINUE                YES...CONTINUE
+         LA    R2,1(0,R2)              NO...BUMP R2 BY 1
+         BCT   R3,AUXLOOP              LOOP...IF R3 NOT ZERO
+         SPACE 1
+CONTINUE EQU   *
+         MVI   0(R2),C')'              MOVE ')' TO WRKAREA
+         BAL   R4,WRITE                WRITE -AUX STATEMENT
+         SPACE 1
+         MVC   IOAREA(5),=C'-EMOD'
+         BAL   R4,WRITE                WRITE -EMOD STATEMENT
+         SPACE 2
+         CP    PARMFLD(3),=PL3'999'    LIBRARIAN LIMIT = 999?
+         BE    DISABLE                 YES...PROCESS ENTIRE PDS
+         SPACE 1
+         AP    AUXCTR,ONE              NO...COUNT LIBRARIAN MODULES
+         CP    AUXCTR,PARMFLD          LIBRARIAN LIMIT EXCEEDED?
+         BH    END                     YES...EXECUTE LIBRARIAN
+         SPACE 1
+DISABLE  EQU   *
+         BR    R5                      RETURN.....
+         SPACE 2
+WRITE    EQU   *
+         PUT   SYSIN,IOAREA            WRITE LIBRARIAN SYSIN DATA SET
+         SPACE 1
+         MVI   IOAREA,X'40'            CLEAR LIBRARIAN
+         MVC   IOAREA+1(79),IOAREA      INPUT/OUTPUT AREA
+         BR    R4
+         TITLE 'LIBRARIAN EXECUTION ROUTINE'
+***********************************************************************
+*                                                                     *
+*                     LIBRARIAN EXECUTION ROUTINE                     *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+END      EQU   *
+         CLOSE (PDSDIR)                CLOSE PARTITIONED DATA SET
+         SPACE 1
+         MVC   IOAREA(4),=C'-END'
+         BAL   R4,WRITE                WRITE -END STATEMENT
+         SPACE 1
+         CLOSE (SYSIN)                 CLOSE LIBRARIAN SYSIN FILE
+         SPACE 2
+         CLC   FLAG,TAPE               TAPE MASTER FILE?
+         BE    EXECTAPE                YES...EXECUTE TAPE LIBRARIAN
+         SPACE 1
+         LINK  EP=LIBRARY,PARAM=(LIBRPARM,LIBRDISK),VL=1
+         SPACE 1
+         B     EOJ                     GO TO END OF JOB.....
+         SPACE 2
+EXECTAPE EQU   *
+         LINK  EP=LIBRARY,PARAM=(LIBRPARM,LIBRTAPE),VL=1
+         TITLE 'END OF JOB ROUTINE'
+***********************************************************************
+*                                                                     *
+*                         END OF JOB ROUTINE                          *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+EOJ      EQU   *
+         ST    R15,RC15                STORE LIBRARIAN RETURN CODE
+         FREEMAIN E,LV=16000,A=TBLADDR   RELEASE TABLE AREA
+         SPACE 1
+         FREEMAIN E,LV=256,A=DIRADDR   RELEASE DIRECTORY AREA
+         SPACE 2
+         L     R13,SAVE+4              RESTORE REGISTER 13
+         L     R15,RC15                SET RETURN CODE
+         L     R14,12(R13)             RESTORE REGISTER 14
+         LM    R0,R12,20(R13)          RESTORE REGISTERS
+         BR    R14                     RETURN TO O.S.
+         TITLE 'PROGRAM CONSTANTS'
+***********************************************************************
+*                                                                     *
+*                          PROGRAM CONSTANTS                          *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+SAVE     DC    18F'0'                  SAVE AREA
+TBLADDR  DC    F'0'                    MODULE NAME TABLE ADDR
+DIRADDR  DC    F'0'                    PDS DIRECTORY AREA ADDR
+TBLCOUNT DC    F'0'                    MODULE NAME TABLE COUNTER
+RC15     DC    F'0'                    LIBRARIAN RETURN CODE
+HEX40    DC    8X'40'                  8 SPACES
+HEXFF    DC    8X'FF'                  HEX FF'S
+R6SAVE   DC    F'0'                    GENERAL REGISTER 6 SAVE AREA
+NAME     DC    CL8' '                  MODULE NAME WORK AREA
+IOAREA   DC    CL80' '                 LIBRARIAN INPUT/OUTPUT AREA
+TAPEAREA DC    CL16' '                 TAPE AREA
+AUXCTR   DC    PL3'0'                  -AUX COUNTER
+PARMFLD  DC    PL3'0'                  MODULE COUNT AREA
+DISK     DC    C'D'                    DISK MASTER FILE INDICATOR
+TAPE     DC    C'T'                    TAPE MASTER FILE INDICATOR
+FLAG     DC    X'40'                   LIBRARIAN MASTER FILE TYPE FLAG
+SEQFLAG  DC    X'40'                   SEQUENCE PARAMETER FLAG
+RC       DC    X'40'                   FAIR RETURN CODE
+ONE      DC    PL1'1'                  CONSTANT '1'
+OPT      DC    CL80'-OPT NOLIST,NOEXEC,NOPC,INDEX'
+PGMR     DC    CL22'-PGMR ADDPDS'      PROGRAMMER
+DESC     DC    CL42'-DESC'             MODULE DESCRIPTION
+LANG     DC    CL10' '                 LANGUAGE
+HST      DC    CL70' '                 HISTORY
+         SPACE 2
+LIBRPARM DC    H'26'                   LIBRARIAN PARAMETERS
+         DC    C'NJTA,NRJS,IEX=IEX,LINES=60'
+         SPACE 1
+LIBRDISK DC    H'64'                   LIBRARIAN DISK DD STATEMENTS
+         DC    CL8'MASTER  '
+         DC    CL8'OSJOB   '
+         DC    CL8'SYSIN   '
+         DC    CL8'SYSPRINT'
+         DC    CL8'INDEX   '
+         DC    CL8'LIST    '
+         DC    CL8'BACKUP  '
+         DC    CL8'SYSPUNCH'
+         SPACE 1
+LIBRTAPE DC    H'104'                  LIBRARIAN TAPE DD STATEMENTS
+         DC    CL8'CYCLE   '
+         DC    CL8'MASTIN  '
+         DC    CL8'MASTOUT '
+         DC    CL8'OSJOB   '
+         DC    CL8'SYSIN   '
+         DC    CL8'SYSPRINT'
+         DC    CL8'INDEX   '
+         DC    CL8'LIST    '
+         DC    CL8'BACKUP  '
+         DC    CL8'SYSPUNCH'
+         DC    CL8'SYSAF01 '
+         DC    CL8'SYSAF02 '
+         DC    CL8'SYSAF03 '
+         TITLE 'DATA CONTROL BLOCKS'
+***********************************************************************
+*                                                                     *
+*                   PARTITIONED DATA SET DIRECTORY                    *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+PDSDIR   DCB   DDNAME=PDSDIR,MACRF=(R),BUFNO=1,DSORG=PS,DEVD=DA,       X
+               RECFM=F,LRECL=256,BLKSIZE=256,EODAD=END
+         EJECT
+***********************************************************************
+*                                                                     *
+*                         INPUT CONTROL FILE                          *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+CTRL     DCB   DDNAME=CTRL,MACRF=GL,BUFNO=1,EODAD=CLOSECTL,            X
+               RECFM=F,LRECL=80,BLKSIZE=80,DSORG=PS
+         EJECT
+***********************************************************************
+*                                                                     *
+*                        LIBRARIAN SYSIN FILE                         *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+SYSIN    DCB   DDNAME=SYSIN,MACRF=PM,BUFNO=4,DSORG=PS,                 X
+               RECFM=FB,LRECL=80,BLKSIZE=800
+         TITLE 'LITERALS'
+***********************************************************************
+*                                                                     *
+*                               LTORG                                 *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+         LTORG
+         END   BEGIN

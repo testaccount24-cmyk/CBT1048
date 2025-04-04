@@ -1,0 +1,1535 @@
+//PSGAVR       JOB  (1140,5),'ASSEMBLE IEFXV001',CLASS=T
+//STEP02   EXEC   ASMFCL
+//ASM.SYSLIB   DD   DSN=SYS1.R217MAC,DISP=SHR
+//             DD   DSN=SYS1.MODGEN,DISP=SHR
+//             DD   DSN=SYS1.MODGEN2,DISP=SHR
+//             DD   DSN=SYS1.MACLIB,DISP=SHR
+//ASM.SYSIN    DD   *
+***********************************************************************
+*                                                                     *
+*579600,903000                                                    20774
+*                                                                 M3216
+* 565200,903600-904800                                            M0247
+*                                                                     *
+***********************************************************************
+*                                                                     *
+* STATUS/CHANGE LEVEL 13                                              *
+*                                                                     *
+* FUNCTION/OPERATION     ALLOCATE,WHERE POSSIBLE,PREVIOUSLY MOUNTED   *
+*                        VOLUMES. READ THE SERIAL NUMBERS IF VOLUMES  *
+*                        ARE NEWLY MOUNTED. PREPARE AND WRITE OUT A   *
+*                        LIST OF REQUIRED SPECIFIC SERIAL NUMBERS.    *
+*                        WAIT FOR DEVICES TO COME READY,READING SERIAL*
+*                        NUMBERS,UNTIL ALL REQUESTED VOLUMES ARE      *
+*                        RECEIVED.                                    *
+*     THE FUNCTION OF PUTTING OUT THE SPEICFIC VOLUME SERIALS HAS 20029
+*     BEEN MOVED TO IEFXV002 DUE TO SPACE REQUIREMENTS.           20029
+*     THE FUNCTION OF BUILDING THE SERIAL LIST NEEDED FOR         21048
+*     FOR OUTPUTTING MOUNT REQUESTS TO THE OPERATOR HAS BEEN      21048
+*     MOVED TO IEFXV002 ALONG WITH PATTEST, THE ROUTINE FOR       21048
+*     VERIFYING THAT THE DEVICE TYPE IS ACCEPTABLE TO ALL         21048
+*     REQUESTS IN THE AFFINITY CHAINS, IN ORDER TO MAKE ROOM FOR  21048
+*     ADDITIONAL DEVICE SUPPORT.  MODULE IEFXV003 HAS BEEN ADDED  21048
+*     TO PROCESS STATISTICS FOR TAPE REQUESTS AND TO DETERMINE IF 21048
+*     A SOLUTION EXISTS BASED ON THE CURRENT CONFIGURATION.       21048
+*                                                                     *
+*                                                                     *
+* ENTRY POINT            IEFXV001                                     *
+*                                                                     *
+*                                                                     *
+* INPUT                  REGISTER 3 CONTAINS A TEST PATTERN FOR       *
+*                        7-TRACK TAPE DENSITIES.                      *
+*                                                                     *
+* OUTPUT                 ALLOCATION OF SPECIFIC DD REQUESTS.          *
+*                                                                     *
+* EXTERNAL ROUTINES      IEFXVMSG,IEFWC000,IEFX3000,IEFXV002,     XV002
+*                        IEFWD000,IEFXJ000,IEFX5000,IEFXV003      21048
+*                        IEFSCAN,UCBSCAN                          IORMS
+*                                                                     *
+* EXITS                  ERROR     IEFXJ000  (ALLOCATION RECOVERY)    *
+*                                                                     *
+*                        NORMAL    IEFWC000  (TIOT CONSTRUCTION)      *
+*                                    IF ALL AWT'S ARE ALLOCATED.      *
+*                                                                     *
+*                                  IEFX5000  (DECISION ALLOCATION)    *
+*                                    IF AWT'S REMAIN TO BE ALLOCATED. *
+*                                                                     *
+*                                                                     *
+* TABLES/WORK AREAS      LIST,TIOT,LCT,AWT,AVT,ACB,UCB,VOLT           *
+*                                                                     *
+* ATTRIBUTES             RE-USEABLE,NON-REENTRANT                     *
+*                                                                     *
+* NOTES                  N/A                                          *
+*                                                                     *
+***********************************************************************
+***********************************************************************
+ATC      DSECT                                                   F22949
+         IEFATCOM
+IEFXV001 CSECT
+* A868160-868180,868740,D938900-938920                            M4046
+* C982800                                                         M0682
+*A562100-562180,565700-565720,579100-579200,583020,830300-830384 A41143
+*A904700,949100                                                  A41143
+*C565200,579200-579600,582600                                    A41143
+*D579200,902400-903600                                           A41143
+*A031100-031160,033500-033588,075500-076999,139700                21048
+*A096500-096560                                                  A41884
+* C 047400, C 057600, C 317400, A 558500-558540, A 581900-582828,A47599
+* C 768500, C 815400, A 938900-938920, D 947923,A 951500,        A47599
+* A 952700-952740, A 986900-986992                               A47599
+*D149400-156000,177000-177600,200400,220800-221400,346200-51000,  21048
+*D517200-518400,520800-539400,609000-612000,642000-649800,        21048
+*D654600,667800-673200,677400,679800-767400,772200                21048
+*A149400-152300,176900-177360,200900-200920,221900-222592,        21048
+*A233300-233320,291500-291500-291599,510500-510599,520780-529700  21048
+*A626900*A867920-867980,868300-868712,874700,890920-890984,894520-894596, 21048
+*A947304-947538,947692-947846,197500-197984
+*C627000                                                          21048
+* 562800,832200                                                   M6159
+* 090600-091800,065000-465600                                     20201
+         ENTRY V1CONST
+         ENTRY WAITCODE                                           20029
+         EXTRN PUTLIST                                            20029
+         EXTRN SERBUILD                                           21048
+         EXTRN IEFXV003                                           21048
+         EXTRN PATTEST                                            21048
+         ENTRY MSG505A                                            21048
+         ENTRY XJIMPOUT                                           21048
+*3050 AS OF RELEASE 18, THE FUNCTION OF READING VOLUME SERIAL     XV002
+*3050  NUMBERS IS BY MEANS OF LINKAGE TO A NEW CSECT, IEFXV002.   XV002
+* 054600                                                          M3057
+*                                                                 M4087
+* 045300,528680-529080                                           A38435
+BEGIN    BALR  R9,0
+         USING *,R9                REGISTER 9 AS BASE
+HERE001  EQU   *                   LABEL FOR START OF PROGRAM. IT 21048
+*                                  MUST REMAIN HERE FOLLOWING THE 21048
+*                                  USING *,R9 STATEMENT. IT IS    21048
+*                                  REFERENCED IN AN ADCON AND IS  21048
+*                                  USED BY MSG505A TO ESTABLISH   21048
+*                                  ADDRESSABILITY.                21048
+*                                                                 21048
+         USING LCT,R12             LCT ADDRESS, PASSED IN R12
+         B     BEGIN1                                             20029
+         DC    C'IEFXV001'                                        20029
+BEGIN1   EQU   *                                                  20029
+         ST    R3,TESTBITS         STORE THE 7 TRACK TEST BITS.(THEY
+*                                    INDICATE DENSITY)
+         L     R3,LCTPARM1         GET ACB ADDRESS
+         USING AWTCTROL,R3         ALLOCATE CONTROL BLOCK ADDRESS IN R3
+         LA    R8,ENDOFCON-BEGINCON-1 DETERMINE THE LENGTH OF THE
+*                                      CONSTANTS WHICH MUST BE
+*                                        INITIALIZED TO ZERO.
+*                                  IT'S ASSUMED THAT THE NUMBER OF
+*                                   BYTES WILL BE LESS THAN 257.
+         EX    R8,INITIAL          SET TO ZERO
+         CLC   LCT(4),CF255        TEST FOR MVT ORMFT2
+         BNH   PCPECB              BRANCH NO
+         L     R5,LCTQDRTY         GET CSCB  ADDRESS
+         USING  CHAIN,R5
+         LA    R1,CHCECB           CANCEL ECB                     M3056
+         TM    HEX00(R1),POST     HAS JOB BEEN CANCELLED          M3057
+         BO    CNCLMSG            YES                             M3057
+         B     SETECB
+PCPECB  EQU  *
+*                                  FIRST,SEARCH FOR JOBQUE ECB AND
+*                                   SET IT TO ZERO.
+         L     R5,CVTPTR           GET THE ADDRESS OF THE CVT.   A47599
+         L     R1,IEESJQ(0,R5)     LOAD THE ADDRESS OF THE SJQ.
+         L     R8,LCTJCTAD         GET THE JCTPTRDRESS.THE JOBNAME
+*                                   IS THE THIRD AND FOURTH WORDS.
+SJQFIND  CLC   8(8,R8),0(R1)       IS THIS THE CORRECT JOBQUE ENTRY.
+         BE    SJQFOUND            YES
+         LA    R1,SJQELNGH(0,R1)   NO. INCREMENT TO NEXT SJQ ENTRY.
+         B     SJQFIND
+SJQFOUND LA    R1,8(R1)            POINT TO THE ECB.
+         L     R5,IEEMSLTV(0,R5)   GET THE ADDRESS OF  MASTER
+*
+         ST    R1,MSBOBECB(0,R5)   STORE THE ECB POINTER IN MS CORE.
+         TM    0(R1),X'30'        HAS THE JOB BEEN CANCELED.
+         BNZ   CNCLMSG             YES
+SETECB   EQU   *                  HERE IF JOB IS NOT CANCELLED    M3057
+         XC    0(4,R1),0(R1)       CLEAR THE ECB
+         ST    R1,ADRCNCL          STORE CANCEL ECB ADDRESS.      20029
+         MVI   ADRCNCL,ENDLIST1        SET END OF ECB LIST IND    M0247
+         L     R5,CVTPTR           ADDRESS OF THE CVT.           A47599
+         L     R5,IEEMSLTV(R5)     ADDRESS OF M/S RESIDENT CORE.    MCS
+         TM    DISPBYTE(R5),X'08'  IS DISPLAY DSNAME IN EFFECT      MCS
+         BNO   SCANUCB             NO.                              MCS
+         MVI   DISPLDSN,X'01'      YES. SET INDICATOR FOR LATER     MCS
+*                                   REFERENCE.                      MCS
+SCANUCB  L     R15,VCONSCAN        GET ADDRESS OF IEFSCAN         IORMS
+UCBLOOP  L     R5,AWTCWTST         GET ADDRESS OF AWT
+         USING AWT,R5
+         LH    R6,AWTCNDDC         GET COUNT OF AWT ENTRIES
+         L     R1,LCTSRTAD         PARM-PTR TO LUT                IORMS
+         LA    R13,SAVEAREA        GET S AVEAREA FOR SCAN         IORMS
+         BALR  R14,R15                                            IORMS
+         LR    R8,R15              ENTRY NUMBER IN LUT            M4780
+         LA    R8,1(R8)       ADD ONE FOR WD'S MSG                M3185
+         LR    R2,R1               GET PTR IN R2 FOR TESTS        IORMS
+         LTR   R2,R2               TEST FOR THE HALF-WORD OF FOX WHICH
+         USING SRT,R2
+         BZ    SCANEND
+         TM    SRTESTAT,SRTEONLI   IS IT ONLINE
+         BNO   NEXTUCB             NO, GET NEXT UCB
+         CLI   UCBTBYT3,UCB3TAPE   IS IT A TAPE UCB
+         BNE    DACK
+         TM    SRTESTAT,SRTEALOC   YES. IS IT ALLOCATED          PTM429
+         BO    NEXTUCB             YES, GET NEXT UCB.            PTM429
+*                                   NOTE THAT A SPECIFIC REQUEST PTM429
+*                                   FOR AN ALREADY ALLOCATED     PTM429
+*                                   NONSHAREABLE                 PTM429
+*                                   VOLUME WILL BE HELD UP IN    PTM429
+*                                   DEMAND ALLOCATION.           PTM429
+         CLI   UCBTBYT4,TYPE2400   IS IT A 2400                   21048
+         BE    TST2400             YES, GO CHECK FURTHER          21048
+         CLI   UCBTBYT4,TYPE3400   IS IT A 3400                   21048
+         BNE   NEXTUCB             IF NOT, GET THE NEXT UCB       21048
+         SR    R10,R10             CLEAR BASE FOR 7-TRK           21048
+         TM    UCBTBYT2,TRK7       IS IT 7-TRK                    21048
+         BO    CHECKSER            YES                            21048
+         LA    R10,TP340016        SET BASE FOR 3400 1600 BPI     21048
+         TM    UCBTBYT1,DEN800     IS IT PHASE ENCODE             21048
+         BNO   NEXTUCB             NO, 800 BPI, GET NEXT UCB      21048
+         TM    UCBTBYT2,DUALDEN    IS IT A DUAL DEN 3400          21048
+         BNO   CHECKSER            NO, ASSUME A 1600 BPI          21048
+         LA    R10,TP3400DD        SET BASE FOR 3400 DUAL DENSITY 21048
+         B     CHECKSER            PROCESS AS A DUAL DENSITY      21048
+TST2400  EQU   *                   CHECK 2400 SERIES              21048
+         SR    R10,R10             ZERO THE BASE IN CASE IT'S 7-TRACK
+         TM    UCBTBYT2,X'80'      BUT IS IT 7-TRACK
+         BO    CHECKSER            YES.
+         LA    R10,TAPESTAT        SET BASE FOR 800BPI DENSITY.
+         TM    UCBTBYT1,X'04'      IS IT 800 DEN.
+         BZ    CHECKSER            YES.
+         LA    R10,TP16STAT        NO.SET BASE FOR 1600BPI DENSITY.
+         CLI   UCBTBYT2,X'00'       IS IT 1600 DENSITY.
+         BE    CHECKSER            YES.
+         LA    R10,DUALSTAT        SET BASE FOR DUAL DENSITY
+         TM    UCBTBYT2,X'20'      IS IT DUAL DENSITY.
+         BO    CHECKSER            IT BETTER BE.  IF NOT, IT'S A
+*                                   DEVICE TYPE NOT SUPPORTED AT THE
+NEXTUCB  L     R15,VCONCONT        TIME THIS WAS CODED  IGNORE IT
+         B     UCBLOOP             GET NEXT
+INITIAL  XC    BEGINCON(0),BEGINCON     INITIALIZE CONSTANTS TO ZERO
+DACK     EQU   *
+         CLI   UCBTBYT3,UCB3DACC   IS IT D.A.
+         BNE   NEXTUCB             NO, GET NEXT UCB
+         LA    R10,DISCSTAT        SET BASE FOR DISC, IN CASE.
+         CLI   UCBTBYT4,TYPE2311   IS IT DISC
+         BE    CHECKSER     YES
+         LA    R10,DRUMSTAT        NO. SET THE BASE FOR DRUM.
+         CLI   UCBTBYT4,TYPE2314  IS IT DRUM?                     20201
+         BE    CHECKSER           YES                             20201
+         LA    R10,MRLNSTAT       NO. SET THE BASE FOR 3330       20201
+         CLI   UCBTBYT4,TYPE3330  IS IT 3330                      20201
+         BNE   NEXTUCB            NO. GET NEXT UCB                20201
+CHECKSER EQU   *
+         CLI   PHASE,PHASE1        IS IT PHASE 1                  22909
+         BE    EXAMSER             YES. GO TO SEE IF THE UCB      22909
+*                                   HAS A VOLUME SERIAL NUMBER.   22909
+         CLI   UCBATI,AVRATI       PHASE 2. IS THIS ONE OF THE    22909
+*                                   DEVICES ELIGIBLE FOR A VOLUME 22909
+         BNE   NEXTUCB             NO. CONTINUE THE SEARCH.       22909
+         TM    UCBSTAT,UCBALOC    IS THE DEVICE ALLOCATED?       A41884
+         BO    NEXTUCB            YES THEN BRANCH TO GET NEXT    A41884*
+                                  UCB.THIS IS NOT ONE FOR WHICH  A41884*
+                                  AVR SHOULD BE WAITING.         A41884
+         TM    UCBFL2,NOTREADY     YES IT IS BUT IS IT ONE THAT   22909
+*                                   CAME READY                    22909
+         BZ    READSER             YES. GO TO READ THE LABEL.     22909
+         B     NEXTUCB             NO. CONTINUE THE SEARCH.       22909
+EXAMSER  EQU   *                                                  22909
+         CLI   SRTEVOLI,HEX00      DOES THE UCB HAVE A VOLUME     22909
+*                                   SERIAL NUMBER                 22909
+         BNE   NEEDTEST            YES. SEE IF THIS STEP REQUIRES 22909
+*                                   IT.                           22909
+RDYTEST  EQU   *
+         TM    UCBFL2,NOTREADY     IF THE SERIAL IS ZERO, IS IT READY.
+         BZ    READSER             YES,GO READ THE SERIAL NUMBER.
+         CLI   UCBTBYT3,UCB3TAPE   NO,IS IT A TAPE UCB.
+         BNE   NEXTUCB             NO,IGNORE NOT READY D.A. DEVICES.
+         NI    UCBFL2,255-NOTREADY YES.TURN OFF THE NOTREADY BIT AND
+*                                   GO ISSUE A CCW NOP TO THE DEVICE.
+*                                    THIS WILL ARM IT,IF IT ISN'T
+*                                     ALREADY,SO IT CAN GENERATE A
+*                                      DEVICE END WHEN BROUGHT READY.
+*                                       THE NOTREADY BIT WILL BE
+*                                        TURNED ON AGAIN ON RETURN FROM
+*                                         THE NOP.                XV002
+READSER  EQU   *                                                  XV002
+         L     R1,TESTBITS         SET THE TEST PATTERN FOR       XV002
+*                                   7-TRACK TAPE DENSITIES AS A   XV002
+*                                   PARAMETER.                    XV002
+         LA    R13,SAVEAREA        POINT TO THE SAVE AREA.        XV002
+         L     R15,XV002VCN        VCON FOR IEFXV002.             XV002
+         BALR  R14,R15                                            XV002
+         B     *+4(R15)            BRANCH BASED ON RETURN CODE.   XV002
+         B     NEEDTEST            PROCESSING SUCCESSFUL.         XV002
+         B     READERR             READ ERROR ENCOUNTERED.        XV002
+         B     NEXTUCB             DEVICE NOT READY OR            XV002
+*                                   NONEXISTENT.                  XV002
+         B     ASCIERR                 ERROR. USASI TAPE IN NON   19200
+*                                      ASCI SYSTEM.               19200
+NEEDTEST SR    R11,R11             WILL CONTAIN AN AWT ADDRESS IF A
+*                                   VOLUME CAN BE ALLOCATED.
+NEEDLOOP EQU   *                                                 PTM866
+         TM    AWTETYPE+2,X'08'    DOES AWT REPRESENT A REQUEST  PTM866
+*                                    FOR A UNIT RECORD DEVICE    PTM866
+         BO    NEXTAWT             YES. IGNORE IT.               PTM866
+         SR    R1,R1
+         IC    R1,AWTEUDEV         GET THE NUMBER OF DEVICES INITIALLY
+*                                  NEEDED.
+         SR    R13,R13
+         IC    R13,AWTESHDV        GET THE NUMBER OF SHARED VOLUMES.
+         SR    R1,R13              CALCULATE THE NUMBER OF DEVICES
+*                                   TO BE ALLOCATED TO VOLUMES USED BY
+*                                    THIS REQUEST ONLY.
+         STH   R1,UNSHARED         SAVE IT
+         IC    R1,AWTENVOL         GET THE NUMBER OF AVT'>.
+         SR    R13,R13
+         LTR   R1,R1               NUMBER OF VOLUMES EQUAL ZERO
+         BNZ   FIRSTAVT
+NEXTAWT  AH    R5,AWTCWTSZ         YES. ADD THE LENGTH OF AN AWT TO THE
+*                                   AWT POINTER TO POINT TO NEXT ONE.
+         BCT   R6,NEEDLOOP         COUNT OF AWT ENTRIES DOWN TO ZERO
+         LTR   R11,R11             YES. TEST REGISTER TO SEE IF AN AWT
+*                                   ADDRESS HAS BEEN PUT IN IT.(IF SO,
+*                                    THIS INDICATES THAT A VOLUME MAY
+*                                     BE ALLOCATED. THE AVT COUNT IS
+*                                      IN R10.)
+         BNZ   ALLOC              YES VIRGINIA, THERE IS AN AWT. GO
+*                                   AND ALLOCATE.
+*
+*                                 NO AWT INDICATES THAT THE VOLUME
+*                                   JUST FOUND TO BE READY IS NOT
+*                                    NEEDED FOR THIS STEP.
+         CLI   PHASE,PHASE2       CHECK TO SEE WHICH PHASE.
+         BNE   NEXTUCB            IF IT'S PHASE ONE, IGNORE THIS
+*                                   VOLUME AND GET THE NEXT UCB.
+         MVI   MATCHSW,OFF         INDICATE NO MATCH WAS FOUND    21048
+         BAL   R14,UNRDYDEC
+         B     UNLOAD              ERROR RETURN IS HERE
+         B     NEXTUCB             NORMAL RETURN IS HERE
+         USING DEVSTAT,R10         DSECT BASE
+UNRDYDEC LH    R11,UNRDYCT         PHASE 2. GET THE COUNT OF UNREADY
+*                                    DEVICES.
+         BCTR  R11,0               DECREMENT BY ONE
+         LTR   R11,R11
+         BM    4(R14)
+         STH   R11,UNRDYCT         PROVISIONALLY STORE THE UPDATED CT
+         CLI   UCBTBYT3,UCB3TAPE   IS IT TAPE
+         BNE   BIGLEAP             NO
+         MVC   SERSAVE(SIX),SRTEVOLI SAVE VOLSER FOR IEFXV003     21048
+         CLI   MATCHSW,ON          IS MATCHSW ON                  21048
+         BE    SKIPDEC             YES, DONT DECREMENT AVAILCT    21048
+         LH    R11,AVAILCT         PICK UP CURRENT AVAILCT        21048
+         LA    R11,ONE(R11)        INCREMENT IT BY ONE TO MAKE    21048
+*                                  THIS VOLUME AVAILABLE TO BE    21048
+*                                  UNLOADED LATER IF NEEDED.      21048
+         STH   R11,AVAILCT         SAVE UPDATED COUNT             21048
+SKIPDEC  STM   R13,R1,TEMPSAVE     SAVE LINKAGE REGISTERS         21048
+         LA    R13,SAVEAREA        POINT TO SAVE AREA             21048
+         L     R15,V003AD          GET ADDRESS OF IEFXV003.       21048
+*                                  IEFXV003 EXPECTS R3 TO CONTAIN 21048
+*                                  PTR TO ACB AND R12 TO CONTAIN  21048
+*                                  PTR TO LCT WHICH IS THE        21048
+*                                  STANDARD CONVENTION FOR AVR    21048
+*                                  MODULES.                       21048
+         BALR  R14,R15             GO TO IEFXV003 TO VERIFY       21048
+         LTR   R15,R15             RETURN CODE ZERO               21048
+         LM    R13,R1,TEMPSAVE     RESTORE REGISTERS              21048
+         BZ    FOUR(R14)           NORMAL RETURN FROM IEFXV003    21048
+*                                                                 21048
+*                                  RETURN IS HERE IF THE MATCHSW  21048
+*                                  IS OFF, AND THE CURRENTLY      21048
+*                                  MOUNTED VOLUME PREVENTS A      21048
+*                                  SUCCESSFUL ALLOCATION.         21048
+         LH    R11,AVAILCT         GET CURRENT AVAILCT FOR DEVICE 21048
+         BCTR  R11,ZERO            DECREMENT COUNT BY ONE         21048
+         STH   R11,AVAILCT         SAVE NEW COUNT                 21048
+         B     UNLOAD              ERROR, UNLOAD THE DEVICE       21048
+BIGLEAP  EQU   *
+         CH    R11,NEEDCT          SEE IF THERE ARE STILL ENOUGH
+*                                    UNREADY DEVICES TO HOLD THE
+*                                      VOLUMES STILL NEEDED.
+         BNL    4(R14)             IF SO, TAKE NORMAL EXIT
+UNLOAD   EQU   *                                                  19716
+         LH    R11,UNRDYCT         IF NOT, RESTORE THE NOT READY COUNT.
+         LA    R11,1(R11)
+         STH   R11,UNRDYCT
+         STM   R13,R1,TEMPSAVE     SAVE REGISTERS.                19716
+         LR    R13,R8              PASS THE LUT POINTER
+         LA    R15,MSG505A         GET ADDRESS OF MSG505A SUBRTTN 21048
+         BALR  R14,R15             PRINT OUT MESSAGE AND UNALOAD  21048
+         LM    R13,R1,TEMPSAVE     RESTORE REGISTERS
+         B     NEXTUCB             ON RETURN, GET THE NEXT UCB
+***********************************************************************
+*
+DECRMNT  EQU   *
+*
+         LH    R11,MASTER          GET THE MASTER COUNT OF TOTAL
+*                                    VOLUMES OF ALL TYPES WHOSE
+*                                      READYNESS IS BEING AWAITED.
+         BCTR  R11,0               DECREMENT BY ONE.
+         STH   R11,MASTER
+         SR    R11,R11
+         IC    R11,6(R14)          GET THE TYPE
+         MH    R11,STATLONG        MULTIPLY BY THE LENGTH OF EACH STAT
+         LA    R14,STATBLOC(R11)    ADD THE BEGINNING
+         DROP  R10
+         USING DEVSTAT,R14
+         LH    R11,NEEDCT          GET THE COUNT OF THE NUMBER OF
+*                                    VOLUMES OF THIS SPECIFIC TYPE
+*                                      BEING WAITED FOR.
+         BCTR  R11,0               DECREMENT BY ONE.
+         STH   R11,NEEDCT
+         CLI   UCBTBYT3,UCB3TAPE   IS IT A TAPE                   21048
+         BNE   SETRET              NO, GO PROCESS UNRDY COUNT     21048
+         CR    R14,R10             IS UCB BASE EQ TO REQUEST BASE 21048
+         BNE   SETRET              NO, GO PROCESS UNREADY COUNT   21048
+         LH    R11,UNRDYCT         GET UNREADY COUNT FOR DEVTYPE  21048
+         LTR   R11,R11             IS IT ZERO                     21048
+         BZ    DECRMNT1            YES, DONT DECREMENT IT         21048
+         BCTR  R11,ZERO            DECREMENT COUNT BY ONE         21048
+         STH   R11,UNRDYCT         SAVE IT                        21048
+DECRMNT1 LR    R11,R0              RESTORE AWT ADDRESS            21048
+         B     STRIKE              GO ALLOCATE THE VOLUME         21048
+         DROP  R14
+         USING DEVSTAT,R10
+FIRSTAVT LH    R4,AWTEFVOL         GET AVT OFFSET INTO VOLUME BLOCK.
+         BCTR  R4,0                ADJUST BY 1
+         A     R4,AWTCSTVB         ADD START OF VOLUME BLOCK
+         USING AVT,R4
+GETAVT   LA    R13,1(R13)          INCREMENT AVT COUNT
+         LH    R7,AVTEVPTR         GET VOLT POINTER
+         N     R7,MASK1            ADDRESS EQUAL ZERO(NO VOLT)
+         BNZ   TESTAVT             NO.  BRANCH.
+NEXTAVT  LA    R4,8(R4)            YES. BUMP AVT POINTER TO NEXT ONE.
+         BCT   R1,GETAVT           DECREMENT COUNT OF AVT'S.TEST IF THE
+*                                   LAST ONE FOR THIS AWT HAS BEEN
+*                                    PASSED. IF SO, GET THE NEXT AWT.
+         B     NEXTAWT             YES.
+TESTAVT  BCTR  R7,0                COMPLETE VOLT POINTER. ADJUST BY ONE
+         A     R7,AWTCSCTV         ADD THE START OF THE BLOCK TO OFFSET
+         CLC   AVTEVOLK(2),HALFZERO     IS THIS A SHARED VOLUME.
+         BNE   CONTINUE            YES
+         LH    R14,UNSHARED        NO,ARE MORE VOLUMES INITIALLY NEEDED
+         LTR   R14,R14
+         BZ    NEXTAVT             NO
+         BCTR  R14,0
+         STH   R14,UNSHARED        UPDATE COUNY
+CONTINUE EQU   *
+         CLI   HEX00(R7),HEXFF    GENERATED VOL SER?              M3216
+         BE    NEXTAVT            YES. IGNORE IT.                 M3216
+         LH    R14,AVTERSRT        GET THE UCB ADDRESS FROM THE AVT.
+         LTR   R14,R14             IS THE ADDRESS ZERO.
+         BNZ   UCBINAVT            NO.
+         CLC   0(6,R7),SRTEVOLI    NO. COMPARE VOLT VOL. SER. TO UCB
+*                                                        VOL. SER.
+         BNE   NEXTAVT             NOT EQUAL. GET THE NEXT AVT.
+*                                  EQUAL.THE VOLUME THAT CAME READY CAN
+*                                    BE USED BY THIS REQUEST.
+*                                  MAKE SURE THAT A 3400 REQUEST  21048
+*                                  WAS NOT MOUNTED ON A 2400      21048
+*                                  TAPE DRIVE.                    21048
+         CLI   UCBTBYT3,UCB3TAPE   IS IT A TAPE UCB               21048
+         BNE   CHCKAFF             NO, GO TO PATTEST              21048
+         CLI   AWTETYPE+3,TYPE3400 YES, IS IT A REQUEST FOR 3400  21048
+         BNE   CHCKAFF             NO, GO TO PATTEST              21048
+         CLI   UCBTBYT4,TYPE3400   IS IT A 3400 UCB               21048
+         BNE   ERR3400             NO, INELIGIBLE DEVICE, UNLOAD  21048
+CHCKAFF  EQU   *
+*
+*                                  FIRST, GO TO SUBROUTINE TO DETERMINE
+*                                   IF THIS REQUEST IS FOR A SECONDARY,
+*                                    AND THEREFORE DEFERRED, VOLUME,
+         L     R15,PATTSTAD        OR IF THE DEVICE IS            21048
+         BALR  R14,R15             UNACCEPTABLE                   21048
+*                                      TO ONE OF THE REQUESTS IN THE
+*                                       VOLUME AFFINITY CHAIN.
+***********************************************************************
+***********************************************************************
+*
+* THE PATTEST SUB-RTN WILL RETURN TO ONE OF THREE PLACES,        A23679
+* DEPENDING ON THE ACTION TO BE TAKEN.                           A23679
+*
+         B     CNFLGO              SUB-RTN RETURNS HERE IF THE DEVICE
+*                                 IS UNACCEPTABLE AND THE VOLUME A23679
+*                                 IS TO BE UNLOADED.             A23679
+*
+*                                 SUB-RTN RETURNS TO 4(R14),     A23679
+*                                 WHICH IS HERE, IF THE DEVICE   A23679
+*                                 IS ACCEPTABLE, AND THIS AWT    A23679
+*                                 (IN R5) IS TO BE ALLOCATED.    A23679
+         ST    R13,LCTPARM4        STORE THE AVT COUNT IN THE LCT AND
+*                                     SAVE THE
+         LR    R11,R5                 AWT ADDRESS FOR USE BY DEVICE
+*                                   STRIKEOUT IF NO CONFLICTING REQUEST
+*                                    FOR THIS DEVICE IS FOUND.(DEMAND
+*                                     ALLOCATION COULD HAVE ALLOCATED
+*                                      IT TO A DIFFERENT VOLUME SERIAL)
+*
+*                                 SUB-RTN RETURNS TO 10(R14),    A23679
+*                                 WHICH IS HERE, IF THIS AWT     A23679
+*                                 (IN R5) IS NOT TO BE ALLOCATED A23679
+         B     NEXTAVT             NOW CONTINUE SEARCHING.
+*
+***********************************************************************
+***********************************************************************
+         DROP  R5                 DROP OLD AWT REGISTER
+         USING AWT,R11            PICK UP THE SAVED AWT AS BASE
+ALLOC    MVI   MATCHSW,ON          INDICATE MATCH WAS FOUND       21048
+         CLI   PHASE,PHASE2        IS IT PHASE 2                  21048
+         BNE   STRIKE              IF NOT, THE VOLUME MUST BE     21048
+*                                  ACCEPTABLE.                    21048
+*
+*                                  IF IT'S PHASE TWO,HOWEVER, EVEN
+*                                    THOUGH THE VOLUME IS NEEDED FOR
+*                                    THE STEP,IT MAY NOT HAVE BEEN
+*                                    REQUESTED IN THE LIST AND MIGHT
+*                                    REDUCE THE NUMBER OF FREE DEVICES
+*                                    BELOW THE NUMBER REQUIRED TO HOLD
+*                                    THE VOLUMES BEING WAITED FOR.
+         L     R14,STRTLIST        OBTAIN POINTER TO START OF LIST17722
+         LR    R0,R11              SAVE THE AWT ARDRESS.
+FIND     CLC   0(6,R14),SRTEVOLI   ARE THE SERIALS EQUAL
+         BE    DECRMNT             YES.DECREMENT COUNT OF EXPECTED SERS
+         C     R14,ENDLIST         NO.HAS THE ENTIRE LIST BEEN EXAMINED
+         BE    NUFTEST
+         LA    R14,7(R14)          POINT TO NEXT LIST ENTRY.
+         B     FIND
+NUFTEST  EQU   *                   THIS VOLUME IS NEEDED,BUT DOES IT
+*                                   LEAVE ENOUGH FREE DEVICES TO HOLD
+*                                    THE AVR REQUESTS.            21048
+         CLI   UCBTBYT3,UCB3TAPE   IS IT A TAPE UCB               21048
+         BE    SETRET              YES, DONT ALLOCATE IT YET.     21048
+         LH    R14,NEEDCT          GET NEED COUNT FOR DEVICE      21048
+         LTR   R14,R14             ARE THERE ANY OUTSTANDING REQUESTS
+         BZ    STRIKE              NO. ALLOCATE THE CURRENT VOLUME
+SETRET  ST    R0,LCTPARM2          IN CASE OF AN ERROR
+         BAL   R14,UNRDYDEC
+         B     XJIMPOUT            ERROR RETURN
+*                                  NORMAL RETURN
+         LR    R11,R0              RESTORE THE AWT ADDRESS.
+STRIKE   SR    R0,R0
+         IC    R0,AWTEDDNM        GET THE INTERNAL DD NUMBER FROM THE
+         ST    R0,LCTPARM2         AWT AND STORE IT IN PARM 2.
+         ST    R2,LCTPARM3        STORE THE UCB ADDRESS IN  PARM 3.
+         L     R15,DEVSTRIK       GET ADDRESS OF DEVICE STRIKOUT,
+         BALR  R14,R15              IEFX3000, AND GO THERE.
+         B     NEXTUCB            ON A NORMAL RETURN, GET THE NEXT UCB.
+         B     STRIKERR           ERROR RETURN
+         B     NEXTUCB
+STRIKERR EQU   *                   ERROR RETURN FROM DEVICE       17722
+*                                   STRIKEOUT. LCTPARM2 IS SET BY 17722
+*                                    DEVICE STRIKEOUT WITH THE    17722
+*                                     ERROR AWT.                  17722
+XJIMPOUT EQU   *                                                  17722
+         LA    R14,1
+         ST    R14,LCTERROR        STORE ERROR INDICATORS
+         LA    R14,X'306'            IN THE
+         ST    R14,LCTPARM3                LCT.
+CLEANUP  EQU   *                                                  17722
+         BAL   R14,CLEARATI        CLEAR THE IOS ATTENTION TABLE. 17722
+         BAL   R14,FREEUPR         FREE THE SERIAL LIST CORE.     17722
+         L     R14,JIMPVCON        LOAD THE V-CON OF IEFXJ000
+         BR    R14
+         DROP  R10
+***********************************************************************
+         DROP  R11
+         USING AWT,R5             RESTORE OLD BASE REGISTER.
+UCBINAVT CH    R2,AVTERSRT         DOES THE UCB ADDRESS IN THE AVT
+*                                   EQUAL THAT OF THE UCB UNDER
+*                                    EXAMINATION.
+         BNE   CNFLTEST            NO.
+*                                  YES.NOW MAKE SURE THAT THE VOLUME
+*                                   REQUESTED BY THE VOLT IS THE ONE
+*                                    THAT CAME READY.
+         CLC   0(6,R7),SRTEVOLI    IS IT.....
+         BE    NEXTUCB             YES. ALLOCATION FOR THIS VOLUME IS
+*                                   ALREADY COMPLETE. GET THE NEXT UCB.
+*
+*                                  NO...THIS DEVICE HAS BEEN ALLOCATED,
+*                                   BY DEMAND, TO A DIFFERENT VOLUME.
+         LR    R13,R8              PASS THE LUT POINTER.
+         L     R15,MSGVCON
+         USING MSGDSECT,R15
+         LA    R1,IEF501I          'UNIT NEEDS DIFFERENT VOLUME'.   MCS
+         TM    UCBTBYT3,UCB3TAPE   IS IT A TAPE DEVICE              MCS
+         BO    TAPERTE1            YES.                             MCS
+         MVI   IEF501I+RTCD501,RTCDPOOL ROUTING CODE FOR DASD POOL. MCS
+WRT501   EQU   *                                                    MCS
+         WTO   MF=(E,(1))          PRINT OUT MESSAGE.
+         BAL   R14,SETTIOT         UNLOAD
+         B     NEXTUCB
+TAPERTE1 EQU   *                                                    MCS
+         MVI   IEF501I+RTCD501,RTCTPOOL ROUTING CODE FOR TAPE POOL. MCS
+         B     WRT501              GO TO WRITE MESSAGE.             MCS
+CNFLTEST CLC   0(6,R7),SRTEVOLI    THIS REQUEST REFERS TO A DIFFERENT
+*                                   DEVICE. DOES IT REQUEST THE VOLUME
+*                                    THAT IS ON THE CURRENT DEVICE.
+         BNE   NEXTAVT             NO.EVERYTHINGS FINE, GO LOOK AT THE
+*                                   NEXT AVT.
+         CLC   28(6,R14),SRTEVOLI YES. AN ERROR MAY EXIST. DOES  A23679
+*                                    THE UCB POINTED TO BY THIS REQUEST
+*                                     HAVE A VOLUME MOUNTED WITH THE
+*                                      SAME SERIAL AS THE CURRENT VOL.
+         BE    DUPLERR             YES. THEREFORE DUPLICATE VOL. SER'S.
+*                                    GO UNLOAD BOTH DEVICES.
+         CLI   AWTELINK,X'00'     IS REQUEST ALSO UNIT AFFINITY  A23679
+         BNE   NEXTAVT            IT IS.  NO ERROR.              A23679
+*                                  NO. IT NEEDS THE VOLUME MOUNTED ON
+*                                    THE CURRENT DEVICE
+*
+CNFLGO   EQU   *
+         STM   R13,R1,TEMPSAVE     SAVE THE REGISTERS USED BY THE
+*                                   WTO AND UNLOAD SUB-ROUTINES.
+         LR    R13,R8              PASS THE LUT POINTER.
+         L     R15,MSGVCON
+         USING MSGDSECT,R15
+         LA    R1,IEF500I          'VOLUME NEEDED ON DIFFERENT UNIT'MCS
+         TM    UCBTBYT3,UCB3TAPE   IS IT A TAPE DEVICE              MCS
+         BO    TAPERTE0            YES.                             MCS
+         MVI   IEF500I+RTCD500,RTCDPOOL ROUTING CODE FOR DASD POOL. MCS
+WRT500   EQU   *                                                    MCS
+         WTO   MF=(E,(1))          PRINT OUT MESSAGE.
+         BAL   R14,SETTIOT         UNLOAD
+         LM    R13,R1,TEMPSAVE     RESTORE REGISTERS
+         B     NEXTUCB
+TAPERTE0 EQU   *                                                    MCS
+         MVI   IEF500I+RTCD500,RTCTPOOL ROUTING CODE FOR TAPE POOL. MCS
+         B     WRT500              GO TO WRITE MESSAGE.             MCS
+***********************************************************************
+ERR3400  DS    0H                  ISSUE MESSAGE AND UNLOAD       21048
+         STM   R13,R1,TEMPSAVE     SAVE REGISTERS USED BY WTO AND 21048
+*                                  UNLOAD ROUTINES.               21048
+         LR    R13,R8              PASS THE LUT ADDRESS           21048
+         L     R15,MSGVCON         ADDRESS OF MSG MODULE          21048
+         USING MSGDSECT,R15                                       21048
+         LA    R1,IEF508I          INELIGIBLE DEVICE MOUNTED      21048
+         WTO   MF=(E,(1))          PRINT OUT MESSAGE              21048
+         BAL   R14,SETTIOT         UNLOAD THE DEVICE              21048
+         LM    R13,R1,TEMPSAVE     RESTORE REGISTERS              21048
+         B     NEXTUCB             GET NEXTUCB                    21048
+*
+DUPLERR  STM   R13,R1,TEMPSAVE     SAVE THE REGISTERS USED BY THE
+*                                   WTO AND UNLOAD SUB-ROUTINES.
+         L     R13,LCTSRTAD        FIND THE LUT ENTRY FOR THE UCB
+*                                    WHOSE ADDRESS IS IN R14.
+LUTINDEX CH    R14,0(R13)          DOES THE LUT ENTRY EQUAL THE UCB ADR
+         BE    FOUNDEX             YES
+         LA    R13,2(R13)          NO. POINT TO NEXT LUT ENTRY.
+         B     LUTINDEX
+*
+FOUNDEX  L     R15,MSGVCON         SET UP BASE TO ACCESS MESSAGE
+         USING MSGDSECT,R15          CSECT.
+*
+         LA    R1,IEF502I          'DUPLICATE SERIAL'               MCS
+         TM    UCBTBYT3,UCB3TAPE   IS IT A TAPE DEVICE              MCS
+         BO    TAPERTE2            YES.                             MCS
+         MVI   IEF502I+RTCD502,RTCDPOOL ROUTING CODE FOR DASD POOL. MCS
+WRT502   EQU   *                                                    MCS
+*
+         WTO   MF=(E,(1))
+*
+         DROP  R2
+         USING SRT,R14
+         SR    R5,R5               ZERO R5 TO SO INDICATE,IF IT IS.
+         TM    SRTESTAT,SRTERESV+SRTEPRES+SRTEALOC     IS THE R14 UCB
+*                                  PERM RES.,RESERVED, OR ALLOCATED.
+         DROP  R14
+         USING SRT,R2
+         BNZ   PERMTEST            IT IS. DONT UNLOAD THIS ONE.
+         LR    R5,R2                MAKE R5 NON ZERO
+         LR    R2,R14              POINT TO THE UCB REPRESENTING  22909
+*                                   THE DEVICE WITH THE VOLUME TO 22909
+*                                   BE UNLOADED.                  22909
+         S     R13,LCTSRTAD            CALC. OFFSET IN LUT        M4087
+         SRL   R13,ONE                 FOR THIS UCB               M4087
+         LA    R13,ONE(R13)            ADD 1 FOR WD MSG           M4087
+         BAL   R14,SETTIOT         IT ISN'T. UNLOAD IT
+         LR    R2,R5               POINT BACK TO THE UCB FOUND IN 22909
+*                                   THE UCB SCAN.                 22909
+*
+PERMTEST EQU   *
+         TM    SRTESTAT,SRTERESV+SRTEPRES+SRTEALOC     IS THE R2  UCB
+*                                  PERM RES.,RESERVED, OR ALLOCATED.
+         BZ    NOTPERM                  NO.
+         LTR   R5,R5               YES. WAS THE FIRST ONE ALSO
+*                                         PERM RES OR RESERVED.
+         BZ    CNCL                     YES. CANCEL THE JOB      A47599
+         B     NEXTUCB             NO. CONTINUE WITH THE JOB.
+NOTPERM  LR    R13,R8              PASS THE LUT POINTER
+         BAL   R14,SETTIOT         GO UNLOAD
+         B     NEXTUCB
+TAPERTE2 EQU   *                                                    MCS
+         MVI   IEF502I+RTCD502,RTCTPOOL ROUTING CODE FOR TAPE POOL. MCS
+         B     WRT502              GO TO WRITE MESSAGE.             MCS
+***********************************************************************
+*
+READERR  STM   R13,R1,TEMPSAVE     SAVE THE REGISTERS USED BY THE
+*                                    WTO AND UNLOAD ROUTINES.
+         L     R15,MSGVCON         SET THE MESSAGE CSECT BASE.
+         USING MSGDSECT,R15
+         LA    R1,IEF503I         'WRONG DENSITY OR INCORRECT LABEL'MCS
+         TM    UCBTBYT3,UCB3TAPE   IS IT A TAPE DEVICE              MCS
+         BO    TAPERTE3            YES.                             MCS
+         MVI   IEF503I+RTCD503,RTCDPOOL ROUTING CODE FOR DASD POOL. MCS
+WRT503   EQU   *                                                    MCS
+         WTO   MF=(E,(1))          WRITE OUT THE MESSAGE.
+         LR    R13,R8              PASS LUT POINTER.
+         BAL   R14,SETTIOT         GO TO UNLOAD
+         LM    R13,R1,TEMPSAVE     RESTORE REGISTERS
+         B     NEXTUCB
+TAPERTE3 EQU   *                                                    MCS
+         MVI   IEF503I+RTCD503,RTCTPOOL ROUTING CODE FOR TAPE POOL. MCS
+         B     WRT503              GO TO WRITE MESSAGE.             MCS
+ASCIERR  EQU   *                       USASI TAPE ERROR MSG       19200
+         STM   R13,R1,TEMPSAVE         SAVE REGS USED BY THE WTO  19200
+*                                      AND UNLOAD ROUTINES.       19200
+         L     R15,MSGVCON                                        19200
+         LA    R1,IEF507I              VOLUME HAS USASI LABEL.    19200
+         B     WRT503                  GO WRITE MESSAGE           19200
+         DROP  R15                                                  MCS
+*
+***********************************************************************
+***********************************************************************
+SCANEND  CLI   PHASE,PHASE1        IS THIS THE END OF PHASE ONE.
+         BNE   WAITCODE            IF NOT, IF IT'S PHASE TWO, GO BACK
+*                                   INTO THE WAIT STATE TO WAIT FOR
+*                                    MORE VOLUMES TO COME READY.
+*
+*                                  IF IT IS THE END OF PHASE ONE,
+         MVI   PHASE,PHASE2         BUILD THE LIST OF SERIAL NUMBERS
+*                                    TO BE REQUESTED, UNLOAD DEVICES
+*                                     IF NECESSARY, ETC.
+         CLC   AWTCCUAE(2),HALFZERO          BUT FIRST, ARE ALL AWT'S
+*                                          ALLOCATED.
+         BE    DONETEST                IF SO EXIT                 18988
+*                                  THE SERIAL LIST BUILD FUNCTION 21048
+*                                  HAS BEEN MOVED TO IEFXV002 IN  21048
+*                                  ORDER TO GAIN SPACE FOR        21048
+*                                  ADDITIONAL DEVICE SUPPORT.     21048
+         L     R15,SERBLDAD        GET ADDRESS OF SERIAL LIST     21048
+*                                  BUILD ROUTINE.                 21048
+         LA    R13,SAVEAREA        PASS SAVEAREA ADDRESS          21048
+         BALR  R14,R15             GO BUILD THE LIST              21048
+         B     ENUFCHCK            GO GATHER STATISTICS           21048
+         B     DONETEST            IF RETURN IS HERE, THE SERIAL  21048
+*                                  LIST WAS NOT BUILT AND         21048
+*                                  STATISTICS ARE NOT NEEDED.     21048
+***********************************************************************
+*                                  WORKING FROM THE BIT PATTERN IN THE
+ENUFCHCK EQU   *                    AWT SAVED FOR EACH DEVICE TYPE
+*                                    DETERMINE HOW MANY DEVICES CAN
+*                                     BE UNLOADED,AND HOW MANY ARE
+*                                      NOT READY.
+*
+         USING DEVSTAT,R8
+         LA    R8,DISCSTAT         SET UP BASE FOR 2311 STATISTICS.
+         MVI   TYPE,X'00'          SET DEVICE TYPE
+         BAL   R14,CONTROL         EXECUTE PASSES ONE,TWO AND THREE.
+         LA    R8,DRUMSTAT         SET BASE FOR 2314
+         MVI   TYPE,X'02'          SET DEVICE TYPE
+         BAL   R14,CONTROL         EXECUTE PASSES
+         LA    R8,MRLNSTAT        SET BASE FOR 3330               20201
+         MVI   TYPE,FIVE          SET DEVICE TYPE                 20201
+         BAL   R14,CONTROL        EXECUTE PASSES                  20201
+         MVI   PASSWTCH,PASS1      SETUP FOR 1 PASS THROUGH THE   21048
+*                                  STATISTIC BUILDING ROUTINE.    21048
+*                                  CONTROL IS NOT USED FOR TAPE.  21048
+*                                  IF UNLOADS ARE NECESSARY, THEY 21048
+*                                  WILL BE DONE LATER IN IEFXV003.21048
+         OI    TEMPMASK,BTAPE      INDICATE TAPE PROCESSING       21048
+         LA    R8,TAPESTAT         SET BASE FOR 2400 STATISTICS   21048
+         MVI   TYPE,FOUR           SET DEVICE TYPE CODE.          21048
+         BAL   R14,NUFDEVS         GO GATHER STATISTICS.          21048
+         LA    R8,TP16STAT         SET BASE FOR 2400-3            21048
+         MVI   TYPE,THREE          SET DEVICE TYPE CODE           21048
+         BAL   R14,NUFDEVS         GO GATHER STATISTICS           21048
+         TM    REALMASK,B2404      HAVE 2400-4 STATISTICS BEEN    21048
+*                                  GATHERED YET.                  21048
+         BO    TST3403             YES, CHECK 3400-3              21048
+         LA    R8,DUALSTAT         SET BASE FOR 2400-4            21048
+         MVI   TYPE,ONE            SET DEVICE TYPE CODE           21048
+         BAL   R14,NUFDEVS         GO GATHER STATISTICS           21048
+TST3403  TM    REALMASK,B3403      3400-3 STATISTICS DONE YET     21048
+         BO    TST3404             YES, CHECK 3400-4              21048
+         LA    R8,TP340016         SET BASE FOR 3400-3            21048
+         MVI   TYPE,SEVEN          SET DEVICE TYPE                21048
+         BAL   R14,NUFDEVS         GO GATHER STATISTICS           21048
+TST3404  TM    REALMASK,B3404      3400-4 STATISTICS DONE YET     21048
+         BO    TSTDONE             YES, ALL DONE                  21048
+         LA    R8,TP3400DD         SET BASE FOR 3400-4            21048
+         MVI   TYPE,SIX            SET DEVICE TYPE                21048
+         BAL   R14,NUFDEVS         GO GATHER STATISTICS           21048
+TSTDONE  LA    R13,SAVEAREA        POINT TO SAVEAREA              21048
+         L     R15,V003AD          GET ADDRESS OF IEFXV003        21048
+*                                  IEFXV003 EXPECTS R3 TO CONTAIN 21048
+*                                  PTR TO ACB AND R12 TO CONTAIN  21048
+*                                  PTR TO LCT WHICH IS THE        21048
+*                                  STANDARD CONVENTION FOR AVR    21048
+*                                  MODULES.                       21048
+         BR    R15                 GO TO IEFXV003                 21048
+*
+FREEUPR  EQU   *                   ALLOW THE FREEMAIN CODE TO BE  17722
+*                                  USED AS A SUBRTN BY A BAL 14.  17722
+         LH    R1,SERCNT           LENGTH OF SERIAL LIST.         17722
+         LTR   R1,R1               IS THERE ONE                   17722
+         BCR   8,R14               NO. RETURN.                    17722
+         ST    R14,REGSAVE2                                       17722
+         L     R4,DOMLIST          OBTAIN THE DOM LIST.             MCS
+         LTR   R4,R4               IS THERE ONE                     MCS
+         BZ    FREECORE            NO.                              MCS
+         BM    NODOMMAC            ALTHOUGH THE CORE FOR THE LIST   MCS
+*                                   WAS OBTAINED, BRANCH IF A MOUNT MCS
+*                                   HAS NOT BEEN ISSUED.            MCS
+         DOM   MSGLIST=(4)                                          MCS
+NODOMMAC EQU   *                                                    MCS
+         LH    R1,DOMCNT           LENGTH OF DOM LIST.              MCS
+         AH    R1,SERCNT           ADD LENGTH OF VOLSER LIST.       MCS
+FREECORE EQU   *                                                    MCS
+         LA    R0,BUFSIZE(R1)        PLUS LENGTH OF WTO BUFFER AND17722
+*                                      JFCB AREA.                 17722
+         L     R1,STRTLIST         LOCATION OF SERIAL LIST.       17722
+         FREEMAIN  R,LV=(0),A=(1)                                  000D
+         L     R14,REGSAVE2                                       17722
+         BR    R14                                                17722
+***********************************************************************
+*                   NOW WAIT FOR THE VOLUMES TO BE MOUNTED
+WAITCODE EQU   *
+         LH    R1,MASTER           GET THE COUNT OF VOLUMES STILL BEING
+         LTR   R1,R1                 AWAITED. HAVE THEY ALL COME READY.
+         BZ    DONETEST            YES.
+         DEQ   MF=(E,IEFXV00A)                                    M3147
+         SPACE 3                                                 A47599
+         DEQ   MF=(E,IEFXV00B)    DEQ ON DYNAMIC/BATCH RESOURCE  A47599
+         SPACE 3                                                 A47599
+         CLC   LCT(4),CF255        IS THIS PCP ?                  20029
+         BNH   PCPWAIT             YES, SO DONT SET UP ECB CHAIN. 20029
+* SINCE THIS IS NON-PCP,USE EAM ECB CHAIN POSTING PROCEDURE.      20029
+         OC    MRQESAVE,MRQESAVE   HAVE WE ALREADY OBTAINED AN    20029*
+                                   ELEMENT AND CHAINED IT IN ?    20029
+         BNZ   HAVEONE             YES, SO NEED IN DOING IT AGAIN.20029
+         LA    R0,EAILEN          SIZE OF EAI                    A41143
+         O     R0,SP245           INDICATE SUBPOOL 245           A41143
+         GETMAIN R,LV=(0)         GET CORE FOR AN EAI            A41143
+         LA    R5,0(R1)           SAVE POINTER TO EAI            A41143
+         USING EAI,R5             BASE FOR EAI                   A41143
+         USING MVI,R1                                             20029
+         LA    R0,MVILNTH         SIZE OF MVI                     M6159
+         O     R0,SP245           INDICATE SUBPOOL 245            M6159
+         GETMAIN R,LV=(0)         GET CORE FOR AN MVI SINCE IT    M6159*
+                                   MUST REMAIN IN CORE IF TSO     20029*
+                                   SWAPS US OUT.                  20029
+         ST    R1,MRQESAVE         SAVE THE MVI POINTER.          20029
+         ST    R5,MVIEAI           PUT EAI POINTER IN MVI        A41143
+         ST    R5,EAIECBP1         SAVE ADDR OF DEVICE END ECB   A41143
+         MVC   EAIECBP2(4),ADRCNCL SAVE ADDR OF CANCEL ECB       A41143
+MVILINKR EQU   MVILINK-4           REFERENCE FOR CLEARING THE MVI.20029
+MVILNTH  EQU   MVIEND-MVI         LENGTH OF THE MVI               M6159
+         XC    MVILINKR(8),MVILINKR CLEAR OUT THE LINK FIELD AND  20029*
+                                   AND THE WORD BEFORE IT IN      20029*
+                                   THE MVI.                       20029
+         L     R8,LCTQDRTY        POINTER TO CSCB                 M6159
+         USING CHAIN,R8                                           M6159
+         MVC   MVITJID(2),CHTJID  MOVE TERM. JOB ID FOR VPOST     M6159
+         DROP R8                                                  M6159
+         L     R8,LCTPSPAR         GET THE ATC ADDRESS.           20029
+         USING ATC,R8                                             20029
+         LA    R8,ATCLINK-ATC(R8)  GET ADDRESS OF LINK FIELD IN THE ATC
+         LA    R2,MVILINK-MVI      GET DISPLACEMENT TO LINK FIELD 20029*
+                                   IN THE MVI.                    20029
+         SR    R8,R2               MAKE THE ATC LOOK LIKE AN MVI. 20029
+         DROP  R8                                                 20029
+         USING MVI,R8                                             20029
+COMPARE  EQU   *                                                  20029
+         OC    MVILINK,MVILINK     IS THE END OF THE ECB QUE ?    20029
+         BZ    ENDCHAIN            YES, SO ADD OURS.              20029
+         L     R8,MVILINK          GET ADDRESS OF NEXT ELEMENT.   20029
+         B     COMPARE             GO CHECK FOR END AGAIN.        20029
+ENDCHAIN EQU   *                                                  20029
+         ST    R1,MVILINK          PUT IN OUR POINTER.            20029
+         USING DEVSTAT,R8                                         20029
+PCPWAIT  EQU   *                                                  20029
+HAVEONE  EQU   *                                                  20029
+         L     R5,MRQESAVE         OBTAIN POINTER TO MVI         A41143
+         L     R5,0(R5)            OBTAIN EAI FROM MVI           A41143
+         XC    EAIDEECB,EAIDEECB   CLEAR DEVICE END ECB          A41143
+         LA    R1,EAIECBP1         GET THE WAIT LIST             A41143
+         WAIT  ECBLIST=(R1)        WAIT FOR A CANCEL OR A DEVICE  20029*
+                                   END (IN PCP THIS IS THE SAME ECB BUT*
+                                   THE LIST FORM IS IS STILL USED)20029
+         SPACE 3                                                 A47599
+*    *    *    *    *    *    *    *    *    *    *    *    *    A47599
+*        BECAUSE DYNAMIC ALLOCATION COULD HAVE PROCESSED WHILE   A47599
+*        THE ABOVE WAIT WAS IN PROCESS, THE IORMS INTERFACE MUST A47599
+*        AGAIN BE ESTABLISHED. (DYNAMIC ALLOCATION WOULD HAVE    A47599
+*        DESTORYED IT IF HE PROCESSED DURING THE WAIT.)  THE     A47599
+*        Q9 AND Q5 RESOURCES MUST ALSO BE OBTAINED HERE AGAIN    A47599
+*        TO KEEP OUT OTHER ALLOCATIONS, TERMINATIONS, AND        A47599
+*        DYNAMIC ALLOCATION.                                     A47599
+*    *    *    *    *    *    *    *    *    *    *    *    *    A47599
+DDRPRES  EQU   X'20'               DDR IS IN SYSTEM              A47599
+         STM   R4,R5,REGSAVE3     SAVE REGS TO USE IN            A47599
+         ST    R8,REGSAVE4        SETTING IORMS INTERFACE        A47599
+         L     R4,CVTPTR           GET PTR TO CVT                A47599
+         USING CVT,R4                                            A47599
+         TM    CVTOPTA,DDRPRES     IS DDR IN SYSTEM              A47599
+         BZ    NODDR               NO-DO NOT WAIT                A47599
+         L     R8,CVTTCBP          GET PTR TO TCB'S              A47599
+ACTTCB   EQU   4                   DISPLACEMENT TO ACTIVE TCB    A47599
+         L     R8,ACTTCB(,R8)      GET PTR TO CURRENT TCB IN REG A47599
+         USING TCB,R8                                            A47599
+         L     R4,CVTDCB           GET PTR TO LOGREC DCB         A47599
+         DROP  R4                                                A47599
+IORMSPTR EQU   0                   DISPLACEMENT TO ADDR OF       A47599
+*                                  IORMS COMMUNICATION AREA      A47599
+         L     R4,IORMSPTR(,R4)    FIRST WORD POINTS TO IORMS COMA47599
+         USING IGFIORMS,R4                                       A47599
+         B     YESDDR              DDR IS PRESENT DON'T ZERO REG A47599
+NODDR    SR    R4,R4               R4 EQUAL 0 MEANS NO DDR       A47599
+YESDDR   EQU   *                                                 A47599
+         EJECT 1                                                 A47599
+         ENQ   MF=(E,IEFXV00B)     ENQ ON DYNAMIC/BATCH RESOURCE A47599
+*                                                                A47599
+         LTR   R4,R4               IS DDR PRESENT AND ACTIVE     A47599
+         BZ    NODDR1              NO-DON'T W AIT                A47599
+         ST    R8,ALLOCTCB         PUT PTR TO CLLOC TCB IN COM   A47599
+         L     R5,TCBJSCB              GET PTR TO JSCB           A47599
+         USING IEZJSCB,R5                                        A47599
+         MVC   ALLOTJID(2),JSCBTJID    STORE TJID IN             A47599
+*                                      IORMS COM AREA FOR DDR    A47599
+*                       WAIT UNTIL DDR-I/O RMS IS NOT IN PROCESS A47599
+         WAIT  ECB=ALLOCECB                                      A47599
+         DROP  R4                                                A47599
+         DROP  R8                                                A47599
+         DROP  R5                                                A47599
+NODDR1   EQU   *                                                 A47599
+         USING DEVSTAT,R8                                        A47599
+         USING EAI,R5                                            A47599
+         LM    R4,R5,REGSAVE3     RESTORE REGS USED IN           A47599
+         L     R8,REGSAVE4        SETTING IORMS INTERFACE.       A47599
+         ENQ    MF=(E,IEFXV00A)    RE-ENQUEUE ON RESOURCE         20029
+         L     R1,EAIECBP2        GET ADDRESS OF THE CANCEL ECB. A41143
+         CLC   LCT(4),CF255       IS THIS PCP ?                  A38435
+         BNH   PCPCNCL            YES                            A38435
+         TM    HEX00(R1),POST     HAS THIS JOB BEEN CANCELED ?   A38435
+         BO    CNCLMSG            YES                            A38435
+         B     CLEARECB                                          A38435
+         DROP  R5                 DROP EAI BASE                  A41143
+PCPCNCL  EQU   *                                                 A38435
+         TM    0(R1),X'30'         HAS THE JOB BEEN CANCELED.
+         BNZ   CNCLMSG             CANCEL WITH "CANCELED BY OP." MSG.
+CLEARECB EQU   *                  HERE IF JOB IS NOT CANCELLED    M3057
+         XC    0(4,R1),0(R1)       NO. CLEAR THE ECB.
+*
+         B     SCANUCB             GO SCAN THE UCB'S TO FIND THOSE
+*                                    THAT HAVE COME READY.
+***********************************************************************
+*
+***********************************************************************
+***********************************************************************
+*
+DONETEST BAL   R14,CLEARATI        CLEAR THE IOS ATTENTION TABLE INDEX
+         BAL   R14,FREEUPR         FREE THE SERIAL LIST CORE.     17722
+*                                  ALL THE REQUESTED SERIALS HAVE BEEN
+*                                   RECEIVED.NOW TEST IF ALL AWTS ARE
+         CLC   AWTCCUAE(2),HALFZERO  ALLOCATED.
+         BE    ALLDONE             YES. GO TO TIOT CONSTRUCTION
+         L     R14,DECISVCN        NO. GO TO DECISION ALLOCATION
+         BR    R14
+***********************************************************************
+CONTROL  MVI   PASSWTCH,PASS1      SET SWITCH FOR PASS ONE.
+         BAL   R1,NUFDEVS          EXECUTE PASS ONE.
+         LH    R15,NEEDCT          GET THE NUMBER OF NEEDED DEVICES
+         SH    R15,UNRDYCT         SUBTRACT UNREADY DEVICES
+         LTR   R15,R15             ARE MORE DEVICES NEEDED
+         BCR   13,R14              NO,PROCEED TO NEXT DEVICE TYPE.
+         CH    R15,AVAILCT         YES,CAN ENOUGH BE UNLOADED.
+         STH   R15,UNLOADCT
+         BNH   ENOUGH              YES
+ERRAWT   EQU  *
+         MVC   LCTPARM2(4),SAVEAWT NO.MOVE THE AWT ADDRESS INTO THE
+*                                    LCT FOR USE BY ALLOCATION
+*                                     RECOVERY
+         B     XJIMPOUT
+ENOUGH   EQU   *
+         MVI   PASSWTCH,PASS2      YES. SET SWITCH FOR PASS TWO.
+         BAL   R1,NUFDEVS          EXECUTE PASS TWO.
+*
+         MVI   PASSWTCH,PASS3      SET FOR PASS THREE.
+         BAL   R1,NUFDEVS          EXECUTE PASS THREE.
+         BR    R14                 PROCEED TO NEXT DEVICE TYPE.
+***********************************************************************
+NUFDEVS  EQU   *
+         USING AWT,R5
+         L     R5,SAVEAWT          GET THE SAVED AWT ADDRESS.
+         LTR   R5,R5               WAS ONE SAVED.
+         BNZ   YESAWT              YES
+         MVI   TYPE,X'FF'          NO. BLOT OUT THE DEVICE TYPE.
+         BR    R14
+YESAWT   EQU   *
+         LH    R13,AWTCNBPW        GET THE NUMBER OF WORDS IN THE
+*                                   PRIMARY BIT PATTERN.
+         L     R6,LCTSRTAD         GET THE LUT ADDRESS
+         SR    R15,R15             CLEAR REG. FOR COUNT OF UNITS
+         LA    R10,AWTESRTS        GET THE STARTING ADDRESS OF THE
+*                                   BIT PATTERN.
+NEXTWORD LA    R11,32              SET BIT COUNT
+         L     R0,0(R10)           GET A WORD OF BIT PATTERN
+MOREBITS LTR   R0,R0               IS THE HIGH.ORDER BIT ON.
+         BM    MAYBEUCB            YES
+NEXTBIT  SLL   R0,1                NO.SHIFT THE NEXT BIT INTO POSITION.
+         LA    R6,2(R6)            POINT TO THE NEXT UCB ADDRESS.
+*                                  THROUGH WITH THIS WORD OF PATTERN.
+         BCT   R11,MOREBITS        NO.INSPECT THE NEXT BIT.
+         LA    R10,4(R10)          YES.POINT TO THE NEXT WORD OF
+*                                    THE PATTERN.
+         BCT   R13,NEXTWORD        BUT IS THERE A NEXT WORD.
+         OC    REALMASK,TEMPMASK   HAS TAPE PROCESSING STARTED    21048
+         BZ    ZERO(R1)            RETURN TO LOOP CONTRL IF NO.   21048
+         BR    R14                 IF YES, RETURN TO MAIN LINE.   21048
+MAYBEUCB LH    R2,0(R6)            GET THE UCB ADDRESS FROM THE LUT.
+         USING SRT,R2
+         TM    SRTESTAT,SRTECHGS+SRTERESV+SRTEALOC+SRTEPRES
+*
+*                                  IS THE UCB;CHANGING FROM ONLINE TO
+*                                    OFFLINE,RESERVED,ALLOCATED OR
+*                                      PERMANENTLY RESIDENT.
+         BNZ   NEXTBIT             YES. DISREGARD THIS UNIT.
+         TM    SRTESTAT,SRTEONLI   IS IT ONLINE.
+         BZ    NEXTBIT             NO
+         TM    UCBTBYT3,UCB3TAPE   IS IT A TAPE UCB               21048
+         BO    TAPEPROC            YES, SKIP TO TAPE PROCESSING   21048
+RDYCHECK EQU   *                                                  21048
+         TM    UCBFL2,NOTREADY     IS THE DEVICE READY
+         BO    UNRDYCOD            NO.
+*                                  YES.
+         CLI   PASSWTCH,PASS1      IS IT PASS ONE.
+         BNE   RTAINTST            NO.
+*
+*                                  YES.THIS THEN IS A VOLUME WHICH MAY
+*                                   BE UNLOADED IF REQUIRED.
+         LH    R15,AVAILCT         GET THE COUNT OF UNLOADABLE VOLUMES
+         LA    R15,1(R15)           AND INCREMENT BY ONE.
+         STH   R15,AVAILCT
+         B     NEXTBIT
+UNRDYCOD CLI   PASSWTCH,PASS1      IS IT PASS ONE.
+         BNE   NEXTBIT             NO. IGNORE NOT READY DEVICES.
+         LH    R15,UNRDYCT         YES. INCREMENT THE COUNT OF FREE
+         LA    R15,1(R15)            DEVICES.
+         STH   R15,UNRDYCT
+         MVI   UCBATI,AVRATI       SET THE ATTENTION TABLE INDEX  22909
+*                                   ALLOWING THIS DEVICE TO SERVE 22909
+*                                   AS A DEVICE TO RECEIVE THE    22909
+*                                   REQUIRED VOLUMES.             22909
+         B     NEXTBIT
+TAPEPROC DS    0H                  GATHERING TAPE STATISTICS      21048
+         CLI   UCBTBYT4,TYPE3400   IS IT A 3400                   21048
+         BNE   TAPE2400            NO, MUST BE A 2400             21048
+         CLI   UCBTBYT2,DEN1600    IS IT A 3400-3 1600BPI         21048
+         BNE   TAPE34DD            NO, MUST BE A 3400-4           21048
+         TM    REALMASK,B3403      3400-3 STATISTICS COMPLETE     21048
+         BO    NEXTBIT             YES, PROCEED WITH THE NEXT UCB 21048
+         OI    TEMPMASK,B3403      3400-3 STATISTICS IN PROCESS   21048
+         LA    R8,TP340016         SET BASE FOR 3400-3            21048
+         B     RDYCHECK            GO PROCESS                     21048
+TAPE34DD TM    REALMASK,B3404      3400-4 STATISTICS COMPLETE     21048
+         BO    NEXTBIT             YES, PROCEED TO NEXT UCB       21048
+         OI    TEMPMASK,B3404      3400-4 STATISTICS IN PROCESS   21048
+         LA    R8,TP3400DD         SET BASE FOR 3400-4            21048
+         B     RDYCHECK            GO PROCESS                     21048
+TAPE2400 TM    UCBTBYT1,DEN800     IS IT A 1600 BPI 2400          21048
+         BNZ   TAPE2416            YES, GO CHECK FOR DUALS        21048
+         LA    R8,TAPESTAT         SET BASE FOR 2400 800 BPI      21048
+         B     RDYCHECK            GO PROCESS                     21048
+TAPE2416 CLI   UCBTBYT2,DEN1600    IS IT A 2400-3                 21048
+         BNE   TAPE24DD            NO, MUST BE A 2400-4 DUAL DEN  21048
+         LA    R8,TP16STAT         SET BASE FOR 2400-3            21048
+         B     RDYCHECK            GO PROCESS                     21048
+TAPE24DD TM    REALMASK,B2404      2400-4 STATISTICS COMPLETE     21048
+         BO    NEXTBIT             YES, PROCEED TO NEXT UCB       21048
+         OI    TEMPMASK,B2404      2400-4 STATISTICS IN PROCESS   21048
+         LA    R8,DUALSTAT         SET BASE FOR 2400-4            21048
+         B     RDYCHECK            GO PROCESS                     21048
+RTAINTST CLI   SRTEJBNR,X'00'      IS THE VOLUME PASSED OR RETAINED
+         BNE   THREETST            YES. TEST FOR PASS 3.
+         CLI   PASSWTCH,PASS2      NO. IS IT PASS 2.
+         BE    EXTERNAL            YES. SET UP TO UNLOAD THIS DEVICE.
+         B     NEXTBIT             NO.THIS WAS SET UP DURING PASS 2.
+THREETST CLI   PASSWTCH,PASS3      IS IT PASS 3.
+         BNE   NEXTBIT             IF NOT,IGNORE PASSED AND RETAINED
+*                                    VOLUMES TILL PASS 3.
+*                                  YES,IT'S PASS 3. SET UP TO UNLOAD
+*
+*
+EXTERNAL STM   R13,R1,TEMPSAVE     SAVE THE REGISTERS USED BY THE
+*                                   WTO AND UNLOAD SUBROUTINES
+         LR    R13,R6              PASS THE LUT POINTER IN THE
+*                                  PROPER REGISTER.
+         S     R13,LCTSRTAD       GET OFFSET OF LUT ENTRY.        M3133
+         SRL   R13,1              BEGIN SETUP FOR STORAGE INTO-   M3133
+         LA    R13,1(R13)         TIOT FOR WD000.                 M3133
+         LA    R15,MSG505A         GET ADDR OF MSG505A SUBROUTINE 21048
+         BALR  R14,R15             PRINT OUT MESSAGE AND UNLOAD   21048
+         LM    R13,R1,TEMPSAVE     RESTORE REGISTERS
+         LH    R15,UNRDYCT         INCREMENT COUNT OF FREE DEVICES
+         LA    R15,1(R15)
+         STH   R15,UNRDYCT
+         LH    R15,UNLOADCT        GET THE NUMBER OF DEVICES TO BE
+         BCTR  R15,0                 UNLOADED. DECREMENT IT.
+         STH   R15,UNLOADCT
+         LTR   R15,R15             ARE ENOUGH UNLOADED.
+         BCR   8,R14               YES, GO TO THE NEXT DEVICE TYPE.
+         B     NEXTBIT             NO. KEEP LOOKING
+***********************************************************************
+         DROP  R5                                                A47599
+         EJECT                                                    21048
+***********************************************************************
+***********************************************************************
+*
+*                   WRITE OUT MESSAGE 5  AND THEN UNLOAD
+*
+*
+MSG505A  DS    0H                  PRINT MSG 505A SUBROUTINE      21048
+         USING *,R15               ESTABLISH TEMPORARY ADDRESS-   21048
+*                                  ABILITY IN CASE ROUTINE IS     21048
+*                                  BEING ENTERED FROM IEFXV003    21048
+         L     R9,AHERE001         LOAD BASE ADDRESS OF THIS MOD  21048
+         DROP  R15                 DROP TEMPORARY BASE            21048
+         L     R15,MSGVCON         SET UP BASE TO ACCESS          21048
+         USING MSGDSECT,R15          THE MESSAGE CSECT,IEFXVMSG.
+         LA    R1,IEF505I          'UNIT REQUIRED'                  MCS
+         TM    UCBTBYT3,UCB3TAPE   IS IT A TAPE DEVICE              MCS
+         BO    TAPERTE5            YES.                             MCS
+         MVI   IEF505I+RTCD505,RTCDPOOL ROUTING CODE FOR DASD POOL. MCS
+WRT505   EQU   *                                                    MCS
+         WTO   MF=(E,(1))          WRITE OUT MESSAGE
+         B     SETTIOT             UNLOAD THE DEVICE
+TAPERTE5 EQU   *                                                    MCS
+         MVI   IEF505I+RTCD505,RTCTPOOL ROUTING CODE FOR TAPE POOL. MCS
+         B     WRT505              GO TO WRITE MESSAGE.             MCS
+         DROP  R15                                                  MCS
+***********************************************************************
+*
+*
+***********************************************************************
+***********************************************************************
+SETTIOT  EQU   *
+*                                  SUB-ROUTINE WHICH SETS UP A DUMMY
+*                                   TIOT AND GOES TO EXTERNAL ACTION,
+*                                    (IEFWD000),TO UNLOAD VOLUMES.
+*
+*                                  INPUT-- R13 POINTS TO THE ADDRESS,
+*                                    WITHIN THE SCHEDULER LUT,
+*                                    (LCTSRTAD),OF THE UCB FOR THE
+*                                    UNIT TO BE UNLOADED.
+*
+*                                  REGISTERS USED- R13,R14,R15
+         L     R15,LCTPARM1        GET THE ACB ADDRESS
+         STM   R14,R15,REGSAVE2    SAVE ACB ADDRESS AND THE RETURN ADDR
+         L    R14,LCTJCTAD         GET THE JCT ADDRESS.
+         MVC   TIOCNJOB(8),8(R14)  MOVE JOBNAME INTO THE TIOT    A33707
+         SLL   R13,12
+         A     R13,STATUSB
+         ST    R13,TIOESTTB
+         CLI   SRTEJBNR,X'00'      IS CURRENTLY MOUNTED VOLUME    II245
+*                                  PASSED OR RETAINED             II245
+         BE    LETDSMNT            NO, LET TIOT REFLECT D MESSAGE II245
+         OI    TIOESTTB,X'04'      YES, SET TIOT TO REQ R MESSAGE II245
+LETDSMNT EQU   *                                                  II245
+         LA    R13,ADTIOT          STORE THE ADDRESS OF THE TIOT PTR IN
+         ST    R13,LCTPARM1          THE LCT.
+         CLI   PHASE,PHASE2        IS IT PHASE 2                  22909
+         BNE   GOTOWD              NO. GO TO IEFWD000.            22909
+         MVI   UCBATI,AVRATI       SET THE ATTENTION TABLE INDEX  22909
+*                                   AGAIN ALLOWING THIS DEVICE TO 22909
+*                                   SERVE AS A DEVICE TO RECEIVE  22909
+*                                   THE REQUIRED VOLUMES.         22909
+GOTOWD   EQU   *                                                  22909
+         STM   R0,R15,SAVEAREC                                    21048
+         CALL  IEFWD000            EXIT TO EXTERNAL ACTION
+         USING *,R14               SET UP TEMPORARY BASE TO REFERENCE
+*                                    THE SAVE AREA.
+         LM    R0,R15,SAVEAREC                                    21048
+         DROP  R14
+         LM    R14,R15,REGSAVE2    RESTORE CALLING ROUTINE'S RETURN
+*                                   ADDRESS AND THE ACB ADDRESS.
+         ST    R15,LCTPARM1        RESTORE THE ACB ADDRESS.
+         BR    R14
+***********************************************************************
+***********************************************************************
+***********************************************************************
+*
+***********************************************************************
+***********************************************************************
+*
+ALLDONE  L     R14,CIMPVCON        GET THE V-CON OF IEFWC000
+         BR    R14
+*
+***********************************************************************
+CNCLMSG  LA    R14,X'10A'          SET CODE FOR 'CANCELED BY OP. MSG.
+CNCL     EQU   CNCLMSG                                           A47599
+JUMPMSG  ST    R14,LCTPARM3
+         SR    R14,R14
+         ST    R14,LCTPARM2           INDICATORS IN THE
+         ST    R14,LCTERROR             LCT
+         B     CLEANUP             GO TO IEFXJ000 EXIT.           17722
+*
+***********************************************************************
+CLEARATI EQU   *                                                  20029
+         L     R8,MRQESAVE         GET POINTER TO THE MVI.        20029
+         LTR   R8,R8               WAS AN MVI BUILT FOR THIS      20029X
+                                   ALLOCATION?                    20029
+         BZ    SKIPPAST            IF NOT, THERE'S NOTHING TO FREE20029X
+                                   OR DECHAIN                     20029
+         L     R2,LCTPSPAR         GET THE ATC ADDRESS.           20029
+         LA    R2,ATCLINK-ATC(R2)  GET DISPLCMENT TO LNK FIELD.   20029
+         LA    R1,MVILINK-MVI      GET SAME FOR MVI.              20029
+         SR    R2,R1               ADJUST ATC TO LOOK LIKE AN MVI.20029
+COMPREG  EQU   *
+         USING MVI,R2                                             20029
+         CL    R8,MVILINK          IS THIS OUR LINK ?             20029
+         BE    DECHAIN             YES, SO TAKE IT OUT.           20029
+         L     R2,MVILINK          IF NOT GET POINTER TO NEXT ONE.20029
+         B     COMPREG             GO BACK TO SEE IF ITS OURS.    20029
+DECHAIN  MVC   MVILINK,MVILINK-MVI(R8) REMOVE OUR LINK.           20029
+         USING MVI,R8             BASE FOR MVI                   A41143
+         L     R1,MVIEAI          POINTER TO EAI                 A41143
+         LA    R0,EAILEN          LENGTH OF EAI                  A41143
+         O     R0,SP245           INDICATE SUBPOOL 245           A41143
+         FREEMAIN R,LV=(0),A=(1)  FREE EAI                       A41143
+         DROP  R8                 DROP MVI BASE                  A41143
+         LR    R1,R8               GET ADDRESS OF MVI IN R1 FOR   20029X
+                                   FREEMAIN                       20029
+         DROP  R2                                                 20029
+         LA    R0,MVILNTH         LENGTH OF MVI                   M6159
+         O     R0,SP245           INDICATE SUBPOOL 245            M6159
+         FREEMAIN R,LV=(0),A=(1)  FREE MVI CORE                   M6159
+SKIPPAST EQU   *                                                  20029
+         L     R8,LCTSRTAD         GET LUT ADDRESS.               20029
+ATILOOP  LH    R2,0(R8)            GET A UCB ADDRESS.
+         USING SRT,R2
+         LTR   R2,R2               TEST FOR THE FOX ENDING THE TABLE.
+         BCR   4,R14               IF IT'S THE END, RETURN.
+         LA    R8,2(R8)            OTHERWISE POINT TO THE NEXT ENTRY.
+         BC    8,ATILOOP          LOOP IF ZERO UCB ADDRESS       A23547
+         XR    R10,R10        CLEAR WORK REG                      M3147
+         TM    PASSWTCH,UPUSERCT        USER COUNTS UPDATED       M3147
+         BZ    NODECRM          NO BRANCH TO NODECRM              M3147
+         TM    UCBTBYT3,UCB3DACC    TEST FOR TAPE                 M3147
+         BZ    NODECRM          BRANCH TO NO DECREMENT            M3147
+         CLI   UCBID,X'FF'         TEST FOR DATA CELL             M3147
+         BNE   DEDCELCT            BRANCH IF SUB                  M3147
+         CLC   UCBTYP+2(2),DCEL05  MAIN UCB FOR DCEL              M3147
+         BNE   NODECRM          BRANCH TO NO DECREMENT            M3147
+         IC    R10,SRTEUSER      GET USER COUNT                   M3147
+         BCTR  R10,0          DECREMENT                           M3147
+         STC   R10,SRTEUSER          AND STORE BACK               M3147
+         B     NODECRM       BRANCH TO CONTINUE PROCESSING        M3147
+DEDCELCT EQU   *                                                  M3147
+         USING DATACELL,R2                                        M3147
+         IC    R10,DCELUSER           GET USER COUNT              M3147
+         BCTR  R10,0          DECREMENT                           M3147
+         STC   R10,DCELUSER             AND STORE BACK            M3147
+         USING SRT,R2                                             M3147
+NODECRM  EQU   *                                                  M3147
+         CLI   UCBATI,X'0C'        HAS AN ATTN. INDEX BEEN SET
+         BNE   ATILOOP             NO
+         TM    SRTESTAT,SRTEALOC   IS THE UNIT ALLOCATED? (THIS CAN
+*                                  HAPPEN,EVEN WITH A ZERO SERIAL,IF
+*                                  IEFWD000 HAS DEQUED WHILE WAITING
+*                                  FOR A MOUNT.)
+         BNO   ATIZERO             NO, GO AHEAD AND CLEAR IT.
+         TM    UCBFL2,NOTREADY     YES.IS IT ALSO NOT READY.
+         BO    ATILOOP             YES. IEFWD000 MUST BE WAITING FOR
+*                                  IT TO COME READY.DONT CLE AR IT.
+ATIZERO  EQU   *
+         MVI   UCBATI,X'00'        YES.CLEAR IT OUT.
+         B     ATILOOP
+***********************************************************************
+***********************************************************************
+R0       EQU   0
+R1       EQU   1
+R2       EQU   2
+R3       EQU   3
+R4       EQU   4
+R5       EQU   5
+R6       EQU   6
+R7       EQU   7
+R8       EQU   8
+R9       EQU   9
+R10      EQU   10
+R11      EQU   11
+R12      EQU   12
+R13      EQU   13
+R14      EQU   14
+R15      EQU   15
+POST     EQU   X'40'              CANCEL ECB TEST                A38435
+B3404    EQU   X'01'               3400-4 BIT FOR TEMPMASK        21048
+B3403    EQU   X'02'               3400-3 BIT FOR TEMPMASK        21048
+B2404    EQU   X'04'               2400-4 BIT IN TEMPMASK         21048
+BTAPE    EQU   X'80'              TAPE PROCESSING BIT IN TEMPMASK 21048
+ONE      EQU   1                       USED TO ADJUST FOR WD MSG  M4087
+         DS    0F                                                 M6159
+SP245    DC    AL1(245)           SUBPOOL 245                     M6159
+         DC    AL3(0)             ZERO MASK                       M6159
+REGSAVE3 DS    2F                 TEMP SAVE AREA                  M4046
+REGSAVE4 DS    F                  TEMP SAVE AREA                  M4046
+PUTLSTAD DC    V(PUTLIST)                                         20029
+V003AD   DC    V(IEFXV003)         ADDRESS OF IEFXV003            21048
+AHERE001 DC    A(HERE001)          BASE VALUE OF THIS MODULE      21048
+SERBLDAD DC    V(SERBUILD)         ADDRESS OF SERIAL BUILD        21048
+*                                  ROUTINE IN IEFXV002.           21048
+PATTSTAD DC    V(PATTEST)          ADDRESS OF PATTEST ROUTINE     21048
+SAVEAREC DC    18F'0'              TEMPORARY SAVE AREA            21048
+         EJECT                                                    21048
+* READ COMMENT BEFORE ADDING ANY CONSTANTS ***** IMPORTANT *****  M4046
+*  THIS AREA BEGINS THE LIST OF CONSTANTS USED BY BOTH IEFXV001   20029
+*   AND IEFXV002.  ALL NEW CONSTANTS SHOULD BE ADDED BEFORE THIS  20029
+*   POINT                                                         20029
+PHASE1   EQU   0
+PASS1    EQU   1
+PASS2    EQU   2
+PASS3    EQU   3
+HEXFF    EQU   X'FF'                                                MCS
+HEX00    EQU   X'00'                                                MCS
+AVRATI   EQU   X'0C'               ATTENTION TABLE INDEX USED BY  22909
+*                                   AVR.                          22909
+ASPENATI EQU   X'18'               UCBATI CODE FOR 3400 SECURITY  21048
+IEESJQ   EQU   96
+SJQELNGH EQU   12
+IEEMSLTV EQU   60
+DISPBYTE EQU   X'89'               OFFSET INTO M/S RESIDENT CORE    MCS
+*                                   FOR BYTE WITH DISPLAY DSNAME    MCS
+*                                   INDICATOR.                      MCS
+MSBOBECB EQU   X'AC'
+RTCDPOOL EQU   X'10'               ROUTING CODE FOR DASD POOL.      MCS
+RTCTPOOL EQU   X'20'               ROUTING CODE FOR TAPE POOL.      MCS
+RTCDPLLB EQU   X'14'               ROUTING CODE FOR DASD POOL AND   MCS
+*                                   LIBRARY.                        MCS
+RTCTPLLB EQU   X'28'               ROUTING CODE FOR TAPE POOL AND   MCS
+*                                   LIBRARY.                        MCS
+FLAGSRD  EQU   X'80'               MCSFLAGS FOR ROUTING AND/OR      MCS
+*                                   DESCRIPTOR CODES PRESENT.       MCS
+RTCD500  EQU   45   OFFSET INTO MSG. IEF500A FOR ROUTING CODE.      MCS
+RTCD501  EQU   41   OFFSET INTO MSG. IEF501A FOR ROUTING CODE.      MCS
+RTCD502  EQU   30   OFFSET INTO MSG. IEF502A FOR ROUTING CODE.      MCS
+RTCD503  EQU   46   OFFSET INTO MSG. IEF503A FOR ROUTING CODE.      MCS
+RTCD505  EQU   27   OFFSET INTO MSG. IEF505A FOR ROUTING CODE.      MCS
+V1CONST  DS    0C
+BEGINCON EQU   *         ALL CONSTANTS BETWEEN * AND ENDOFCON WILL
+*                          BE INITIALIZED TO ZERO.   BE CAREFUL.
+STRTLIST DS    1F                                                 17722
+ENDLIST  DS  1F
+DOMLIST  DS    1F                  ADDRESS OF DOM LIST.             MCS
+         SPACE 3
+*    THE FOLLOWING STATISTICS TABLE CONSISTS OF ENTRIES OF THREE  21048
+*    FULL WORDS PER ENTRY.  THEY MUST BE KEPT IN THE SAME ORDER   21048
+*    THAT THEY NOW APPEAR. REFERERENCE IS MADE BY THE RELATIVE    21048
+*    LOCATION OF THE PARTICULAR ENTRY IN THE TABLE.               21048
+*                                                                 21048
+STATBLOC DS    0F
+DISCSTAT DC    3F'0'
+DUALSTAT DS    3F
+DRUMSTAT DC    3F'0'
+TP16STAT DS    3F
+TAPESTAT DC    3F'0'
+MRLNSTAT DC    3F'0'                                              20201
+TP3400DD DC    3F'0'               3400-4 STATISTICS              21048
+TP340016 DC    3F'0'               3400-3 STATISTICS              21048
+REALMASK DC    C'0'                STATISTICS ROUTINE MASK        21048
+TEMPMASK DC    C'0'                STATISTICS ROUTINE MASK        21048
+SERSAVE  DC    3H'0'               SAVE VOLSER IN PHASE 2         21048
+MATCHSW  DC    C'0'                PHASE 2 VOLSER MATCH SWITCH    21048
+MODESW   DC    C'0'                VERIFY MODE SWITCH FOR IEFXV00321048
+MASTER   DS    1H
+PHASE    DC    H'0'
+SERCNT   DS    H'0'                ALLOWS FOR A LIST OF 4681      17722
+*                                    SERIAL NUMBERS (6 BYTES EACH)17722
+*                                    AND DEVICE TYPES (1BYTE EACH)17722
+DOMCNT   DS    1H                  LENGTH OF DOM LIST.              MCS
+DISPLDSN DS    1C                  DISPLAY DSNAME INDICATOR.        MCS
+TYPESAVE DS    1C
+PASSWTCH DS    1C
+RTCOD504 DS    2C                  VALUE OF ROUTING CODE FOR        MCS
+*                                   MESSAGE IEF504A.                MCS
+ENDOFCON EQU   *         CAUTION--THE ENTIRE AREA,FROM BEGINCON TO
+*                        ********    HERE,WILL BE INITIALIZED TO ZERO.
+ENDLIST1 EQU   X'80'                   WAIT LIST END INDICATOR    M0247
+         DS    0F                                                A41143
+ADRCNCL  DC    X'80000000'             PTR TO CANCEL ECB          M0247
+MRQESAVE DC    F'0'                                               20029
+WATCDVCN DC    A(WAITCODE)         RETURN PT AFTER PUTTING OUT    20029X
+                                   SPECIFIC VOLUME SERIALS IN V00220029
+**********************************************************************
+         DS    0H                      THIS IS THE LENGTH OF THE
+STATLONG DC    AL2(DUALSTAT-DISCSTAT)    STATISTICS BLOCK FOR EACH
+BASESAVE DS    F
+UNSHARED DS    H
+UNLOADCT DS    H
+DUALBYTE DC    X'00'
+*                                        DEVICE TYPE.
+**********************************************************************
+DESCRCOD DC    X'0000'             AREA FOR DESCRIPTOR CODE FOR     MCS
+*                                   MESSAGE IEF504A.                MCS
+DESCRC2  EQU   X'40'               CODE = 2 FOR IMMEDIATE ACTION.   MCS
+*                                   (MUST BE DOM'ED).               MCS
+DESCRC3  EQU   X'20'               CODE = 3 FOR EVENTUAL ACTION.    MCS
+*                                   (NO DOM REQUIRED).              MCS
+SYS      DC    C'SYS'                                              000D
+ADSAVE   DS    F                                                   000D
+HALF72   DC    F'72'                                               000D
+QMVCON   DC    V(IEFQMSSS)                                         000D
+BUFSAVE  DC    F'0'                                                000D
+PARAPTR  DC    X'01'                                               000D
+         DC    AL3(REGSAVE2)                                       000D
+REGSAVE2 DS    4F
+STATUSB  DC    X'02000000'        INDICATE UNLOAD REQUIRED        M0172
+***********************************************************************
+DUALUNRD EQU   DUALSTAT+6
+DUALNEED EQU   DUALSTAT+4
+UNRDY16  EQU   TP16STAT+6
+NEED16   EQU   TP16STAT+4
+NEED8    EQU   TAPESTAT+4
+UNRDY8   EQU   TAPESTAT+6
+TIOT     EQU   *
+TIOCNJOB DS    2F                  JOB NAME
+         DS    4F                  UNUSED
+         DC    AL1(20)             TIOELNGH-- LENGTH OF DD ENTRY
+         DC    3X'00'
+         DC    2F'0'               ZERO DD NAME INDICATES TO EXTERNAL
+*                                    ACTION THAT ENTRY IS FROM AVR.
+         DC    X'00000040'        DEFER MOUNT INDICATES NO DOM    M0172
+*                                 LIST IS TO BE GOTTEN BY WD      M0172
+TIOESTTB DC    F'0'
+         DC    F'0'                END OF TIOT INDICATOR
+***********************************************************************
+TEMPSAVE DS    5F
+VCONSCAN DC    V(IEFSCAN)                                         IORMS
+VCONCONT DC    V(UCBSCAN)                                         IORMS
+DECISVCN DC    V(IEFX5000)
+JIMPVCON DC    V(IEFXJ000)
+MSGVCON  DC    V(IEFXVMSG)
+CIMPVCON DC    V(IEFWC000)
+XV002VCN DC    V(IEFXV002)                                        XV002
+TESTBITS DS    F
+SAVEAREA DS    18F
+DEVSTRIK DC    V(IEFX3000)        DEVICE STRIKOUT
+         DS    0F
+MASK1    DC    X'0000FFFF'
+ADTIOT   DC    AL4(TIOT)
+HALFZERO EQU   MASK1              USE THE FIRST TWO BYTES OF MASK 1
+*                                   AS A HALF-WORD OF ZERO'S.
+FULL32   DC    F'32'
+CF255    DC    F'255'
+HALF7    DC    H'7'
+         DS    0F
+LOW2OFF  DC    X'FFFFFFFC'                                        17722
+TYPE2400 EQU   1                   TEST BIT FOR UCBTBYT4 INDICATES 2400
+TYPE2311 EQU   1                   TEST BIT FOR UCBTBYT4 INDICATES 2311
+TYPE2314 EQU   8                   TEST BIT FOR UCBTBYT4 INDICATES 2314
+TYPE3330 EQU   9                                                  20201
+TYPE3400 EQU   X'03'               UCB MASK FOR 3400 SERIES       21048
+TRK7     EQU   X'80'               UCBTBYT2 MASK FOR 7-TRK        21048
+DEN800   EQU   X'04'               UCBTBYT1 MASK FOR 800 (IF OFF) 21048
+DUALDEN  EQU   X'20'               UCBTBYT2 MASK FOR DUAL DENSITY 21048
+DEN1600  EQU   X'00'               UCBTBYT2 MASK FOR 1600 BPI     21048
+OFF      EQU   X'00'               MATCHSW OFF STATUS             21048
+ON       EQU   X'FF'               MATCHSW ON STATUS              21048
+ZERO     EQU   0                   INCREMENT OF 0                 21048
+TWO      EQU   2                   INCREMENT OF 2                 21048
+THREE    EQU   3                   INCREMENT OF 3                 21048
+FOUR     EQU   4                   INCREMENT OF 4                 21048
+FIVE     EQU   5                                                  20201
+SIX      EQU   6                   INCREMENT OF 6                 21048
+SEVEN    EQU   7                   INCREMENT OF 7                 21048
+TWELVE   EQU   12                  OFFSET INTO SAVEAREA           21048
+PHASE2   EQU   2
+NOTREADY EQU   64
+EAILEN   EQU   X'14'              LENGTH TO GETMAIN FOR EAI      A41143
+         SPACE 3                                                  M3147
+UPUSERCT EQU   X'80'                                              M3147
+DCEL05   DC    X'2005'                                            M3147
+IEFXV00A ENQ   (IEFSQCBS,IEFQ5QCB,E,2,SYSTEM),MF=L  ENQ PARM LIST M3147
+IEFXV00B ENQ   (IEFSQCBS,IEFQ9QCB,E,2,SYSTEM),MF=L               A47599
+IEFSQCBS DC    C'SYSIEFSD'                                        M3147
+IEFQ5QCB DC    C'Q5'                                              M3147
+IEFQ9QCB DC    C'Q9'              THIS RESOURCE IS USED TO       A47599
+*                                 SERIALIZE BATCH AND DYNAMIC    A47599
+*                                 ALLOCATIONS.                   A47599
+         EJECT                                                    M3147
+LCT      DSECT
+         IEFALLCT
+         IEFWKTAB
+         EJECT
+MSGDSECT DSECT
+         DS    0F
+CNFLMSG  WTO   'IEF500I VOLUME NEEDED ON DIFFERENT UNIT',MF=L,         X
+               ROUTCDE=(3,4),DESC=4                                DMCS
+IEF501I  WTO   'IEF501I UNIT NEEDS DIFFERENT VOLUME',MF=L,             X
+               ROUTCDE=(3,4),DESC=4                                DMCS
+IEF502I  WTO   'IEF502I DUPLICATE SERIAL',MF=L,ROUTCDE=(3,4),DESC=4
+*                                                                  DMCS
+IEF503I  WTO   'IEF503I WRONG DENSITY OR INCORRECT LABEL',MF=L,        X
+               ROUTCDE=(3,4),DESC=4                                DMCS
+IEF505I  WTO   'IEF505I UNIT REQUIRED',MF=L,ROUTCDE=(3,4),DESC=4   DMCS
+IEF507I  WTO   'IEF510I VOLUME HAS ANS LABEL.',MF=L,             M4321 X
+               ROUTCDE=(2,5),DESC=(3,4,6),MSGTYP=N                19200
+IEF508I  WTO   'IEF508I VOLUME MOUNTED ON INELIGIBLE DEVICE',     21048X
+               MF=L,ROUTCDE=3,DESC=4                              21048
+         DS    0F
+IEF504A  DC    C'IEF504A M '                                       000D
+CHAR2311 DC    C'2311'                                             000D
+CHAR2314 DC    C'2314'                                             000D
+CHAR2400 DC    C'2400'                                             000D
+CHAR1600 DC    C'2400-3'                                           000D
+CHARDUAL DC    C'2400-4'                                           000D
+CHAR3330 DC    C'3330'                                            20201
+CHAR3404 DC    C'3400-4'           MESSAGE CONSTANT FOR 3400-4    21048
+CHAR3403 DC    C'3400-3'           MESSAGE CONSTANT FOR 3400-3    21048
+IEF500I  EQU   CNFLMSG                                              MCS
+         SPACE
+BUFFER   DSECT                                                     000D
+         DS    0F                                                  000D
+WTOLNGTH DS    F                                                   000D
+WTOBUF   DS    72C                                                 000D
+WTOMCS   DS    1F                  AREA FOR MCS ROUTING AND         MCS
+*                                   DESCRIPTOR CODES.               MCS
+JFCBBUF  DS    176C                                                000D
+BUFSIZE  EQU   *-BUFFER                                           17722
+         EJECT
+DEVSTAT  DSECT
+SAVEAWT  DS    1F
+NEEDCT   DS    1H             NUMBER OF VOLUMES STILL NEEDING DEVICES
+UNRDYCT  DS    1H             NUMBER OF UNREADY DEVICES
+AVAILCT  DS    1H             NUMBER OF READY DEVICES WHICH MAY BE
+*                               UNLOADED IF NECESSARY.(NOT NEEDED, AND
+*                                 CONSEQUENTLY NOT MAINTAINED,AFTER
+*                                   SUFFICIENT DEVICES TO HOLD ALL
+*                                     SPECIFIED VOLUMES ARE DETERMINED
+*                                       TO BE AVAILABLE.)
+TYPE     DS    1C
+         IEFAJCTB                                                  000D
+         IEFASCTB                                                  000D
+         IEFASIOT                                                  000D
+         IEFQMNGR                                                 M0682
+         EJECT
+SRT      DSECT
+         IEFUCBOB
+A      DSECT
+         IEECHAIN
+         EJECT
+CVT      DSECT
+         CVT
+         EJECT 1
+         IKJTCB
+         EJECT
+         IGFIORMS
+         EJECT 1
+         IEZJSCB
+         END
+//LKED.SYSLMOD DD   DSN=SYS1.R217LIB(IEFXV001),DISP=SHR

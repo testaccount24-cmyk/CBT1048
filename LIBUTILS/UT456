@@ -1,0 +1,750 @@
+ /*       JOB COST ESTIMATE                                           */
+ B2851: PROC OPTIONS(MAIN);
+ /* *************** IDENTIFICATION  SECTION ************************* */
+ /*       TITLE        - JOB COST ESTIMATE                            */
+ /*       AUTHOR       - R E BAITY                                    */
+ /*       LOCATION     - MISD SYSTEMS PROGRAMMING, GENERAL OFFICES    */
+ /*       DATE WRITTEN - AUGUST 1972                                  */
+ /*       COMPUTER     - IBM 370                                      */
+ /*       FILES        - SYSIN          INPUT CARD DATA               */
+ /*                    - SYSEDIT        OUTPUT EDIT LISTING           */
+ /*                    - SYSPRINT       OUTPUT ESTIMATE REPORT        */
+ /*       SUBPROGRAMS  - DATE           BUILT IN DATE FUNCTION        */
+ /*                    - EDITL          SUBPROGRAM TO WRITE EDIT LIST */
+ /*                    - INDEX          BUILT IN FUNCTION WHICH       */
+ /*                    -                LOCATES A SPECIFIC STRING     */
+ /*                    - SUBSTR         BUILT IN SUBSTRING FUNCTION   */
+ /*                    - MIN            BUILT IN FUNCTION EXTRACTS    */
+ /*                    -                MINIMUM ARGUMENT FROM SET     */
+ /*                    - EREPORT        WRITES ESTIMATE REPORT        */
+ /*                    - STEPTL         GENERATE STEP TOTAL LINE      */
+ /*                    - JOBTL          GENERATE JOB TOTAL LINE       */
+ /*                                                                   */
+ /*                                                                   */
+ /*                                                                   */
+ /*                                                                   */
+ /*                                                                   */
+ /*                                                                   */
+ /*                                                                   */
+ /*       *** ABSTRACT ***                                            */
+ /*                                                                   */
+ /*       THIS PROGRAM READS INPUT DATA CARDS IN A PSUEDO-JCL FORMAT. */
+ /*       AN EDIT LISTING CONTAINING INPUT CARDS AS READ AND ANY      */
+ /*       GENERATED DIAGNOSTICS IS PRINTED.  ALSO, A REPORT OF        */
+ /*                 EXPECTED JOB COST IS PRINTED.                     */
+ /*                                                                   */
+ /* *************** DEFINITION SECTION ****************************** */
+ /*       ABSCPU    - TIME FOR CPU IS SPECIFIED IN MINUTES            */
+ /*       BLKFAC    - BLOCKING FACTOR                                 */
+ /*       BLKSIZE   - BLOCK SIZE                                      */
+ /*       CARDIN    - INPUT DATA CARD IN JCL FORMAT (JOB,EXEC, OR DD) */
+ /*                 - JOBCARD FORMAT CONSISTS OF JOBNAME BEGINNING IN */
+ /*                 - COL 1 FOLLOWED BY ONE OR MORE SPACES, THE       */
+ /*                 - OPERATION CODE JOB FOLLOWED BY ONE OR MORE      */
+ /*                 - SPACES FOLLOWED BY KEYWORD PARAMETERS SEPARATED */
+ /*                 - BY COMMA.  KEYWORD PARAMETERS --                */
+ /*                 -         MACHINE=..., MACHINE FOR WHICH CPU TIME */
+ /*                 -                      IS SPECIFIED ON EXEC CARDS */
+ /*                 -         RATE=..., THE CHARGE RATE IN DOLLARS    */
+ /*                 -                   PER MACHINE UNIT.             */
+ /*                 - EXEC CARD FORMAT CONSISTS OF STEPNAME BEG. IN   */
+ /*                 - COL 1 FOLLOWED BY ONE OR MORE SPACES, THE       */
+ /*                 - OPERATION CODE EXEC FOLLOWED BY ONE OR MORE     */
+ /*                 - SPACES FOLLOWED BY KEYWORD PARAMETERS SEPARATED */
+ /*                 - BY COMMA.  KEYWORD PARAMETERS --                */
+ /*                 -         CPUTIME=..., TIME IN MINUTES            */
+ /*                 -         REGION=...K, MAIN STORAGE REQUIRED      */
+ /*                 - DD CARD FORMAT CONSISTS OF DDNAME BEGINNING IN  */
+ /*                 - COL 1 FOLLOWED BY ONE OR MORE SPACES, THE       */
+ /*                 - OPERATION CODE DD FOLLOWED BY ONE OR MORE       */
+ /*                 - SPACES FOLLOWED BY KEYWORD PARAMETERS SEPARATED */
+ /*                 - BY COMMA.  KEYWORD PARAMETERS --                */
+ /*                 -         BLKSIZE=..., BLOCK SIZE IN BYTES        */
+ /*                 -         NOBLKS=...,  NUMBER OF BLOCKS READ      */
+ /*       CHAR      - SINGLE CHARACTER WORK AREA                      */
+ /*       CPUDEFAULT- DEFAULT CPU TIME %                              */
+ /*       CPUHIGH   - HIGH CPU TIME %                                 */
+ /*       CPU LOW   - LOW CPU TIME %                                  */
+ /*       CPUTABLE  - TABLE OF CPU MODEL NUMBERS                      */
+ /*       DATEHOLD  - HOLD TODAY'S DATE                               */
+ /*       DPCOUNT   - COUNTER FOR NUMBER OF DECIMAL PLACES            */
+ /*       DPFOUND   - DECIMAL POINT FOUND FLAG                        */
+ /*       EDITCARD  - CARD IMAGE OF INPUT ON EDIT LISTING             */
+ /*       EDITDATE  - DATE ON EDIT LISTING                            */
+ /*       EDITDIAG  - DIAGNOSTIC AREA OF EDIT LISTING                 */
+ /*       EDITLINE  - PRINT AREA FOR EDIT LISTING                     */
+ /*       EDITLNO   - PRINT LINE NUMBER FOR EDIT LISTING              */
+ /*       ERRNO     - DIAGNOSTIC ERROR NUMBER                         */
+ /*       ERRORS    - ERROR FLAG FOR EDITING                          */
+ /*       HDRLINE   - REPORT HEADER LINE AREA                         */
+ /*       HOLDCARD  - PREVIOUS BAD CARD                               */
+ /*       I         - DO LOOP OUTERMOST INDEX                         */
+ /*       IOTIME    - I/O TIME FOR DATASET                            */
+ /*       JOBCPUTIM - JOB CPUTIME ACCUMULATOR                         */
+ /*       JOBIOTIM  - JOB I/O TIME ACCUMULATOR                        */
+ /*       JOBIOUNIT - JOB I/O UNIT ACCUMULATOR                        */
+ /*       JOBCOST   - JOB COST ACCUMULATOR                            */
+ /*       JOBOCUNIT - JOB OCCUPANCY UNIT ACCUMULATOR                  */
+ /*       JOBMAUNIT - JOB MACHINE UNIT ACCUMULATOR                    */
+ /*       JOBRUNTIM - JOB RUN TIME ACCUMULATOR                        */
+ /*       KEYEND    - INDEX OF END OF PARAMETER                       */
+ /*       KEYSTART  - INDEX OF BEGINNING OF KEYWORD OR PARAMETER      */
+ /*       K1        - RELATIONSHIP BETWEEN CPU COST AND UTILIZATION   */
+ /*       K2        - RELATIONSHIP BETWEEN PERIPHERAL HARDWARE        */
+ /*                 - COST AND UTILIZATION                            */
+ /*       K3        - RELATIONSHIP BETWEEN THE CPU CYCLE SPEEDS       */
+ /*                 - M155 = 1.00                                     */
+ /*       K3TABLE   - TABLE OF K3 FACTORS CORRESPONDING TO            */
+ /*                   THE VARIOUS CPU MODELS                          */
+ /*       LRECL     - RECORD LENGTH IN BYTES                          */
+ /*       MACHINE   - WORK AREA TO HOLD MACHINE NO. IN STD. FORMAT    */
+ /*       MSG       - ERROR MESSAGE TABLE FOR EDIT LISTING            */
+ /*       NOBLKS    - NUMBER OF BLOCKS READ                           */
+ /*       NOCPU     - NUMBER OF VALID CPU MODEL NUMBERS               */
+ /*       NODD      - NUMBER OF DATASETS IN STEP                      */
+ /*       NORECS    - NUMBER OF RECORDS                               */
+ /*       PRINTCARD - CONTROLS PRINTING OF AN INPUT DATA CARD         */
+ /*                 - WITH A DIAGNOSTIC MESSAGE                       */
+ /*       RATE      - SERVICE RATE IN DOLLARS/MACHINE UNIT            */
+ /*       REGION    - STEP REGION IN K-BYTES                          */
+ /*       RPTBLKNO  - NUMBER OF BLOCKS ON ESTIMATE REPORT             */
+ /*       RPTBLKSIZ - BLOCK SIZE ON ESTIMATE REPORT                   */
+ /*       RPTCOST   - COST ON ESTIMATE REPORT                         */
+ /*       RPTCPU    - MOD 155 CPU TIME ON ESTIMATE REPORT             */
+ /*       RPTDATE   - DATE ON ESTIMATE REPORT                         */
+ /*       RPTDD     - DDNAME ON ESTIMATE REPORT                       */
+ /*       RPTIOTIM  - I/O TIME IN MINUTES ON ESTIMATE REPORT          */
+ /*       RPTIOUNIT - I/O UNITS ON ESTIMATE REPORT                    */
+ /*       RPTLINE   - JOB ESTIMATE REPORT PRINT AREA                  */
+ /*       RPTLNO    - LINE NUMBER ON ESTIMATE REPORT                  */
+ /*       RPTJOB    - JOB NAME ON ESTIMATE REPORT                     */
+ /*       RPTOCPNCY - OCCUPANCY UNITS ON ESTIMATE REPORT              */
+ /*       RPTRATE   - RATE ON ESTIMATE REPORT                         */
+ /*       RPTRGN    - REGION SIZE ON ESTIMATE REPORT                  */
+ /*       RPTRUNTIM - RUN TIME ON ESTIMATE REPORT                     */
+ /*       RPTSTEP   - STEP NAME ON ESTIMATE REPORT                    */
+ /*       RPTTLTYPE - TOTAL TYPE CODE ON ESTIMATE REPORT              */
+ /*       SCHTIME   - TIME FOR JOB STEP INITIATION AND TERMINATION    */
+ /*       SSTIME    - START STOP TIME (ROTATIONAL DELAY)              */
+ /*       STEPCOST  - ESTIMATED STEP COST                             */
+ /*       STEPIOTIM - STEP I/O TIME ACCUMULATOR                       */
+ /*       STEPIOUNT - STEP I/O UNITS                                  */
+ /*       STEPMAUNT - STEP MACHINE UNITS                              */
+ /*       STEPOCUNT - STEP OCCUPANCY UNITS                            */
+ /*       STEPRUNTM - STEP RUN TIME IN MINUTES                        */
+ /*       TEMPSTR   - PORTION OF INPUT CARD BEING SCANNED             */
+ /*       TIME      - STEP CPU TIME IN MINUTES                        */
+ /*       TRANSTIME - DEVICE TRANSFER TIME FOR ONE BYTE TO CHANNEL    */
+ /* ***************  FILE SECTION  ********************************** */
+          DCL SYSIN FILE RECORD SEQUENTIAL INPUT;
+          DCL SYSEDIT FILE STREAM OUTPUT PRINT;
+          DCL SYSPRINT FILE STREAM OUTPUT PRINT;
+ /* *************** DECLARATIVE SECTION ***************************** */
+          DCL CARDIN          CHAR(80);
+          DCL EDITLINE        CHAR(132);
+          DCL EDITCARD        CHAR(81)  DEF EDITLINE        POS(1);
+          DCL EDITDIAG        CHAR(51)  DEF EDITLINE        POS(82);
+          DCL EDITDATE        CHAR(8)   DEF HDRLINE         POS(121);
+          DCL EDITLNO         FIXED BIN(15)       INIT(60);
+          DCL DATEHOLD        CHAR(6);
+          DCL RPTLINE         CHAR(132)           INIT(' ');
+          DCL RPTDATE         CHAR(8)   DEF HDRLINE         POS(121);
+          DCL RPTJOB          CHAR(8)   DEF RPTLINE         POS(1);
+          DCL RPTRATE         PIC '9V.99' DEF RPTLINE       POS(11);
+          DCL RPTSTEP         CHAR(8)   DEF RPTLINE         POS(17);
+          DCL RPTRGN          PIC 'ZZ9' DEF RPTLINE         POS(29);
+          DCL RPTDD           CHAR(8)     DEF RPTLINE       POS(35);
+          DCL RPTBLKSIZ       PIC 'ZZZZ9' DEF RPTLINE       POS(46);
+          DCL RPTBLKNO        PIC 'ZZZZZZZ9' DEF RPTLINE    POS(54);
+          DCL RPTIOTIM        PIC 'ZZZ9V.99' DEF RPTLINE    POS(64);
+          DCL RPTCPU          PIC 'ZZZ9V.99' DEF RPTLINE    POS(75);
+          DCL RPTRUNTIM       PIC 'ZZ,ZZ9V.99' DEF RPTLINE  POS(83);
+          DCL RPTIOUNIT       PIC 'ZZ,ZZ9V.99' DEF RPTLINE  POS(94);
+          DCL RPTOCPNCY       PIC 'ZZ,ZZ9V.99' DEF RPTLINE  POS(109);
+          DCL RPTCOST         PIC '$$,$$9V.99' DEF RPTLINE  POS(120);
+          DCL RPTTLTYPE       CHAR(2)   DEF RPTLINE         POS(130);
+          DCL RATE            FIXED DEC(6,2);
+          DCL REGION          FIXED DEC(4);
+          DCL TIME            FIXED DEC(9,2);
+          DCL CPUDEFAULT      FIXED DEC(5,3)      INIT(0.35);
+          DCL CPUHIGH         FIXED DEC(5,3)      INIT(1.00);
+          DCL CPULOW          FIXED DEC(5,3)      INIT(0.20);
+          DCL JOBCPUTIM       FIXED DEC(7,2);
+          DCL STEPIOTIM       FIXED DEC(7,2);
+          DCL JOBIOTIM        FIXED DEC(7,2);
+          DCL IOTIME          FIXED DEC(7,2);
+          DCL STEPRUNTM       FIXED DEC(8,2);
+          DCL JOBRUNTIM       FIXED DEC(8,2);
+          DCL STEPIOUNT       FIXED DEC(8,2);
+          DCL JOBIOUNIT       FIXED DEC(8,2);
+          DCL STEPOCUNT       FIXED DEC(8,2);
+          DCL JOBOCUNIT       FIXED DEC(8,2);
+          DCL STEPMAUNT       FIXED DEC(8,2);
+          DCL JOBMAUNIT       FIXED DEC(8,2);
+          DCL STEPCOST        FIXED DEC(7,2);
+          DCL JOBCOST         FIXED DEC(7,2);
+          DCL NODD            FIXED DEC(3);
+          DCL BLKFAC          FIXED DEC(5);
+          DCL LRECL           FIXED DEC (6);
+          DCL NORECS          FIXED DEC(9);
+          DCL HOLDCARD        CHAR(80)         INIT (' ');
+          DCL BLKSIZE         FIXED DEC(6);
+          DCL NOBLKS          FIXED DEC(9);
+          DCL TRANSTIME       FIXED DEC(8,7)      INIT(0.0000032);
+          DCL SSTIME          FIXED DEC(5,4)      INIT(0.0125);
+          DCL K2              FIXED DEC(5,4)      INIT(0.0840);
+          DCL SCHTIME         FIXED DEC(3,2)      INIT(0.09);
+          DCL K1              FIXED DEC(5,4)      INIT(0.0093);
+          DCL K3              FIXED DEC(6,4);
+          DCL MACHINE         CHAR(3);
+          DCL EDITL           ENTRY(FIXED BIN);
+          DCL ERRNO           FIXED BIN;
+          DCL KEYSTART        FIXED BIN;
+          DCL ERRORS          BIT(1);
+          DCL ABSCPU          BIT(1);
+          DCL KEYEND          FIXED BIN;
+          DCL TEMPSTR         CHAR(80);
+          DCL I               FIXED BIN;
+          DCL DPFOUND         BIT(1);
+          DCL DPCOUNT         FIXED DEC(6,2);
+          DCL CHAR            CHAR(1);
+          DCL HDRLINE         CHAR(132);
+          DCL MSG(23)         CHAR(33)         INIT(
+                    'NO VALID INPUT DATA',                      /*  1 */
+                    'NO JOBCARD FOUND',                         /*  2 */
+                    'CARD BEFORE FIRST JOBCARD IGNORED',        /*  3 */
+                    'NO VALID FORMAT 1 OR 2 DD SPEC',           /*  4 */
+                    'INVALID MACHINE',                          /*  5 */
+                    'RATE NOT SPECIFIED',                       /*  6 */
+                    'RATE NOT NUMERIC',                         /*  7 */
+                    'SKIPPING FOR JOBCARD',                     /*  8 */
+                    'JOB HAS NO STEPS',                         /*  9 */
+                    'MISPLACED DD CARD IGNORED',                /* 10 */
+                    'INVALID OPERATION CODE',                   /* 11 */
+                    'REGION FORMAT ERROR',                      /* 12 */
+                    'REGION NOT NUMERIC',                       /* 13 */
+                    ' ',                                        /* 14 */
+                    'CPUTIME NOT NUMERIC/HIGH/LOW',             /* 15 */
+                    'DD CARD IGNORED DUE TO EXEC ERROR',        /* 16 */
+                    'RECORD LENGTH NOT NUMERIC',                /* 17 */
+                    'BLOCK SIZE NOT NUMERIC',                   /* 18 */
+                    'NUMBER OF BLOCKS NOT SPECIFIED',           /* 19 */
+                    'NUMBER OF BLOCKS NOT NUMERIC',             /* 20 */
+                    'NUMBER OF RECORDS NOT SPECIFIED',          /* 21 */
+                    'NUMBER OF RECORDS NOT NUMERIC',            /* 22 */
+                    'BLOCKING FACTOR NOT NUMERIC');             /* 23 */
+          DCL RPTLNO          FIXED BIN(15)       INIT(60);
+          DCL PRINTCARD        BIT(23)
+                    INIT (00111110011111111111111B);
+ /*                                                                   */
+ /*       DECLARE, ALLOCATE, AND INITIALIZE CPUTABLE AND K3TABLE      */
+ /*                                                                   */
+          DCL NOCPU           FIXED BIN           INIT(10);
+          DCL CPUTABLE(*)     CHAR(3)             CONTROLLED;
+          DCL K3TABLE(*)      FIXED DEC(6,4)      CONTROLLED;
+          ALLOCATE CPUTABLE(NOCPU), K3TABLE(NOCPU);
+          CPUTABLE( 1) = '30 ';         K3TABLE( 1) = 0.0625;
+          CPUTABLE( 2) = '40 ';         K3TABLE( 2) = 0.1250;
+          CPUTABLE( 3) = '50 ';         K3TABLE( 3) = 0.2500;
+          CPUTABLE( 4) = '65 ';         K3TABLE( 4) = 1.0000;
+          CPUTABLE( 5) = '135';         K3TABLE( 5) = 0.2180;
+          CPUTABLE( 6) = '145';         K3TABLE( 6) = 0.4750;
+          CPUTABLE( 7) = '155';         K3TABLE( 7) = 1.0000;
+          CPUTABLE( 8) = '158';         K3TABLE( 8) = 1.3200;
+          CPUTABLE( 9) = '165';         K3TABLE( 9) = 2.6500;
+          CPUTABLE(10) = '168';         K3TABLE(10) = 3.4000;
+ /*                 MAIN PROGRAM                                      */
+ /*                                                                   */
+ /*       OPEN FILES SECTION                                          */
+ /*                                                                   */
+          OPEN FILE (SYSPRINT) LINESIZE(132),
+               FILE (SYSEDIT)  LINESIZE(132);
+ /*                                                                   */
+          DATEHOLD=DATE;                          /*  GET SYSTEM DATE */
+ /*                                                                   */
+ /* SET SYSTIN EOF FOR NO INPUT DATA                                  */
+ /*                                                                   */
+          ON ENDFILE (SYSIN) BEGIN;
+               CALL EDITL(1);                     /* WRITE ERROR      */
+               GO TO ENDJOB;
+               END;
+ /*                                                                   */
+ /*       LOOK FOR FIRST JOB CARD                                     */
+ /*                                                                   */
+ READ1:   READ FILE (SYSIN) INTO (CARDIN);
+          KEYSTART = INDEX(CARDIN,' JOB ');
+          IF KEYSTART = 0 THEN DO;                /* CARD NOT JOB     */
+ /*                                                                   */
+ /* SET SYSIN EOF FOR NO JOB CARD FOUND                               */
+ /*                                                                   */
+               ON ENDFILE (SYSIN) BEGIN;
+                    CALL EDITL(2);                /* WRITE ERROR      */
+                    GO TO ENDJOB;
+                    END;
+               CALL EDITL(3);                     /* WRITE ERROR      */
+               GO TO READ1;
+               END;
+ /*                                                                   */
+ /*       EDIT JOB CARD SECTION                                       */
+ /*                                                                   */
+ EDITJOB: RPTJOB = SUBSTR(CARDIN,1,KEYSTART);     /* GET JOBNAME      */
+          ERRORS = 0B;                            /* ERROR FLAG OFF   */
+          KEYSTART = INDEX(CARDIN,'MACHINE=');    /* FILD KEYWORD     */
+          IF KEYSTART = 0 THEN DO;                /* MISSING KEYWORD  */
+               MACHINE = '155';                   /* DEFAULT MACHINE  */
+               GO TO GETK3;
+               END;
+          TEMPSTR = SUBSTR(CARDIN,KEYSTART+8,73-KEYSTART);
+          SUBSTR(TEMPSTR,80,1) = ',';             /* INSURE COMMA     */
+          KEYEND =MIN (INDEX(TEMPSTR,','),INDEX(TEMPSTR,' '));
+          MACHINE=SUBSTR(TEMPSTR,1,KEYEND-1);     /* SET MACHINE NO   */
+ GETK3:
+          DO I=1 TO NOCPU;                        /* LOOKUP CPU       */
+          IF MACHINE = CPUTABLE(I) THEN GO TO FOUNDCPU;
+          END;
+          ERRORS = 1B;                            /* CPU NOT FOUND    */
+          CALL EDITL(5);                          /* WRITE ERROR      */
+          GO TO FINDRATE;
+ FOUNDCPU:
+          K3 = K3TABLE(I);                        /* SET K3 FOR CPU   */
+ FINDRATE: KEYSTART = INDEX(CARDIN,'RATE=');      /* FIND KEYWORD     */
+          IF KEYSTART = 0 THEN DO;                /* MISSING KEYWORD  */
+               ERRORS=1B;                         /* ERROR FLAG ON    */
+               CALL EDITL(6);                     /* WRITE ERROR      */
+               GO TO EDITJOBEND;
+               END;
+          TEMPSTR = SUBSTR(CARDIN,KEYSTART+5,76-KEYSTART);
+          SUBSTR(TEMPSTR,80,1) = ',';             /* INSURE COMMA     */
+          KEYEND =MIN (INDEX(TEMPSTR,','),INDEX(TEMPSTR,' '))-1;
+ /*       DEVELOP RATE                                                */
+          DPFOUND = 0B;                           /* NO DP FOUND YET  */
+          RATE = 0;                               /* RESET RATE       */
+          DO I=1 TO KEYEND;                       /* SCAN RATE FIELD  */
+          CHAR = SUBSTR(TEMPSTR,I,1);             /* EXAMINE CHAR     */
+          IF CHAR = '.' THEN DO;                  /* LOOK FOR DP      */
+               DPFOUND = 1B;                      /* FOUND DP         */
+               DPCOUNT = 1;                       /* RESET COUNT      */
+               GO TO SCANEND1;
+               END;
+          IF (CHAR < '0') | (CHAR > '9') THEN DO; /* NUMERIC TEST     */
+               ERRORS=1B;                         /* NOT NUMERIC      */
+               CALL EDITL(7);                     /* WRITE ERROR      */
+               GO TO EDITJOBEND;
+               END;
+          RATE = RATE*10 + CHAR;                  /* CHAR NUMERIC     */
+          IF DPFOUND THEN DPCOUNT = DPCOUNT*10;   /* COUNT DP'S       */
+ SCANEND1: END;
+          IF ^ DPFOUND THEN GO TO REPORTRATE;     /* ADJUST FOR DP'S  */
+          RATE = RATE / DPCOUNT;                  /* RATE NOW ALIGNED */
+ REPORTRATE: RPTRATE = RATE;                      /* RATE TO REPORT   */
+ EDITJOBEND: IF   ^ ERRORS THEN GO TO JOBCARDOK;  /* WAS JOB CARD OK  */
+ /*       ERRORS WERE FOUND ON JOB CARD.                              */
+ /*       SET SYSIN EOF FOR END OF JOB.                               */
+ /*       SKIP TO NEXT JOB CARD                                       */
+          ON ENDFILE (SYSIN) GO TO ENDJOB;
+ SKIPLOOP: READ FILE (SYSIN) INTO (CARDIN);       /* GET NEXT CARD    */
+          KEYSTART = INDEX(CARDIN,' JOB ');       /* LOOK FOR JOBCARD */
+          IF KEYSTART = 0 THEN DO;                /* CARD NOT JOB     */
+               CALL EDITL(8);                     /* WRITE ERROR      */
+               GO TO SKIPLOOP;
+               END;
+          GO TO EDITJOB;                          /* JOB CARD FOUND   */
+ /*                                                                   */
+ /*       JOB CARD HAS BEEN FOUND AND HAS PASSED EDIT                 */
+ /*                                                                   */
+ JOBCARDOK: JOBIOTIM, JOBRUNTIM, JOBIOUNIT,       /*      RESET       */
+          JOBCPUTIM,
+            JOBOCUNIT, JOBMAUNIT, JOBCOST   = 0;  /* JOB ACCUMULATORS */
+          CALL EDITL(0);                          /* PRINT GOOD CARD  */
+ /*                                                                   */
+ /*       SET SYSIN EOF FOR NO STEPS                                  */
+ /*                                                                   */
+          ON ENDFILE (SYSIN) BEGIN;
+               CALL EDITL(9);                     /* WRITE ERROR      */
+               GO TO ENDJOB;
+               END;           ERRNO=10;           /* SET DDCARD ERRNO */
+ READ2:   READ FILE (SYSIN) INTO (CARDIN);        /* GET NEXT CARD    */
+          KEYSTART = INDEX(CARDIN,' JOB ');       /* IS THIS JOBCARD  */
+          IF KEYSTART ^= 0 THEN DO;               /* JOB CARD FOUND   */
+               CALL EDITL(9);                     /* WRITE ERROR      */
+               GO TO EDITJOB;                     /* EDIT NEW JOBCARD */
+               END;
+          KEYSTART = INDEX(CARDIN,' DD ');        /* IS THIS DD CARD  */
+          IF KEYSTART ^= 0 THEN DO;               /* DD CARD FOUND    */
+               CALL EDITL(ERRNO);                 /* WRITE ERROR      */
+               GO TO READ2;                       /* GET NEXT CARD    */
+               END;
+          KEYSTART = INDEX(CARDIN,' EXEC ');      /* IS THIS EXEC CRD */
+          IF KEYSTART = 0 THEN DO;                /* NOT EXEC CARD    */
+               CALL EDITL(11);                    /* WRITE ERROR      */
+               GO TO READ2;                       /* GET NEXT CARD    */
+               END;
+ /*                                                                   */
+ /*       EDIT EXEC CARD SECTION                                      */
+ /*                                                                   */
+ EDITEXEC: RPTSTEP = SUBSTR(CARDIN,1,KEYSTART);   /* STEPNAME TO RPT  */
+          SUBSTR(RPTLINE,32,1) = 'K';
+          ABSCPU,                                 /* SPECIFY TIME OFF */
+          ERRORS = 0B;                            /* ERROR FLAG OFF   */
+ /*                                                                   */
+ /*       SET SYSIN EOF FOR JOB TOTAL ONLY                            */
+ /*                                                                   */
+          ON ENDFILE (SYSIN) BEGIN;
+          RPTLINE = ' ';                          /* CLEAR DETAIL LIN */
+               CALL JOBTL;                        /* GEN JOB TOTAL    */
+               GO TO ENDJOB;
+               END;
+          KEYSTART = INDEX(CARDIN,'REGION=');     /* FIND KEYWORD     */
+          IF KEYSTART = 0 THEN DO;                /* DEFAULT REGION   */
+               REGION=100;                        /*   IS 100K        */
+               GO TO REPORTRGN;
+               END;
+          TEMPSTR = SUBSTR(CARDIN,KEYSTART+7,74-KEYSTART);
+          KEYEND = INDEX(TEMPSTR,'K') - 1;        /* FIND PARAM END   */
+          IF KEYEND = -1 THEN DO;                 /* K MISSING        */
+               ERRORS=1B;                         /* ERROR FLAG ON    */
+               CALL EDITL(12);                    /* WRITE ERROR      */
+               GO TO FINDTIME;                    /* NEXT KEYWORD     */
+               END;
+          REGION=0;                               /* DEVELOP REGION   */
+          DO I=1 TO KEYEND;
+          CHAR = SUBSTR(TEMPSTR,I,1);             /* EXAMINE CHAR     */
+          IF (CHAR < '0') | (CHAR > '9') THEN DO; /* NUMERIC TEST     */
+               ERRORS=1B;                         /* NOT NUMERIC      */
+               CALL EDITL(13);                    /* WRITE ERROR      */
+               GO TO FINDTIME;                    /* NEXT KEYWORD     */
+               END;
+          REGION = REGION*10 + CHAR;              /* CHAR NUMERIC     */
+          END;
+ REPORTRGN: RPTRGN = REGION;                      /* REGION TO REPORT */
+ FINDTIME: KEYSTART = INDEX(CARDIN,'CPUTIME=');   /* LOOK FOR KEYWORD */
+          IF KEYSTART = 0 THEN DO;                /* KEYWORD MISSING  */
+          TIME = CPUDEFAULT;                      /* DEFAULT CPUTIME  */
+               GO TO EDITEXECEND;
+               END;
+          TEMPSTR = SUBSTR(CARDIN,KEYSTART+8,73-KEYSTART);
+          IF SUBSTR(TEMPSTR,1,4)='HIGH' THEN DO;  /* CHECK FOR HIGH   */
+               TIME = CPUHIGH;                    /* HIGH FOUND       */
+               GO TO EDITEXECEND;
+          END;
+          IF SUBSTR(TEMPSTR,1,3)='LOW' THEN DO;   /* CHECK FOR LOW    */
+               TIME = CPULOW;                     /* LOW FOUND        */
+               GO TO EDITEXECEND;
+          END;
+          SUBSTR(TEMPSTR,80,1) = ',';             /* INSURE COMMA     */
+          KEYEND = MIN (INDEX(TEMPSTR,','),INDEX(TEMPSTR,' '))-1;
+ /*       DEVELOP TIME                                                */
+          DPFOUND=0B;                             /* NO DP FOUND YET  */
+          TIME=0;                                 /* RESET TIME       */
+          DO I=1 TO KEYEND;                       /* SCAN TIME FIELD  */
+          CHAR = SUBSTR(TEMPSTR,I,1);             /* EXAMINE CHAR     */
+          IF CHAR = '%' THEN DO;                  /* CHECK FOR PCT    */
+               TIME = TIME * 0.01;                /* PCT FOUND        */
+               IF DPFOUND THEN TIME=TIME / DPCOUNT; /* ADJ FOR DPS    */
+               GO TO EDITEXECEND;
+          END;
+          IF CHAR = '.' THEN DO;                  /* LOOK FOR DP      */
+               DPFOUND=1B;                        /* FOUND DP         */
+               DPCOUNT = 1;                       /* RESET COUNT      */
+               GO TO SCANEND2;
+               END;
+          IF (CHAR < '0') | (CHAR > '9') THEN DO; /* NUMERIC TEST     */
+               ERRORS=1B;                         /* NOT NUMERIC      */
+               CALL EDITL(15);                    /* WRITE ERROR      */
+               GO TO EDITEXECEND;
+               END;
+          TIME = TIME*10 + CHAR;                  /* CHAR NUMERIC     */
+          IF DPFOUND THEN DPCOUNT = DPCOUNT*10;   /* COUNT DP'S       */
+ SCANEND2: END;
+          IF ^ DPFOUND THEN GO TO ADJTIME;        /* ADJUST FOR DP'S  */
+          TIME = TIME / DPCOUNT;                  /* TIME NOW ALIGNED */
+ ADJTIME:  TIME = TIME * K3 + 0.005;              /* TIME BASED M155  */
+          ABSCPU = 1B;                            /* SPECIFY TIME ON  */
+ EDITEXECEND: IF ^ ERRORS THEN GO TO EXECCARDOK;  /* WAS EXEC CRD OK  */
+ /*                                                                   */
+ /*       ERRORS WERE FOUND ON EXEC CARD                              */
+ /*       SKIP TO NEXT JOB OR EXEC CARD                               */
+ /*                                                                   */
+          ERRNO=16;                               /* SET DDCARD ERRNO */
+          GO TO READ2;                            /* GET NEXT CARD    */
+ /*                                                                   */
+ /*       EXEC CARD HAS BEEN FOUND AND HAS PASSED EDIT                */
+ /*                                                                   */
+ EXECCARDOK: STEPIOTIM, NODD = 0;                 /* RESET STEP PARM  */
+          CALL EDITL(0);                          /* PRINT GOOD CARD  */
+ /*                                                                   */
+ /*       SET SYSIN EOF TO GENERATE STEP AND JOB TOTALS               */
+ /*                                                                   */
+          ON ENDFILE (SYSIN) BEGIN;
+               CALL EREPORT;                      /* WRITE DETAIL LIN */
+               CALL STEPTL;                       /* GEN STEP TOTAL   */
+               CALL JOBTL;                        /* GEN JOB TOTAL    */
+               GO TO ENDJOB;
+               END;
+ READ3:   READ FILE (SYSIN) INTO (CARDIN);        /* GET NEXT CARD    */
+          KEYSTART = INDEX(CARDIN,' JOB ');       /* IS THIS JOB CARD */
+          IF KEYSTART ^= 0 THEN DO;               /* THIS IS JOB CARD */
+               CALL EREPORT;                      /* WRITE DETAIL LIN */
+               CALL STEPTL;                       /* GEN STEP TOTALS  */
+               CALL JOBTL;                        /* GEN JOB TOTALS   */
+               GO TO EDITJOB;                     /* PROCESS NEXT JOB */
+               END;
+          KEYSTART = INDEX(CARDIN,' EXEC ');      /* IS THIS EXEC CRD */
+          IF KEYSTART ^= 0 THEN DO;               /* THIS IS EXEC CRD */
+               CALL EREPORT;                      /* WRITE DETAIL LIN */
+               CALL STEPTL;                       /* GEN STEP TOTALS  */
+               GO TO EDITEXEC;                    /* PROCESS NEXT STP */
+               END;
+          KEYSTART = INDEX(CARDIN,' DD ');        /* IS THIS DD CARD  */
+          IF KEYSTART = 0 THEN DO;                /* NOT DD CARD      */
+               CALL EDITL(11);                    /* WRITE ERROR      */
+               GO TO READ3;                       /* GET NEXT CARD    */
+               END;
+ /*                                                                   */
+ /*       EDIT DD CARD SECTION                                        */
+ /*                                                                   */
+ EDITDD:  RPTDD = SUBSTR(CARDIN,1,KEYSTART);      /* REPORT DDNAME    */
+          ERRORS=0B;                              /* ERROR FLAG OFF   */
+          KEYSTART=INDEX(CARDIN,'BLKSIZE=');      /* FIND KEYWORD     */
+          IF KEYSTART ^= 0 THEN GO TO GOTBLKSIZE; /* KEYWORD FOUND    */
+          KEYSTART = INDEX(CARDIN,'LRECL=');      /* FIND KEYWORD     */
+          IF KEYSTART = 0 THEN DO;                /* KEYWORD MISSING  */
+               ERRORS = 1B;                       /* ERROR FLAG ON    */
+               CALL EDITL(4);                     /* WRITE ERROR      */
+               GO TO EDITDDEND;
+               END;
+          TEMPSTR=SUBSTR(CARDIN,KEYSTART+6,75-KEYSTART);
+          SUBSTR(TEMPSTR,80,1) = ',';             /* INSURE COMMA     */
+          KEYEND = MIN(INDEX(TEMPSTR,','),INDEX(TEMPSTR,' '))-1;
+          LRECL=0;                                /* DEVELOP LRECL    */
+          DO I=1 TO KEYEND;
+          CHAR = SUBSTR(TEMPSTR,I,1);             /* EXAMINE CHAR     */
+          IF (CHAR < '0') | (CHAR > '9') THEN DO; /* NUMERIC TEST     */
+               ERRORS = 1B;                       /* NOT NUMERIC      */
+               CALL EDITL(17);                    /* WRITE ERROR      */
+               GO TO FINDNORECS;                  /* NEXT KEYWORD     */
+               END;
+          LRECL = LRECL * 10 + CHAR;              /* CHAR NUMERIC     */
+          END;
+ FINDNORECS: KEYSTART = INDEX(CARDIN,'NORECS=');  /* FIND KEYWORD     */
+          IF KEYSTART = 0 THEN DO;                /* KEYWORD MISSING  */
+               ERRORS = 1B;                       /* ERROR FLAG ON    */
+               CALL EDITL(21);                    /* WRITE ERROR      */
+               GO TO FINDBLKFAC;                  /* NEXT KEYWORD     */
+               END;
+          TEMPSTR=SUBSTR(CARDIN,KEYSTART+7,74-KEYSTART);
+          SUBSTR(TEMPSTR,80,1) = ',';             /* INSURE COMMA     */
+          KEYEND = MIN(INDEX(TEMPSTR,','),INDEX(TEMPSTR,' '))-1;
+          NORECS =0;                              /* DEVELOP NORECS   */
+          DO I=1 TO KEYEND;
+          CHAR = SUBSTR(TEMPSTR,I,1);             /* EXAMINE CHAR     */
+          IF (CHAR < '0') | (CHAR > '9') THEN DO; /* NUMERIC TEST     */
+               ERRORS = 1B;                       /* NOT NUMERIC      */
+               CALL EDITL(22);                    /* WRITE ERROR      */
+               GO TO FINDBLKFAC;                  /* NEXT KEYWORD     */
+               END;
+          NORECS = NORECS * 10 + CHAR;            /* CHAR NUMERIC     */
+          END;
+ FINDBLKFAC: KEYSTART = INDEX(CARDIN,'BLKFAC=');  /* FIND KEYWORD     */
+          IF KEYSTART = 0 THEN DO;                /* KEYWORD MISSING  */
+               BLKFAC = 1;                        /* DEFAULT BLKFAC   */
+               GO TO CALCBLKSIZE;
+               END;
+          TEMPSTR=SUBSTR(CARDIN,KEYSTART+7,74-KEYSTART);
+          SUBSTR(TEMPSTR,80,1) = ',';             /* INSURE COMMA     */
+          KEYEND = MIN(INDEX(TEMPSTR,','),INDEX(TEMPSTR,' '))-1;
+          BLKFAC=0;                               /* DEVELOP BLKFAC   */
+          DO I=1 TO KEYEND;
+          CHAR = SUBSTR(TEMPSTR,I,1);             /* EXAMINE CHAR     */
+          IF (CHAR < '0') | (CHAR > '9') THEN DO; /* NUMERIC TEST     */
+               ERRORS = 1B;                       /* NOT NUMERIC      */
+               CALL EDITL(23);                    /* WRITE ERROR      */
+               GO TO EDITDDEND;
+               END;
+          BLKFAC = BLKFAC * 10 + CHAR;            /* CHAR NUMERIC     */
+          END;
+ CALCBLKSIZE: IF ERRORS THEN GO TO EDITDDEND;     /* GOOD CARD ?      */
+          BLKSIZE = LRECL * BLKFAC;               /* CALC BLKSIZE   */
+          RPTBLKSIZ = BLKSIZE;                    /* REPORT BLKSIZE */
+          NOBLKS=((NORECS-1)/BLKFAC)+1;           /* CALC NO BLOCKS   */
+          RPTBLKNO = NOBLKS;                      /* REPORT NO BLOCKS */
+          GO TO EDITDDEND;
+ GOTBLKSIZE:
+          TEMPSTR=SUBSTR(CARDIN,KEYSTART+8,73-KEYSTART);
+          SUBSTR(TEMPSTR,80,1) = ',';             /* INSURE COMMA     */
+          KEYEND = MIN(INDEX(TEMPSTR,','),INDEX(TEMPSTR,' '))-1;
+          BLKSIZE=0;                              /* DEVELOP BLKSIZE  */
+          DO I=1 TO KEYEND;
+          CHAR = SUBSTR(TEMPSTR,I,1);             /* EXAMINE CHAR     */
+          IF (CHAR < '0') | (CHAR > '9') THEN DO; /* NUMERIC TEST     */
+               ERRORS=1B;                         /* NOT NUMERIC      */
+               CALL EDITL(18);                    /* WRITE ERROR      */
+               GO TO FINDBLKS;
+               END;
+          BLKSIZE = BLKSIZE*10 + CHAR;            /* CHAR NUMERIC     */
+          END;
+          RPTBLKSIZ = BLKSIZE;                    /* REPORT BLKSIZE   */
+ FINDBLKS: KEYSTART = INDEX(CARDIN,'NOBLKS=');    /* LOOK FOR KEYWORD */
+          IF KEYSTART = 0 THEN DO;                /* KEYWORD MISSING  */
+               ERRORS=1B;                         /* ERROR FLAG ON    */
+               CALL EDITL(19);                    /* WRITE ERROR      */
+               GO TO EDITDDEND;
+               END;
+          TEMPSTR=SUBSTR(CARDIN,KEYSTART+7,74-KEYSTART);
+          SUBSTR(TEMPSTR,80,1) = ',';             /* INSURE COMMA     */
+          KEYEND=MIN(INDEX(TEMPSTR,','),INDEX(TEMPSTR,' ')) -1;
+          NOBLKS = 0;                             /* DEVELOP NO. BLKS */
+          DO I=1 TO KEYEND;
+          CHAR = SUBSTR(TEMPSTR,I,1);             /* EXAMINE CHAR     */
+          IF (CHAR < '0') | (CHAR > '9') THEN DO; /* NUMERIC TEST     */
+               ERRORS=1B;                         /* NOT NUMERIC      */
+               CALL EDITL(20);                    /* WRITE ERROR      */
+               GO TO EDITDDEND;
+               END;
+          NOBLKS = NOBLKS*10 + CHAR;              /* CHAR NUMERIC     */
+          END;
+          RPTBLKNO = NOBLKS;                      /* REPORT NO BLKS   */
+ EDITDDEND: IF ^ ERRORS THEN GO TO DDCARDOK;      /* WAS DD OK        */
+ /*                                                                   */
+ /*       ERRORS WERE FOUND ON THE DD CARD                            */
+ /*       IGNORE THIS CARD                                            */
+ /*                                                                   */
+          GO TO READ3;                            /* GET NEXT CARD    */
+ /*                                                                   */
+ /*       DD CARD HAS BEEN FOUND AND HAS PASSED EDIT                  */
+ /*                                                                   */
+ DDCARDOK: CALL EDITL(0);                         /* PRINT GOOD CARD  */
+          NODD=NODD+1;                            /* COUNT DD'S       */
+ /*                                                                   */
+ /*       CALCULATE I/O TIME FOR THIS DD                              */
+ /*                                                                   */
+          IOTIME = ((BLKSIZE * TRANSTIME)         /* THIS DD          */
+               + SSTIME) * NOBLKS
+               * 0.0167 + 0.005;                  /* CONVERT TO MIN   */
+          RPTIOTIM = IOTIME;                      /* REPORT I/O TIME  */
+          STEPIOTIM = STEPIOTIM + IOTIME;         /* ACCUM I/O TIME   */
+          CALL EREPORT;                           /* WRITE DETAIL LIN */
+          GO TO READ3;                            /* GET NEXT CARD    */
+ /*                                                                   */
+ /*       SUBROUTINE SECTION                                          */
+ /*                                                                   */
+ EDITL:   PROC(ERRNO);
+ /*                                                                   */
+ /*       THIS PROGRAM WRITES THE EDIT LISTING REPORT;                */
+ /*                                                                   */
+          DCL ERRNO FIXED BIN;
+          IF EDITLNO > 55 THEN DO;                /* GEN PAGE HEADING */
+               HDRLINE = ' ';                     /* CLEAR HEADER     */
+               SUBSTR(HDRLINE,49,33) =
+                    'J O B   C O S T   E S T I M A T E';
+               SUBSTR(HDRLINE,127,2) = SUBSTR(DATEHOLD,1,2);
+               SUBSTR(HDRLINE,123,1),SUBSTR(HDRLINE,126,1) = '/';
+               SUBSTR(HDRLINE,121,2) = SUBSTR(DATEHOLD,3,2);
+               SUBSTR(HDRLINE,124,2) = SUBSTR(DATEHOLD,5,2);
+               PUT FILE (SYSEDIT) EDIT (HDRLINE)(PAGE,SKIP(2),A);
+               HDRLINE = ' ';
+               SUBSTR(HDRLINE,54,23)='E D I T   L I S T I N G';
+               PUT FILE (SYSEDIT) EDIT (HDRLINE)(SKIP,A);
+               HDRLINE = 'X---------------------------  INPUT  DATA ----
+ ---------------------------------X X---------------- DIAGNOSTIC -------
+ --------------X';
+               PUT FILE (SYSEDIT) EDIT (HDRLINE)(SKIP,A);
+               EDITLNO = 7;                       /* RESET LINE COUNT */
+               END;
+ /*                                                                   */
+ /*       IF ERRNO = 0 PRINT NO DIGNOSTIC--GOOD CARD.                 */
+ /*                                                                   */
+          IF ERRNO = 0 THEN DO;
+               EDITCARD=CARDIN;                   /* GOOD CARD TO RPT */
+               EDITDIAG=' ';                      /* NO DIAGNOSTIC    */
+               GO TO PUTEDITLINE;
+               END;
+          IF ^ SUBSTR(PRINTCARD,ERRNO,1) THEN DO; /* CARD AND DIAG ?  */
+               EDITCARD=' ';                      /* NO INPUT CARD    */
+               EDITDIAG=MSG(ERRNO);               /* GET DIAGNOSTIC   */
+               GO TO PUTEDITLINE;
+               END;
+          IF HOLDCARD = CARDIN THEN EDITCARD=' '; /* SAME BAD CARD   */
+               ELSE EDITCARD = CARDIN;            /* NEW BAD CARD     */
+          HOLDCARD = CARDIN;                      /* SAVE BAD CARD    */
+          EDITDIAG=MSG(ERRNO);                    /* GET DIAGNOSTIC   */
+ PUTEDITLINE: PUT FILE (SYSEDIT) EDIT (EDITLINE)(A);
+          EDITLNO = EDITLNO+1;                    /* COUNT LINES      */
+          END EDITL;
+ /*                                                                   */
+ /*                                                                   */
+ EREPORT: PROC;
+ /*                                                                   */
+ /*       THIS PROGRAM WRITES THE JOB COST ESTIMATE REPORT            */
+ /*                                                                   */
+          IF RPTLNO > 55 THEN DO;                 /* GEN PAGE HEADING */
+               HDRLINE = ' ';
+               SUBSTR(HDRLINE,49,33) =
+                    'J O B   C O S T   E S T I M A T E';
+               SUBSTR(HDRLINE,127,2) = SUBSTR(DATEHOLD,1,2);
+               SUBSTR(HDRLINE,123,1),SUBSTR(HDRLINE,126,1) = '/';
+               SUBSTR(HDRLINE,121,2) = SUBSTR(DATEHOLD,3,2);
+               SUBSTR(HDRLINE,124,2) = SUBSTR(DATEHOLD,5,2);
+               PUT FILE (SYSPRINT) EDIT (HDRLINE)(PAGE,SKIP(2),A);
+          HDRLINE =' JOBNAME  RATE  STEPNAME  REGION   DDNAME   BLKSIZE
+  NO. BLKS  I/O TIME  CPU TIME  RUN TIME  I/O UNITS  OCCUPANCY UNITS   C
+ OST';
+               PUT FILE (SYSPRINT) EDIT (HDRLINE)(SKIP,A);
+               PUT FILE (SYSPRINT) SKIP;
+               RPTLNO = 6;                        /* RESET LINE COUNT */
+               END;
+          PUT FILE (SYSPRINT) EDIT (RPTLINE)(A);  /* WRITE DETAIL LIN */
+          RPTLINE=' ';                            /* CLEAR DETAIL LIN */
+          RPTLNO = RPTLNO + 1;                    /* COUNT LINES      */
+          END EREPORT;
+ /*                                                                   */
+ /*                                                                   */
+ STEPTL:  PROC;
+ /*                                                                   */
+ /*       THIS PROGRAM GENERATES STEP TOTALS                          */
+ /*                                                                   */
+          RPTIOTIM = STEPIOTIM;                   /* REPORT I/O TIME  */
+          JOBIOTIM = JOBIOTIM + STEPIOTIM;        /* ACCUM I/O TIME   */
+          IF ^ ABSCPU THEN TIME = TIME * STEPIOTIM; /* CALC CPU TIME  */
+          RPTCPU = TIME;
+          JOBCPUTIM = JOBCPUTIM + TIME;           /* ACCUM CPU TIME   */
+          STEPRUNTM = TIME + STEPIOTIM;           /* CALC RUN TIME    */
+          RPTRUNTIM = STEPRUNTM;                  /* REPORT RUN TIME  */
+          JOBRUNTIM = JOBRUNTIM + STEPRUNTM;      /* ACCUM RUN TIME   */
+          STEPIOUNT = K2 * NODD * STEPRUNTM+0.005;/* CALC I/O UNITS   */
+          RPTIOUNIT = STEPIOUNT;                  /* REPORT I/O UNITS */
+          JOBIOUNIT = JOBIOUNIT + STEPIOUNT;      /* ACCUM I/O UNITS  */
+          STEPOCUNT = K1 * REGION * (0.90 + 0.0013 * REGION)
+               * (STEPRUNTM + SCHTIME) +0.005;    /* CALC OCCUPANCY   */
+          RPTOCPNCY = STEPOCUNT;                  /* REPORT OCCUPANCY */
+          JOBOCUNIT = JOBOCUNIT + STEPOCUNT;      /* ACCUM OCCUPANCY  */
+          STEPMAUNT = STEPOCUNT + STEPIOUNT;      /* CALC MACH. UNITS */
+          JOBMAUNIT = JOBMAUNIT + STEPMAUNT;      /* ACCUM MACH. UNIT */
+          STEPCOST = STEPMAUNT * RATE + 0.005;    /* CALC STEP COST   */
+          RPTCOST = STEPCOST;                     /* REPORT COST      */
+          JOBCOST = JOBCOST + STEPCOST;           /* ACCUM COST       */
+          RPTTLTYPE = 'ST';                       /* SET TOTAL CODE   */
+          CALL EREPORT;                           /* WRITE DETAIL LIN */
+          PUT FILE (SYSPRINT) SKIP(2);            /* BLANK LINE       */
+          RPTLNO = RPTLNO + 1;                    /* COUNT LINES      */
+          END STEPTL;
+ /*                                                                   */
+ /*                                                                   */
+ JOBTL:   PROC;
+ /*                                                                   */
+ /*       THIS PROGRAM GENERATES JOB TOTALS                           */
+ /*                                                                   */
+          RPTCPU = JOBCPUTIM;                     /* REPORT CPUTIME   */
+          RPTIOTIM = JOBIOTIM;                    /* REPORT I/O TIME  */
+          RPTRUNTIM = JOBRUNTIM;                  /* REPORT RUN TIME  */
+          RPTIOUNIT = JOBIOUNIT;                  /* REPORT I/O UNITS */
+          RPTOCPNCY = JOBOCUNIT;                  /* REPORT OCCUPANCY */
+          RPTCOST = JOBCOST;                      /* REPORT COST      */
+          RPTTLTYPE = 'JB';                       /* SET TOTAL CODE   */
+          CALL EREPORT;                           /* WRITE DETAIL LIN */
+          RPTLNO = 60;                            /* PAGE ON NEXT JOB */
+          END JOBTL;
+ /*                                                                   */
+ /*       END OF JOB                                                  */
+ /*                                                                   */
+ ENDJOB:  END B2851;

@@ -1,0 +1,243 @@
+//JEACMPRS JOB (1140,5),'J ABBEY',CLASS=N,NOTIFY=JEA
+// EXEC LIBRARYN,FILE=MVS,BLKSIZE=6480
+//SYSIN DD DATA,DLM='??'
+-OPT NOLIST,EXEC
+-DLM COMPRESS,CMPR
+-ADD COMPRESS,CMPR
+-PGMR JEABBEY
+-DESC SRL COMPRESSION/DECOMPRESSION ROUTINE
+         TITLE 'SELF REORGANISING LIBRARYN EXPANSION/COMPRESSION RTN'
+***********************************************************************
+*                           C O M P R E S S
+*
+*            THIS ROUTINE WILL COMPRESS OR DE-COMPRESS A RECORD
+*        ACCORDING TO WHETHER IT IS ENTERED AT 'COMPRESS' OR AT
+*        'EXPAND'. THE DATA IS COMPRESSED/EXPANDED ACCORDING TO THE
+*        FOLLOWING ALGORITHM:
+*
+*        ALL THE DATA IS PLACED IN 'STRINGS' OF UP TO 128 BYTES. EACH
+*        STRING IS PRECEEDED BY A CONTROL BYTE OF THE FOLLOWING FORM
+*
+*        BIT 0       IF ON, THIS IS A DUPLICATE STRING
+*        BIT 1-7     LENGTH OF THE ORIGINAL FIELD REPLACED.
+*
+*        FOR A DUPLICATE STRING, THE NEXT BYTE AFTER THE CONTROL BYTE
+*        IS AN IMAGE OF THE BYTE DUPLICATED. BITS 1-7 OF THE CONTROL
+*        BYTE INDICATE HOW MANY SUCH DUPLICATE BYTES WERE PRESENT IN
+*        THE ORIGINAL DATA.
+*
+*        FOR A NON-DUPLICATE STRING, THE NEXT 7 BITS OF THE CONTROL
+*        BYTE GIVE THE LENGTH OF THE DATA WHICH FOLLOWS AND WHICH IS A
+*        COPY OF THE ORIGINAL DATA.
+*
+*        N.B. THE LENGTH IN EACH CONTROL BYTE IS AN EXECUTABLE LENGTH
+*
+*            ON ENTRY TO THE ROUTINE, REGISTER ONE WILL ADDRESS A
+*        PARAMETER LIST OF THREE ENTRIES:
+*
+*        1)    THE ADDRESS OF THE USER PARAMETER DEFINITION AREA
+*        2)    THE ADDRESS OF THE SOURCE FIELD TO BE COMPRESSED OR
+*              EXPANDED.
+*        3)    THE ADDRESS OF THE FIELD INTO WHICH THE COMPRESSED/
+*              EXPANDED DATA IS TO BE PLACED.
+*
+*        ON EXIT FROM THE ROUTINE, THE DATA WILL HAVE BEEN EITHER
+*        COMPRESSED OR EXPANDED INTO THE RECEIVING FIELD AND THE
+*        HALFWORD LENGTH FIELDS AT THE START OF EACH STRING WILL HAVE
+*        BEEN MAINTAINED CORRECTLY.
+*
+***********************************************************************
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING
+***********************************************************************
+         SPACE 2
+COMPRESS ZCSECT 12,GETMAIN=1
+         LR    REG8,REG11          ADDRESS OF CALLERS SAVE AREA
+         USING SRLWORK,REG8        ADDRESSABILITY FOR WORK AREA
+         L     REG9,0(REG1)        LOAD UP THE PASSED PARAMETER
+         USING USERPARM,REG9       ADDRESSABILITY FOR IT
+         L     REG10,UPEDITWK      ADDRESS OF EDIT WORK AREA
+         USING WDSECT,REG10        ADDRESSABILITY FOR IT
+         LM    REG3,REG4,4(REG1)   LOAD IN AND OUT FIELD ADDRESSES
+         LH    REG7,RECLENTH       LOAD LENGTH OF INCOMING RECORDS
+         AR    REG7,REG3           ADDRESS OF END OF INPUT DATA
+         EJECT
+***********************************************************************
+*        BUMP ALONG SOURCE DATA FOR A DUPLICATING FIELD
+***********************************************************************
+         SPACE 2
+         LA    REG5,4(REG4)        POINT SCB REGISTER AT FIRST OUT BYTE
+         LA    REG1,4              LOAD 'NULL' RECORD DESCRIPTOR WORD
+         SLL   REG1,16             MOVE IT TO HALFWORD POSITION
+         ST    REG1,0(REG4)        AND STORE IN OUTPUT AREA
+         BAL   REG11,INITSTR       INITIALISE FIRST STRING
+LOOPX    EQU   *
+         TM    0(REG5),SCBDUP      ARE WE PROCESSING A DUP STRING
+         BZ    BUMP001             NO. GO TRY NON-DUP PROCESSING
+         CLC   0(1,REG3),0(REG2)   NEXT BYTE SAME AS OLD ONE ?
+         BNE   BUMP002             NO. GO TERMINATE THIS STRING
+         LA    REG6,1(REG6)        INCREMENT COUNTER
+         LA    REG3,1(REG3)        AND ADDRESS NEXT SOURCE BYTE
+         B     LOOPENDX            GO FETCH NEXT BYTE
+BUMP002  EQU   *
+         BAL   REG11,ENDSTRNG      TERMINATE THIS STRING
+         BAL   REG11,INITSTR       INITIALISE NEXT STRING
+         B     LOOPX               AND GO FETCH NEXT BYTE
+BUMP001  EQU   *
+         LA    REG15,4(REG3)       ADDRESS OF END OF THE DUP TEST
+         CR    REG15,REG7          AM I RISKING AN OC4 ?
+         BH    SKIPDUPT            YES. SKIP THE DUP TEST
+         CLC   0(3,REG3),1(REG3)   START OF DUPLICATION STRING ?
+         BE    BUMP003             YES. ASSUME START OF NEW DUP STRING
+SKIPDUPT EQU   *
+         MVC   0(1,REG2),0(REG3)   COPY THAT BYTE ACROSS
+         LA    REG2,1(REG2)        AND ADDRESS NEXT OUTPUT BYTE
+         LA    REG3,1(REG3)        AS WELL AS NEXT INPUT BYTE
+         LA    REG6,1(REG6)        INCREMENT STRING COUNTER
+         B     LOOPENDX            AND GO FETCH NEXT BYTE
+BUMP003  EQU   *
+         BAL   REG11,ENDSTRNG      GO TERMINATE THIS STRING
+         BAL   REG11,INITSTR       START OFF THE NEXT STRING
+         B     LOOPX               GO RESTART THE PROCESS
+LOOPENDX EQU   *
+         CH    REG6,MAXLEN         LENGTH HAS REACHED MAXIMUM ?
+         BL    LNGTHOK             NO. LENGTH IS OK
+         BAL   REG11,ENDSTRNG      OTHERWISE TERMINATE THAT STRING
+         BAL   REG11,INITSTR       AND START OFF ANOTHER ONE
+LNGTHOK  EQU   *
+         CR    REG3,REG7           REACHED END OF INPUT ?
+         BL    LOOPX               NO. KEEP GOING
+         BAL   REG11,ENDSTRNG      YES. FINISH OFF FINAL STRING
+         B     ZRETURN             AND RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        END OF A STRING DETECTED. COMPLETE CONTROL BYTE ETC.
+***********************************************************************
+         SPACE 2
+ENDSTRNG DS    0H
+         BCTR  REG6,0              GET EXECUTABLE LENGTH OF DATA
+         XR    REG0,REG0           CLEAR WORK REGISTER
+         IC    REG0,0(REG5)        LOAD THE SCB FLAGS
+         OR    REG0,REG6           ADD IN THE LENGTH OF THE DATA
+         STC   REG0,0(REG5)        STORE THE CONTROL BYTE
+         LH    REG1,0(REG4)        LOAD CURRENT RECORD LENGTH
+         TM    0(REG5),SCBDUP      WAS THAT A DUPLICATE STRING
+         BZ    ENDNOTDP            NO. GO ADD NORMAL LENGTH
+         LA    REG5,2(REG5)        OTHERWISE JUST ADD FOR SCB AND IMAGE
+         LA    REG1,2(REG1)        INCREMENT RECORD LENGTH FIELD
+         B     ENDCONT1            AND GO CONTINUE
+ENDNOTDP EQU   *
+         LA    REG5,2(REG6,REG5)   CALCULATE NEXT SCB ADDRESS
+         LA    REG1,2(REG6,REG1)   INCREMENT RECORD LENGTH FIELD
+ENDCONT1 EQU   *
+         STH   REG1,0(REG4)        RESTORE RECORD LENGTH AT START
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        INTIIALISE FOR THE START OF A NEW STRING
+***********************************************************************
+         SPACE 2
+INITSTR  DS    0H
+         MVI   0(REG5),0           CLEAR THE SCB FLAG
+         LA    REG2,1(REG5)        ADDRESS OF NEXT RECEIVING BYTE
+         MVC   0(1,REG2),0(REG3)   COPY ACROSS THE FIRST BYTE
+         LA    REG15,4(REG3)       ADDRESS OF END OF DUP TEST
+         CR    REG15,REG7          AM I RISKING AN OC4 ?
+         BH    NORISKS             YES. BYPASS THE DUP TEST
+         CLC   0(3,REG3),1(REG3)   START OF A DUP STRING
+         BNE   NOTNEWDP            NO. NOT A NEW DUP FIELD
+         OI    0(REG5),SCBDUP      YES. SO TURN ON FLAG
+NORISKS  EQU   *
+NOTNEWDP EQU   *
+         XR    REG6,REG6           INITIALISE THE LENGTH OF IT
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        RETURN TO CALLER
+***********************************************************************
+         SPACE 2
+ZRETURN  EQU   *
+         ZRETURN
+         EJECT
+***********************************************************************
+*        CONSTANTS NOT CHANGED BY THIS ROUTINE
+***********************************************************************
+         SPACE 2
+SCBDUP   EQU   X'80'               SCB BYTE FLAG. THIS IS A DUP STRING
+MAXLEN   DC    H'128'
+         LTORG
+         EJECT
+***********************************************************************
+*        THIS ENTRY POINT FOR DE-COMPRESSION OF DATA
+***********************************************************************
+         SPACE 2
+EXPAND   ZCSECT GETMAIN=1
+         LR    REG8,REG11          ADDRESS OF SRL DSECT
+         L     REG9,0(REG1)        ADDRESS OF USER PARM AREA
+         L     REG10,UPEDITWK      ADDRESS OF EDIT WORK AREA
+         LM    REG3,REG4,4(REG1)   ADDRESS OF SOURCE AND RECEIVING FLDS
+         LH    REG2,0(REG3)        LOAD LENGTH OF INPUT DATA
+         LA    REG2,0(REG2,REG3)   ADDRESS OF AND OF INPUT DATA
+         LA    REG3,4(REG3)        STEP OVER INPUT LENGTH FIELD
+         EJECT
+***********************************************************************
+*        COPY ACROSS THE DATA TO RECEIVING FIELD
+***********************************************************************
+         SPACE 2
+         XR    REG15,REG15         CLEAR WORK LENGTH REGISTER
+EXPLOOP  EQU   *
+         IC    REG15,0(REG3)       LOAD FIRST/NEXT STRING CONTROL BYTE
+         N     REG15,=F'127'       STRIP OFF TOP BIT
+         MVC   0(1,REG4),1(REG3)   MOVE NEXT BYTE IN CASE OF DUPLICATE
+         TM    0(REG3),X'80'       STRING IS DUPLICATE ?
+         BZ    NOTDUP              NO. GO COPY FULL STRING
+         BCTR  REG15,0             SUBTRACT ONE MORE FOR PROPAGATE
+         EX    REG15,DUPMOVE       DUPLICATE THE CHARACTER
+         LA    REG3,2(REG3)        ADDRESS OF NEXT CONTROL BYTE
+         LA    REG4,2(REG15,REG4)  ADDRESS NEXT RECEIVING FIELD
+         B     LOOPENDS            GO PROCESS THE NEXT STRING
+NOTDUP   EQU   *
+         EX    REG15,NONDUPMV      COPY ACROSS THE NON-DUP STRING
+         LA    REG3,2(REG15,REG3)  ADDRESS OF NEXT CONTROL BYTE
+         LA    REG4,1(REG15,REG4)  ADDRESS NEXT RECEIVING FIELD
+LOOPENDS EQU   *
+         CR    REG3,REG2           END OF ALL DATA ?
+         BL    EXPLOOP             NO. CONTINUE WITH THE LOOP
+         EJECT
+***********************************************************************
+*        RETURN TO CALLER
+***********************************************************************
+         SPACE 2
+         ZRETURN
+         EJECT
+***********************************************************************
+*        CONSTANTS NOT CHANGED BY THE PROGRAM
+***********************************************************************
+         SPACE 2
+DUPMOVE  MVC   1(0,REG4),0(REG4)   EXECUTED TO PROPAGATE DUP CHAR
+NONDUPMV MVC   0(0,REG4),1(REG3)   EXECUTED TO COPY A NON-DUP STRING
+         LTORG
+         EJECT
+***********************************************************************
+*        WORK AREAS USED BY THE PROGRAM
+***********************************************************************
+         SPACE 2
+         USERPARM
+         SPACE 2
+         EDITWK2
+         SPACE 2
+         SRLDSECT
+         SPACE 2
+         END
+??
+// EXEC ASMFCL,L=H
+//SYSLIB DD DSN=JEA.MACLIB,DISP=SHR
+//       DD DSN=SYS2.MACLIB,DISP=SHR
+// DD    DSN=SYS1.MACLIB,DISP=SHR
+//SYSIN DD DSN=&OSJOB,DISP=(OLD,DELETE)
+//LKED.SYSLMOD DD DSN=JEA.LOADLIB,DISP=SHR
+ INCLUDE SYSLMOD(MOPE)
+ ENTRY MOPE
+ NAME MOPE(R)
+/*

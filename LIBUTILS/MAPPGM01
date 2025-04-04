@@ -1,0 +1,291 @@
+         TITLE 'MONITOR ACTIVITY OF ATTACHED SUB-TASK'
+*        PROGRAMMER:               D.A.MOORCROFT
+*                                  MONSANTO EUROPE S.A.
+*                                  PLACE MADOU, 1
+*                                  1030 BRUSSELS.
+         SPACE 1
+*        DATE WRITTEN:             OCTOBER 1975
+         SPACE 5
+*        PURPOSE:-
+*         THIS PROGRAM ATTACHES AS A SUB-TASK THE PROGRAM SPECIFIED
+*         IN THE PARM FIELD AND MONITORS ITS EXECUTION.
+         SPACE 5
+*        FILES:-
+*         MAPDATA - ANALYSIS RECORDS (RECFM=FB,LRECL=24,BLKSIZE=1680)
+         SPACE 5
+*        PARM:-
+*         THIS PROGRAM REQUIRES A STRUCTURED PARM OF THE FORM:
+*              . PROGRAM NAME RIGHT PADDED WITH BLANKS TO LENGTH 8
+*              . FOUR SLASHES ( //// ) AS A DELIMITER
+*              . USER PROGRAM PARM FIELDS IF ANY
+         EJECT
+*        OUTPUT RECORD:-
+*         1-6  INSTRUCTION ADDRESS IN EBCDIC REPRESENTATION OF HEX
+*               IF THE INSTRUCTION IS BEFORE THE ENTRY POINT OF THE
+*               PROGRAM BEING MONITORED THE ADDRESS IS ABSOLUTE.
+*               IF THE ADDRESS IS AFTER THE ENTRY POINT, THE ADDRESS
+*               IS RELATIVE TO THE ENTRY POINT OF THE PROGRAM.
+*         7-8  FLAG BYTES          'EP' - ENTRY POINT ADDRESS
+*                                  'L ' - ADDRESS BEFORE ENTRY POINT
+*                                  '  ' - RELATIVEADDRESS
+*         9-20 INSTRUCTION IMAGE IN EBCDIC
+*        21-24 ADDRESS IN HEX ( FOR SUBSEQUENT SORT )
+         SPACE 5
+*        NOTES:-
+*         1. THIS PROGRAM REQUIRES PROGRAM MAPPGM02 TO ANALYSE THE
+*            OUTPUT AND TO PRODUCE A HISTOGRAM OF ACTIVITY.
+*         2. THIS PROGRAM HAS BEEN BENCH-MARKED AGAINST THE PACKAGE
+*            'PPE' WITH 100% CORELATION OF RESULTS. ( DON'T TELL CAP )
+         EJECT
+*        TECHNIQUE:-
+*         1. RETRIEVE FROM THE PARM FIELD THE NAME OF THE PROGRAM TO
+*            BE MONITORED, AND ADJUST THE PARM POINTER FOR THE ATTACHED
+*            TASK.
+*         2. ATTACH THE PROGRAM AS A SUBTASK WITH A LOWER DISPATCHING
+*            PRIORITY.
+*         3. GET ZERO PROTECT KEY AND SET THE DISPATCHING PRIOTTIY
+*            OF THE MONITOR'S TCB TO 249, WHICH IS OUT OF THE RANGE OF
+*            PRIORITYS MONITORED AND DYNAMICCALLY CHAINED BY OUT HASP.
+*            THEN RESET THE PROTECT KEY SO THAT THE MONITORED PROGRAM
+*            CANNOT AFFECT ANYTHING.
+*         4. LOCATE THE PRIMARY RB OF THE ATTACHED SUBTASK. IT SS
+*            FROM THE PSW IN THIS RB THAT FLOW OF THE PROGRAM IS
+*            MONITORED.
+*         5. USING STIMER, MONITOR THE FLOW OF THE SUBTASK ( WHICH
+*            IS RUNNING WITH A LOWER DISPATCHING PRIORITY ) FROM THE
+*            NSI ADDRESS IN THE PSW IN THE PRIMARY RB.  INITIALLY I
+*            USED THE INSTRUCTION LENGTH CODE TO WORK BACK TO THE
+*            PRECEDING INSTRUCTION ADDRESS AND IMAGE, BUT I FOUND
+*            THAT I OFTEN INTERCEPTED AN NSI AFTER A BRANCH, AND THE
+*            RESULTS LOOKED ABSOLUTE RUBBISH.
+*         6. WHEN THE SUBTASK TERMINATES, THE ORIGINAL DISPATCHING
+*            PRIORITY IS RESET SO THAT THOSE WHO FOLLOW AFTER WON'T
+*            BENEFIT UNREASONABLY.
+         EJECT
+MAPPGM01 CSECT
+         PGMIN
+         EJECT
+***********************************************************************
+*        DETERMINE PROGRAM NAME AND ATTACH TASK                       *
+***********************************************************************
+         SPACE 1
+         L     R1,0(,R1)           GET ADDRESS OF PARM FIELD
+         LH    R2,0(,R1)           RETRIEVE LENGTH OF PARM FIELD
+         SH    R2,=H'12'           DECREMENT LENGTH TO ALLOW FOR NME
+         MVC   NAME,2(R1)          GET NAME OF PROGRAM TO BE ATTACHED
+         LA    R1,12(,R1)          POINT PAST PROGRAM NAME IN PARM
+         STH   R2,0(,R1)           SET NEW LENGTH FIELD
+         ST    R1,PARMADDR         PRESERVE ADDRESS OF REMAIMING PARM
+         LA    R1,PARMADDR         ESTABLISH LINKAGE WITH PARM POINTER
+        ATTACH EPLOC=NAME,ECB=ECB,DPMOD=-20 ATTACH PGM TO BE TRACED
+         ST    R1,TCBADDR          PRESERVE ADDRESS OF SUB-TASK'S DCB
+         EJECT
+***********************************************************************
+*        OPEN OUTPUT DATA SET                                         *
+***********************************************************************
+         SPACE 1
+         OPEN  (SYSUT2,(OUTPUT))   OPEN MAP DATA OUTPUT D/S
+         SPACE 5
+***********************************************************************
+*        SET DISPATCHING PRIORITY ABOVE HASP'S MONITORING RANGE       *
+***********************************************************************
+         SPACE 1
+         L     R1,TCBADDR          RETRIEVE ADDRESS OF TCB FOR SUB-TASK
+         L     R10,132(,R1)        GET ADDRESS OF ORIGINATING TCB
+         ST    R10,TCBMAIN         PRESERVE THIS TCB ADDRESS
+         BAL   R4,PK0              GET ZERO PROTET KEY
+         MVC   LIMTPRTY,152(R10)   PRESERVE LIMIT PRIORITY OF TASK
+         MVI   152(R10),X'F9'      SET LIMIT PRIORITY ABOVE HASP MONITR
+         BAL   R4,PKX              RESET ORIGINAL PROTECT KEY
+         CHAP  255                 PUSH PRIOTRIY TO 252
+         EJECT
+***********************************************************************
+*        LOCATE PRIMARY RB OF SUB-TASK                                *
+***********************************************************************
+         SPACE 1
+         L     R1,TCBADDR          RETRIEVE ADDRESS OF SUB-TASKS TCB
+         LA    R10,0(,R1)          PRESERVE TCB ADDRESS FOR COMPARISON
+         LA    R5,500              SET TO LOOP IF NECESSARY
+LOCATE  STIMER WAIT,BINTVL=BINTVL  GIVE SUBTASK A CHANCE TO START
+         L     R1,0(,R10)          GET CURRENT RB ADDREESS FROM TCB
+         B     *+8                 BYPASS BACK CHAINING
+         L     R1,28(,R1)          GET ADDRESS OF PREVIOUS RB
+         LA    R1,0(,R1)           PURIFY RB ADDRESS
+         CR    R1,R10              HAVE WE CHAINED BACK TO TCB
+         BE    LOCATEND            TASK HASN'T STARTED YET SO BRANCH
+         CLC   0(8,R1),NAME        IS THIS THE RB OF THE ATTACHED TASK
+         BNE   *-20                LOOP BACK IF IT ISN'T TO GET ANOTHER
+         LA    R10,20(,R1)         POINT AT ADDRESS OF NSI IN PSW IN RB
+         B     CREATE1             GO CREATE 1ST RECORD
+LOCATEND BCT   R5,LOCATE           WAIT ANOTHER 1/100 SEC FOR IT TO STT
+         B     END                 EITHER IT WAS TOO FAST OR ???????
+         SPACE 5
+***********************************************************************
+*        CREATE ENYRT POINT RECORD                                    *
+***********************************************************************
+         SPACE 1
+CREATE1  LA    R11,32(,R1)         POINT AT START OF PROGRAM
+         ST    R11,STORE           MOVE ENTRY POINT TO STORE
+         BAL   R4,TRANSLTE         TRANSLATE ADDRESS INTO EBCDIC
+         MVC   ADDRESS,STORE+2     MOVE TRANSLATED ENTRY POINT ADDRRESS
+         B     PUT                 GO WRITE INITIAL RECORD
+         EJECT
+***********************************************************************
+*        MONITOR SUB-TASK EVERY 1/1000 SEC                            *
+***********************************************************************
+         SPACE 1
+STIMER  STIMER WAIT,BINTVL=BINTVL  WAIT FOR A TIMER INTERRUPT
+         TM    ECB,COMPLETE        TEST IF TASK COMPLETE
+         BO    END                 GO TERMINATE TRCAE IF YES
+         MVC   RECORD,RECORD-1     BLANK OUT RECORD
+         L     R9,0(,R10)          RETRIEVE ADDRESS FROM PSW IN RB
+         LA    R9,0(,R9)           PURIFY HIGH-ORDER BYTE
+         SPACE 5
+***********************************************************************
+*        TEST FOR SVC LOCKOUT & ALTER TIMER IF YES                    *
+***********************************************************************
+         SPACE 1
+         LA    R12,0(,R9)          POINT  R12 AT NEXT SEQUNTIAL INSTRUC
+         BCTR  R12,0               DECREMENT BY 2 TO TEST
+         BCTR  R12,0                ... FOR PRECEDING SVC
+         C     R9,LASTADDR         IS THIS THE SAME ADDRESS AS LAST TIM
+         BNE   SAVEADDR            BR IF NOT
+         CLC   0(2,R12),SVC0       IS THIS STILL SVC0
+         BE    SET100              GO ALTER TIMER INTERVAL IF YES
+         CLC   0(2,R12),SVC1       IS THIS STILL SVC1
+         BE    SET100              GO ALTER TIMER INTERVAL IF YES
+SAVEADDR LA    R12,2(,R12)         POINT BACK AT NSI
+         MVC   STACK(16),STACK+4   MOVE ADDRESSES UP THE STACK
+         ST    R9,LASTADDR         PRESERVE ADDRESS OF NSI
+         CLC   STACK(16),STACK+4   ARE THE LAST 5 ADDRESSES THE SAME
+         BNE   GETLGTH             BR IF NOT
+SET100   B     STIMER              GO & WAIT WITHOUT CREATING RECORD
+         EJECT
+***********************************************************************
+*        DETERMINE LENGTH FROM INSTRUCTION CODE                       *
+***********************************************************************
+         SPACE 1
+GETLGTH  SR    R5,R5               ZEROISE WORK REGISTER
+         IC    R5,0(R9)            GET 1ST BYTE OF INSTRUCTION
+         SRL   R5,6                ISOLATE BITS 0-1 OF INSTRUCTION CODE
+         STC   R5,BITS01           STORE BITS 0-1 OF INS CODE
+         TR    BITS01,LGTHTABL     DERIVE INS LENGTH FROM BITS 0-1
+         IC    R5,BITS01           RETRIEVE EXECUTABLE LENGTH IN R5
+         SPACE 4
+***********************************************************************
+*        DETERMINE & TRANSLATE INSTRUCTION ADDRESS                    *
+***********************************************************************
+         SPACE 1
+         SR    R12,R11             SUBTRACT ENTRY POINT ADDRESS
+         BNM   *+12                BR IF ADDRESS ABOVE ENTRY POINT
+         MVI   LOWFLAG,C'L'        FLAG THAT ADDRESS IS BELOW ENTRY
+         LA    R12,0(,R9)          RESET ADDRESS TO ABSOLUTE
+         ST    R12,HEXADDR         PRESERVE HEX INSTRUCTION ADDRESS
+         ST    R12,STORE           MOVE DISPLACEMENT TO WIRK AREA
+         BAL   R4,TRANSLTE         TRANSLATE ADDRESS INTO EBCDIC
+         MVC   ADDRESS,STORE+2     MOVE TRANSLATED ADDRESS TO RECORD
+         SPACE 4
+***********************************************************************
+*        TRANSLATE INSTRUCTION                                        *
+***********************************************************************
+         SPACE 1
+         MVC   STORE,0(R9)         MOVE INSTRUCTION TO WORK AREA
+         BAL   R4,TRANSLTE         TRANSLATE INSTRUCTION IMAGE INTO EBC
+         EX    R5,MOVEINS          MOVE EBCDIC INSTRUCTION TO RECORD
+         SPACE 4
+***********************************************************************
+*        WRITE OUTPUT RECORD                                          *
+***********************************************************************
+         SPACE 1
+PUT      PUT   SYSUT2,RECORD       WRITE TRACE RECORD
+         B     STIMER              GO AND WAIT AGAIN
+         EJECT
+***********************************************************************
+*        DETACH SUB-TASK & CLOSE D/S                                  *
+***********************************************************************
+         SPACE 1
+END     DETACH TCBADDR             DETACH SUBTASK FROM SYSTEM
+         CLOSE (SYSUT2)            CLOSE TRACE DATA SET
+         SPACE 5
+***********************************************************************
+*        RESET DISPATCHING PRIORITY WITHIN HASP'S RANGE               *
+***********************************************************************
+         SPACE 1
+         L     R10,TCBMAIN         RETRIEVE ADDRESS OF THIS TCB
+         BAL   R4,PK0              GET ZERO PROTECT KEY
+         MVC   152(1,R10),LIMTPRTY SESTORE ORIGINAL LIMIT PRIORITY
+         BAL   R4,PKX              RESET ORIGINAL PROTECT KEY         *
+         CHAP  -10                 GET INTO RANGE OF HASP MONITOR
+         SPACE 5
+***********************************************************************
+*        TERMINATE PROGRAM
+***********************************************************************
+         SPACE 1
+        PGMOUT ,                   RETURN TO SYSTEM
+         EJECT
+***********************************************************************
+*        SET ZERO PROTECT KEY                                         *
+***********************************************************************
+         SPACE 1
+PK0      SUBIN ,                   ENTER ROUTINE
+        SPMODE PROB,0              GET ZERO PROTECT KEY
+        SUBOUT ,                   RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        RESET OIGINAL PROTECT KEY                                    *
+***********************************************************************
+         SPACE 1
+PKX      SUBIN ,                   ENTER ROUTINE
+        SPMODE PROB,*              RESET ORIGINAL PROTECT KEY
+        SUBOUT ,                   RETURN TO CALLER
+         SPACE 5
+***********************************************************************
+*        TRANSLATE HEX INTO EBCDIC                                    *
+***********************************************************************
+         SPACE 1
+*        THIS UNBELIEVABLY CLEVER ROUTINE CONVERTS A DOUBLE WORD INTO
+*         THE EBCDIC EQUIVALENT.  IT CONVERTS EACH BYTE CONTAINING
+*         X'XY' INTO TWO BYTES CONTAINING X'0X0Y'.  THIS EXPANDED
+*         AREA IS THEN TRANSLATED AGAINST A 16-BYTE TABLE.
+         SPACE 1
+TRANSLTE SUBIN ,                   TRANSLATE HEX TO EBCDIC
+         LA    R8,16               ESTABLISH LOOP FOR 8 BYTES
+         LA    R7,STORE            POINT R7 AT STORE
+         MVO   0(9,R7),0(8,R7)     CREATE HEEX-0, HEX-DIGIT IN 1ST BYTE
+         LA    R7,1(,R7)           INCREMENT TO NEXT BYTE
+         BCT   R8,*-10             LOOP BACK IF ANYTHING LEFT
+         TR    STORE(16),TABLE     TRANSLATE DOUBLE WORD INTO EBCDIC
+        SUBOUT ,                   RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        CONSTANTS AND WORK AREAS                                     *
+***********************************************************************
+         SPACE 1
+ECB      DC    F'0'                ECB FOR SUB-TASK TERMINATION
+COMPLETE EQU   64                  EVENT COMPLETE
+TABLE    DC    C'0123456789ABCDEF' TRANSLATE TABLE FOR HEX EXPANSION
+STORE    DS    CL24                WORK AREA FOR TRANSLATE ROUTINE
+         DS    3F                  PLAY SAFE
+PARMADDR DS    F                   ADDRESS OF PARM FOR SUBTASK
+BINTVL   DC    F'1'                INTERVAL OF 1/100 SEC
+TCBADDR  DS    F                   ADDRESS OF TCB OF SUBTASK
+TCBMAIN  DS    F                   ADDRESS OF MAJOR TCB
+         DC    CL4' '              ENSURE ALIGNMENT
+RECORD   DS    0CL24               OUTPUT RECORD
+ADDRESS  DC    CL6' '              ADDRESS OF NEXT INSTRUCTION
+LOWFLAG  DC    CL2'EP'             FLAG BYTES
+INSTRUC  DC    CL12'ENTRY POINT'   INSTRUCTION IMAGE
+HEXADDR  DS    CL4                 INSTRUCTION ADDRESS IN HEX
+STACK    DC    4F'0'               ADDRESSES OF 4 PREVIOUS INTRUCTIONS
+LASTADDR DC    F'0'                ADDRESS OF NSI FROM LAST TIME
+SVC0     DC    X'0A00'             SVC 0 INSTRUCTION IMAGE
+SVC1     DC    X'0A01'             SVC 1 INSTRUCTION IMAGE
+MOVEINS  MVC   INSTRUC(0),STORE    MOVE INSTRUCTION TO RECORD
+NAME     DC    CL8'IEFBR14'        NAME OF PROGRAM TO BE TRACED
+BITS01   DS    CL1                 STORE FOR BITS 0-1 OF INSTRUC CODE
+LGTHTABL DC    X'0307070B'         TRANSLATE INTO EXECUTABLE LGTH
+LIMTPRTY DS    CL1                 LIMIT PRIORITY OF THIS TCB
+         PRINT NOGEN               SUPPRESS GENERATION OF DCB EXPANSION
+SYSUT2   DCB   DDNAME=MAPDATA,DSORG=PS,MACRF=PM,RECFM=FB,LRECL=24,     *
+               BLKSIZE=1680
+         END

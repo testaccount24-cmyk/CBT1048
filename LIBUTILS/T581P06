@@ -1,0 +1,1483 @@
+T581P06  START 0
+         SPACE 1
+***********************************************************************
+*                                                                     *
+*        PROGRAM ID. :             T581P06                            *
+*        DATE WRITTEN :            APRIL , 1974                       *
+*            VERSION 2 (MVS VERSION) JANUARY, 1977.                   *
+*        LOCATION :                EUROPEAN COMPUTER CENTER           *
+*        AUTHOR :                  J. NOLS                            *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+***********************************************************************
+*                                                                     *
+*              THIS PROGRAM READS THE CATALOG DATA SETS AND           *
+*               CREATES OUTPUT RECORD FOR EACH CATALOG ENTRY.         *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+***********************************************************************
+*                                                                     *
+*        DD STATEMENTS                                                *
+*        =============                                                *
+*                                                                     *
+*               SYSPRINT = OUTPUT REPORT DATA SET.                    *
+*               T581F100 = OUTPUT DATA SET.                           *
+*                                                                     *
+*        INPUT  (OPTIONAL)                                            *
+*        =====                                                        *
+*                                                                     *
+*         IF NO INPUT DATA SUPPLIED, THIS PROGRAM READS ALL THE       *
+*          CATALOG DATA SETS (CVOL AND VSAM) PRESENT IN THE SYSTEM.   *
+*                                                                     *
+*         IF INPUT DATA SUPPLIED, THIS PROGRAM WILL START TO READ     *
+*          THE CATALOG DATA SET SPECIFIED IN PARM OF EXEC CARD AND    *
+*          ALL THE OTHER CATALOGS CONNECTED TO THIS ONE.              *
+*                                                                     *
+*                                                                     *
+*          PARM OF EXEC CARD :                                        *
+*              TVVVVVVUUUUUU       FOR CVOL CATALOG                   *
+*         OR - TNNNNNNNNNNNNNNNNN  FOR VSAM CATALOG                   *
+*                   T = TYPE OF CATALOG, C=CVOL OR V=VSAM             *
+*                   -IF T=C :                                         *
+*                        VVVVVV = VOLUME SERIAL NUMBER                *
+*                        UUUUUU = UNIT NAME (3330,2314,ETC ...)       *
+*                   -IF T=V :                                         *
+*                        NNNNNNNNNNNNNNNNN = VSAM CATALOG DATA SET    *
+*                                            NAME (MAX. 17 POSITIONS) *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*               THE RECORDS CREATED BY THIS PROGRAM                   *
+*               HAVE THE FOLLOWING FORMAT :                           *
+*                                                                     *
+*              CL6  - SERIAL NUMBER OF DISK ON WHICH                  *
+*                     THE CATALOG RESIDES                             *
+*              CL44 - DSNAME / INDEX / CLUSTER / ETC... NAME          *
+*              XL1  - FLAGS        THIS RECORD DESCRIBES              *
+*                     1... ....    CVOL POINTER                       *
+*                     11.. ....    VSAM POINTER                       *
+*                     .1.. ....    DATA SET                           *
+*                     ..1. ....    INDEX                              *
+*                     .11. ....    CLUSTER                            *
+*                     .111 ....    VSAM DATA                          *
+*                     .111 1...    VSAM INDEX                         *
+*                     .111 11..    VSAM ALIAS                         *
+*                     .111 111.    VSAM VOLUME                        *
+*                     .111 1.1.    VSAM USER CATALOG                  *
+*                     ...1 ....    GENERATION INDEX                   *
+*                     .... 1...    LAST VOL ON WHICH DS RESIDES       *
+*                     .... .1..    ALIAS                              *
+*                     .... ..1.    FIRST VOL ON WHICH DS RESIDES      *
+*                     .... ...0    FROM CVOL CATALOG                  *
+*                     .... ...1    FROM VSAM CATALOG                  *
+*              CL4  - DEVICE CODE  (D/S AND CVOL ONLY) - HEX.         *
+*              CL6  - VOL SER D/S OR  CVOL RESIDES ON                 *
+*                     OR CL2 CURRENT GEN COUNT FOR GEN INDEX          *
+*                    AND CL4 FILLER                                   *
+*              CL2  - D/S SEQUENCE OF VOL  (D/S TAPE ONLY)            *
+*                     OR CL1 GDG FLAGS (GEN INDEX ONLY)               *
+*                     AND CL1 MAX GENERATIONS ALLOWED                 *
+*              CL2  - SEQ OF VOL IN MULTI-VOL LIST                    *
+*              CL8  - OWNER OF THE DATA SET                           *
+*              CL3  - DATA SET CREATION DATE (PACKED-DECIMAL)         *
+*              CL3  - DATA SET EXPIRATION DATE (PACKED-DECIMAL)       *
+*              CL1  - VOLUME FLAGS, AS FOLLOWS : (IF FLAG=.1.....1)   *
+*                1... .... PRIME, WHICH INDICATES THAT THIS VOLUME    *
+*                           WAS ALLOCATED WHEN THE DATA SET DESCRIBED *
+*                           BY THIS RECORD WAS DEFINED.               *
+*                ..1. .... OVERFLOW, WHICH INDICATES THAT THIS VOLUME *
+*                           IS BEING USED BY THE DATA SET, BUT THIS   *
+*                           VOLUME WAS NOT ALLOCATED WHEN THE DATA    *
+*                           SET WAS DEFINED.                          *
+*                .X.X XXXX RESERVED.                                  *
+*               OR  -  CLUSTER ATTRIBUTES,AS FOLLOWS: FLAG=.11....1   *
+*                       .... ...1  THE CLUSTER DESCRIBES A PAGESPACE  *
+*                       XXXX XXXX  RESERVED                           *
+*              CL3  - IF THE NONVSAM DATA SET RESIDES ENTIRELY ON ONE *
+*                      VOLUME, THIS FIELD CONTAINS THE LOCATION (TTR) *
+*                      OF THE DSCB F.1 IN THE VOLUME'S VTOC.          *
+*              CL17 - IF FLAGS=11.....1 : DSNAME OF VSAM CATALOG      *
+*                                                                     *
+***********************************************************************
+         TITLE 'INITIALIZATION'
+***********************************************************************
+*        REGISTERS EQUATES AND USAGE                                  *
+***********************************************************************
+         SPACE 1
+R0       EQU   0    SVC COMMUNICATIONS AND WORK REGISTER
+R1       EQU   1    SVC COMMUNICATIONS AND WORK REGISTER
+R2       EQU   2    WORK REGISTER
+R3       EQU   3    WORK REGISTER
+R4       EQU   4    WORK REGISTER
+R5       EQU   5    WORK REGISTER
+R6       EQU   6    WORK REGISTER
+R7       EQU   7    WORK REGISTER
+R8       EQU   8    WORK REGISTER
+R9       EQU   9    BASE REGISTER 2
+R10      EQU   10   WORK REGISTER
+R11      EQU   11   WORK REGISTER
+R12      EQU   12   WORK REGISTER
+R13      EQU   13   SAVE AREA POINTER / BASE REGISTER 1
+R14      EQU   14   BALR RETURN ADDRESS
+R15      EQU   15   BALR ROUTINE ADDRESS / RETURN CODE OF LOCATE MACRO
+         SPACE 2
+***********************************************************************
+*        HOUSEKEEPING                                                 *
+***********************************************************************
+         SPACE 1
+         PGMIN  EQUATES=NO,USING=(R13,R9) ESTABLISH ADDRESSABILITY
+         SPACE 1
+         PRINT NOGEN               SUPPRESS MACRO EXPANSION
+         SPACE 1
+         L     R5,0(R1)            SAVE ADDRESS PARM FROM EXEC CARD
+         SPACE 1
+***********************************************************************
+*        OPEN THE FILES                                               *
+***********************************************************************
+         SPACE 1
+         OPEN  (T581F100,(OUTPUT),SYSPRINT,(OUTPUT))
+         EJECT
+***********************************************************************
+*        PROCESS PARM OF EXEC CARD, ASK FOR IPL DATE AND TIME         *
+*         AND WRITE FIRST HEAD LINES TO SYSPRINT DATA SET.            *
+***********************************************************************
+         SPACE 1
+         LH    R6,0(R5)            LOAD LENGTH OF PARM
+         LTR   R6,R6               TEST IF PARM PRESENT
+         BZ    SP                  BRANCH IF NO
+         CH    R6,=H'18'           TEST IF LENGTH OF PARM = 18
+         BH    ERRENT8             YES - ERROR
+         BCTR  R6,0                SUB ONE FROM LENGTH OF PARM
+         EX    R6,*+8              EXECUTE NEXT MOVE INSTRUCTION
+         B     *+10                SKIP NEXT INSTRUCTION
+         MVC   TSYSCTLG(0),2(R5)   SAVE PARM IN CONTROL-VOLUME-TABLE
+         MVI   MASVSAM+1,X'F0'     INDICATE 1ST VOL=SER IN PARM
+SP       BAL   R4,CLEAR            PERFORM CLEAR WA'S
+         UT458 ,                   ASK FOR IPL DATE AND TIME
+         MVC   DATE458,UTREPORT    SAVE DATE FORMAT 'DD MMM YY'
+         MVC   THH458,UTHHMMSS     SAVE TIME (HOURS)
+         MVC   TMM458,UTHHMMSS+2   SAVE TIME (MINUTES)
+         BAL   R4,HEADLINE         PERFORM PRINT HEAD LINES
+         TESTOS MVS                TEST IF OPERATING SYSTEM IS MVS
+         LTR   R15,R15
+         BZ    MASVSAM             BRANCH IF YES
+         WTO   '**** IT IS NOT POSSIBLE TO EXECUTE THIS VERSION OF T581*
+               P06 UNDER MFT ***********'
+         B     ABEND               GO TO ABEND ROUTINE
+         SPACE 1
+***********************************************************************
+*        FIND THE DATA SET NAME OF THE VSAM MASTER CATALOG            *
+*         IF NOTHING IS SUPPLIED IN PARM OF EXEC CARD.                *
+***********************************************************************
+         SPACE 1
+MASVSAM  NOP   GETVSAM
+         L     R1,16               GET CVT ADDRESS
+         L     R1,256(R1)          GET AMCBS ADDRESS
+         L     R1,20(R1)           GET CAXWA ADDRESS
+LMC      TM    8(R1),X'04'         IS CAXWA OF MASTER CATALOG ?
+         BO    *+12                BRANCH IF YES
+         L     R1,4(R1)            LOAD ADDRESS OF NEXT CAXWA
+         B     LMC                  AND PROCESS IT
+         MVI   TSYSCTLG,C'V'       INDICATE IS A VSAM CATALOG
+         MVC   TSYSCTLG+1(17),52(R1)     AND MOVE DATA SET NAME
+         B     GETVSAM                         IN TABLE-OF-CATALOGS
+         TITLE 'ROUTINES FOR THE VSAM CATALOGS'
+***********************************************************************
+*        VSAM CATALOG PROCESSING.                                     *
+***********************************************************************
+         SPACE 1
+GETVSAM  EQU   *
+         LA    R12,DSNINX          LOAD INTO R12 ADDRESS OF DSNINX F.
+         SPACE 1
+***********************************************************************
+*        FIND THE DATA SET NAME OF THE NEXT VSAM CATALOG TO BE READ   *
+***********************************************************************
+         SPACE 1
+NVVC     L     R5,ATSVSAM          LOAD ADDR. OF LAST T-O-C ELEMENT
+         LA    R5,L'TSYSCTLG(R5)   POINT TO NEXT T-O-C ELEMENT
+         ST    R5,ATSVSAM          STORE NEW POINTER
+         CLC   0(2,R5),ENDTSYSC    TEST IF END OF TABLE
+         BE    CONT                YES - GO PROCESS CVOL CATALOGS
+         CLI   0(R5),C'V'          TEST IF VSAM CATALOG
+         BNE   NVVC                BRANCH IF NO
+         MVC   VSAMDSN+6(17),1(R5) MOVE DSNAME FOR DYNAMIC ALLOC.
+         SPACE 1
+***********************************************************************
+*        DYNAMIC ALLOCATION AND OPEN THIS VSAM CATALOG                *
+***********************************************************************
+         SPACE 1
+         LA    R1,1(R5)            GET ADDRESS OF DSNAME 1ST POSITION
+         XR    R2,R2               ZEROISE
+         LA    R3,17               ESTABLISH LOOP
+LCLDSN   CLI   0(R1),BLANK         TEST IF THIS POSITION IS BLANK
+         BE    *+16                BRANCH IF YES
+         LA    R1,1(R1)            GET LENGTH OF THIS
+         LA    R2,1(R2)             DATA SET NAME
+         BCT   R3,LCLDSN             FOR TEXT UNIT
+         STC   R2,VSAMDSN+5           OF NEXT DYNAMIC ALLOCATION
+         MVI   VSAMAORU,X'01'      INDICATE  DSNAME ALLOCATION REQUEST
+         LA    R1,VSAMPRB          LOAD ADDRESS OF REQUEST BL. POINTER
+         DYNALLOC
+         LTR   R15,R15             TEST IF RETURN CODE IS ZERO
+         BNZ   ERRENT6             BRANCH IF NO
+         TESTIOT DDNAME=VSAMCTLG+40    EXTRACT
+         B     *+4(R15)                 UCB
+         B     *+8                       ADDRESS
+         B     ERRENT0                    FROM
+         L     R1,16(R1)                   TIOT (IN REG. 1)
+         MVC   CATLGVS,28(R1)               AND SAVE VOLSER INTO RECOUT
+         MVC   VSAMCTLG+40(8),=C'CATALOG ' RESTORE DD NAME
+         OPEN  (VSAMCTLG)          OPEN VSAM CATALOG
+         LTR   R15,R15             TEST IF RETURN CODE FROM OPEN IS 0
+         BZ    RTNCAT              BRANCH IF YES
+         C     R15,=F'8'           TEST IF RETURN CODE IS 8
+         BNE   ERRENT7             BRANCH IF NOT
+         CLI   VSAMCTLG+49,X'BC'   TEST IF ERROR CODE IN ACB = 188
+         BNE   ERRENT7             NO - GO TO ABEND
+         CNOP  2,4
+         MVC   *+67(17),VSAMDSN+6  MOVE DSNAME INTO MESSAGE
+         PRINT GEN
+         WTO   '* T581P06 * STEPCAT DD STATEMENT MISSING FOR DSNAME ''Z*
+               ZZZZZZZZZZZZZZZZ'', PROCESSING BYPASSED FOR THIS CTLG *'
+         PRINT NOGEN
+         B     UNAVSAM             ASSUME GOOD CONTINUATION
+         EJECT
+***********************************************************************
+*        READ THE TRUE-NAME CATALOG RECORDS IN SEQUENCE AND           *
+*         FOR EACH RECORD PASS THE CONTROL TO 'SCAN CATALOG           *
+*         RECORD ROUTINE'                                             *
+***********************************************************************
+         SPACE 1
+RTNCAT   MODCB RPL=VSAMRPL1,       RESTORE PREVIOUS RPL                *
+               OPTCD=(KEY,ARD,SKP,KGE,FWD,FKS,MVE)
+         MVI   VSAMKEY,X'01'       FORMAT KEY FOR FIRST READ
+         GET   RPL=VSAMRPL1        READ FIRST CATLG RECORD
+         MODCB RPL=VSAMRPL1,                                           *
+               OPTCD=(SEQ,FWD,MVE)     MODIFY VSAM RPL 1
+         B     VSAMSEQ             SKIP NEXT INSTRUCTION
+RNVSAMR  GET   RPL=VSAMRPL1        READ NEXT CATLG RECORD
+VSAMSEQ  MVI   FLAG,FLAGVSAM       INDICATE IS A VSAM CATALOG
+         MVC   DSNINX,VSAMREC      MOVE INDEX/DS NAME TO RECORD
+         XC    VSAMKEY,VSAMKEY     ZEROISE
+         MVC   VSAMKEY+1(3),VSAMREC+44 MOVE REL. BLOCK NO TO VSAM KEY
+         GET   RPL=VSAMRPL2        READ CATLG RECORD
+         BAL   R4,VSAMSCAN         GO SCAN RECORD
+         B     RNVSAMR             GO READ NEXT RECORD
+         SPACE 1
+***********************************************************************
+*        AT END, CLOSE AND DYNAMIC UNALLOCATION OF CURRENT VSAM CTLG. *
+***********************************************************************
+         SPACE 1
+EOVSAM   CLOSE (VSAMCTLG)          CLOSE VSAM CATALOG
+UNAVSAM  MVI   VSAMAORU,X'02'      UNALLOCATION REQUEST
+         MVI   VIEOL,X'80'         INDICATE DSNAME IS END OF LIST
+         LA    R1,VSAMPRB          LOAD ADDRESS OF REQ. BLOCK POINTER
+         DYNALLOC
+         LTR   R15,R15             TEST IF RETURN CODE IS ZERO
+         BNZ   ERRENT6             BRANCH IF NO
+         MVI   VIEOL,X'00'         SUPPRESS END OF LIST
+         XC    VSAMRPL2+4(4),VSAMRPL2+4 SET POINTER TO ZERO
+         B     GETVSAM             GO PROCESS NEXT VSAM CATALOG
+CONT     MVI   DSNINX,BLANK        CLEAR
+         MVC   DSNINX+1(L'DSNINX-1),DSNINX
+         B     GETCVOL             GO PROCESS CVOL CATALOGS
+         EJECT
+***********************************************************************
+*        SCAN CATALOG RECORD ROUTINE                                  *
+***********************************************************************
+         SPACE 1
+VSAMSCAN SUBIN SAVE=(R4)
+         SPACE 1
+***********************************************************************
+*        NONVSAM CATALOG RECORD                                       *
+***********************************************************************
+         SPACE 1
+         CLI   VSAMREC+44,C'A'     TEST IF RECORD TYPE = A
+         BNE   VSAMSC1             BRANCH IF NO
+         MVC   OWNERID,VSAMREC+93  SAVE OWNER ID TO RECOUT
+         MVC   DSETCRDT,VSAMREC+101 SAVE CREATION DATE TO RECOUT
+         MVC   DSETEXDT,VSAMREC+104 SAVE EXPIRATION DATE TO RECOUT
+         B     BALVL
+         SPACE 1
+***********************************************************************
+*        CLUSTER CATALOG RECORD                                       *
+***********************************************************************
+         SPACE 1
+VSAMSC1  CLI   VSAMREC+44,C'C'     TEST IF RECORD TYPE = C
+         BNE   VSAMSC2             BRANCH IF NO
+         OI    FLAG,FLAGCLUS       INDICATE IS A CLUSTER
+         MVC   TYPE,=C'CLUSTER '
+         MVC   VOLFLG,VSAMREC+107  SAVE CLUSTER ATTRIBUTES
+         B     VSAMCOM
+         SPACE 1
+***********************************************************************
+*        DATA CATALOG RECORD (VSAM D/S)                               *
+***********************************************************************
+         SPACE 1
+VSAMSC2  CLI   VSAMREC+44,C'D'     TEST IF RECORD TYPE = D
+         BNE   VSAMSC3             BRANCH IF NO
+         OI    FLAG,FLAGVSDA       INDICATE IS A VSAM DATA
+         MVC   TYPE,=C'VSAM D  '
+         B     VSAMCOM
+         SPACE 1
+***********************************************************************
+*        INDEX CATALOG RECORD (VSAM D/S)                              *
+***********************************************************************
+         SPACE 1
+VSAMSC3  CLI   VSAMREC+44,C'I'     TEST IF RECORD TYPE = I
+         BNE   VSAMSC4             BRANCH IF NO
+         OI    FLAG,FLAGVSIN       INDICATE IS A VSAM INDEX
+         MVC   TYPE,=C'VSAM I  '
+         B     VSAMCOM
+         EJECT
+***********************************************************************
+*        VOLUME CATALOG RECORD (SPACE DESCRIPTION OF THIS VSAM CTLG)  *
+***********************************************************************
+         SPACE 1
+VSAMSC4  CLI   VSAMREC+44,C'V'     TEST IF RECORD TYPE = V
+         BNE   VSAMSC5             BRANCH IF NO
+         OI    FLAG,FLAGVOL        INDICATE IS A VSAM VOLUME REC.
+         MVC   TYPE,=C'VOLUME  '
+         B     VSAMSCED
+         SPACE 1
+***********************************************************************
+*        USER-CATALOG CATALOG RECORD                                  *
+***********************************************************************
+         SPACE 1
+VSAMSC5  CLI   VSAMREC+44,C'U'     TEST IF RECORD TYPE = U
+         BNE   VSAMSC6             BRANCH IF NO
+         OI    FLAG,FLAGVSUC       INDICATE IS A VSAM USER CATALOG
+         MVC   TYPE,=C'VSAM CTG'
+         B     BALVL
+VSAMCOM  MVC   OWNERID,VSAMREC+93  SAVE OWNER ID TO RECOUT
+         MVC   DSETCRDT,VSAMREC+101 SAVE CREATION DATE TO RECOUT
+         MVC   DSETEXDT,VSAMREC+104 SAVE EXPIRATION DATE TO RECOUT
+         B     VSAMSCED            GO WRITE
+         SPACE 1
+***********************************************************************
+*        ALIAS CATALOG RECORD                                         *
+***********************************************************************
+         SPACE 1
+VSAMSC6  CLI   VSAMREC+44,C'X'     TEST IF RECORD TYPE = X
+         BNE   VSAMSCED            BRANCH IF NO
+BALVL    BAL   R4,VSAMVL           GO PROCESS VARIABLE-LENGTH FIELDS
+         B     VSAMSEND            SKIP NEXT INSTRUCTION
+VSAMSCED BAL   R4,WRITE            GO WRITE TO SYSPRINT AND T581F100
+         SPACE 3
+VSAMSEND SUBOUT RESTORE=(R4)
+         EJECT
+***********************************************************************
+*        VARIABLE-LENGTH FIELDS ROUTINE                               *
+***********************************************************************
+         SPACE 1
+VSAMVL   SUBIN SAVE=(R4,R5,R6,R7,R8,R10,R11)
+         SP    SVMVL,SVMVL         ZEROISE
+VSAMVL2  XR    R5,R5               ZEROISE
+         IC    R5,VSAMREC+48       LOAD LENGTH OF FIXED-LENGTH FIELDS
+         LA    R5,VSAMREC(R5)      ADD START ADDRESS OF VSAM REC WA
+         LA    R5,5(R5)            PAST POINTER TO HORIZONTAL EXT.REC.
+         XR    R6,R6               ZEROISE
+         IC    R6,0(R5)            LOAD NUMBER OF SET OF FIELDS PTR
+         LA    R5,1(R5)            POINT TO 1ST 5-BYTE POINTER
+         LR    R7,R6               LOAD NUMBER OF SET OF FIELDS PTR
+         MH    R7,=H'5'            MULTIPLY IT BY FIVE
+         LA    R7,0(R7,R5)         GET ADDRESS OF 1ST SET-OF-FIELDS
+         LR    R8,R7               GET ADDRESS OF 1ST SET-OF-FIELDS
+LSOFPTR  TM    3(R5),X'40'         TEST IF THIS S-O-F POINTER IS ACTIF
+         BNO   ACTIVE              BRANCH IF YES
+         BCTR  R6,0                DECREMENT OF ONE
+         STH   R6,NVOLMAX          MAX. NUMBER OF VOLUMES
+         LA    R6,1(R6)            ADD ONE
+         CLC   VSAMREC+49(9),=C'SYSCTLG.V' FOR CVOL CATALOG
+         BNE   *+10                            MAX. NO OF VOL. FORCED
+         MVC   NVOLMAX,=H'1'                      TO ONE.
+         MVI   SWCLEAR+1,X'F0'     CHANGE SWITCH
+         B     ISOFPTR
+         SPACE 1
+ISOFPTR  LA    R5,5(R5)            POINT TO NEXT SET-OF-FIELDS PTR
+         LR    R8,R7               ADDRESS OF 1ST SET OF FIELDS
+         XC    DECIMAL,DECIMAL     ZEROISE
+         MVC   DECIMAL+2(2),1(R5)  MOVE DISPLACEMENT FROM BEGINNING
+         A     R8,DECIMAL          ADD THIS DISPL. TO START ADDRESS
+         BCT   R6,LSOFPTR          GO PROCESS NEXT SET-OF-FIELDS PTR
+VSAMVLED SUBOUT RESTORE=(R4,R5,R6,R7,R8,R10,R11)
+         EJECT
+***********************************************************************
+*        VARIABLE-LENGTH FIELDS ROUTINE (CONT'D)                      *
+***********************************************************************
+         SPACE 1
+ACTIVE   TM    3(R5),X'80'         TEST IF S-O-F IS IN AN EXT.REC.
+         BNO   NANEXTR             BRANCH IF NO
+         BAL   R4,INEXTREC
+         B     ISOFPTR
+NANEXTR  CLI   3(R5),X'03'         TEST IF GROUP CODE IS = 3
+         BNE   NVISFF              BRANCH IF NO
+         BAL   R4,VISFF
+         BAL   R4,WRITE            GO WRITE
+         B     ISOFPTR
+NVISFF   MVI   SWCLEAR+1,X'00'     CHANGE SWITCH
+         CLI   3(R5),X'02'         TEST IF GROUP CODE IS = 2
+         BNE   ISOFPTR             BRANCH IF NO
+         CLI   2(R8),C'A'          TEST IF TYPE = A
+         BE    *+12                BRANCH IF YES
+         CLI   2(R8),C'U'          TEST IF TYPE = U
+         BNE   ISOFPTR             BRANCH IF NO
+         XC    VSAMKEY,VSAMKEY     ZEROISE
+         MVC   VSAMKEY+1(3),3(R8)  MOVE REL.BLOCK NO TO KEY
+         GET   RPL=VSAMRPL2         AND GO READ THIS BLOCK
+         CLC   VSAMREC+49(9),=C'SYSCTLG.V' TEST FOR CVOL POINTER
+         BNE   VSAMPTR             BRANCH IF NOT A CVOL POINTER
+         OI    FLAG,FLAGCVOL       INDICATE IS A CVOL POINTER
+         MVC   TYPE,=C'CVOL PTR'
+         B     VSAMVL2             GO PROCESS V-L F. OF THIS RECORD
+VSAMPTR  OI    FLAG,FLAGVSPT       INDICATE IS A VSAM POINTER
+         MVC   TYPE,=C'VSAM PTR'
+         MVC   VSPTDSN,VSAMREC+49  MOVE DATA SET NAME TO RECOUT
+         B     VSAMVL2
+         EJECT
+***********************************************************************
+*        ROUTINE FOR AN EXTENSION RECORD                              *
+***********************************************************************
+         SPACE 1
+INEXTREC SUBIN SAVE=(R4,R5,R6,R7,R8,R10,R11)
+         XC    VSAMKEY2,VSAMKEY2   ZEROISE
+         MVC   VSAMKEY2+1(3),0(R5) MOVE REL. BLOCK NO TO KEY
+         GET   RPL=VSAMRPL3         AND READ THIS BLOCK
+         L     R3,REC2ADDR         LOAD INTO REG.3 ADDRESS OF THIS BLCK
+         XR    R10,R10             ZEROISE
+         IC    R10,4(R5)           LOAD S-O-F PTR NO CONCERNED
+         BCTR  R10,0               DECREMENT OF ONE
+         MH    R10,=H'5'           MULTIPLY BY FIVE
+         XR    R5,R5               ZEROISE
+         IC    R5,48(R3)            LOAD LENGTH OF FIXED-LENGTH FIELDS
+         LA    R5,0(R3,R5)          ADD START ADDRESS OF VSAM REC WA
+         LA    R5,5(R5)            PAST POINTER TO HORIZONTAL EXT.REC.
+         XR    R6,R6               ZEROISE
+         IC    R6,0(R5)            LOAD NUMBER OF SET OF FIELDS PTR
+         LA    R5,1(R5)            POINT TO 1ST 5-BYTE POINTER
+         LR    R7,R6               LOAD NUMBER OF SET OF FIELDS PTR
+         MH    R7,=H'5'            MULTIPLY IT BY FIVE
+         LA    R7,0(R7,R5)         GET ADDRESS OF 1ST SET-OF-FIELDS
+         LR    R8,R7               GET ADDRESS OF 1ST SET-OF-FIELDS
+         LA    R5,0(R10,R5)        GET ADDR. OF S-O-F PTR CONCERNED
+         XC    DECIMAL,DECIMAL     ZEROISE
+         MVC   DECIMAL+2(2),1(R5)  MOVE DISPLACEMENT FROM BEGINNING
+         A     R8,DECIMAL          ADD DISPL. TO START ADDRESS
+         CLI   3(R5),X'03'         TEST IF GROUP CODE IS = 3
+         BNE   EXTRVLEN            BRANCH IF NO
+         BAL   R4,VISFF
+         BAL   R4,WRITE            GO WRITE
+EXTRVLEN SUBOUT RESTORE=(R4,R5,R6,R7,R8,R10,R11)
+         EJECT
+***********************************************************************
+*                                                                     *
+***********************************************************************
+         SPACE 1
+VISFF    SUBIN SAVE=(R4,R5,R10,R11)
+         MVC   DEVICECD,2(R8)      SAVE DEVICE CODE TO RECOUT
+         MVC   VOLSER,6(R8)        SAVE VOL=SER TO RECOUT
+         TM    FLAG,FLAGVSUC       IS A VSAM USER CATALOG ?
+         BO    VISFFEND            BRANCH IF YES
+         TM    FLAG,FLAGVSPT       IS A VSAM POINTER ?
+         BO    VSPTR               BRANCH IF YES
+         TM    FLAG,FLAGCVOL       TEST IF CVOL POINTER
+         BO    VCST                BRANCH IF YES
+         OI    FLAG,FLAGDS         INDICATE IS A DATA SET
+         MVC   TYPE,=C'DATA SET'   INDICATE TYPE OF ENTRY IS DATA SET
+         AP    SVMVL,ONE           ADD ONE TO MULTI-VOL SEQ NO
+         XC    DECIMAL,DECIMAL     ZEROISE
+         MVC   DECIMAL+6(2),SVMVL  MOVE MULTI-VOL SEQ NO
+         CVB   R5,DECIMAL          CONVERT TO BINARY
+         STH   R5,DECIMAL          STORE RESULT
+         MVC   SEQVOLMV,DECIMAL     AND MOVE RESULT TO RECOUT
+         MVC   DSEQVOL,12(R8)      SAVE FILE SEQUENCE NO TO RECOUT
+         MVC   VOLFLG,14(R8)       SAVE VOLUME FLAGS TO RECOUT
+         MVC   DSCBTTR,15(R8)      SAVE DSCB TTR TO RECOUT
+         B     VISFFEND
+VCST     LA    R10,TSCTNOE         ESTABLISH LOOP
+         LA    R11,TSYSCTLG        LOAD ADDR. OF CVOL TABLE
+LVSAT    CLI   0(R11),C'V'         VSAM CATALOG ?
+         BE    ITNTE               BRANCH IF YES
+         CLC   1(6,R11),VOLSER     TEST IF VOL=SER ALREADY IN TABLE
+         BE    VISFFEND            BRANCH IF YES
+         CLC   1(2,R11),ENDTSYSC   TEST IF THIS TABLE ELEMENT IS USED
+         BE    PCVIT               BRANCH IF NO
+ITNTE    LA    R11,L'TSYSCTLG(R11) POINT TO NEXT TABLE ELEMENT
+         BCT   R10,LVSAT           GO PROCESS NEXT ELEMENT
+         B     ERRCVTAB            BRANCH IF TABLE TOO SHORT
+PCVIT    MVI   0(R11),C'C'         INDICATE IS A CVOL CATALOG
+         MVC   1(6,R11),VOLSER     AND MOVE THE VOL=SER
+         B     VISFFEND
+VSPTR    LA    R10,TSCTNOE         ESTABLISH LOOP
+         LA    R11,TSYSCTLG        GET ADDRESS OF CVOL'S TABLE
+LVSCAT   CLI   0(R11),C'C'         TEST IF THIS ENTRY DEF. A CVOL CAT.
+         BE    PTNE                BRANCH IF YES
+         CLC   1(17,R11),VSAMREC+49 TEST IF DSNAME ALREADY IN TABLE
+         BE    VISFFEND            BRANCH IF YES
+         CLC   1(2,R11),ENDTSYSC   TEST IF THIS ENTRY IS FREE
+         BE    MNIT                BRANCH IF YES
+PTNE     LA    R11,L'TSYSCTLG(R11) POINT TO NEXT TABLE ENTRY
+         BCT   R10,LVSCAT          GO PROCESS THIS ENTRY
+         B     ERRCVTAB            ABEND - TABLE TOO SHORT
+MNIT     MVI   0(R11),C'V'         INDICATE IS A VSAM CATALOG
+         MVC   1(17,R11),VSAMREC+49  AND MOVE DSNAME IN TABLE
+VISFFEND SUBOUT RESTORE=(R4,R5,R10,R11)
+         TITLE 'ROUTINES FOR THE CVOL CATALOGS'
+***********************************************************************
+*        CVOL CATALOG PROCESSING.                                     *
+***********************************************************************
+         SPACE 1
+GETCVOL  B     SWFT                SWITCH FIRST TIME
+         SPACE 1
+***********************************************************************
+*        CLOSE, DEQ AND DYNAMIC UNALLOCATION OF CURRENT CVOL CATALOG. *
+***********************************************************************
+         SPACE 1
+         CLOSE SYSCATLG            CLOSE SYSCTLG DATA SET
+         MVC   DSNINX(12),SYSCTLG  MOVE QNAME TO DSNINX AREA
+         DEQ   (SYSCTLG,DSNINX,,SYSTEM)      DEQ SYSCTLG'S DATA SET
+         MVI   CVOLAORU,X'02'      UNALLOCATION REQUEST
+         LA    R1,CVOLPRB          LOAD REQUEST BLOCK POINTER
+         MVI   IEOL,X'80'          INDICATE DSNAME IS END OF LIST
+         DYNALLOC
+         LTR   R15,R15             TEST IF RETURN CODE IS ZERO
+         BNZ   ERRENT6             BRANCH IF NO
+         MVI   IEOL,X'00'          SUPPRESS END OF LIST
+         SPACE 1
+***********************************************************************
+*        FIND THE VOLUME SERIAL NUMBER OF THE NEXT CVOL CATALOG       *
+*         TO BE READ.                                                 *
+***********************************************************************
+         SPACE 1
+SWFT     MVI   GETCVOL+1,X'00'     CHANGE SWITCH FIRST TIME
+NCVC     L     R5,ATSCTLG          LOAD POINTER TO CURRENT VOLUME
+         LA    R5,L'TSYSCTLG(R5)   POINT TO NEXT VOLUME
+         ST    R5,ATSCTLG          SAVE ADDRESS
+         CLC   0(2,R5),ENDTSYSC    TEST IF END OF TABLE VOL SER SYSCTLG
+         BE    CLOSE               YES - BRANCH TO CLOSE THE FILES /EOP
+         CLI   0(R5),C'C'          TEST IF CVOL CATALOG
+         BNE   NCVC                BRANCH IF NO
+         MVC   CVOLNO,1(R5)        MOVE VOL SER
+         MVC   CATLGVS,1(R5)       MOVE VOL SER TO RECOUT
+         MVC   DDNDISK+2(6),1(R5)  MOVE VOLSER TO DDN OF SYSCATLG DCB
+         MVC   CVOLDDN+8(6),1(R5)  MOVE VOL SER TO TEXT UNIT DDN
+         MVC   CVOLVOLS+6(6),1(R5) MOVE VOL SER TO TEXT UNIT VOL=SER
+         MVC   CVOLUNIT+6(6),7(R5) MOVE UNIT TO TEXT UNIT UNIT=
+         EJECT
+***********************************************************************
+*        DYNAMIC ALLOCATION, ENQ AND OPEN THIS CVOL CATALOG           *
+*         AND READ FIRST CATALOG ENTRY.                               *
+***********************************************************************
+         SPACE 1
+         MVI   CVOLAORU,X'01'      DSNAME ALLOCATION REQUEST
+         LA    R1,CVOLPRB          LOAD REQUEST BLOCK POINTER
+         DYNALLOC
+         LTR   R15,R15             TEST IF RETURN CODE IS ZERO
+         BZ    TESTIOT             BRANCH IF YES
+         CH    R15,=H'4'           TEST FOR RETURN CODE 4
+         BNE   ERRENT6             BRANCH IF NO
+         CLC   CVOLERCD,=X'0218'   YES, TEST IF ERROR CODE = 218
+         BNE   ERRENT6             BRANCH IF NO
+         CNOP  2,4
+         MVC   *+26(6),1(R5)       MOVE VOLSER INTO NEXT WTO MESSAGE
+         PRINT GEN
+         WTO   '* T581P06 * XXXXXX NOT MOUNTED, PROCESSING BYPASSED FOR*
+                THIS CVOL CATALOG ******'
+         PRINT NOGEN
+         B     NCVC                GO READ NEXT CVOL
+TESTIOT  TESTIOT DDNAME=DDNDISK    TEST IF DDNAME IS PRESENT
+         B     *+4(R15)
+         B     *+8                 YES
+         B     ERRENT0             NO
+         MVC   SYSCTLG+10(2),18(R1) MOVE UCB ADDRESS FOR ENQ MACRO
+         MVC   DSNINX(12),SYSCTLG  MOVE QNAME TO DSNINX AREA
+         ENQ   (SYSCTLG,DSNINX,E,,SYSTEM)    ENQ SYSCTLG'S DATA SET
+         OPEN  SYSCATLG
+         MVC   TTR(4),FIRSTTRN     MOVE TTRN '00000100' FOR FIRST READ
+         MVC   DEB+1(3),SYSCATLG+45 SAVE DATA EXTENT BLOCK ADDRESS
+         MVC   DSNINX+8(4),DSNINX+7
+         BAL   R4,READABLK         PERFORM READ A CATALOG BLOCK
+         SR    R5,R5               CLEAR
+         IC    R5,13(R2)           LOAD NO OF HW LEFT FOR V.I.C.E.
+         SLL   R5,1                MULT BY 2
+         LA    R10,14(R5,R2)       ADDRESS OF THE FIRST ENTRY
+         EJECT
+***********************************************************************
+*        PROCESS NEXT CVOL CATALOG ENTRY                              *
+***********************************************************************
+         SPACE 1
+NEXTENT  BAL   R4,ILE              PERFORM TEST INDEX LINK ENTRY
+         CLI   NORY,NO             IS IT A INDEX LINK ENTRY
+         BE    TENTRY              NO  - GO TO TEST ENTRY
+         CLI   TTRSW,ON            IS IT END OF THIS CATALOG
+         BE    GETCVOL             YES - GO TO TEST NEXT CATALOG
+         BAL   R4,READABLK         PERFORM READ A CATALOG BLOCK
+         LA    R10,2(R2)           IGNORE TWO FIRST BYTES
+         SPACE 1
+***********************************************************************
+*        TEST TYPE OF ENTRY FROM CATALOG                              *
+***********************************************************************
+         SPACE 2
+         SPACE 1
+TENTRY   LA    R4,NEXTENT          GET ADDRESS FOR RETURN
+         LA    R12,DSNINX
+         CLI   11(R10),TIPE        IS IT AN INDEX POINTER ENTRY
+         BE    IPE                 YES - GO TO IPE
+         CLI   11(R10),TVCBPE      IS IT A VOLUME CTRL BLOCK P. ENTRY
+         BE    VCBPE               YES - GO TO VCBPE
+         CLI   11(R10),TGIPE       IS IT A GENERATION INDEX POINT.ENTRY
+         BE    GIPE                YES - GO TO GIPE
+         CLI   11(R10),TCVPE       IS IT A CONTROL VOLUME POINTER ENTRY
+         BE    CVPE                YES - GO TO CUPE
+         CLI   11(R10),TAE         IS IT AN ALIAS ENTRY
+         BE    AE                  YES - GO TO AE
+         CLI   11(R10),TNCVPE      IS IT A NEW CONTROL VOLUME P. ENTRY
+         BE    NCVPE               YES - GO TO NCVPE
+         CLI   11(R10),TDSPEMIN    TEST IF THE HW LEFT IS < 7
+         BL    ERRENT1             YES - ERROR
+         CLI   11(R10),TDSPEMAX    TEST IF THE HW LEFT IS > 61
+         BH    ERRENT1             YES - ERROR
+         B     DSPE                GOTO DATA SET POINTER ENTRY
+         EJECT
+***********************************************************************
+*        READ CATALOG BLOCK ROUTINE                                   *
+***********************************************************************
+         SPACE 1
+READABLK SUBIN PREFIX=A,SAVE=(R4)
+         L     R0,TTR              LOAD TTRN INTO R0
+         L     R1,DEB              LOAD ADDRESS OF DATA EXTENT BLOCK
+         LA    R2,MBBCCHHR         LOAD ADDRESS OF MBBCCHHR WORK AREA
+         L     R15,16              LOAD ADDRESS OF COMM. VECTOR TABLE
+         L     R15,28(R15)         LOAD ENTRY POINT ADDRESS OF IECPCNVT
+         STM   R9,R13,XDAPSA       SAVE CONTAIN OF R9,10,11,12,13
+         CNOP  2,4
+         BALR  R14,R15             GO CONVERT RELATIVE TRACK ADDRESS
+*                                   TO ACTUAL ADDRESS
+         BAL   R14,24(R14)         BRANCH AND LINK AROUND SAVE AREA REG
+XDAPSA   DS    5F                  SAVE AREA FOR REGS 9,10,11,12,13,
+         LM    R9,R13,0(R14)       RESTORE REGISTERS
+         XDAP  XDAPCB,RI,SYSCATLG,BLOCKWA,264,,MBBCCHHR
+         WAIT  ECB=XDAPCB
+         LA    R2,BLOCKWA+8
+         SUBOUT PREFIX=A,RESTORE=(R4)   YES
+         SPACE 3
+***********************************************************************
+*        INDEX LINK ENTRY ROUTINE                                     *
+***********************************************************************
+         SPACE 1
+ILE      SUBIN PREFIX=B,SAVE=(R4)
+         MVI   NORY,NO
+         MVI   TTRSW,OFF
+         CLC   0(8,R10),ILENAME    TEST IF INDEX LINK ENTRY
+         BNE   ENDILER             NO  - GO TO ENDILER
+         MVI   NORY,YES            YES
+         MVC   TTR,8(R10)          MOVE TTR OF THIS ILE FOR NEXT READBL
+         CLC   8(3,R10),TTR0       TEST IF TTR OF THIS ILE = 0
+         BNE   ENDILER             NO  - GO TO ENDILER
+         MVI   TTRSW,ON            YES
+ENDILER  SUBOUT PREFIX=B,RESTORE=(R4)
+         EJECT
+***********************************************************************
+*        INDEX POINTER ENTRY ROUTINE                                  *
+***********************************************************************
+         SPACE 1
+IPE      SUBIN PREFIX=C,SAVE=(R4)
+         LA    R3,TABINDEX         GET ADDRESS TABLE INDEX
+         MVI   0(R3),X'AA'         FIRST ELEMENT
+MULTIPE  MVC   1(3,R3),TTR         SAVE TTR
+         ST    R10,4(R3)           SAVE R10
+         ST    R12,8(R3)           SAVE R12
+         LA    R3,12(R3)           INCREMENT 12
+         MVC   0(8,R12),0(R10)     MOVE NAME TO RECOUT
+         MVI   FLAG,FLAGINX        MOVE FLAG INDEX TO RECOUT
+         LR    R11,R12
+         BAL   R4,PUTPOINT         PERFORM PUTPOINT ROUTINE
+         LR    R12,R11
+         MVC   TYPE,=C'INDEX   '
+         BAL   R4,WRITE            PERFORM PRINT ROUTINE
+         MVC   TTR,8(R10)          MOVE TTR FROM THIS IPE
+         BAL   R4,READABLK         PERFORM READ A CATALOG BLOCK
+         LA    R10,20(R2)          GET ADDRESS FIRST ENTRY
+         B     LOOPIPE2
+LOOPIPE1 BAL   R4,READABLK         PERFORM READ A CATALOG BLOCK
+LOOPIPE2 BAL   R4,ILE              PERFORM TEST INDEX LINK ENTRY
+         CLI   NORY,NO             IS IT A INDEX LINK ENTRY
+         BE    TIPENT              NO - GO TO TEST THIS ENTRY
+         CLI   TTRSW,ON            IS IT END OF THIS INDEX
+         BE    ENDIPE              YES
+         BAL   R4,READABLK         PERFORM READ A CATALOG BLOCK
+         LA    R10,2(R2)
+         B     LOOPIPE2
+TIPENT   LA    R4,LOOPIPE2         GET ADDRESS FOR RETURN
+         CLI   11(R10),TIPE        IS IT AN INDEX POINTER ENTRY
+         BE    MULTIPE             YES - GO TO MULTIPE
+         CLI   11(R10),TVCBPE      IS IT A VOLUME CTRL BLOCK P. ENTRY
+         BE    VCBPE               YES - GO TO VCBPE
+         CLI   11(R10),TGIPE       IS IT A GENERATION INDEX POINT.ENTRY
+         BE    GIPE                YES - GO TO GIPE
+         CLI   11(R10),TDSPEMIN    TEST IF THE HW LEFT IS < 7
+         BL    ERRENT2             YES - ERROR
+         CLI   11(R10),TDSPEMAX    TEST IF THE HW LEFT IS > 61
+         BH    ERRENT2             YES - ERROR
+         B     DSPE                GOTO DATA SET POINTER ENTRY
+ENDIPE   S     R3,TWELVE           SUBTRACT TWELVE
+         MVC   TTR,1(R3)           RESTORE TTR
+         L     R10,4(R3)           RESTORE R10
+         L     R12,8(R3)           RESTORE R12
+         MVI   0(R12),BLANK          ** CLEAR WA
+         MVC   1(93,R12),0(R12)      ** RECOUT
+         LA    R10,12(R10)         GET ADDRESS FOR NEXT ENTRY
+         CLI   0(R3),X'AA'         IS IT END OF TABLE
+         BNE   LOOPIPE1            NO
+         BAL   R4,READABLK         PERFORM READ A CATALOG BLOCK
+         BAL   R4,CLEAR            PERFORM CLEAR WA'S
+         SUBOUT PREFIX=C,RESTORE=(R4)
+         SPACE 3
+***********************************************************************
+*        GENERATION INDEX POINTER ENTRY ROUTINE                       *
+***********************************************************************
+         SPACE 1
+GIPE     SUBIN PREFIX=D,SAVE=(R4)
+         MVC   0(8,R12),0(R10)     MOVE NAME TO RECOUT
+         MVI   FLAG,FLAGGINX       MOVE FLAG GEN. INDEX TO RECOUT
+         MVC   CURGENC(2),14(R10)  MOVE CURRENT GEN COUNT TO RECOUT
+         MVC   GDGFLAG(2),12(R10)  MOVE GDG FLAG AND MAX.GEN.ALLOWED
+         MVC   GISAVTTR,TTR        SAVE TTR
+         ST    R10,GISAVR10        SAVE R10
+         ST    R12,GISAVR12        SAVE R12
+         LR    R11,R12
+         BAL   R4,PUTPOINT         PERFORM PUTPOINT ROUTINE
+         LR    R12,R11
+         MVC   TYPE,=C'GEN. IX.'
+         BAL   R4,WRITE            PERFORM PRINT ROUTINE
+         MVC   TTR,8(R10)          MOVE TTR FROM THIS GIPE
+         BAL   R4,READABLK         PERFORM READ A CATALOG BLOCK
+         LA    R10,20(R2)          GET ADDRESS OF FIRST ENTRY
+LOOPGIPE BAL   R4,ILE              PERFORM TEST INDEX LINK ENTRY
+         CLI   NORY,NO             IS IT A INDEX LINK ENTRY
+         BE    TGIPENT             NO - GO TO TEST THIS ENTRY
+         CLI   TTRSW,ON            IS IT END OF THIS INDEX
+         BE    ENDGIPE             YES
+         BAL   R4,READABLK         PERFORM READ A CATALOG BLOCK
+         LA    R10,2(R2)
+         B     LOOPGIPE
+TGIPENT  LA    R4,LOOPGIPE         GET ADDRESS FOR RETURN
+         CLI   11(R10),TVCBPE      IS IT A VOLUME CTRL BLOCK P. ENTRY
+         BE    VCBPE               YES - GO TO VCBPE
+         CLI   11(R10),TDSPEMIN    TEST IF THE HW LEFT IS < 7
+         BL    ERRENT3             YES - ERROR
+         CLI   11(R10),TDSPEMAX    TEST IF THE HW LEFT IS > 61
+         BH    ERRENT3             YES - ERROR
+         B     DSPE                GO TO DATA SET POINTER ENTRY
+ENDGIPE  BCTR  R12,R0
+         MVI   0(R12),BLANK          ** CLEAR WA
+         MVC   1(93,R12),0(R12)      ** RECOUT
+         MVC   TTR,GISAVTTR        RESTORE TTR
+         L     R10,GISAVR10        RESTORE R10
+         L     R12,GISAVR12        RESTORE R12
+         BAL   R4,READABLK         PERFORM READ A CATALOG BLOCK
+         LA    R10,16(R10)         GET ADDRESS FOR NEXT ENTRY
+         SUBOUT PREFIX=D,RESTORE=(R4)
+         EJECT
+***********************************************************************
+*        CONTROL VOLUME POINTER ENTRY AND                             *
+*                   NEW C.V.P.E. ROUTINE                              *
+***********************************************************************
+         SPACE 1
+NCVPE    MVC   DEVICECD,12(R10)    MOVE DEVICE CODE TO RECOUT
+         MVC   12(6,R10),16(R10)   ADJ VOL SER
+CVPE     SUBIN PREFIX=E,SAVE=(R4)
+         MVC   DSNINX(8),0(R10)    MOVE NAME TO RECOUT
+         MVI   FLAG,FLAGCVOL       MOVE FLAG CVOL TO RECOUT
+         MVC   VOLSER,12(R10)      MOVE VOL SER TO RECOUT
+         MVC   TYPE,=C'CVOL PTR'
+         BAL   R4,WRITE            PERFORM PRINT ROUTINE
+         LA    R5,TSCTNOE          ESTABLISH LOOP
+         LA    R6,TSYSCTLG         GET ADDRESS TABLE OF VOL. FOR SYSCTG
+LOOPCVPE CLI   0(R6),C'V'          VSAM CATALOG ?
+         BE    NCVCTX              BRANCH IF YES
+         CLC   1(6,R6),12(R10)     TEST IF THE VOL SER OF THIS ENTRY
+         BE    ENDCVPE             YES              / IS IN TABLE
+         CLC   0(2,R6),ENDTSYSC    TEST IF THE SPACE OF THIS ELEMENT IS
+         BE    PINTAB              YES                        / FREE
+NCVCTX   LA    R6,L'TSYSCTLG(R6)   NO
+         BCT   R5,LOOPCVPE
+         B     ERRCVTAB            YES - ERROR
+PINTAB   MVC   1(6,R6),12(R10)     MOVE NEW CVOL IN TABLE
+         MVI   0(R6),C'C'          INDICATE IS A CVOL CATALOG
+ENDCVPE  SR    R5,R5               CLEAR
+         IC    R5,11(R10)          LOAD NO OF HW LEFT
+         SLL   R5,1                MULT BY 2
+         LA    R10,12(R5,R10)      GIVE ADDRESS FOR NEXT ENTRY
+         SUBOUT PREFIX=E,RESTORE=(R4)
+         SPACE 2
+***********************************************************************
+*        ALIAS ENTRY ROUTINE                                          *
+***********************************************************************
+         SPACE 1
+AE       SUBIN PREFIX=F,SAVE=(R4)
+         MVC   DSNINX(8),0(R10)    MOVE ALIAS NAME TO RECOUT
+         LA    R11,DSNINX
+         BAL   R4,PUTPOINT         PERFORM PUTPOINT ROUTINE
+         MVC   1(8,R11),=C'ALIAS OF'
+         LA    R11,10(R11)         ADD 10
+         MVC   0(8,R11),12(R10)    MOVE TRUE NAME TO RECOUT
+         BAL   R4,PUTPOINT         PERFORM PUTPOINT ROUTINE
+         MVI   FLAG,FLAGALS        MOVE FLAG ALIAS TO RECOUT
+         MVC   TYPE,=C'ALIAS   '
+         BAL   R4,WRITE            PERFORM PRINT ROUTINE
+         LA    R10,20(R10)         GIVE ADDRESS FOR NEXT ENTRY
+         SUBOUT PREFIX=F,RESTORE=(R4)
+         EJECT
+***********************************************************************
+*        VOLUME CONTROL BLOCK POINTER ENTRY ROUTINE                   *
+***********************************************************************
+         SPACE 1
+VCBPE    SUBIN PREFIX=G,SAVE=(R4)
+         MVC   0(8,R12),0(R10)     MOVE NAME TO RECOUT
+         CLI   0(R10),C'G'         TEST IF GDG DS
+         BNE   *+20                BRANCH IF NO
+         CLC   5(3,R10),=C'V00'    YES - CONFIRME IF GDG DS
+         BNE   *+10                BRANCH IF NO
+         XC    1(4,R12),TRANSGDG   YES - TRANSLATE NUMBER IN DISPLAY F.
+         MVI   FLAG,FLAGDS         MOVE FLAG DATA SET TO RECOUT
+         ZAP   SVMVL,ONE           ZERO AND ADD ONE
+         MVI   SWCLEAR+1,X'F0'
+         MVC   VCSAVTTR,TTR        SAVE TTR
+         ST    R10,VCSAVR10        SAVE R10
+         MVC   TTR,8(R10)          MOVE TTR FROM THIS VCBPE
+         BAL   R4,READABLK         PERFORM READ A CATALOG BLOCK
+         MVC   NVOLMAX,0(R2)       MOVE NUMBER OF VOL FOR THIS DS
+LOOPVCB  BAL   R4,READABLK         PERFORM READ A CATALOG BLOCK
+         LR    R10,R2
+         LH    R7,0(R10)           LOAD NUMBER OF VOLUME
+         C     R7,TWENTY           TEST IF NUMBER OF VOL IS > 20
+         BH    MOVE20              YES - GO TO MOVE TWENTY
+         B     LAFV                NO
+MOVE20   L     R7,TWENTY
+LAFV     LA    R8,2(R10)           GET ADDRESS OF FIRST VOL
+         BAL   R4,MVL              PERFORM MOVE'S FOR MULTI-VOL LIST
+         CLC   252(3,R10),TTR0     TEST IF LAST VCBC
+         BE    ENDVCBPE            YES
+         MVC   TTR,252(R10)        NO - MOVE TTR OF NEXT VCBC
+         B     LOOPVCB
+ENDVCBPE MVC   TTR,VCSAVTTR        RESTORE TTR
+         L     R10,VCSAVR10        RESTORE R10
+         BAL   R4,READABLK         PERFORM READ A CATALOG BLOCK
+         LA    R10,14(R10)         GET ADDRESS FOR NEXT ENTRY
+         SUBOUT PREFIX=G,RESTORE=(R4)
+         EJECT
+***********************************************************************
+*        DATA SET POINTER ENTRY ROUTINE                               *
+***********************************************************************
+         SPACE 1
+DSPE     SUBIN PREFIX=H,SAVE=(R4)
+         MVC   0(8,R12),0(R10)     MOVE NAME TO RECOUT
+         CLI   0(R10),C'G'         TEST IF THIS DS IS A GDG
+         BNE   NOTGDG              NO
+         CLC   5(3,R10),=C'V00'    YES - CONFIRME IF GDG DS
+         BNE   NOTGDG              NO
+         XC    1(4,R12),TRANSGDG   YES - TRANSLATE NUMBER IN DISPLAY F.
+NOTGDG   MVI   FLAG,FLAGDS         MOVE FLAG DATA SET TO RECOUT
+         MVC   NVOLMAX,12(R10)     MOVE NUMBER OF VOL FOR THIS DS
+         LH    R7,12(R10)          LOAD VOLUME COUNT
+         LA    R8,14(R10)          GET ADDRESS FIRST VOLUME
+         ZAP   SVMVL,ONE           ZERO AND ADD ONE
+         MVI   SWCLEAR+1,X'F0'
+         BAL   R4,MVL              PERFORM MOVE'S FOR MULTI-VOL LIST
+         SR    R5,R5               CLEAR
+         IC    R5,11(R10)          LOAD NO OF HW LEFT
+         SLL   R5,1                MULT BY 2
+         LA    R10,12(R5,R10)      GET ADDRESS FOR NEXT ENTRY
+         SUBOUT PREFIX=H,RESTORE=(R4)
+         SPACE 3
+MVL      SUBIN PREFIX=I,SAVE=(R4)
+LOOPVC   MVC   DEVICECD,0(R8)      MOVE DEVICE CODE TO RECOUT
+         MVC   VOLSER,4(R8)        MOVE VOL SER TO RECOUT
+         MVC   DSEQVOL,10(R8)      MOVE DS SEQ. NUMBER TO RECOUT
+         XC    DECIMAL,DECIMAL
+         MVC   DECIMAL+6(2),SVMVL
+         CVB   R5,DECIMAL
+         STH   R5,DECIMAL
+         MVC   SEQVOLMV,DECIMAL
+NOTP     MVC   TYPE,=C'DATA SET'
+         BAL   R4,WRITE            PERFORM PRINT ROUTINE
+         LA    R8,12(R8)           GET ADDRESS FOR NEXT VOLUME INFO
+         AP    SVMVL,ONE           ADD ONE
+         BCT   R7,LOOPVC
+         SUBOUT PREFIX=I,RESTORE=(R4)
+         TITLE 'INPUT/OUTPUT ROUTINES'
+***********************************************************************
+*        PRINT ROUTINE                                                *
+***********************************************************************
+         SPACE 1
+WRITE    SUBIN PREFIX=P,SAVE=(R4,R5,R6)
+         MVC   CTYPE,=C'CVOL'      INDICATE IS A CVOL CATALOG
+         TM    FLAG,FLAGVSAM       TEST IF IS A VSAM CATALOG
+         BNO   *+10                NO - SKIP NEXT INSTRUCTION
+         MVC   CTYPE,=C'VSAM'      YES - INDICATE IS A VSAM CATALOG
+         MVC   FROMCVOL,CATLGVS    MOVE CVOL TO PRINT DETAIL LINE
+         MVC   NAME,DSNINX         MOVE NAME TO PRINT DETAIL LINE
+         MVC   HEXSTOR(4),DEVICECD PREPARE FOR TRANSLATE DEVICE CODE
+         BAL   R4,HEXTRANS         PERFORM TRANSLATE
+         MVC   DEVICECX,HEXSTOR    MOVE DEVICE CODE TO PRINT DETAIL LNE
+         CLC   DEVICECX,DEVBLANK
+         BE    CLEARDEV
+         B     MVS
+CLEARDEV MVI   DEVICECX,BLANK
+         MVC   DEVICECX+1(7),DEVICECX
+MVS      MVC   VOLSERP,VOLSER      MOVE VOL SER TO PRINT DETAIL LINE
+         TM    FLAG,FLAGVSPT       TEST IF VSAM POINTER
+         BNO   NVSP                BRANCH IF NO
+         MVC   INFORM(7),=C'DSNAME=' MOVE DATA SET
+         MVC   INFORM+7(17),VSPTDSN     NAME TO DETAIL LINE
+         B     MFLAG
+NVSP     TM    FLAG,FLAGCVOL       TEST FOR CVOL/VSAM POINTER
+         BO    MFLAG               BRANCH IF YES
+         TM    FLAG,FLAGCLUS       TEST IF CLUSTER,VSAM DATA AND INDEX
+         BNO   TIFIX               BRANCH IF NO
+         TM    FLAG,FLAGVOL        TEST IF VSAM VOLUME RECORD
+         BO    MFLAG               BRANCH IF YES
+         TM    FLAG,FLAGVSUC       TEST IF VSAM USER CATALOG
+         BO    MFLAG               BRANCH IF YES
+         MVC   INFORM(L'MSGDS),MSGDS
+         MVC   OWNID,OWNERID       MOVE OWNER ID TO DETAIL LINE
+         UNPK  CDATE,DSETCRDT      UNPACK CREATION DATE
+         OI    CDATE+4,SIGN        FORCE SIGN TO 'F'
+         UNPK  EDATE,DSETEXDT      UNPACK EXPIRATION DATE
+         OI    EDATE+4,SIGN        FORCE SIGN TO 'F'
+         B     MFLAG
+TIFIX    CLI   FLAG,FLAGGINX       TEST IF THIS ENTRY IS A GEN.INDEX
+         BNE   TIFDS               NO - GO TO NEXT TEST
+         MVC   INFORM(L'MSGDG),MSGDG
+         MVI   VOLSERP,BLANK       CLEAR
+         MVC   VOLSERP+1(5),VOLSERP  VOLSERP
+         MVC   DECIMAL(2),CURGENC  YES - ALIGNMENT
+         LH    R5,DECIMAL          LOAD CURRENT GEN, COUNT INTO REG.5
+         CVD   R5,DECIMAL          CONVERT BINARY
+         UNPK  CUGEN,DECIMAL+6(2)  UNPACK
+         OI    CUGEN+2,SIGN        FORCE SIGN
+         EJECT
+***********************************************************************
+*        PRINT ROUTINE   (CONT'D)                                     *
+***********************************************************************
+         SPACE 1
+         MVC   HEXSTOR(1),GDGFLAG  PREPARE FOR TRANSLATE GDG FLAG
+         BAL   R4,HEXTRANS         PERFORM TRANSLATE
+         MVC   GDGF,HEXSTOR        MOVE GDG FLAG TO PRINT DET. LINE
+         SR    R5,R5               CLEAR
+         IC    R5,MAXGDG           LOAD MAX.GEN. ALLOWED INTO REG.5
+         CVD   R5,DECIMAL          CONVERT BINARY
+         UNPK  GDGMAX,DECIMAL+6(2) UNPACK
+         OI    GDGMAX+2,SIGN       FORCE SIGN
+         B     MFLAG               NO - GO TO MOVE FLAG TO PRINT DET.L.
+TIFDS    TM    FLAG,FLAGDS         TEST IF THIS ENTRY IS A DATA SET
+         BNO   MFLAG               NO - GO TO MOVE FLAG TO PRINT DET.L.
+         MVC   DECIMAL(2),DSEQVOL  YES - ALIGNMENT
+         LH    R5,DECIMAL          LOAD SEQ. OF VOL INTO REG.5
+         CVD   R5,DECIMAL          CONVERT BINARY
+         UNPK  SEQNO,DECIMAL+6(2)  UNPACK
+         OI    SEQNO+2,SIGN        FORCE SIGN
+         MVC   DECIMAL(2),SEQVOLMV ALIGNMENT
+         LH    R5,DECIMAL          LOAD SEQ. OF VOL IN MULTI-VOL LIST
+         CVD   R5,DECIMAL          CONVERT BINARY
+         UNPK  MVSEQNO,DECIMAL+6(2) UNPACK
+         OI    MVSEQNO+2,SIGN      FORCE SIGN
+         TM    FLAG,FLAGVSAM       TEST IF VSAM CATALOG
+         BNO   NOTVSAM             BRANCH IF NO
+         MVI   FLAG,FLAGDS+FLAGVSAM MOVE F. DS + VSAM TO RECOUT
+         MVC   INFORM(L'MSGDS),MSGDS
+         MVC   OWNID,OWNERID       MOVE OWNER ID TO DETAIL LINE
+         UNPK  CDATE,DSETCRDT      UNPACK CREATION DATE
+         OI    CDATE+4,SIGN        FORCE SIGN TO 'F'
+         UNPK  EDATE,DSETEXDT      UNPACK EXPIRATION DATE
+         OI    EDATE+4,SIGN        FORCE SIGN TO 'F'
+         B     *+8                 SKIP NEXT INSTRUCTION
+NOTVSAM  MVI   FLAG,FLAGDS         MOVE FLAG DATA SET TO RECOUT
+         CH    R5,=H'1'            TEST IF FIRST VOL FOR THIS DS
+         BNE   TIFLV               NO
+         OI    FLAG,FLAGFVDS       YES
+TIFLV    CH    R5,NVOLMAX          TEST IF LAST VOL FOR THIS DS
+         BNE   MFLAG               NO
+         OI    FLAG,FLAGLVDS       YES
+         MVI   SWCLEAR+1,X'00'
+MFLAG    MVC   HEXSTOR(1),FLAG     PREPARE FOR TRANSLATE FLAG CHAR.
+         BAL   R4,HEXTRANS         PERFORM TRANSLATE
+         MVC   FLAGX,HEXSTOR       MOVE FLAG TO PRINT DETAIL LINE
+         EJECT
+***********************************************************************
+*        PRINT ROUTINE (CONT'D)                                       *
+***********************************************************************
+         SPACE 1
+TCTRLCH  AP    LINECOUN,ONE        ADD ONE TO LINE COUNT
+         CP    LINECOUN,MAXLINE    TEST IF LINE COUNT IS > MAX.LINE
+         BE    OVFLOW
+         MVI   CTRCHAR,SPACE1      NO - MOVE SPACE1 TO CONTROL CHAR.
+         B     PUT
+OVFLOW   MVI   CTRCHAR,SKIP        YES - MOVE SKIP TO CONTROL CHAR.
+PUT      PUT   T581F100,RECOUT
+         PUT   SYSPRINT,OUTPRINT
+         CP    LINECOUN,MAXLINE    TEST IF LINE COUNT IS > MAX.LINE
+         BNE   NOHL                NO
+         BAL   R4,HEADLINE         PERFORM PRINT HEAD LINES
+NOHL     MVI   OUTPRINT,BLANK           ## CLEAR WA
+         MVC   OUTPRINT+1(132),OUTPRINT ## OUTPRINT
+SWCLEAR  NOP   ENDW
+         MVI   0(R12),BLANK          ** CLEAR WA
+         MVC   1(93,R12),0(R12)      ** RECOUT
+ENDW     SUBOUT PREFIX=P,RESTORE=(R4,R5,R6)
+         EJECT
+***********************************************************************
+*        CLEAR RECOUT AND OUTPRINT WORK AREAS                         *
+***********************************************************************
+         SPACE 1
+CLEAR    SUBIN PREFIX=Q,SAVE=(R4)
+         MVI   RECOUT+6,BLANK        ** CLEAR WA
+         MVC   RECOUT+7(93),RECOUT+6 ** RECOUT
+         MVI   OUTPRINT,BLANK           ## CLEAR WA
+         MVC   OUTPRINT+1(132),OUTPRINT ## OUTPRINT
+         SUBOUT PREFIX=Q,RESTORE=(R4)
+         SPACE 3
+         SPACE 1
+***********************************************************************
+*        PRINT HEAD LINES                                             *
+***********************************************************************
+         SPACE 1
+HEADLINE SUBIN PREFIX=R,SAVE=(R4)
+         AP    PAGECOUN,ONE        ADD ONE TO PAGE COUNT
+         UNPK  PAGE,PAGECOUN       UNPACK
+         OI    PAGE+2,SIGN         FORCE SIGN
+         PUT   SYSPRINT,HEADLNE1
+         PUT   SYSPRINT,HEADLNE2
+         PUT   SYSPRINT,HEADLNE3
+         ZAP   LINECOUN,=P'5'      ZERO AND ADD FIVE TO LINE COUNT
+         SUBOUT PREFIX=R,RESTORE=(R4)
+         TITLE ' '
+***********************************************************************
+*                                                                     *
+***********************************************************************
+         SPACE 1
+PUTPOINT SUBIN PREFIX=S,SAVE=(R4)
+         LA    R5,8
+LOOPPP   LA    R11,1(R11)
+         CLI   0(R11),BLANK
+         BE    ENDTPP
+         BCT   R5,LOOPPP
+ENDTPP   MVI   0(R11),POINT
+         LA    R11,1(R11)
+         SUBOUT PREFIX=S,RESTORE=(R4)
+         SPACE 3
+***********************************************************************
+*        CONVERT A FW OF HEX CHARACTERS TO DISPLAY FORMAT             *
+***********************************************************************
+         SPACE 1
+HEXTRANS SUBIN PREFIX=T,SAVE=(R4)
+         LA    R5,8
+         LA    R6,HEXSTOR
+HEXLOOP  MVO   0(5,R6),0(4,R6)
+         LA    R6,1(R6)
+         BCT   R5,HEXLOOP
+         TR    HEXSTOR(8),HEXTABLE
+         SUBOUT PREFIX=T,RESTORE=(R4)
+         EJECT
+***********************************************************************
+*        ERROR ROUTINES                                               *
+***********************************************************************
+         SPACE 1
+ERROR    CVD   R15,DECIMAL         CONVERT BINARY
+         MVC   OUTPRINT+1(71),MSGERR1
+         UNPK  DECIMAL(3),DECIMAL+6(2)  UNPACK
+         OI    DECIMAL+2,SIGN      FORCE SIGN
+         MVC   OUTPRINT+36(3),DECIMAL   MOVE CC TO PRINT DET LINE
+         MVC   HEXSTOR(3),TTR
+         BAL   R4,HEXTRANS
+         MVC   OUTPRINT+48(6),HEXSTOR
+         MVC   OUTPRINT+64(6),CVOLNO
+         B     ABEND
+         SPACE 1
+ERRENT0  MVC   OUTPRINT+1(L'MSGERR0),MSGERR0
+         MVC   OUTPRINT+15(8),DDNDISK
+         B     ABEND
+ERRENT1  MVC   OUTPRINT+1(74),MSGERR2
+         B     PR10
+ERRENT2  MVC   OUTPRINT+1(74),MSGERR3
+         B     PR10
+ERRENT3  MVC   OUTPRINT+1(74),MSGERR4
+         B     PR10
+ERRENT6  MVC   OUTPRINT+1(74),MSGERR6
+         LR    R10,R15
+         B     PR10
+ERRENT7  MVC   OUTPRINT+1(74),MSGERR7
+         LR    R10,R15
+PR10     ST    R10,HEXSTOR
+         BAL   R4,HEXTRANS
+         MVC   OUTPRINT+65(8),HEXSTOR
+         B     ABEND
+ERRENT8  MVC   OUTPRINT+1(L'MSGERR8),MSGERR8
+         B     ABEND
+         SPACE 1
+ERRCVTAB MVC   OUTPRINT+1(53),MSGERR5
+         MVC   OUTPRINT+36(6),12(R10)
+         SPACE 1
+ABEND    MVI   OUTPRINT,SPACE1
+         PUT   SYSPRINT,OUTPRINT
+         ABEND 581,DUMP
+         EJECT
+***********************************************************************
+*        ERROR MESSAGES                                               *
+***********************************************************************
+         SPACE 1
+MSGERR0  DC    C'DD STATEMENT ''        '' MISSING'
+MSGERR1  DC    C'CONDITION CODE FROM LOCATE MACRO =     , TTR =       '
+         DC    C' , CVOL =        .'
+MSGERR2  DC    C'BAD ENTRY IN A VOLUME INDEX CONTROL ENTRY, SEE DUMP ('
+         DC    C' ADDRESS =          )'
+MSGERR3  DC    C'BAD ENTRY IN AN INDEX CONTROL ENTRY (IPE), SEE DUMP ('
+         DC    C' ADDRESS =          )'
+MSGERR4  DC    C'BAD ENTRY IN AN INDEX CONTROL ENTRY (GIPE), SEE DUMP '
+         DC    C'( ADDRESS=          )'
+MSGERR5  DC    C'TABLE CVOL IS TOO SHORT (MAX.20 VOL)                 '
+MSGERR6  DC    C'RETURN CODE FROM DYNALLOC MACRO IS NOT ZERO          '
+         DC    C'( REG.15 =          )'
+MSGERR7  DC    C'RETURN CODE FROM OPEN MACRO OF VSAM CATALOG IS NOT 0 '
+         DC    C'( REG.15 =          )'
+MSGERR8  DC    C'ERROR IN PARM OF EXEC CARD'
+         SPACE 3
+***********************************************************************
+*    CLOSE THE FILES AND END OF PROGRAM                               *
+***********************************************************************
+         SPACE 1
+CLOSE    CLOSE (T581F100,,SYSPRINT)
+         SPACE 2
+         PGMOUT ,                  END OF PROGRAM
+         TITLE 'INPUT/OUTPUT CONTROL BLOCKS'
+***********************************************************************
+*        DATA CONTROL BLOCKS
+***********************************************************************
+         SPACE 1
+         PRINT NOGEN
+         SPACE 1
+T581F100 DCB   DDNAME=T581F100,                                        C
+               DSORG=PS,                                               C
+               RECFM=FB,                                               C
+               MACRF=PM,                                               C
+               LRECL=100,                                              C
+               BLKSIZE=1600        (BLOCKING FACTOR = 16)
+         SPACE 3
+SYSPRINT DCB   DDNAME=SYSPRINT,                                        C
+               DSORG=PS,                                               C
+               RECFM=FM,                                               C
+               LRECL=133,                                              C
+               BLKSIZE=133,                                            C
+               MACRF=PM
+         SPACE 3
+SYSCATLG DCB   DDNAME=CT......,                                        C
+               MACRF=(E)
+DDNDISK  EQU   SYSCATLG+40
+         EJECT
+***********************************************************************
+*        VIRTUAL STORAGE ACCESS METHOD CONTROL BLOCKS                 *
+***********************************************************************
+         SPACE 1
+VSAMCTLG ACB   AM=VSAM,                                                *
+               DDNAME=CATALOG,                                         *
+               PASSWD=PASSWORD,                                        *
+               EXLST=VSAMEXL,                                          *
+               MACRF=(KEY,SEQ,DIR,SKP,IN,NUB)
+         SPACE 1
+VSAMRPL1 RPL   ACB=VSAMCTLG,                                           *
+               AM=VSAM,                                                *
+               AREA=VSAMREC,                                           *
+               AREALEN=512,                                            *
+               ARG=VSAMKEY,                                            *
+               OPTCD=(KEY,ARD,SKP,KGE,FWD,FKS,MVE)
+         SPACE 1
+VSAMRPL2 RPL   ACB=VSAMCTLG,                                           *
+               AM=VSAM,                                                *
+               AREA=VSAMREC,                                           *
+               AREALEN=512,                                            *
+               ARG=VSAMKEY,                                            *
+               OPTCD=(KEY,ARD,DIR,KGE,FWD,FKS,MVE)
+         SPACE 1
+VSAMRPL3 RPL   ACB=VSAMCTLG,                                           *
+               AM=VSAM,                                                *
+               AREA=REC2ADDR,                                          *
+               AREALEN=4,                                              *
+               ARG=VSAMKEY2,                                           *
+               OPTCD=(KEY,ARD,DIR,KGE,FWD,FKS,LOC)
+         SPACE 1
+VSAMEXL  EXLST AM=VSAM,                                                *
+               EODAD=(EOVSAM,A)
+         TITLE 'OUTPUT RECORDS'
+***********************************************************************
+*        DEFINITION FOR OUTPUT RECORD  ( T581F100)                    *
+***********************************************************************
+               SPACE 1
+RECOUT   DS    0CL100
+CATLGVS  DS    CL6
+DSNINX   DC    CL44' '
+FLAG     DS    C
+DEVICECD DS    CL4
+VOLSER   DS    CL6
+CURGENC  EQU   VOLSER    (LENGTH=2)
+DSEQVOL  DS    CL2
+GDGFLAG  EQU   DSEQVOL
+MAXGDG   EQU   DSEQVOL+1
+SEQVOLMV DS    CL2
+OWNERID  DS    CL8                 ONLY FOR VSAM
+DSETCRDT DS    CL3                 ONLY FOR VSAM
+DSETEXDT DS    CL3                 ONLY FOR VSAM
+VOLFLG   DS    CL1                 ONLY FOR VSAM
+DSCBTTR  DS    CL3                 ONLY FOR VSAM
+VSPTDSN  DS    CL17                ONLY FOR VSAM
+         EJECT
+***********************************************************************
+*        DETAIL LINE FOR SYSPRINT                                     *
+***********************************************************************
+         SPACE 1
+OUTPRINT DS    0CL133
+CTRCHAR  DS    CL1
+NAME     DS    CL44
+         DS    CL2
+TYPE     DS    CL8
+         DS    CL2
+FLAGX    DS    CL2
+         DS    CL2
+DEVICECX DS    CL8
+         DS    CL2
+VOLSERP  DS    CL6
+         DS    CL2
+SEQNO    DS    CL3
+         DS    CL3
+MVSEQNO  DS    CL3
+         DS    CL3
+INFORM   DS    CL30
+         ORG   *-30
+         DS    CL8
+CUGEN    DS    CL3
+         DS    CL6
+GDGF     DS    CL2
+         DS    CL5
+GDGMAX   DS    CL3
+         DS    CL4
+         ORG   *-31
+         DS    CL6
+OWNID    DS    CL8
+         DS    CL3
+CDATE    DS    CL5
+         DS    CL3
+EDATE    DS    CL5
+         DS    C
+CTYPE    DS    CL4
+         DS    C
+FROMCVOL DS    CL6
+         SPACE 1
+MSGDG    DC    C'CUR.GEN=    FLAG=   MAX='
+MSGDS    DC    C'OWNID=         C=      E='
+         EJECT
+***********************************************************************
+*        HEAD LINES                                                   *
+***********************************************************************
+         SPACE 1
+HEADLNE1 DS    0CL133
+         DC    X'11'
+         DC    C'T581P06'
+         DC    CL32' '
+         DC    C'CATALOGS REPORT BY CVOL'
+         DC    CL20' '
+         DC    C'DATE '
+DATE458  DC    CL9'         '
+         DC    C'   TIME '
+THH458   DC    CL2'  '
+         DC    C'.'
+TMM458   DC    CL2'  '
+         DC    CL14' '
+         DC    C'PAGE  '
+PAGE     DS    CL3
+         SPACE 3
+HEADLNE2 DS    0CL133
+         DC    X'09'
+         DC    CL46' '
+         DC    C'ENTRY          DEVICE   VOLUME  SEQ  M-VOL  *----    '
+         DC    C'INFORMATION    -----*  CATALOGUED'
+         SPACE 3
+HEADLNE3 DS    0CL133
+         DC    X'11'
+         DC    CL46'*------------------ NAME ------------------*  '
+         DC    C'   TYPE   F.    CODE      ID.    NO  SEQ.NO          '
+         DC    C'                          ON     '
+         TITLE 'CONTROL BLOCKS FOR DYNAMIC ALLOCATION'
+***********************************************************************
+*        REQUEST BLOCK AND TEXT UNITS FOR DYNAMIC ALLOCATION OF       *
+*         VSAM CATALOG.                                               *
+***********************************************************************
+         SPACE 1
+VSAMPRB  DC    X'80'               INDICATE END OF LIST
+         DC    AL3(VSAMCATL)       REQUEST BLOCK POINTER
+         SPACE 1
+VSAMCATL DS    0F                  REQUEST BLOCK FOR SYSCTLG
+         DC    X'14'               LENGTH OF THIS REQUEST BLOCK
+VSAMAORU DC    X'01'               DSNAME ALLOCATION (DEFAULT 1ST TIME)
+         DC    X'F000'             FLAGS 1
+         DC    X'0000'             ERROR CODE
+         DC    X'0000'             INFO CODE
+         DC    A(VSAMTPTR)         POINTER TO TEXT UNIT POINTERS
+         DC    A(0)                RESERVED
+         DC    F'0'                FLAGS 2
+         SPACE 1
+VSAMTPTR DC    A(VSAMDDN) TEXT UNIT POINTERS TO DDNAME
+VIEOL    DC    A(VSAMDSN)                   TO DSNAME
+         DC    X'80'                         INDICATE END OF LIST
+         DC    AL3(VSAMDISP)               TO DISP
+         SPACE 1
+VSAMDDN  DC    X'0001',X'0001',X'0007',C'CATALOG' TEXT UNITS - DDNAME
+VSAMDSN  DC    X'0002',X'0001',X'0000',C'                 ' DSNAME
+VSAMDISP DC    X'0004',X'0001',X'0001',X'08' DISP=SHR
+         EJECT
+***********************************************************************
+*        REQUEST BLOCK AND TEXT UNITS FOR DYNAMIC ALLOCATION OF       *
+*         CVOL CATALOG (SYSCTLG).                                     *
+***********************************************************************
+         SPACE 1
+CVOLPRB  DC    X'80'               INDICATE END OF LIST
+         DC    AL3(CVOLCTLG)       REQUEST BLOCK POINTER
+         SPACE 1
+CVOLCTLG DS    0F                  REQUEST BLOCK FOR SYSCTLG
+         DC    X'14'               LENGTH OF THIS REQUEST BLOCK
+CVOLAORU DC    X'01'               DSNAME ALLOCATION (DEFAULT 1ST TIME)
+         DC    X'F000'             FLAGS 1
+CVOLERCD DC    X'0000'             ERROR CODE
+         DC    X'0000'             INFO CODE
+         DC    A(CVOLTPTR)         POINTER TO TEXT UNIT POINTERS
+         DC    A(0)                RESERVED
+         DC    F'0'                FLAGS 2
+         SPACE 1
+CVOLTPTR DC    A(CVOLDDN) TEXT UNIT POINTERS TO DDNAME
+IEOL     DC    A(CVOLDSN)                   TO DSNAME
+         DC    A(CVOLDISP)                 TO DISP
+         DC    A(CVOLUNIT)                TO UNIT
+         DC    X'80'                        INDICATE END OF LIST
+         DC    AL3(CVOLVOLS)           TO VOL=SER
+         SPACE 1
+CVOLDDN  DC    X'0001',X'0001',X'0008',C'CT......' TEXT UNITS - DDNAME
+CVOLDSN  DC    X'0002',X'0001',X'0007',C'SYSCTLG' DSNAME
+CVOLDISP DC    X'0004',X'0001',X'0001',X'08' DISP=SHR
+CVOLUNIT DC    X'0015',X'0001',X'0004',C'3330' UNIT
+         DC    CL2' '              + TWO BYTES FOR UNIT
+CVOLVOLS DC    X'0010',X'0001',X'0006',C'......' VOL=SER
+         TITLE 'TABLE OF CATALOGS'
+***********************************************************************
+*        TABLE OF CATALOGS, MAXIMUN 15 ELEMENTS.                      *
+*         ONE ELEMENT = 18 BYTES.                                     *
+*              DESCRIPTION OF AN ELEMENT  :                           *
+*                FIRST BYTE = TYPE OF CATALOG.                        *
+*                   C = CVOL CATALOG                                  *
+*                   V = VSAM CATALOG                                  *
+*                NEXT 17 BYTES =                                      *
+*                   IF VSAM CATALOG; DATA SET NAME.                   *
+*                   IF CVOL CATALOG; VOLUME SERIAL NUMBER AND         *
+*                    UNIT NAME.                                       *
+***********************************************************************
+         SPACE 1
+ATSCTLG  DC    A(TSYSCTLG-L'TSYSCTLG)
+ATSVSAM  DC    A(TSYSCTLG-L'TSYSCTLG)
+TSYSCTLG DC    X'00000000000000F3F3F3F040400000000000'
+         DC    14X'00000000000000F3F3F3F040400000000000'
+TSCTNOEP EQU   *-TSYSCTLG
+TSCTNOE  EQU   TSCTNOEP/L'TSYSCTLG
+ENDTSYSC DC    X'0000'
+         TITLE 'WORK AREAS, CONSTANTS, EQUATES AND LITERAL POOL'
+***********************************************************************
+*        WORK AREAS                                                   *
+***********************************************************************
+         SPACE 1
+SVMVL    DC    PL2'0'
+DECIMAL  DS    D                   WA FOR DECIMAL OPERATION
+HEXSTOR  DC    3F'0'
+HEXTABLE DC    C'0123456789ABCDEF'
+         SPACE 1
+MBBCCHHR DC    D'0'                ACTUAL ADDRESS
+DEB      DC    F'0'                DATA EXTENT BLOCK ADDRESS
+         SPACE 1
+         DS    0F
+TTR      DS    CL3
+N        DC    X'00'
+         DS    0D
+BLOCKWA  DS    CL265
+         ORG   *-265
+VSAMKEY  DS    CL44
+VSAMREC  DS    CL256
+         DS    CL256
+VSAMKEY2 DS    CL44
+REC2ADDR DS    F
+CVOLNO   DS    CL6
+         SPACE 1
+SWITCH   DC    C' '
+NORY     DC    C' '
+TTRSW    DC    C' '
+LINECOUN DC    PL2'0'
+PAGECOUN DC    PL2'0'
+MAXLINE  DC    P'60'
+GISAVTTR DS    CL3
+GISAVR10 DS    F
+GISAVR12 DS    F
+VCSAVTTR DS    CL3
+VCSAVR10 DS    F
+NVOLMAX  DS    H
+SYSCTLG  DC    C'SYSCTLG '
+         DC    C'0000'
+         EJECT
+***********************************************************************
+*        CONSTANTS , EQUATES AND LITERAL POOL                         *
+***********************************************************************
+         SPACE 1
+ONE      DC    P'1'
+TTR0     DC    X'000000'
+FIRSTTRN DC    F'256'
+ILENAME  DC    X'FFFFFFFFFFFFFFFF'
+TRANSGDG EQU   ILENAME
+TWELVE   DC    F'12'
+TWENTY   DC    F'20'
+DEVBLANK DC    C'40404040'
+         SPACE 1
+BLANK    EQU   X'40'
+ZERO     EQU   X'F0'
+SIGN     EQU   X'F0'
+SPACE1   EQU   X'09'
+SKIP     EQU   X'89'
+YES      EQU   C'Y'
+NO       EQU   C'N'
+ON       EQU   X'FF'
+OFF      EQU   X'00'
+POINT    EQU   C'.'
+FLAGCVOL EQU   B'10000000'
+FLAGVSPT EQU   B'11000000'
+FLAGDS   EQU   B'01000000'
+FLAGINX  EQU   B'00100000'
+FLAGCLUS EQU   B'01100000'
+FLAGVSDA EQU   B'01110000'
+FLAGVSIN EQU   B'01111000'
+FLAGVSAL EQU   B'01111100'
+FLAGVOL  EQU   B'01111110'
+FLAGVSUC EQU   B'01111010'
+FLAGGINX EQU   B'00010000'
+FLAGLVDS EQU   B'00001000'
+FLAGALS  EQU   B'00000100'
+FLAGFVDS EQU   B'00000010'
+FLAGVSAM EQU   B'00000001'
+TIPE     EQU   X'00'
+TVCBPE   EQU   X'01'
+TGIPE    EQU   X'02'
+TCVPE    EQU   X'03'
+TAE      EQU   X'04'
+TNCVPE   EQU   X'05'
+TDSPEMIN EQU   X'07'
+TDSPEMAX EQU   X'1F'
+         LTORG
+PASSWORD DC    X'08',C'TSGOROPS'
+TABINDEX DS    0F        21 ELEMENTS
+         DC    21XL12'000000000000000000000000'
+         END

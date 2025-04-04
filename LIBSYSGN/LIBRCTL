@@ -1,0 +1,2420 @@
+ASMI     TITLE ' ASMINT - LIBRARIAN /  ASSEMBLER INTERFACE PROG'
+         MACRO              MACRO TO LINK TO PROPER FAIR ROUTINE
+&LABEL   FAIR  &RTN,&REG=R15
+         AIF   ('&RTN' EQ '').ER
+&LABEL   L     &REG,FAIR&RTN.(,&REG) ADDRESS OF PROPER ENTRY POINT
+         BALR  R14,&REG .         LINK TO FAIR ROUTINE
+         MEXIT
+.ER      MNOTE 4,'ERRRO - ROUTINE NAME MISSING'
+         MEND
+         EJECT
+ASMINT   CSECT
+*
+*        THIS PROGRAM IS AN INTERFACE BETWEEN THE LIBRARIAN AND
+*              THE ASSEMBLER FOR ACP PROGRAMS AND PERFORMS THE
+*              FOLLOWING:
+*
+*              1. TAKE BATCHED OUTPUT FROM THE LIBRARIAN AND LINK
+*                 TO THE ASSEMBLER FOR EACH SEGMENT
+*
+*              2. INCLUDE TEST MACROS INSTREAM FROM A LIBRARIAN FILE
+*
+*              3. CHECK THE RETURN CODE FROM ASSEMBLIES AND PLACE
+*                 OBJECT CODE IN A PARTITIONED DATA SET
+*
+*              4. RETRIEVE SOURCE CODE FROM LIBRARIAN FILE FOR ASSEMBLY
+*                 WITHOUT UPDATING.
+*
+***********************************************************************
+         SPACE 3
+*
+*   INITIALIZATION ROUTINES:
+*
+*     RESTRICTIONS:
+*        THESE ROUTINES WILL BE OVERLAYED BY -PCL, -MCL & -DLM INFO
+*        THESE ROUTINES MAY NOT CALL ANY 1ST LEVEL SUBROUTINES
+*              BECAUSE REGISTER L1 IS USED AS A BASE
+*
+         STM   R14,R12,12(R13)    SAVE CALLERS REGS
+         LR    L1,R15              TEMP INIT BASE
+         USING ASMINT,L1
+         LM    R11,R12,BASES
+         B     CONT2
+BASES    DC    A(ASMSETUP,ASMSETUP+4096)
+CONT2    EQU   *
+         USING ASMSETUP,R11,R12
+         USING DSCTL,R2
+         LR    R4,R1              PARM
+         GETMAIN R,LV=72          GET SAVE AREA
+         ST    R13,4(,R1)         CHAIN
+         ST    R1,8(,R13)
+         LR    R13,R1
+         TIME  ,                  GET DATE FOR HEADER'S ETC
+         LR    R0,R1
+         SRL   R0,4               SHIFT TO MAKE YDDD
+         STH   R0,STOWDAY         TO BE USED IN STOW MACRO
+         CALL  JULTOACT           CONVERT FOR LOG HEADER
+         ST    R2,DWORD           RESULT ZMMDDYYF
+         ED    EDITDAY(10),DWORD  MAKE DBCDIC MM/DD/YY
+         OPEN  (MYPRINT,OUTPUT)
+         PUT   MYPRINT            GET BUFF
+         BAL   R14,PBLANK         BLANK PRINT LINE IN CASE TSO TERM
+         MVI   0(R1),X'8B'        SKIP TO CHANNEL 1
+         L     R1,0(,R4)          PARM ADDR
+         LH    R15,0(,R1)         LEN OF PARMS
+         LTR   R15,R15
+         BZ    NOPARM             NONE
+         XC    OPTIONS,OPTIONS
+         LA    R14,2(R1)          START OF PARM
+         LR    R0,R15             LEN OF PARM FIELD
+         BCTR  R0,0               360
+         STC   R0,OVRMVC+1        LEN FOR MVC
+         MVC   CARD(19),=C'00OVERRIDE PARMS = '
+OVRMVC   MVC   CARD+19(0),0(R14)  MOVE PARM FIELD TO MSG
+         LA    R5,19(,R15)        LEN OF MSG
+         BAL   L2,SCANS           START SCAN
+         B     NOPARM             ALL BLANK
+         LR    R1,R5
+         LA    R5,CARD
+         BAL   L4,PRINTMY         PRINT PARM FIELD
+PARMLP   EQU   *
+         CLI   SCNSTP,C' '
+         BE    PARMDON            YES
+         BAL   L2,SCANC           FIND NEXT FIELD & LEN
+         B     PARMDON            NO MORE
+         LM    R1,R3,PARMCTL      TABLE POINTERS
+PARMLP1  EX    R15,PARMCLC
+         BE    GOTPARM            THIS IS IT
+         BXLE  R1,R2,PARMLP1      CHECK ALL
+         CLI   SCNSTP,C'='         IS IT KEYWORD
+         BNE   PARMNEG             NO, CHK NEGATIVE OVERIDE
+         LA    R15,1(,R15)         INCLUDE EQUAL SIGN IN ERR MSG
+         B     INVALPRM
+PARMNEG  EQU   *
+         CLC   0(2,R14),=C'NO'    IS IT NEGATIVE
+         BNE   INVALPRM           NO, INVALID
+         LR    R0,R15             LEN OF PARM -2
+         SH    R0,=H'2'
+         BM    INVALPRM           ONLY NO, INVALID
+         LR    R15,R0
+         LA    R14,2(,R14)        POINT PAS NO
+         LM    R1,R3,PARMCTL      SEARCH AGAIN
+PARMLP2  EX    R15,PARMCLC        IS THIS IT
+         BE    PARMOFF            YES, TURN IT OFF
+         BXLE  R1,R2,PARMLP2      CHECK ALL
+         SH    R14,=H'2'          ADJUST POINTERS FOR INVALID
+         LA    R15,2(,R15)
+INVALPRM EQU   *                  PRINT ERROR MESSAGE
+         MVC   IPRM,IPRM-1        CLEAR FIELD
+         EX    R15,IPRMVC         PUT INVALID PARM IN MSG
+         LA    R5,ERR7
+         LA    R1,LN57            MSG LEN
+         BAL   L4,PRINTMY
+         CLI   SCNSTP,C'='         WAS THERE AN OPERAND
+         BNE   PARMLP              NO, GET NXT
+         BAL   L2,SCANC            SKIP OPERAND OF KEYWORD
+         B     PARMDON
+         B     PARMLP             IGNORE IT FOR NOW
+PARMCLC  CLC   0(0,R14),0(R1)     CHECK PARM AGAINST TABLE OF VALID
+IPRMVC   MVC   IPRM(0),0(R14)
+NEGFLD   DC    X'FFFF'
+PARMOFF  MVC   NEGFLD,=X'FFFF'    RESTORE MASK
+         XC    NEGFLD,6(R1)       TURN OFF OPTION BIT IN NEGFLD
+         NC    OPTIONS,NEGFLD     TURN OFF OPTION
+         B     PARMLP             NEXT PARM
+GOTPARM  EQU   *
+         CLI   SCNSTP,C'='         IS IT KEYWORD TYPE
+         BE    PARMKEY
+         OC    OPTIONS,6(R1)       TUN ON OPTIONS
+         CLC   0(3,R1),=C'OFF'    IS IT OFFLINE
+         BNE   NOTOFF              NO
+         MVC   ONOF,=C'O F F'
+         B     PARMLP
+NOTOFF   EQU   *
+         CLC   0(4,R1),=C'ASMF'
+         BNE   NOTF               NO
+         MVC   PRINT,=CL8'FPRINT'  CHANGE PRINT FILE DDNAME
+         MVC   SYSPRINT+40(8),PRINT
+         MVC   GNAM,FNAM          CHANGE ENTRY POINT NAME
+         LA    R14,ASMFPARM+2     CHANGE DEFAULT PARMS
+         LH    R15,ASMFPARM
+NEWPARM  EQU   *
+         STH   R15,ASMPLEN
+         BCTR  R15,0
+         EX    R15,MVCAP
+         B     PARMLP
+NOTF     EQU   *
+         CLC   0(3,R1),=C'STC'    IS IT STC RUN
+         BNE NOTSTC               SO
+         MVC   GNAM,=CL8'STC'     CHANGE NAME OF COMPILER TO USE
+         MVC   AIN+40(8),=CL8'CARDIN'  CHANGE DDNAME FOR COMPILER
+         MVC   ENDCD+1(15),=CL15'END STC'
+         OI    UPSW,STC
+         MVC   ONOF(38),=CL38' STC INPUT FROM LIBRAIAN DATA SET'
+         MVC   TITLE+9(5),TITLE+8
+         LA    R14,STCPARM+2      ALTER PARMS
+         LH    R15,STCPARM
+         B     NEWPARM
+NOTSTC   EQU   *
+         CLC   0(4,R1),UTILNAM    IS PARM = UTIL
+         BNE   NOTUTIL            NO
+         OI    UPSW,UTIL          TWO PASSES TO LIBRARIAN
+         B     PARMLP
+NOTUTIL  EQU   *
+         CLC   0(4,R1),=C'SALT'   IS IT SYSTEM ALLOCATOR RUN
+         BNE   NOTSALT            NO
+         MVC   ONOF(38),=CL3' SAL INPUT FROM LIBRAIAN DATA SET'
+         MVC   AIN+40(8),=CL8'SALIN'   SAL INPUT DD NAME
+         B     PARMLP
+NOTSALT  EQU   *
+         CLC   0(3,R1),=C'PL1'
+         BNE   PARMLP
+         MVC   GNAM,=CL8'IEMAA'   CHANGE ENTRY POINT NAME
+         LA    R14,PL1PARM+2      CHANGE PARMS FOR PL1
+         LH    R15,PL1PARM
+         B     NEWPARM
+PARMKEY  EQU   *       PROCESS PARMS WITH OPERAND
+         LH    R3,6(R1)            INDEX INTO BRANCH TABLE
+         BAL   L2,SCANC            ISOLATE OPERAND
+         B     INVALPRM            NO OPERAND SUPPLIED
+         B     PARMKBR(R3)         GO TO PROPER ROUTINE
+PARMKBR  EQU   *                   BR TABLE FOR KEYWORD PARMS
+         B     PARMPGM             PGM=
+         B     PARMDD              DD=
+         B     PARMLNAM           LNK EDIT PROG NAME
+PARMLNAM EQU   *
+         LA    R1,LNAM            ADDR OF NAME AREA
+         OI    OPT1,LNK           TURN ON LINK OPTION
+         B     PARMNAM
+PARMPGM  EQU   *     CHANGE ENTRY POINT NAME OF PROG TO BE ENTERED
+         LA    R1,GNAM            ADDR OF NAME
+         OI    OPT1,ASM           WANT ASSEMBLY
+PARMNAM  EQU   *
+         C     R15,=F'8'           CHECK LEN OF NAME
+         BNL   INVALPRM            TOO LONG
+         MVI   0(R1),C' '         BLANK DEFAULT
+         MVC   1(7,R1),0(R1)
+         EX    R15,PARMPMVC        PUT IN NEW NAME
+         B     PARMLP
+PARMPMVC MVC   0(0,R1),0(R14)
+         SPACE
+PARMDD   EQU   *    CHANGE DD NAMES USED BY PROG AFTER LIBRARIAN
+         CH    R15,=H'3'           LIST NAME MUST BE 4 CHAR
+         BNE   INVALPRM            ERROR
+         LM    R1,R3,PARMDDC       FOR TABLE SEARCH
+PARMDDLP CLC   0(4,R14),0(R1)      IS THIS IT
+         BE    PARMDDG             YES
+         BXLE  R1,R2,PARMDDLP      CHECK ALL NAMES
+         B     INVALPRM            NO SUCH LIST
+PARMDDG  L     R2,4(,R1)           ADDR OF LIST OF NAMES
+         USING IHADCB,R1           DCB DSECT
+         LH    R3,0(R2)            NBR OF DD NAMES TO CHANGE
+PARMDDL2 L     R1,2(,R2)           DCB ADDR
+         MVC   DCBDDNAM,6(R2)      PUT NEW DDNAME IN DCB
+         LA    R2,12(,R2)          NEXT
+         BCT   R3,PARMDDL2
+         B     PARMLP              GET NEXT PARM
+         DROP  R1
+PARMDON  EQU   *
+         TM    UPSW,UTIL          IS THIS UTILITY RUN
+         BZ    NOPARM             OK
+         TM    OPT1,MIXIN         IS II MIXED INPUT ALSO
+         BZ    NOPARM             NO, OK
+         LA    R5,ERR15           ERR, NO CAN DO
+         LA    R1,L'ERR15
+         BAL   L4,PRINTMY
+         B     EOJ
+NOPARM   EQU   *
+         TM    OPT1,ASM           ANY COMPILE
+         BNZ   CONT1              YES
+         TM    OPT2,CPYONLY       COPY FROM LIBR TO OBJ
+         BO    CONT1              YES
+         OI    UPSW,UPONLY        DONE AFTER LIBR
+CONT1    EQU   *
+         GETMAIN R,LV=176      ROOM FOR JFCB
+         LR    R3,R1
+         O     R1,EXJFCB
+         ST    R1,EXJFCB          FOR RDJFCB
+         RDJFCB OBJ               GET INFO FROM OBJLIB DD CARD
+         LTR   R15,R15            DD  ARD THERE
+         BZ    OBJOK              YES
+         OI    OPT1,NODECK        IGNORE OBJECT /P
+         B     OBJDON             CONTINUE
+OBJOK    EQU   *
+         USING IEFJFCBN,R3
+         MVC   DSN,JFCBDSNM       DATA SET NAME OF OBJECT LIB
+         MVC   ELNM,JFCBELNM      MEMBER NAME IF SEQ PDS
+         TM    JFCDSORG,X'40'     IS IT PS
+         BO    OBJPS              YES
+         TM    JFCBIND1,1         IS IT SEQ ACCESS MEMBER OF PDS
+         BZ    OBJPO              NO, MUST BE PDS
+         OI    NAMSW,MEMBER SHOW IS MEMBER  OF PDS
+OBJPS    TM    OPT2,ONEIP         IS IT COMBINED I/P RUN
+         BO    PSOK               YES, CAN HAVE SEQ I/P
+         TM    OPT1,NODECK        ANY REASON TO CHECK FURTHER
+         BO    OBJDON             NO
+         LA    R5,ERR2            ERROR MSG
+         LA    R1,L'ERR2
+         BAL   L4,PRINTMY         PRINT IT ON LOG
+         B     NOASM              ONLY ALLOW LIBR UPDATES
+PSOK     EQU   *
+         LA    R2,OBJDS
+         TM    NAMSW,MEMBER       IS OBJLIB A PDS
+         BO    OBJDON             YES
+         MVI   OBJ+26,X'40'       MAKE DCB PS
+         NI    DSW,255-DSTO       TURN OFF STOW SWITCH
+         OI    NAMSW,SEQOBJ       SHOW IS SEQUENTIAL NAME
+         B     OBJDON
+OBJPO    EQU   *
+         TM    OPT2,ONEIP         TRYING TO COMBINE I/P W/O GIV NAME
+         BZ    OBJDON             NO, OK
+         TM    OPT1,NODECK        ANYTHING TO DO
+         BO    OBJDON             NO, NO ERROR
+         LA    R5,ERR8            ERROR MSG
+         LA    R1,L'ERR8
+         BAL   L4,PRINTMY         PRINT ON RUN LOG
+NOASM    LA    R5,ERR9            ALL BUT LIBR UPDATE ABORTED
+         LA    R1,L'ERR9
+         BAL   L4,PRINTMY
+         OI    UPSW,UPONLY        EOJ AFTER LIBRARIAN
+OBJDON   EQU   *
+         SPACE 1
+*
+*     NOW CHECK IF WE CAN PUT MSGS ON ASSEMBLER'S PRINT O/P
+*
+         TM    OPT1,ASM           IS IT ASSEMBLER RUN
+         BZ    *+10               NO, USE SYSPRINT
+         MVC   SYSPRINT+40(8),PRINT  DDNAME ASSEMBLER WILL USE
+         EXTRACT TAD,FIELDS=TIOT  GET MY TIOT ADDR
+         L     R6,TAD
+         SR    R14,R14
+         SR    R5,R5              ZERO SYSPRINT UCB ADDR REG
+         LA    R6,24(,R6)         1ST DD ENTRY
+TLP1     IC    R14,0(,R6)         LEN THIS DD ENTRY
+         LTR   R14,R14            END TABLE
+         BZ    TLPEND
+         CLC   SYSPRINT+40(8),4(R6)  IS THIS AASSEMBLERS PRINT
+         BNE   TLP1A               NO CHECK FURTHER
+         L     R5,16(,R6)          UCB ADDR
+TLP1A    CLC   OBJ+40(8),4(R6)  IS IT OBJLIB DD
+         BNE   TLP1B              NO
+         MVC   OBJUCB,16(R6)      SAVE FOR LATER
+TLP1B    CLC   LINDD,4(R6)        IS IT SYSLIN
+         BNE   TLP1C              NO
+         MVC   LNKLIN,LINDD        CHG SYSLIN DDNAME
+         OI    UPSW,USERLIN       USE SYSLIN PROVIDED
+TLP1C    EQU   *
+*  ANY FURTHER CHECKING FROM TIOT MAY BE ADDED HERE
+TLP1GO   EQU   *
+         AR    R6,R14             NEXT
+         B     TLP1
+TLPEND   EQU   *           THROUGH WITH TIOT
+         LTR   R5,R5               ANY DD FOR SYSPRINT
+         BZ    SYSPNO             NO
+         CLI   18(R5),8           CHK SYSPRINT UCB IF UNIT RECORD
+         BE    SYSPOK             YES, CAN USE IT
+         TM    OPT1,NOSYSP         NOT TO USE SYSPRINT
+         BO    SYSPOK              YES, IGNORE
+         RDJFCB SYSPRINT
+         LTR   R15,R15            SHOULD NEVER
+         BNZ   SYSPNO
+         TM    JFCBTSDM,X'20'     IS IT SYSOUT
+         BO    SYSPOK             YES
+         NI    JFCBIND2,X'C0'      TURN OFF UNNEC BITS
+         CLI   JFCBIND2,X'80'       IS IT MOD DATA SET
+         BE    SYSPOK             YES
+SYSPNO   EQU   *
+         OI    OPT1,NOSYSP         DON'T USE SYSPRINT DATA SET
+SYSPOK   EQU   *
+         RDJFCB  DSNDCB            JFCB FOR LIBRARIAN MASTER FILE
+         LTR   R15,R15             ANY ERROR
+         BNZ   NOMASTER            YES
+         MVC   MASTDSN,JFCBDSNM    DSN OF MASTER DD
+NOMASTER EQU   *
+         MVC   DSNDCB+40(8),MACDD  DDNAME FOR -MCL
+         RDJFCB DSNDCB             JFCB FOR MCL DATA SET
+         LTR   R15,R15             ANY ERRORS
+         BNZ   NOMACDD             YES
+         MVC   MACDSN,JFCBDSNM     DATA SET NAME
+NOMACDD  EQU   *
+         MVC   DSNDCB+40(8),=CL8'SYSLMOD'
+         RDJFCB DSNDCB
+         LTR   R15,R15            ANY DD
+         BNZ   NOSYSL             NO
+         MVC   LNKDSN,JFCBDSNM    SAVE DSN FOR RC MSG
+NOSYSL   EQU   *
+         LA    R1,0(,R3)          ADDR OF JFCB GETMAIN AREA
+         FREEMAIN R,LV=176,A=(1)  RELEASE CORE
+         XC    EXJFCB+1(3),EXJFCB+1  ZERO ADDR OF JFCB
+         SPACE 3
+*
+*   OPTION INITIALIZATION COMPLETE
+*
+START    EQU   *
+         DROP  R3
+         LA    R5,MSG09
+         LA    R1,LN09
+         BAL   L4,PRINTMY          PRINT MASTER FILE DSN MSG
+         MVI   0(R5),X'11'         DBL SPACE
+         LA    R2,CTLDS
+         BAL   L4,OPENS            OPEN CARD
+         LA    R2,CTLDS           CONTROL CARD DATA SET
+         BAL   L3,GET             GET 1ST CARD
+         B     EOJ                NO INPUT
+         LR    R3,R2               SAVE IT
+         TM    OPT1,MIXIN         IS IT MIXED CARDS AND PCL
+         BZ    CONT5              NO
+         LA    R2,AINDS           OPEN ASSEMBLERS I/P NOW
+         BAL   L4,OPENS
+         OI    AINDS+(DSW-DSCTL),DSTRNC DON'T CLOSE AIN ON LIB EOF
+         OI    LIBDS+(LIBSW-DSCTL),DSLMULT  SAME FOR LIB
+         TM    OPT1,CPYONLY       IS IT ALSO COPY ONLY RUN
+         BZ    CONT6              NO
+         OI    OBJDS+(DSW-DSCTL),DSTRNC DON' CLOSE BTW COPPIES
+         B     CONT6
+CONT5    EQU   *
+         LA    R2,LINDS
+         BAL   L4,OPENS            LIBRARIANS SYSIN
+CONT6    EQU   *
+         XR    R2,R3               SWITCH REGS R2 & R3
+         XR    R3,R2
+         XR    R2,R3
+         TM    OPT1,MIXIN         NO LIBR IF MIXIN
+         BO    CTLDCOD2
+         LA    R1,LOPT            DEFAULT ADD OPT CARD FOR LIBR
+         CLC   CARD(4),LOPT       IS 1ST CARD LIBR OPT
+         BNE   CONT3              NO
+         LA    R1,CARD            YES USE ONE SUPPLIED
+         OI    UPSW,DOUPDAT       HAVE LIBR INPUT
+         B     CONT8
+CONT3    EQU   *
+         TM    UPSW,UTIL          IS IT UTILITY RUN
+         BZ    CONT8              NO, USE STD OPT
+         LA    R1,UOPT            OPT UTILITY CARD
+CONT8    EQU   *
+         BAL   L3,PUT             WRITE LIBRARIAN OPT CARD
+         LA    R1,CARD      SHOW DATA IN CARD IF 1ST WASN'T -OPT
+         TM    UPSW,DOUPDAT       DO WE HAVE A CARD
+         BZ    CTLDCOD            YES, PROCESS IT
+         BAL   L4,PRINTCD         PRINT RPOVIDED -OPT
+         B     LIBLOOP
+UOPT     DC    CL80'-OPT UTILITY'
+         SPACE 3
+*
+*   PARM FIELD DEFINITIONS - WILL BE OVERLAYED BY PCL/MCL TABLE
+*        6 BYTES OF CHAR
+*        2BYTES OF OPTIONS TO OR IN
+*
+PARMCTL  DC    A(PARMFST,8,PARMLST)
+PARMFST  EQU   *
+         DC    CL6'RT',AL1(ASM,TITL+ENDO+NOGENO+SRCDSN)
+         DC    CL6'OFF',AL1(ASM+LNK,CMNT+SRCDSN)
+         DC    CL6'MACRO',AL1(0,STOMAC+CPYONLY)
+         DC    CL6'WTO',AL1(WTO,0)
+         DC    CL6'DATA',AL1(0,CPYONLY)
+         DC    CL6'ASMG',AL1(ASM,0)
+         DC    CL6'NOP',AL1(0,0)
+         DC    CL6'CMNT',AL1(0,CMNT)
+         DC    CL6'NOGEN',AL1(0,NOGENO)
+         DC    CL6'TITLE',AL1(0,TITL)
+         DC    CL6'END',AL1(0,ENDO)
+         DC    CL6'CPASM',AL1(ASM,CMNT+ONEIP+SRCDSN)
+         DC    CL6'ONEIP',AL1(0,ONEIP)
+         DC    CL6'LNK',AL1(LNK,0)
+         DC    CL6'STC',AL1(ASM+NODECK+NOSYSP,CMNT+SRCDSN+ENDO)
+         DC    CL6'MIXIN',AL1(MIXIN,0)
+         DC    CL6'NODECK',AL1(NODECK,0)
+         DC    CL6'PL1',AL1(ASM+NOSYSP,0)
+         DC    CL6'NOSYSP',AL1(NOSYSP,0)
+         DC    CL6'PIRT',AL1(ASM+NODECK+NOSYSP,0)
+         DC    CL6'XASM',AL1(ASM+NOSYSP,TITL+SRCDSN)
+         DC    CL6'PRTMAC',AL1(PMAC,0)
+         DC    CL6'ASMF',AL1(ASM,0)
+         DC    CL6'UTIL',AL1(0,0)
+         DC    CL6'SALT',AL1(ASM+NODECK+NOSYSP,CMNT+ONEIP+SRCDSN)
+*
+*  FOLLOWING ARE KEYWORD PARMS WHICH ARE 6 CHAR + HWORD INDEX TO BR TAB
+*
+         DC    CL6'PGM',H'0'
+         DC    CL6'LNAM',H'8'
+PARMLST  EQU   *-8
+         SPACE 2
+*
+*  DDNAME OVERRIDE LIST - 4 CHAR NAME + ADDR OF OVERIDES
+*
+PARMDDC  DC    A(DDFST,8,DDLST)
+DDFST    DC    CL4'XASM',A(DDXASM) FOR CROSS ASSEM WITTEN IN FORTRAN
+         DC    CL4'PIRT',A(DDPIRT)   FOR PIRT COMPILER
+DDLST    EQU   *-8
+         SPACE
+*
+*   DD OVERIDES - START ON HWORD NOT FWORD, 2 BYTES NBR ENTRIES
+*        FOLLOWED BY SETS OF FWORD ADDR OF DCB AND 8CHAR NEW DDNAME
+*
+         CNOP  2,4                 ALIGN
+DDXASM   DC    H'2',A(AIN),CL8'FT05F001',A(AOT),CL8'FT07F001'
+         CNOP  2,4                 ALIGN
+DDPIRT   DC    H'2',A(AIN),CL8'CARD',A(AOT),CL8'LESSOUT'
+         SPACE 3
+*
+*    THE FOLLOWING EQUATE DEFINES THE NUBER OF SLOTS FOR PCL/MCL
+*        OF MAX LEN
+TABNBR   EQU   ((*-ASMINT)/9)+1
+         ORG   ASMINT+(9*TABNBR)  MAKE EXACT MULT OF MAX LEN
+*
+PCLTAB   EQU   ASMINT             PROGS TO CALL FOR ASSEMBLY
+*
+*    FORMAT OF EACH ENTRY
+*        LEN, 1BYTE LEN OF NAME
+*        NAME, VARIABLE LEN
+*     IN ASCENDING ORDER BY PCL CARDS
+*
+MCLTAB   EQU   PCLTAB+(9*2*(TABNBR/3)) DIVIDE AVAIL SPACE INTO 3 TABLES
+*
+*     TABLE FORMAT
+*        NAME, VARIABLE LEN
+*        LEN, 1BYPE LEN OF NAME
+*   IN DESCENDING ORDER   (TABLE WILL BE SEARCHED BACKWORDS)
+*
+DLMTAB   EQU   MCLTAB       -DLM CARDS TO BE DELETED FROM OBJLIB
+*
+*     TABLE FORMAT
+*        SAME AS PCLTAB
+*
+         EJECT
+*
+*                   MAIN PROGRAM
+*
+         SPACE 3
+*
+*    PROCESS CARD INPUT AND LINK TO LIBRARIAN IF WANTED
+*              STILL CANNOT USE LEVEL ONE SUBROUTINES
+*
+         SPACE 1
+LIBLOOP  BAL   L3,GET             GET CTL CARD
+         B     CTLEOF
+CTLDCOD  EQU   *                  DECODE CTL CARD
+         C     R1,=A(CARD)        IS I/P ALEADY IN CARD
+         BE    *+10               YES
+         MVC   CARD,0(R1)            PUT IT THERE
+CTLDCOD2 EQU   *
+         TM    UPSW,UTIL          IF 1ST TIME ON UTIL IGNORE LIB CDS
+         BO    LIBENDCK
+         CLC   CARD(6),=C'-ASMRC'
+         BE    ASMRC              SET ASSEMBLER RC LIMIT
+         CLC   CARD(5),=C'-ASMP'
+         BE    ASMPRM             CHANGE DEFAULT PARMS
+         CLC   CARD(5),=C'-LNKP'  PARMS FOR LINKAGE EDITOR
+         BE    LNKPRM
+         CLC   CARD(5),=C'-LIBP'  PARMS FOR LIBRARIAN
+         BE    LIBPRM
+         CLC   CARD(4),=C'-MCL'
+         BE    MACRD              GET IN-STREAM MACRO NAME(S)
+         CLC   CARD(4),=C'-PCL'
+         BE    PCL                GET PROGRAM CALL NAME(S)
+         TM    UPSW,STC           IS IT STC RUN
+         BO    STCCTL             YES
+         TM    OPT1,MIXIN         IS IT MIXED I/P
+         BO    LIBOK              YES, IGNORE LIBR CONTROL CARDS
+         CLC   CARD(4),=C'-SEL'   IS IT SELECT FOR LIBR
+         BE    SELCD               YES,CHECK IT
+         CLC   CARD(4),=C'-ADD'   IS NEW MEMBER FOR LIBR
+         BE    LIBPRT
+         CLC   CARD(4),=C'-DLM'   IS IT LIBR DELETE
+         BE    DLMCD               YES, SAVE ANME
+LIBENDCK EQU   *
+         CLC   CARD(4),=C'-END'   WAS LAST CARD END CARD
+         BE    LIBLOOP            YES, WILL PUT ONE THERE BEFORE CLOSE
+         B     LIBOK
+STCCTL   CLC   CARD(8),ENDCD      IS IT END STC
+         BE    LIBLOOP   IGNORE
+         CLC   CARD(6),=C' RUNID'   PRINT RUNIDS IF STC
+         BNE   LIBOK
+LIBPRT   BAL   L4,PRINTCD         SHOW WHAT WAS PASSED TO LIBR
+LIBOK    EQU   *
+         OI    UPSW,DOUPDAT       SHOW UPDATE TO BE DONE
+         LA    R1,CARD            FOR PUT
+         BAL   L3,PUT
+         B     LIBLOOP
+CTLEOF   EQU   *
+         MVI   CARD,C' '
+         MVC   CARD+1(L'CARD-1),CARD  BLANK CARD BUFFER
+         TM    OPT1,MIXIN         IF MIXED I/P STILL HAVE ASM TO DO
+         BO    MIXEOF
+         MVC   CARD(4),=C'-END'   LIBR END CARD
+         LA    R1,CARD
+         BAL   L3,PUT             WRITE TO LIBR I/P FILE
+         LR    R2,R3
+         MVI   0(R5),X'19'        SPACE 3 AFTER PRINT
+         BAL   L4,CLOSES          WRITE EOF
+         TM    UPSW2,UTIL2        IS IT SECOND PASS OF UTILITY
+         BZ    CONT9              NO
+         CLOSE (LDATA)             CLOSE AS INPUT
+         OPEN  (LDATA,INOUT)      OPEN INOUT SO CAN STOW
+         STOW  LDATA,UTILNAM,D    CLEAN UP OSJOB FOR LIBRARIAN
+         CLOSE (LDATA)
+         OI    LDATA+DSW-DSCTL,DSCLSD  SO WILL OPEN AGAIN AS I/P
+CONT9    EQU   *
+         TM    UPSW,DOUPDAT       ANY TO DO
+         BZ    ASMSETUP           GET READY FOR ASSEMBLER
+         LINK  EP=LIBRARY,PARAM=(LIBPLEN),VL=1
+         LR    R6,R15             SAVE RC
+         CVD   R15,DWORD
+         C     R6,RETCOD          IS THIS NEW HIGH RETRUN CODE
+         BNH   *+8                NO
+         ST    R6,RETCOD          YES
+         MVC   LNKNAM,=CL9'LIBRARIAN'
+         TM    UPSW,UTIL          WAS THIS 1ST PASS OF UTILITY
+         BO    LIBUTIL            YES, SET UP FOR 2ND
+         MVC   LNKPNAM,=CL8'UPDATES'
+         BAL   L4,PRINTRC         GO PRINT RETURN CODE
+         MVI   0(R5),X'11'        DBL SPACE AFTER
+         TM    OPT2,ONEIP         IS IT ONE I/P RUN
+         BZ    CHKDLM              SEE IF DELETES FOR OBJLIB
+         LTR   R6,R6              CHECK LIBRARIAN RC
+         BZ    CHKDLM              SEE IF DELETES FOR OBJLIB
+         LA    R5,ERR1
+         LA    R1,L'ERR1
+         BAL   L4,PRINTMY         PRINT ERROR MSG
+         B     EOJ                ABORT RUN
+         SPACE 1
+*
+*   DELETE MEMBERS FROM OBJLIB THAT HAVE BEEN DELETED FROM LBIR
+*        VIA -DLM OR RENAME UNLESS ERROR FROM LIBR, ONEIP RUN, OR MACRO
+*
+CHKDLM   EQU   *
+         TM    UPSW,DODLM          ANY TO WORRY ABOUT
+         BZ    ASMSETUP            NO
+         TM    OPT2,STOMAC         IS IT MACRO UPDATE
+         BO    ASMSETUP            YES, VER NBR NOT IN OBJLIB
+         LTR   R6,R6               ANY ERR FROM LIBR
+         BNZ   DLMERR1             YES, PUT MSG AND IGNORE DELETES
+         OC    OBJUCB,OBJUCB       ANY DD CARD FOR OBJLIB
+         BZ    DLMERR2             NO, ERROR
+         LA    R2,OBJDS
+         TM    DSW,DSTO            IS OBJLIB PARTITIONED DS
+         BZ    DLMERR3             NO, CAN'T DELETE
+         RESERVE (QNAM,DSN,E,44,SYSTEMS),UCB=OBJUCB
+         L     R15,=A(MCLTAB)      DLMTAB EQUALS MCLTAB
+         ST    R15,MPCLSAV         SAVE IT
+         BAL   L4,OPENS            OPEN PDS OBJLIB
+DLMLP    L     R14,MPCLSAV         ADD OF NXT NAME
+         C     R14,DLMPT
+         BNL   ENDDLM              ALL DONE
+         SR    R15,R15
+         IC    R15,0(,R14)         360 LEN OF NAME
+         LA    R0,2(R15,R14)       NXT ENTRY
+         ST    R0,MPCLSAV          SAVE IT
+         MVC   PROG,PROG-1         BLANK
+         EX    R15,PROGMOV         PUT NAME IN
+         STOW  OBJ,PROG,D          DELETE MEMBER
+         MVC   CARD(LN04-4),MSG+4  CONSTRUCT MSG
+         MVC   CARD(2),=C'08'      MSG NBR
+         LA    R5,CARD
+         MVC   MNAM-5(8,R5),PROG   NAME IN MSG
+         MVC   MACT-5(14,R5),=CL14'DELETED FROM -'
+         LTR   R15,R15             TEST RETURN FROM STOW
+         BZ    DLMPRT              GOOD
+         C     R15,=F'8'           IS IT NOT FOUND
+         BE    DLMNF               YES
+         MVC   MACT-5(13,R5),=C'ERROR ON STOW'
+         B     DLMPRT              PUT MSG
+DLMNF    MVC   MACT-5(12,R5),=C'NOT FOUND IN'
+DLMPRT   EQU   *
+         LA    R1,LN04-4
+         BAL   L4,PRINTMY
+         B     DLMLP               CHECK FOR MORE DELETES
+ENDDLM   EQU   *
+         MVI   0(R5),X'11'        DBL SPACE AFTER DELETE MSGS
+         DEQ   (QNAM,DSN,44,SYSTEMS)  RELEASE DEVICE AND DATA SET
+         CLOSE OBJ                 CLOSE DATA SET
+         B     ASMSETUP
+DLMERR1  LA    R5,ERR10            ADDR OF ERROR MSG
+         LA    R1,L'ERR10          LEN OF MSG
+         B     DLMPRTER            GO LIND TO PRINT ROUTINE
+DLMERR2  LA    R5,ERR11
+         LA    R1,L'ERR11
+         B     DLMPRTER
+DLMERR3  LA    R5,ERR12
+         LA    R1,L'ERR12
+DLMPRTER BAL   L4,PRINTMY
+         B     ASMSETUP            CONTINUE RUN
+         SPACE 3
+*
+*     AFTER 1ST LINK TO LIBRARIN ON UTILITY RUN SET UP FOR
+*        2ND LINK, PASSING BACK OSJOB O/P FROM 1ST PASS.
+*              OSJOB DD CARD MUST BE PDS WITH MEMBER NAME 'UTILITY'
+*                     SPECIFIED IN DSNAME.
+*
+LIBUTIL  EQU   *
+         MVC   LNKPNAM,UTILNAM    COMPLETE RC MSG
+         BAL   L4,PRINTRC         PRINT IT
+         C     R6,RCLIMIT         ERROR ON 1ST PASS
+         BH    UTILERR            YES, ABORT
+         MVI   0(R5),X'11'        DBL SPACE
+         NI    UPSW,255-UTIL-DOUPDAT  TURN OFF 1ST PASS & UPDATES
+         LA    R2,LINDS           REOPEN LIBRARIAN I/P DS
+         BAL   L4,OPENS
+         LR    R3,R2              USE FOR O/P
+         LA    R2,LDATADS         OPEN DATA DCB
+         BAL   L4,RDJFCB          READ JFCB
+         B     UTILER1            NUST NOT BE DD CARD
+         L     R6,EXJFCB          ADDR OF JFCB
+         USING IEFJFCBN,R6
+         TM    JFCDSORG,X'40'     IS IT SEQ
+         BO    SEQLIB             YES
+         TM    JFCBIND1,1          IS MEMBER NAME BIT ON
+         BZ    UTILER1             NO, CAN'T DO IT
+         MVC   UTILNAM,JFCBELNM    SAVE NAME FOR FIND & STOW
+         DROP  R6
+         BAL   L4,OPENJ            OPEN FOR INPUT
+         FIND  LDATA,UTILNAM,D    POINT OT START OF UTIL O/P
+         LTR   R15,R15            ANY ERROR ON FIND
+         BNZ   UTILER1            YES
+         OI    UPSW2,UTIL2        DELETE MEMBER UTILITY AFTER EOF
+LIBSEQ   EQU   *
+         BAL   L3,GET             READ 1ST RECORD
+         B     CTLEOF             NO O/P FROM LIBR
+         CLC   CARD(4),LOPT       IS IT LOPE CARD
+         BE    CTLDCOD            YES
+         MVC   CARD,0(R1)         SAVE I/P
+         LA    R1,LOPT            USE DEFAULT
+         BAL   L3,PUT
+         LA    R1,CARD            SHOW DATA ALREADY IN CARD
+         B     CTLDCOD            PROCESS CARD
+UTILER1  EQU   *
+         LA    R5,ERR16           UNAMBLE TO FIND UTILITY O/P
+         LA    R1,L'ERR16
+UTILEOJ  BAL   L4,PRINTMY         PEINT ERROR
+         B     EOJ                END RUN
+UTILERR  L     R5,=A(ERR17)       EROR RETURN FROM LIBRARIAN
+         LA    R1,L'ERR17              ON UTILITY PASS
+         B     UTILEOJ            END RUN
+SEQLIB   EQU   *
+         MVC   LDATA+26(2),DIR+26 CHANGE DCBDSORG TO PS
+         BAL   L4,OPENJ           USE OPEN 4 SO WILL FREE JFCB
+         B     LIBSEQ             CONTINUE
+         SPACE 3
+MIXEOF   MVI   0(R5),X'19'        TRIPLE SPACE
+         TM    OPT2,ENDO          WANT END CARD
+         BZ    ENDCTL             NO, GO TO ASM
+         LA    R1,ENDCD           PUT END CARD TO ASM I/P
+         BAL   L3,PUT
+         B     ENDCTL
+*
+*        DECODE MY CONTROL CARDS
+*
+         SPACE 3
+ASMRC    EQU   *
+         BAL   L4,PRINTCD         PRINT CARD
+         LA    R14,CARD+6
+         LA    R15,65             BEFORE COL 71
+         BAL   L2,SCANS
+         B     INVALCD            INVALID CARD
+         BAL   L2,SCANC           GET START AND LEN
+         NOP   *+4
+         LA    R1,0(R14,R15)      POINT TO LAST CHAR
+         C     R15,=F'8'          IS IT TOO LONG
+         BNL   INVALCD
+         CLI   0(R1),C'0'         IS IT NUMERIC
+         BL    INVALCD
+         EX    R15,RCPACK
+         CVB   R1,DWORD
+         ST    R1,RCLIMIT         FOR ASMLNK
+         B     LIBLOOP
+RCPACK   PACK  DWORD,0(0,R14)
+         SPACE 3
+LNKPRM   EQU   *
+         LA    R6,LNKPLEN         ADDR OF PARM TO OVERLAY
+         B     PARMOVR            DO IT
+         SPACE 3
+LIBPRM   EQU   *
+         LA    R6,LIBPLEN         ADDR OF PARM TO OVERLAY
+         B     PARMOVR
+         SPACE 3
+ASMPRM   EQU   *                  OVERIDE DEFAULT PARMS FOR ASSEMBLER
+         LA    R6,ASMPLEN         ADDR OF ASMBLR PARMS
+         SPACE 1
+PARMOVR   EQU  *             OVERLAY DEFAULT PARM FIELD  IN REG 3
+         BAL   L4,PRINTCD         PRINT CARD
+         LA    R14,CARD+5
+         LA    R15,74
+         BAL   L2,SCANS           FIND START
+         B     NOPRM              NUL PARM
+         BAL   L2,SCANB           FIND END
+         NOP   *+4                USE WHOLE REST OF CARD
+         EX    R15,MVCPRM         OVERLAY DEFAULTS
+         LA    R15,1(,R15)
+LENPRM   EQU   *
+         STH   R15,0(,R6)         NEW PARM LENTH
+         B     LIBLOOP
+NOPRM    EQU   *
+         SR    R15,R15
+         B     LENPRM
+MVCPRM   MVC   2(0,R6),0(R14)
+         SPACE 3
+MACRD    EQU   *                  GET NAME OF IN-STREAM MACROS WANTED
+         BAL   L4,PRINTCD
+         LA    R14,CARD+4         START SCAN ADDR
+         LA    R15,75
+         BAL   L2,SCANS           FIND 1ST
+         B     INVALCD            NOTHING ON CARD
+         LA    L4,MCLP            RETURN IF INVALID NAME
+MCLP     CLI   SCNSTP,C' '        WAS IT LAST ON CARD
+         BE    LIBLOOP            YES
+         BAL   L2,SCANC           NEXT NAME
+         B     LIBLOOP            END OF CARD
+         C     R15,=F'8'          CHECK LEN
+         BNL   INVALNAM           TOTO LONG
+         LA    R1,2(,R15)         ACTUAL LEN OF NAME + LEN BYTE
+         LNR   R1,R1              MAKE SUBTR
+         A     R1,MCLPT           SLOT TO USE
+         C     R1,PCLPT           ROOM LEFT
+         BL    NOROOM             NO
+         OI    UPSW,DOMCL         DO LATER
+         EX    R15,MCLMVC         MOVE NAME
+         STC   R15,1(R15,R1)      SAVE LEN
+         ST    R1,MCLPT           NEXT SLOT
+         B     MCLP               SEE IF MORE ON CARD
+MCLMVC   MVC   0(0,R1),0(R14)
+         SPACE 3
+PCL      EQU   *             GET NAMES OF PROGS TO ASSEMBLE W/O UPDATE
+         BAL   L4,PRINTCD         PRINT CARD
+         LA    R14,CARD+4         START SCAN ADDR
+         LA    R15,66             DON'T LOOK BEYOND COL 71
+         BAL   L2,SCANS           FIND START
+         B     INVALCD            INVALID
+         LA    L4,PCLLP           RETURN FROM INVALNAM
+PCLLP    CLI   SCNSTP,C' '        END OF DATE
+         BE    LIBLOOP            YES, NEXT CARD
+         BAL   L2,SCANC           FIND NAME
+         B     LIBLOOP            END OF CARD
+         C     R15,=F'8'          CHECK LEN
+         BNL   INVALNAM           TOO LONG
+         TM    OPT1,MIXIN         IF MIXED I/P DO PCL NOW
+         BO    PCLMIX
+         L     R1,PCLPT           GET NEXT SLOT
+         LA    R0,2(R15,R1)       NEXT AFTER THIS
+         C     R0,MCLPT           ROOM
+         BH    NOROOM             NO
+         EX    R15,PCLMVC         MOVE NAME
+         STC   R15,0(R1)          SAVE LEN
+         ST    R0,PCLPT           SAVE NXT SLOT
+         OI    UPSW,DOPCL         DO LATER
+         B     PCLLP              CHECK MORE ON CARD
+PCLMVC   MVC   1(0,R1),0(R14)
+         SPACE 1
+PCLMIX   BCTR  R14,0              ADJUST NAME POINTER FOR PCL ROUTINE
+         LA    R2,LIBDS           I/P
+         B     CTLMIX             GO WRITE TO ASM I/P
+         SPACE 2
+NOROOM   EQU   *                  INSUFFICIENT ROOM IN TABLE FOR PCL/MC
+         LA    R5,ERR3            EROR MSG
+         LA    R1,L'ERR3          BAL
+         BAL   L4,PRINTMY         PRINT MSG
+         B     LIBLOOP            NEXT CARD
+         SPACE 1
+INVALCD  EQU   *
+         S     R14,=A(CARD-1)
+         CVD   R14,DWORD          CARD COL OF ERROR
+         MVC   CCOL,=X'40212020'  MASK
+         ED    CCOL,DWORD+6
+         LA    R5,ERR4            ERROR MSG
+         LA    R1,LN54
+         BAL   L4,PRINTMY
+         B     LIBLOOP
+         SPACE 1
+INVALNAM EQU   *
+         S     R14,=A(CARD-1)
+         CVD   R14,DWORD          CARD COL OF INVALID NAME
+         MVC   NCOL,=X'40212020'
+         ED    NCOL,DWORD+6
+         LA    R5,ERR5
+         LA    R1,LN55
+         B     PRINTMY            WILL RETURN TO PROPER LOOP
+         SPACE 1
+SELCD    EQU   *    CHECK FOR RENAME OPTION TO DO DELETE FROM OBJ
+         LA    R14,CARD+4          START OF SCAN
+         LA    R15,76             LEN
+         BAL   L2,SCANS            FIND 1ST NON-BLANK
+         B     LIBPRT              IGNORE IF NONE
+         BAL   L2,SCANC            ISOLATE 1ST OPERAND
+         B     LIBPRT              ERROR
+         CLI   SCNSTP,C','        WAS IT DELIMITTED BY COMMA
+         BNE   LIBPRT              NO, CANT BE RENAME
+         LR    R5,R14              SAVE START OF PROG NAME
+         LR    R6,R15              360 LEN
+SELCDLP  CLI   SCNSTP,C' '         DID BLANK STOP
+         BE    LIBPRT              YES, NO MORE OPTIONS
+         BAL   L2,SCANC           GET NXT OPERAND
+         B     LIBPRT
+         CH    R15,=H'5'          IS LEN RIGHT FOR RENAME
+         BNE   SELCDLP             NO, CHK NXT OPERAND
+         CLI   SCNSTP,C'='         ANY OP
+         BNE   SELCDLP             NO, NOT REANME=
+         CLC   0(6,R14),=C'RENAME' IS IT RENAME
+         BNE   SELCDLP             NO
+         LR    R14,R5              NAME OF PROG TO DELETE
+         LR    R15,R6              LEN OF NAME
+         B     DLMCDAD             PUT NAME IN LIST TO DELETE FROM OBJ
+         SPACE 1
+DLMCD    EQU   *      SAVE NAMES OF MODULES DELETED TO DEL FROM OBJLIB
+         LA    R14,CARD+4          START OF SCAN
+         LA    R15,76              LEN
+         BAL   L2,SCANS            1ST NON-BLANK
+         B     LIBPRT              NONE
+         BAL   L2,SCANC            GET PROG NAME
+         B     LIBPRT
+DLMCDAD  C     R15,=F'8'           CHK LEN OF NAME
+         BNL   LIBPRT              ILLEGAL NAME, FORGET IT
+         L     R1,DLMPT            NEXT AVAIL SLOT IN TABLE
+         LA    R0,2(R15,R1)        ADDR OF NXT SLOT
+         C     R0,=A(LIBLOOP)     IS THERE ANY ROOM IN TABLE
+         BH    LIBPRT              NO ROOM, IGNORE
+         EX    R15,DLMMOV PUT NAME IN TABLE
+         ST    R0,DLMPT            SAVE NEXT AVAIL
+         STC   R15,0(R1)           SAVE LEN OF NAME
+         OI    UPSW,DODLM         SHOW MODULES TO BE DELETED AFTER LIBR
+         B     LIBPRT              PRINT CARD AND CONTINUE
+DLMMOV   MVC   1(0,R1),0(R14)
+*       CAN USE LEVEL 1 SUBROUTINES AFTER THIS POINT
+*              UNLESS USED BY MIXED INPUT ROUTINES
+         LTORG ,                  LITERALS FOR INIT AND LIBR INERFACE
+         EJECT
+*
+*      ASMSETUP - PRIPARE FOR LINKING TO ASSEMBLER
+*
+ASMSETUP EQU   *
+         TM    UPSW,UPONLY        ARE WE ALL DONE
+         BO    EOJ                YES
+         LA    R2,AINDS           ASSEMBLER I/P
+         MVI   CARD-1,C' '         FOR BALNKING
+         BAL   L4,OPENS            OPEN IT
+         OI    DSW,DSNOTE          WANT NOTE 1ST TIME
+         TM    OPT1,NODECK         WANT OBJLIB UPDATED
+         BO    NOAOTOPN            NO
+         LA    R2,AOTDS           ASSEMBLER'S O/P
+         BAL   L4,OPENS            OPEN
+         OI    DSW,DSNOTE          SAVE START ADDR
+NOAOTOPN EQU   *
+         SPACE 2
+*
+*       PUT MACROS IN-STREAM
+*
+         TM    UPSW,DOMCL         ANY MACROS REQUESTED
+         BZ    NOMAC              NO
+         LA    R5,MSG10
+         LA    R1,LN10
+         BAL   L4,PRINTMY
+         MVI   0(R5),X'11'        DBL SPACE AFTER DSN MSG
+         LA    R2,LIBDS
+         OI    LIBSW,DSLMULT      DON'T CLOSE LIB ON EOF
+         L     R14,=A(MCLTAB)     START (END) OF TAB
+         MVC   CARD,CARD-1         BLANK
+         LA    R3,AINDS           PUT TO ASSEMBLER I/P
+         TM    OPT1,ASM           IS IT ASSEMBLY RUN
+         BZ    MACLP              NO
+         MVC   CARD(LN10),MSG10   SHOW DSN -MCL FROM
+         MVC   CARD(2),=C'* '      MAKE COMMENT
+         LA    R1,CARD
+         BAL   L3,PUT             PUT IN ASSEMBLER'S I/P
+         MVC   CARD,CARD-1        BLAND
+         TM    OPT1,PMAC          WANT MACROS LISTED BY ASSEMBLER
+         BO    MACONT             YES
+         MVC   CARD+1(9),=CL9'PRINT OFF'
+         LA    R1,CARD
+         BAL   L3,PUT             WRITE PRINT OFF CARD AHEAD OF MACS
+         MVC   CARD+1(9),CARD     BLANK AGAIN
+MACONT   MVC   CARD+20(23),=CL23'MACRO INSTREAM VIA -MCL'
+         MVI   CARD,C'*'
+         L     R14,=A(MCLTAB)      START(END) OF NAMES
+MACLP    C     R14,MCLPT          ANY MORE
+         BNH   MACEND             NO
+         BCTR  R14,0              POINT AT LEN BYTE
+         SR    R15,R15
+         IC    R15,0(R14)         LEN OF NAME
+         SR    R14,R15
+         BCTR  R14,0              START OF NAME
+         ST    R14,MPCLSAV        SAVE IT
+         L     R1,FAIRBUF         ADDR OF BUFFER FOR LIBR
+         MVC   PROG,PROG-1        CLEAR NAME FIELD
+         EX    R15,MOVLNAMP       MOVE NAME TO PROG IN CASE NOT FNTD
+         MVC   8(8,R1),PROG       FOR MPOINT ROUTINE
+         MVI   FAIRP2,0           ADD LIB DDNAME PARM FOR FAIR
+         BAL   L2,MPOINT          FIND START OF MEMBER
+         CLI   LIBRET,C'0'
+         BE    GOTMAC
+         BAL   L4,NOTFND          PRINT ERROR MSG
+         L     R14,MPCLSAV        RESORE POINTER
+         MVI   0(R14),255          MARK NOT FOUND
+         B     MACLP
+GOTMAC   EQU   *
+         LA    R3,AINDS
+         MVC   CARD+5(8),PROG
+         TM    OPT1,ASM
+         BZ    NOMCOM
+         LA    R1,CARD
+         BAL   L3,PUT             WRITE COMMENT CARD SHOWING MAC VER
+NOMCOM   EQU   *
+         OI    DSW-DSCTL(R3),DSTRNC  DON'T WRITE EOF ON ASSEM I/P
+         BAL   L2,COPY            COPY TO ASSEMBLER INPUT
+         L     R14,MPCLSAV        RELOAD
+         LA    R2,LIBDS           POINT TO LIBR DATA SET AGAIN
+         B     MACLP
+MOVLNAMP MVC   PROG(0),0(R14)
+MACEND   EQU   *
+         TM    OPT1,ASM
+         BZ    MACDON             NOT ASSEMBLY
+         TM    OPT1,PMAC          DID WE PRINT MACROS
+         BO    MACDON             YES, ALL DONE
+         MVC   CARD+1(9),=CL9'PRINT ON'  TURN PRINT BACK ON
+         MVI   CARD,C' '
+         LA    R1,CARD
+         BAL   L3,PUT             WRITE TO ASSEMBLER I/P
+         MVC   CARD+1(9),CARD
+         MVI   CARD,C'*'          MAKE COMMENT
+         L     R2,=A(MCLTAB)      LIST OF MACROS NOT PRINTED
+MACNAMLP C     R2,MCLPT           IS IT END
+         BNH   MACLAST            YES
+         BCTR  R2,0               POINT AT LEN BYTE
+         SR    R15,R15
+         IC    R15,0(R2)          360 LEN OF NAME
+         SR    R2,R15
+         BCTR  R2,0               START OF NAME
+         CLI   0(R2),255           WAS IT FOUND ON LIBR DATA SET
+         BE    MACNAMLP            NO, SKIP IT
+         MVC   CARD+5(8),CARD+4   BLANK NAME FIELD IN CARD
+         EX    R15,MVCMAC         PUT NAME IN
+         LA    R1,CARD
+         BAL   L3,PUT             WRITE FOR ASSEMBLER
+         B     MACNAMLP
+MACLAST  LR    R2,R3
+         BAL   L4,CLOSES          ANOTHER TRUNK
+MACDON   EQU   *
+         LA    R2,LIBDS
+         NI    LIBSW,255-DSLMULT      NOW LET LIBR CLOSE
+         BAL   L4,CLOSES          CLOSE MACRO
+         LA    R2,AINDS
+         L     R3,DCBAD           FOR NOTE
+         NOTE  (R3)               SAVE ADDR OF LAST MACRO RECORD
+         ST    R1,DSPNT
+         MVI   DSPNTNXT,1         MAKE POINT NEXT RECORD
+         NI    DSW,255-DSTRNC-DSNOTE  RESET
+         B     LIBR               GO CHECK LIBRARIAN PDS
+NOMAC    LA    R2,AINDS
+         B     LIBR
+MVCAP    MVC   ASMP(0),0(R14)     EXECUTED INSTR
+MVCMAC   MVC   CARD+5(0),0(R2)
+         EJECT
+*
+*     ROUTINE TO PROCESS PDS O/P FROM LIBRARIAN
+*
+LIBR     EQU   *
+         TM    UPSW,DOUPDAT       WAS THERE LIBR I/P
+         BZ    CTLCALL
+         TM    OPT2,ONEIP         IS IT ONE I/P RUN
+         BO    CTLCALL            YES, IGNORE LIBR O/P
+         LA    R2,DIRDS           OPEN LIBRARIAN O/P DATA SETS
+         BAL   L4,RDJFCB          GO READ JFCB
+         B     LIBRER             MUST NOT BE DD CARD
+         L     R6,EXJFCB          ADDR OF JFCB
+         USING IEFJFCBN,R6
+         TM    JFCDSORG,X'40'     IS IT SEQ DS
+         BO    SEQOSJOB           YES
+         NI    JFCBIND1,X'FE'     TURN OFF MEMBER BIT IF ON
+         DROP  R6
+         BAL   L4,OPENJ           OPEN DIRECTORY AS PS
+         LA    R2,LDATADS
+         BAL   L4,OPENS
+LIBLP    BAL   L1,NXTMEM          FIND NEXT MEM FROM LIBARARIAN
+         B     CTLCALL            THAT'S ALL FOLKS
+LIBRSEQ  EQU   *                  ENTRY TO LOOP IF OSJOB IS SEQ
+         TM    OPT2,CPYONLY       NO POST PROCESS
+         BO    LIBCPY             YES
+         LA    R2,AINDS           ASSEM I/P
+         BAL   L2,POINT           POINT PAST IN STREAM MACRO
+         LR    R3,R2
+         LA    R2,LDATADS         LIBRARIAN O/P
+         BAL   L2,POINT           POINT TO START OF MEMBER
+         OI    CPYSW,ENDIF        WAND END CARD IF RT
+         BAL   L2,COPY            COPY TO ASSEMBLER I/P
+         NI    CPYSW,255-ENDIF
+         BAL   L1,ASMLNK          GO ASSEMBLE
+         B     LIBLP
+LIBCPY    EQU  *
+         LA    R4,LDATADS         FROM DS
+         BAL   L1,RESCOPY         DO RESERVE AND COPY
+         B     LIBLP
+SEQOSJOB EQU   *
+         BAL   L4,OPENJF          FREE JFCB ADN MARK DIR AS NO DD
+         MVC   LDATA+26(2),DIR+26 CHANGE DCBDSORG TO PS
+         LA    R2,LDATADS         OPEN LDATA DCB AS SEQ
+         BAL   L4,OPENS
+         OI    DSW,DSNOTE         PREVENT POINT
+         MVC   PROG,=CL8'OSJOBDD'   DUMMY PROG NAME
+         LA    R14,6
+         STH   R14,NAMLEN
+         B     LIBRSEQ            GO COPY FOR ASMBLR OR WHATEVER
+LIBRER   L     R5,=A(ERR18)       UNABLE TO OPEN OSJOB
+         LA    R1,L'ERR18
+         BAL   L4,PRINTMY         PRINT IT
+         B     CTLCALL            GO PROCESS -PCL CARDS
+         SPACE 3
+*
+*     ROUTINE TO CALL FOR ASSEMBLY
+*
+CTLCALL  EQU   *
+         LA    R2,LIBDS           LIB CTL
+         TM    UPSW,DOPCL         ANY TO DO
+         BZ    EOJ                NO
+         L     R14,=A(PCLTAB)      START OF TABLE
+         ST    R14,MPCLSAV
+         TM    OPT2,ONEIP         IS I/P TO BE COMBINED
+         BZ    CTLOOP             NO
+         OI    AINDS+(DSW-DSCTL),DSTRNC DON'T CLOSE AIN ON LIB EOF
+         OI    LIBDS+(LIBSW-DSCTL),DSLMULT SAME FOR LIB
+         TM    OPT2,CPYONLY      IS IT ALSO COPY ONLY
+         BZ    CTLCONT
+         OI    OBJDS+(DSW-DSCTL),DSTRNC DON'T CLOSE BTW COPPIES
+         LA    R2,LIBDS
+         B     CTLOOP             WILL NOT USE AINDS
+CTLCONT  EQU   *
+         LA    R2,AINDS           ASSEMBLY I/P
+         BAL   L2,POINT           DO POINT BEYOND MACROS NOW
+         LA    R2,LIBDS
+CTLOOP   L     R14,MPCLSAV        START THIS ENTRY
+         C     R14,PCLPT          IS IT END
+         BNL   ENDCTL             THAT'S ALL, CHECK IF COMBINED I/P
+         SR    R15,R15
+         IC    R15,0(R14)         LEN OF NAME
+         LA    R0,2(R15,R14)      NEXT SLOT
+         ST    R0,MPCLSAV         SAVE IT
+CTLMIX   EQU   *
+         MVC   PROG,PROG-1        BLANK IT
+         EX    R15,PROGMOV        PUT NAME IN
+         L     R1,FAIRBUF
+         MVI   0(R1),C' '         BLANK PARAM AREA
+         MVC   1(7,R1),0(R1)
+         MVC   8(8,R1),PROG       NAME TO FIND
+         STH   R15,NAMLEN         SAVE LENGTH
+         BAL   L2,MPOINT          LINK TO LIBR INTERFACE
+         CLI   LIBRET,C'0'        WAS IT FOUND
+         BE    GOTPROG            YES
+         BAL   L4,NOTFND          PRINT ERROR RTN
+         MVI   0(R5),X'11'        DBL SPACE AFTER MSG
+         TM    OPT1,MIXIN         IS IT FROM PCL CARD ROUTINE
+         BO    NXTMIX             YES, CONTINUE READING CTL CARDS
+         B     CTLOOP
+GOTPROG  EQU   *
+         TM    OPT2,CPYONLY
+         BO    PCLCPY             ONLY COPY LIBR MEMBER
+         LA    R2,AINDS           POINT TO ASSEM
+         TM    OPT2,ONEIP
+         BO    CONT7              DON'T POINT BTW COPPIES
+         TM    OPT1,MIXIN            FI ONEIP OR MIXIN
+         BO    CONT7
+         BAL   L2,POINT           POINT PAST IN-STREAM MACRO
+         OI    CPYSW,ENDIF        ADD END CARD IF REQUESTED
+CONT7    EQU   *
+         LR    R3,R2              FOR COPY
+         LA    R2,LIBDS
+         BAL   L2,COPY            MOVE FOR ASSEMBLER
+         NI    CPYSW,255-ENDIF
+         LA    R2,LIBDS           RESTORE I/P DS POINTER
+         TM    OPT1,MIXIN
+         BO    NXTMIX
+         TM    OPT2,ONEIP         ARE PCL'S TO BE COMBINED
+         BO    CTLOOP             YES, WAIT TILL HAVE ALL
+         BAL   L1,ASMLNK
+         LA    R2,LIBDS           RESET LIB PTR
+         B     CTLOOP
+NXTMIX   LA    R2,CTLDS           RESTORE CARD I/P POINTER
+         B     LIBLOOP            READ NXT CARD
+         DROP  L1
+PCLCPY   LR    R4,R2              I/P POINTER
+         OI    CPYSW,PNTDON
+         BAL   L1,RESCOPY         DO RESERVE AND COPY TO PDS
+         NI    CPYSW,255-PNTDON
+         LA    R2,LIBDS           RESET
+         TM    OPT1,MIXIN
+         BO    NXTMIX
+         TM    OPT2,ONEIP         ARE WE MERGING O/P
+         BZ    CTLOOP             NO
+         LA    L4,CTLOOP          RETURN POINT FOR MSGFIN
+         TM    NAMSW,MEMBER       ARE WE CREATING A MEMBER OF A PDS
+         BZ    MSGFIN             NO, SHOW ADDED TO DSN
+         MVC   MDSN(46,R5),MDSN-1(R5)  BLANK OUT DSN IN PRINT BUFFER
+         MVC   MDSN(8,R5),ELNM    SHOW ADDED TO MEMBER NAME
+         B     MSGFIN             COMPLETE MESSAGE AND CONTINUE
+PROGMOV  MVC   PROG(0),1(R14)
+ENDCTL   EQU   *
+         LA    R2,LIBDS           CLOSE LIB & ELETE ACPFAIR
+         NI    LIBSW,255-DSLMULT
+         BAL   L4,CLOSES
+         TM    OPT1,MIXIN         WERE WE MIXING CARDS WITH -PCL
+         BO    CONT4              YES, STILL HAVE TO COMPILE
+         TM    OPT2,ONEIP         WAS I/P COMBINED
+         BZ    EOJ                NO, ALL DONE
+CONT4    EQU   *
+         LA    R2,AINDS
+         NI    DSW,255-DSTRNC
+         BAL   L4,CLOSES          WRITE EOF ON ASM I/P
+         TM    NAMSW,SEQOBJ+MEMBER IS O/P SEQUENTIAL DD
+         BZ    GOTNAM             NO
+         MVC   PROG,=CL8'SEQDSORG'  SHOW IS SEQUENTIAL NOT PDS
+         MVI   NAMLEN+1,7
+         TM    NAMSW,MEMBER       IS SEQ MEMBER OF PDS
+         BZ    GOTNAM             NO
+         MVC   PROG,ELNM          MEMBER NAME FROM DD CARD
+GOTNAM   EQU   *
+         TM    OPT2,CPYONLY       WERE COPYING TO OBJ
+         BO CPYCLOSE              YES, ALL DONE
+         BAL   L1,ASMLNK          DO ASSEMBLY OR WHATEVER
+         B     EOJ                ALL DONE
+         SPACE 2
+CPYCLOSE EQU   *
+         PUT   SYSPRINT           GET BUFFER FOR COMPLETED MSG
+         LR    R5,R1              BUFFER ADDR
+         MVI   0(R5),C' '
+         LH    R15,SYSPRINT+82
+         BCTR  R15,0
+         BCTR  R15,0              360 LRECL-1
+         EX    R15,PRNTBLK        BLANK BUFFER
+         MVI   0(R5),9            PRINT AND SPACE ONE
+         MVC   1(LN04,R5),MSG
+         LA    R2,OBJDS            OBJLIB STILL OPEN
+         NI    DSW,255-DSTRNC
+         TM    NAMSW,SEQOBJ       IS IT PS DATA SET
+         BO    *+8                YES
+         BAL   L4,STOIT           DO STOW
+         BAL   L1,CLSDEQ          DEQ AND CLOSE OBJLIB
+EOJ      EQU   *                  END ALL PROCESSING
+         MVI   0(R5),X'19'        TRIPLE SPACE BEFORE EOJ MESSAGE
+         BAL   L4,CLOSE           CLOSE ANY OPEN DATA SETS
+         LA    R5,ENDMSG
+         LA    R1,L'ENDMSG
+         BAL   L4,PRINTMY         PRINT END RUN MSG
+         CLOSE MYPRINT
+         LR    R1,R13
+         L     R13,4(,R13)        CALLERS SAVE AREA
+         FREEMAIN R,LV=72,A=(1)   RETURN CORE FOR MY SAVE AREA
+         L     R15,RETCOD         HIGHEST RC FROM ASSEMBLER
+         LM    R0,R12,20(R13)     CALLER'S REGS
+         L     R14,12(,R13)       RETURN POINT
+         BR    R14
+         TITLE '  FIRST LEVEL SUBROUTINES'
+*
+*     LINK TO ASSEMBLER AND DISPOSE OF OBJECT DECK
+*
+ASMLNK   EQU   *
+         TM    OPT1,ASM           WAS A PROG REQUESTED
+         BCR   8,L1               NO, RETURN
+         TM    OPT1,WTO           DO WANT MSG TO OPER
+         BZ    NOWTO              NO
+         MVC   MSGOP+16(8),PROG   PUT NAME IN MSG
+MSGOP    WTO   'ASMI05  PROGNAME TO ASMBLR'
+NOWTO    EQU   *
+GOASM    LINK  EPLOC=GNAM,PARAM=(ASMPLEN,DDASM),VL=1 ASSEMBLE
+         LR    R6,R15             SAVE RETURN CODE
+         MVC   LNKNAM,LNKNAM-1    BLANK
+         MVC   LNKNAM(8),GNAM     NAME OF ASSEMBLER USED
+         MVC   LNKPNAM,PROG
+         CVD   R6,DWORD
+         BAL   L4,PRINTRC         GO PRINT MSESSAGE
+         ST    R6,ASMRCOD         SAVE FOR LNK CHECK
+         LA    R4,AOTDS           INPUT FILE DSCTL
+         B     *+6
+RESCOPY  SR    R6,R6              SHOW ZERO RC
+         LA    R5,CARD            DUMMY BUFF POINTER
+         MVI   CARD,C' '           BLANK IT
+         MVC   CARD+1(L'CARD-1),CARD
+         TM    OPT1,NOSYSP         CAN WE USE ASSEMBLERS PRINT
+         BO    NOPRT1             NO
+         OPEN  (SYSPRINT,OUTPUT)  S ASSEMBLER'S PRINT FILE
+         PUT   SYSPRINT           GET BUFFER
+         LR    R5,R1              ASVE BUFFER ADDR
+         MVI   0(R5),C' '
+         LH    R15,SYSPRINT+82    GET LERCL
+         BCTR  R15,0
+         BCTR  R15,0
+         EX    R15,PRNTBLK        BLANK OUT BUFFER
+         MVI   0(R5),9            PRINT AND SPACE 1
+NOPRT1   EQU   *
+         C     R6,RETCOD          IS IT NEW HIGH RC
+         BNH   *+8                NO
+         ST    R6,RETCOD
+         TM    OPT1,NODECK        DO WANT OBJECT DECK
+         BO    IGNOBJ             NO
+         C     R6,RCLIMIT         IS IT OK TO SAVE OBJ
+         BH    ASMER              NO
+         MVC   1(LN04,R5),MSG     PUT MSG IN BUFFER
+         OC    OBJUCB,OBJUCB       ANY UCB ADDR FOR OBJLIB
+         BZ    ASMER               NO
+         LA    R2,OBJDS
+         L     R14,DCBAD
+         USING IHADCB,R14
+         TM    DCBOFLGS,X'10'     IS DCB OPEN
+         DROP  R14
+         BO    NOBJOPN            YES
+         RESERVE (QNAM,DSN,E,44,SYSTEMS),UCB=OBJUCB RESERVE DATEA SET
+NOBJPDS  EQU   *
+         BAL   L4,OPENS           OPEN TO GET NEW 1ST AVAIL POINTER
+NOBJOPN  EQU   *
+         LR    R3,R2              SAVE FOR COPU
+         LR    R2,R4              INPUT POINTER
+         TM    CPYSW,PNTDON       DO WE NEED TO POINT I/P
+         BO    *+8                NO
+         BAL   L2,POINT           POINT TO START OF OBJECT DECK
+         BAL   L2,COPY            MOVE IT
+         LA    R2,OBJDS
+CLSDEQ   EQU   *
+         TM    DSW,DSTRNC         IS IT MERGE TO ONE O/P
+         BCR   1,L1               YES, LEAVE IT OPEN
+         TM    DSW,DSQS           IS IT QSAM
+         BNZ   DEQOBJ             YES, ALREADY CLOSE
+         L     R3,DCBAD
+         CLOSE ((R3))
+DEQOBJ   EQU   *
+         DEQ   (QNAM,DSN,44,SYSTEMS)   RELEASE DEVICE AND DATA SET
+NOBJDEQ  EQU   *
+         MVC   MNAM(8,R5),STONAM  PUT PROG NAME IN MSG
+         TM    NAMSW,SEQOBJ       IS THERE ANY NAME
+         BZ    ASMDON             YES
+         MVC   MNAM(8,R5),PROG    THERE WAS NO STOEW
+         MVC   MNAM-1(L'SEQMSG,R5),SEQMSG OVERLAY WITH SEQ MSG
+ASMDON   EQU   *
+         TM    OPT1,WTO           WANT MSG TO CONSOLE
+         BZ    NOWTO2             NO
+         MVC   MSGOP2+16(8),PROG  PUT PROG NAME IS MSG
+         MVI   MSGOP2+5,25        NO ERR MSG LEN
+         CLI   5(R5),C'4'         IS IT ERR MSG
+         BNH   MSGOP2             NO
+         MVI   MSGOP2+5,33        APPEND ERROR TO MSG
+MSGOP2   WTO   'ASMI06  PROGNAME DONE - ERROR'
+NOWTO2   EQU   *
+         LA    R5,5(,R5)
+         LA    R1,75              MAX LEN OF MSG
+         BAL   L4,PRINTMY         PRINT ON LOG AS WELL AS SYSPRINT
+         TM    OPT1,LNK           DO WANT LIND EDIT
+         BZ    ASMRET             NO
+         LA    R4,CARD            USE FOR BUFFER IN CASE NO SYSP
+         TM    OPT1,NOSYSP        CAN WE USE ASSEMBLERS PRINT FILE
+         BO    LNKPNO             NO
+         PUT   SYSPRINT           GET ANOTHER I/O AREA
+         LR    R4,R1              SAVE ADDR
+         MVI   0(R4),C' '         BLNK
+         LH    R15,SYSPRINT+82    LRECL
+         BCTR  R15,0
+         BCTR  R15,0
+         LR    R5,R4              FOR EXEC INSTR
+         EX    R15,PRNTBLK
+         MVI   0(R4),9            PRINT AND SPACE 1
+LNKPNO   TM    UPSW,USERLIN       WAS SYSLIN PROVIDED BY USER
+         BO    GOLNK              YES, DON'T PROVIDE NAME
+         TM    NAMSW,SEQOBJ       SEQ OBJ WO NAME IN DD
+         BZ    LNKNAMR            NO
+         TM    OPT2,ONEIP         IS IT ONEIP RUN
+         BO    LNKER              YES,ERROR
+LNKNAMR  MVC   LNKNAME,PROG       NAME FOR MODULE
+GOLNK    EQU   *
+         CLC   ASMRCOD,RCLIMIT    WAS THER ERROR FROM ASMBLR
+         BH    NOLNK              YES, SKIP LNK
+         LINK  EPLOC=LNAM,PARAM=(LNKPLEN,LNKDD),VL=1 GO TO LINK EDITOR
+         C     R15,RETCOD         IT IT NEW HIGH RC
+         BNH   *+8
+         ST    R15,RETCOD         SAVE NEW HIHG RC
+         CVD   R15,DWORD
+         MVC   LNKNAM,LNKNAM-1    BLANK
+         MVC   LNKNAM(8),LNAM     NAME OF EDITOR USED
+         MVC   LNKPNAM,PROG       PROG NAME
+         BAL   L4,PRINTLRC        PUT MSG TO MY PRINT
+         B     ENDLNK
+LNKER    LA    R5,ERR13           INVALID REQUEST FOR LINK
+         LA    R1,L'ERR13
+         B     PRTLNK
+NOLNK    LA    R5,ERR14           NO LNK DUE TO ASM RET CODE
+         LA    R1,L'ERR14
+         MVC   ERR14+2(8),PROG    PUT NAME IN MSG
+PRTLNK   BAL   L4,PRINTMY         PUT IN MY PRINT
+ENDLNK   EQU   *
+         MVC   2(108,R4),12(R5)   PUT MSG IN ASM PRINT IF USED
+ASMRET   EQU   *
+         MVI   0(R5),X'11'        DBL SPACE BTW ASSEMBLIES
+         TM    OPT1,NOSYSP        DID WE USE ASSEMBLERS PRINT
+         BCR   1,L1               NO, ALL DONE
+         CLOSE SYSPRINT           CLOSE ASSEMBLER'S PRINT FILE
+         FREEPOOL SYSPRINT
+         BR    L1                 RETURN TO CALLER
+ASMER    MVC   1(LN50,R5),ASMERMSG
+         MVC   AEMNAM(8,R5),PROG
+         B     ASMDON
+IGNOBJ   MVC   IGNAM,PROG         PUT PROG NAME IN MSG
+         MVC   1(LN07,R5),IGNMSG  FOR ASSEMBLER PRINT FILE
+         B     ASMDON
+PRNTBLK  MVC   1(0,R5),0(R5)      EXECUTED
+         SPACE 3
+*
+*   NXTMEM - RETRIEVE DIRECTORY FROM PDS
+*
+NXTMEM   EQU   *
+         USING DIRENT,R6
+         LA    R2,DIRDS           DIRECTORY DATA SET
+         CLI   DIRSW,0            NEED NEW BLOCK
+         BNE   GOTBLK             NO
+         BAL   L3,GET             READ DIR BLK
+         B     0(,L1)             EOF
+         MVI   DIRSW,1
+         LH    R7,0(,R1)          BLOCK LEN
+         LA    R7,1(R7,R1)        LAST BYTE OF BLOCK
+         LA    R6,2(,R1)          1ST ENTRY
+         STM   R6,R7,DSBCTL       SAVE
+GOTBLK   LM    R6,R7,DSBCTL       GET NEXT ENTRY POINTER
+         CLI   DIRNAM,255         IS IT LOGICAL END OF DIRECTORY
+         BCR   8,L1               YES
+         LR    R14,R6
+         LA    R15,8
+LENLP    CLI   0(R14),C' '        FIND END OF NAME
+         BE    GOTL
+         LA    R14,1(,R14)        NXT
+         BCT   R15,LENLP
+GOTL     SR    R14,R6             GET LEN
+         BZ    NONAME
+         BCTR  R14,0              360
+         STH   R14,NAMLEN         SAVE
+         MVC   PROG,DIRNAM
+         LA    R3,LDATADS         DATA PORTION
+         DROP  R2
+         USING DSCTL,R3
+         MVC   DSPNT,DIRTT        TTR FOR POINT
+         MVI   DSPNTNXT,0         START WITH THIS REC
+         DROP R3
+         USING DSCTL,R2
+BMPDIR   NI    DIRC,X'3F'         TURN OFF SWITCHES
+         IC    R14,DIRC           NBR HALFWORDS
+         SLL   R14,1
+         LA    R6,12(R14,R6)      NEXT SLOT
+         CR    R6,R7              CHECK END OF BLOCK
+         BH    NEWDIR
+         CLI   0(R6),0            DEAD SPACE
+         BNE   DIRET              NO, OK
+NEWDIR   MVI DIRSW,0              GET ANOTHER BLOCK NEXT TIME
+DIRET    ST    R6,DSBCTL          SAVE NEXT SLOT
+         B     4(,L1)             RETURN
+NONAME   LR    L2,L1
+         BAL   L1,BMPDIR
+         NOP   0
+         LR    L1,L2
+         B     NXTMEM             DO IT AGAIN
+         DROP  R6
+         TITLE ' LEVEL 2 SUBROUTINES - LINK VIA L2'
+*
+*    POINT - USED TO POSITION WITHIN A BSAM OR BPAM, OR TO RESET TO
+*              BEGINNING OF A QSAM
+*
+POINT    EQU   *
+         TM    DSW,DSNODD         DD MISSING
+         BCR   1,L2               YES
+         TM    DSW,DSQS+DSLIB     IS QSAM OR LIBRARIAN
+         BNZ   QPNT               YES
+         TM    DSW,DSNOTE         STILL WAINTING FOR NOTE
+         BCR   1,L2               YES, MUST BE RIGHT PLACE NOW
+         L     R1,DCBAD           ADDR OF DCB
+         LA    R0,DSPNT           FWORD WITH TTR
+         POINT (1),(0)
+         BR    L2                 RETURN
+QPNT     TM    DSW,DSQS           QSAM
+         BCR   8,L2               NO
+         L     R4,DCBAD           ADDR OF DCB
+         TM    48(R4),X'10'       IS IT OPEN
+         BZ    QPOP               NO
+         BAL   L4,CLOSES          CLOSE IT
+QPOP     BAL   L4,OPENS           OPEN
+         BR    L2
+         SPACE 3
+*
+*    MPOINT - LIBRARIAN OPEN CLOSE POINT INTERFACE
+*
+MPOINT   EQU   *
+         TM    DSW,DSLIB          LIBRARIAN FILE
+         BCR   8,L2               NO
+         TM    LIBSW,LIBFIN       FAIR IN
+         BO    MPCLS              YES, CHECK CLOSED
+         LOAD  EP=ACPFAIR
+         ST    R0,FAIRAD          SAVE ENTRY POINT
+         OI    LIBSW,LIBFIN
+         B     MPOPN
+MPCLS    TM    LIBSW,LIBGRP+DSLMULT KEEP LIB OPEN ?
+         BO    MPOPN              YES, LEAVE OPEN
+         TM    LIBSW,LIBOPN       IS IT OPEN
+         BZ    MPOPN              N0
+         L     R15,FAIRAD
+         LA    R1,FAIRBUF         PARM POINTER ALTHOUGH NOT USED
+         FAIR  CLS                CLOSE IN CASE NEW LIBRARY
+         NI    LIBSW,255-LIBOPN
+MPOPN    TM    LIBSW,LIBOPN       IS IT OPEN
+         BO    MPMOD              YES
+         LA    R1,FAIRBUF         DDNAME ALREADY THERE
+         L     R15,FAIRAD         FAIR ENTRY POINT
+         FAIR  OPN                OPEN MASTER
+         OI    LIBSW,LIBOPN       SHOW OPEN
+         NI    DSW,255-DSCLSD
+MPMOD    L     R14,FAIRBUF
+         MVC   0(8,R14),8(R14)    SHIFT IN MODULE NAME
+         MVI   FAIRP2,X'80'       IN CASE USED PARAM 3 FOR OPEN
+         LA    R1,FAIRBUF
+         L     R15,FAIRAD
+         FAIR  MOD                POINT TO MEMBER
+         TM    LIBSW,LIBGRP
+         BCR   8,L2
+         CLI   LIBRET,C'1'        IS IT END OF DIRECTORY
+         BCR   11,L2              YES, EOF RETURN
+         L     R15,FAIRBUF
+         LH    R14,GRPLEN
+         EX    R14,GRPCOMP        IS IT ONE
+         BE    4(,L2)             YES
+         B     MPMOD              NO, TRY NEXT
+GRPCOMP  CLC   GRPNAM(0),0(R15)
+         SPACE 3
+*
+*   COPY ONE DATA SET TO ANOTHER - R2 POINTS TO I/P, R3 TO O/P
+*
+COPY     EQU   *
+         TM    OPT2,TITL+CMNT+SRCDSN WANT ANYTHING ADDED
+         BZ    COPYLP             NO
+         TM    CPYSW,ENDIF        IS IT TO ASSEMBLER
+         BZ    COPYLP             NO
+         MVC   TITNAM,PROG        PUT FULL NAME IN TEXT PORTION
+         LA    R1,TITLE
+         MVC   TITLAB,PROG        1ST 4 CHAR IN NAME FIELD
+         TM    OPT2,TITL
+         BO    *+10               WANT TITLE CARD
+         MVC   TITLE(4),=C'*   '
+         BAL   L3,PUT
+         TM    OPT2,SRCDSN         WANT SOURCE LIB DSN
+         BZ    NOSRCMT             NO
+         MVC   CARD,CARD-1         BLANK
+         MVC   CARD(LN09),MSG09
+         MVC   CARD(2),=C'* '     MAKE COMMENT
+         LA    R1,CARD
+         BAL   L3,PUT              WRITE COMMENT CARD WITH DSN OF LIB
+NOSRCMT  EQU   *
+         TM    OPT2,NOGENO        WANT NOGEN
+         BZ    COPYLP
+         LA    R1,NOGEN
+         BAL   L3,PUT             WRITE TITLE CARD
+COPYLP   EQU   *
+         BAL   L3,GET
+         B     CPYEOF
+         BAL   L3,PUT
+         B     COPYLP
+CPYEOF   TM    CPYSW,ENDIF        WANT END CARD IF REAL TIME
+         BZ    CPYCLS             NO
+         TM    OPT2,ENDO          DO WANT END CARD GENERATED
+         BZ    CPYCLS             NOT REAL TIME
+         LA    R1,ENDCD
+         BAL   L3,PUT             WRITE END CARD
+CPYCLS   LR    R2,R3              POINT TO O/P
+         BAL   L4,CLOSES          CLOSE O/P
+         BR    L2
+         SPACE 3
+*
+*   SCAN SUBROUTINES
+*
+*        SCANS CALLED WITH START IN R14 AND LENGTH IN R15. WILL FIND
+*              1ST NON-BLANK ITS ADDR IN R14 AND LEN OF BLANK FIELD
+*              IN R15.
+*        SCANC WILL RETURN WITH START OF NEXT FIELD IN R14 AND ITS
+*              LEN IN R15. NO INPUT REQUIRED. IF 1ST CALL AFTER SCANS
+*              R14 WILL BE SAME AS RETURN THEN
+*        SCANB . SAME AS SCANC EXCEPT ONLY BLK WILL STOP
+*        SCANNB. SAME AS SCANS EXCEPT NO I/P (CONTINUES PREVIOUS SCAN
+*              STOPPED BY BLANK)
+SCANS    EQU   *                  RESET SCAN FIELD POINTERS
+         LR    R1,R15             LEN TO SCAN
+         AR    R1,R14             ADD START
+         BCTR  R1,0
+         LA    R0,1               INCREMENT
+         LR    R15,R14
+SLP      CLI   0(R15),C' '        IS IF BLANK
+         BNE   BLNKRET            NO, STOP HERE
+         BXLE  R15,R0,SLP
+         B     SCANERET           ERROR
+BLNKRET  STM   R15,R1,SCNCTL      START NXT SCAN ON THIS STOP
+         MVC   SCNSTP,0(R15)      SAVE STOP CHAR
+         SR    R15,R14            GET LEN OF FIELD
+         BCTR  R15,0
+         B     4(,L2)
+         SPACE 1
+SCANB    EQU   *                  SCAN TO BLANK
+         BAL   L3,SCNINIT         SET UP REGS
+BLP      CLI   0(R15),C' '        THIS IT
+         BE    BLNKRET            YES
+         BXLE  R15,R0,BLP
+SCANERET ST    R15,SCNCTL         SAVE POINTER
+         MVI   SCNSTP,255
+         SR    R15,R14
+         BCTR  R15,0
+         BR    L2
+         SPACE 1
+SCANNB   EQU   *                  FIND NON-BLANK
+         BAL   L3,SCNINIT
+         B     SLP                SAME AS START FROM HERE
+         SPACE 1
+SCANC    EQU   *                  FIND COMMA OR BLANK
+         BAL   L3,SCNINIT
+CLP      CLI   0(R15),C','
+         BE    NONBRET
+         CLI   0(R15),C'='
+         BE    NONBRET
+         CLI   0(R15),C' '
+         BE    BLNKRET
+         BXLE  R15,R0,CLP
+         MVI   SCNSTP,255          SHOW END OF FIELD
+         B     *+10                NORMAL RETURN
+NONBRET  MVC   SCNSTP,0(R15)      SAVE STOP CHAR
+         LA    R0,1(,R15)         START NEXT SCAN PAST DELIM
+         ST    R0,SCNCTL
+         SR    R15,R14
+         BCTR  R15,0
+         B     4(,L2)             RETURN
+         SPACE 1
+SCNINIT  EQU   *                  SET UP TO CONTINUE SCAN
+         LM    R15,R1,SCNCTL      START, INCR ,END
+         LR    R14,R15
+         CR    R14,R1             ALREADY BEYOND END
+         BCR   13,L3              NO, OK
+         MVI   SCNSTP,255
+         LNR   R15,R15            NEG LEN
+         BR    L2
+         TITLE ' LEVEL THREE SUBROUTINES - LINK VIA L3'
+*
+*   GET - COMMON ROUTINE TO RETRIEVE NEXT RECORD
+*
+*        COMMON:
+*              R2 = ADDR OF DSCTL
+*
+*        QSAM:
+*              EITHER LOCATE OR MOVE MODE.
+*              IF MOVE MODE DSBAD HAS ADDR OF WORK AREA ON ENTRY.
+*              FOR EITHER RECORD POINTER IS IN R1 AND DSBAD ON RETURN.
+*
+*        BSAM:
+*              ALWAYS LOCATE MODE WITH REC ADDR IN REG 1.
+*
+*        EOF:
+*              QSAM CLOSED AND FREEPOOL. BSAM BUFFER FREED.
+*
+GET      TM    DSW,DSNODD+DSCLSD  DD MISSING OR DS CLOSED
+         BCR   7,L3               YES, SIMULATE EOF
+         TM    DSW,DSQS           QSAM
+         BO    QGET
+         TM    DSW,DSLIB          LIBRARIAN
+         BO    LGET
+*  MUST BE BSAM
+         TM    DSBAD+3,1          DO WE HAVE A BUFFER
+         BZ    GGOTB              YES
+         L     R14,DCBAD          DCB ADDR
+         USING IHADCB,R14
+         LH    R0,DCBBLKSI        BLOCKSIZE FROM LABEL
+         DROP  R14
+         BAL   L4,GETMAIN         GET BUFFER FROM SP 0
+         ST    R1,DSBAD           SAVE IT
+         LR    R0,R1
+         B     GREAD
+GGOTB    LM    R15,R1,DSBCTL      GET BUFFER POINTERS
+         BXLE  R15,R0,GRET
+         L     R0,DSBAD           BUFFER EMPTY
+GREAD    L     R14,DCBAD           DCB ADDR
+         READ  RDECB,SF,(14),(0),'S'
+         CHECK RDECB
+         TM   DSW,DSNOTE          WANT NOTE
+         BZ    GNONOTE            NO
+         L     R1,DCBAD
+         NOTE  (1)
+         ST    R1,DSPNT           SAVE FOR POINT
+         NI    DSW,255-DSNOTE     TURN OFF REQUEST
+GNONOTE  EQU   *
+         L     R1,DSBAD
+         LR    R15,R1             1ST RECORD
+         L     R14,DCBAD
+         USING IHADCB,R14
+         AH    R1,DCBBLKSI        MAX LEN OF I/P BLOK
+         LH    R0,DCBLRECL        RECORD LEN
+         DROP  R14
+         L     R14,RDECB+16       IOB ADDR
+         SH    R1,14(,R14)        - RESID
+         SR    R1,R0              LAST RECORD
+GRET     STM   R15,R1,DSBCTL
+         LR    R1,R15
+         B     4(,L3)             RETURN
+         SPACE 1
+QGET     EQU   *                  GET QSAM RECORD
+         L     R1,DCBAD
+         L     R0,DSBAD           WORK AREA IF MOVE
+         GET   (1),(0)
+         ST    R1,DSBAD           SAVE REC PTR
+         B     4(,L3)
+         SPACE 1
+LGET     EQU   *                  GET LIBRARIAN REC
+         LA    R1,FAIRBUF         PARAM LIST
+         L     R15,FAIRAD
+         FAIR  RCD                GET NEXT RECORD
+         L     R1,FAIRBUF         REC ADDR
+         CLI   LIBRET,C'1'        EOF
+         BL    4(,L3)             NO
+GEOF     BAL   L4,CLOSES          CLOSE FILE
+         BR    L3                 EOF RET
+         SPACE 3
+*
+*        PUT - ADD LOGICA RECORD TO A FILE
+*
+*              R3 = PTR TO DSCTL
+*              R1 = RECORD ADDR
+*              ALWAYS MOVE MODE
+*
+         DROP R2
+         USING DSCTL,R3
+PUT      EQU   *
+         TM    DSW,DSNODD+DSLIB   CAN WE DO IT
+         BCR   7,L3               NO
+         LR    R6,R1              RECORD POINTER
+         TM    DSW,DSQS           QSAM
+         BO    QPUT
+         TM    DSBAD+3,1          ANY BUFFER
+         BZ    PGOTB              YES
+         L     R14,DCBAD
+         USING IHADCB,R14
+         LH    R0,DCBBLKSI
+         BAL   L4,GETMAIN
+         ST    R1,DSBAD           SAVE IT
+         L     R14,DCBAD
+         LR    R15,R1
+         LH    R0,DCBLRECL
+         AH    R1,DCBBLKSI        END OF BUFFER
+         SR    R1,R0              LAST RECORD
+         STM   R15,R1,DSBCTL      FOR BXLE
+         DROP  R14
+         B     PMOVE
+PGOTB    LM    R15,R1,DSBCTL
+         LTR   R15,R15            ROOM LEFT
+         BNZ   PMOVE              YES
+         CHECK WDECB              WAIT FOR LAST WRITE
+         TM    DSW,DSNOTE         WANT NOTE
+         BZ    PNONOTE            NO
+         L     R1,DCBAD
+         NOTE  (1)
+         ST    R1,DSPNT           SAVE FOR POINT
+         NI    DSW,255-DSNOTE     TURN OFF REQUEST
+PNONOTE  EQU   *
+         LM    R0,R1,DSBCTL+4          RESTORE POINTERS
+         L     R15,DSBAD
+PMOVE    EQU   *
+         LR    R14,R0             RECORD LEN
+         BCTR  R14,0              360
+         EX    R14,PMVC           PUT RECORD IN BUF
+         BXLE  R15,R0,PRET        SEE IF FULL
+         L     R0,DSBAD           YES, GET START OF BUFFER
+         SR    R15,R0             LEN OF BUFFER
+         LR    R6,R15
+         L     R14,DCBAD
+         WRITE WDECB,SF,(14),(0),(R6)
+         SR    R15,R15            SHOW WRITE OUTSTANDING
+PRET     ST    R15,DSBCTL
+         BR    L3
+         SPACE 1
+QPUT     L     R1,DCBAD
+         PUT   (R1),(R6)
+         BR    L3
+         SPACE 1
+PMVC     MVC   0(0,R15),0(R6)
+         DROP  R3
+         USING DSCTL,R2
+         TITLE ' LEVEL FOUR SUBROUTINES - LINK VIA L4'
+*
+*     PRINTCD - PRINT LISTIN OF CARD I/P ON LOG
+*
+PRINTCD  EQU   *
+         LA    R5,CARDCOD
+         LA    R1,82      LEN
+*  FALL THROUGH TO PRINTMY
+*
+*     PRINTMY  - FORMAT LOG MSG AND PRINT IT
+*
+PRINTMY  EQU   *
+         LA    R0,100             CHECK LEN
+         CR    R1,R0
+         BNH   *+6
+         LR    R1,R0              CUT TO 100 CHAR MSG
+         SH    R1,=H'3'           MAKE LEN 360 OF TEXT
+         STC   R1,PRNTMVC
+         LH    R1,LINCNT          GET LINES LEFT
+         BCT   R1,PLINE           BR IF ANY LEFT
+         L     R1,PBUFF           IS IT 1ST PAGE
+         LTR   R1,R1
+         BZ    *+8                YES
+         MVI   0(R1),X'89'        MAKE LAST ONE EJECT
+         PUT   MYPRINT
+         BAL   R14,PBLANK         BLAN PRINT LINE
+         MVC   11(21,R1),=C'A S M I  R U N  L O G'
+         MVC   38(8,R1),DATE      PUTE DATE IN HEADER
+         MVI   0(R1),X'11'
+         PUT MYPRINT              SUB HEADER
+         BAL   R14,PBLANK
+         MVC   3(L'SHEAD,R1),SHEAD  PUT IN BUFFER
+         MVI   0(R1),X'11'
+         LA    R1,35     NBR LINES LEFT ON PAGE (AVG 1.5 PER CALL)
+         STH   R1,LINCNT
+         B     PNOERR             MAKE SURE EJECT
+PLINE    STH   R1,LINCNT          SAVE LINES LEFT
+         TM    PRNTMVC,X'80'      WAS THERE ANYTHING TO PRINT
+         BCR   1,L4               NO, JUST WANTED HEADER
+PNOERR   EQU   *
+         PUT   MYPRINT            GET BUFFER
+         ST    R1,PBUFF           SAVE ADDR
+         BAL   R14,PBLANK
+         MVI   0(R1),9             SINGLE SPACE
+PRNTMVC  EQU   *+1
+         MVC   20(0,R1),2(R5)     PUT TEXT IN LINE
+         MVC   16(2,R1),0(R5)     MSG
+         MVC   12(4,R1),=C'ASMI'         NBR
+         CLI   0(R5),C'4'         IS IT ERROR
+*     INFO MESSAGES ARE NBRD 0 THROUGH 49, ERRORS 50 THROUGH 99
+         LR    R5,R1              POINT TO START OF BUFFER
+         BNH   PRTIME             NOT HIGH, NO ERROR
+         MVC   1(7,R1),=C'*ERROR*'
+         BR    L4                  RETURN
+PRTIME   MVC   0(9,R1),=X'4021207A20207A2020'
+         TIME  DEC
+         ST    R0,DWORD
+         ED    0(9,R5),DWORD
+         BR    L4
+         SPACE 1
+PBLANK   MVI   0(R1),C' '         BLANK PRINT LINE
+         MVC   1(120,R1),0(R1)
+         BR    R14                RETURN
+         SPACE 1
+*
+*   PRINTRC - PRINT RETCODE FROM OTHER PROG
+*
+PRINTRC  EQU   *
+         LA    R1,LN02            LEN OF MSG
+RCMSG    EQU   *
+         MVC   LNKRC,=X'40212020'
+         ED    LNKRC,DWORD+6
+         LA    R5,LNKMSG
+         B     PRINTMY            WILL RETURN TO CALLER
+         SPACE 1
+*
+*     PRINTLRC - PRINT RETURN CODE FROM LINKAGE EDITOR
+*
+PRINTLRC EQU   *
+         LA    R1,LN02A           APPEND SYSLMOD DSN TO RC MSG
+         B     RCMSG              GO FORMAT
+         SPACE 1
+*
+*   NOTFND - PROG NOT FOUND IN LIBRARIAN DATA SET
+*
+NOTFND   EQU   *
+         MVC   NFNAM,PROG         PUT PROG NAME IN MSG
+         LA    R5,ERR6
+         LA    R1,LN56            LEN OF MSG
+         B     PRINTMY            WILL RETURN TO CALLER
+         SPACE 1
+*
+*  MSGFIN - WHEN COPYING OT SINGLE O/P COMPLETE ADD TO MSG
+*
+MSGFIN   MVC   MNAM(8,R5),PROG      PUT PROG NAME IN SYSPRINT BUF
+         LA    R5,5(,R5)          POINT TO MSG NBR FOR MYPRINT
+         LA     R1,75
+         B     PRINTMY
+         SPACE 3
+*
+*     CLOSES - CLOSE A SINGLE DATA SET
+*
+*              QSAM - NORMAL CLOSE WITH FREEPOOL
+*
+*              LIBRARIAN - CLOSE AND DELETE FAIR ROUTINES
+*
+*              BSAM I/P - FREE BUFFERS
+*
+*              BSAM O/P - WRITE LAST BLOCK, FREE BUFFERS, DO STOW
+*                  IF WANTED, WRITE EOF IF WANTED
+*
+CLOSES   EQU   *
+         TM    DSW,DSNODD+DSCLSD  CHECK NO DD OR ALREADY CLOSED
+         BCR   7,L4               NOTHING TO CLOSE
+         TM    DSW,DSQS           QSAM
+         BO    QCLOS
+         TM    DSW,DSLIB          LIBRARIAN
+         BO    LCLOS
+         TM    DSW,DSOP           BSAM O/P
+         BZ    FREEBUF            NO
+         TM    DSBAD+3,1          WERE THERE ANY PUTS
+         BO    CNOCHK             NO, NOTHING TO CHECK
+         L     R15,DSBCTL         GET BUF POINTER
+         LA    R6,WDECB
+         LTR   R15,R15            ANY IN BUFFER
+         BZ    CHKW               NO,WAIT ON LAST WRITE
+         L     R0,DSBAD           START OF BUFFER
+         SR    R15,R0             LEN
+         LR    R6,R15
+         L     R14,DCBAD           DCB POINTER
+         USING IHADCB,R14
+         OI    DCBRECFM,X'40'     MAKE UNDEFINED FOR SHORTY
+         WRITE TDECB,SF,(14),(0),(6)
+         L     R14,DCBAD          RELOAD
+         NI    DCBRECFM,X'BF'     TURN OFF UNDEFINED
+         DROP  R14
+         LA    R6,TDECB
+CHKW     CHECK (R6)               WAIT
+         TM   DSW,DSNOTE          WANT NOTE
+         BZ    CNOCHK             NO
+         L     R1,DCBAD
+         NOTE  (1)
+         ST    R1,DSPNT           SAVE FOR POINT
+         NI    DSW,255-DSNOTE     TURN OFF REQUEST
+CNOCHK   EQU   *
+         TM    DSW,DSTO           STOW WANTED
+         BZ    CHKEOF             NO
+         TM    DSW,DSTRNC         IS IT REALLY END OF MEMBER
+         BO    FREEBUF            NO, THEY'LL BE BACK LATER
+         TM    DSBAD+3,1          WERE THERE ANY PUTS
+         BO    CNORECS            NO, IGNORE STOW
+STOIT    EQU   *
+         MVI   STOWC,1            1HALFWD USER DATA
+         LH    R14,NAMLEN         LEN OF STOW NAME
+         TM    OPT2,STOMAC        WANT TO STRIP LAST TWO CHAR
+         BZ    CNOMAC             NO
+         BCTR  R14,0
+         BCTR  R14,0
+         LA    R15,PROG+1(R14)    ADDR OF VER NBR
+         MVC   STOWVER,0(R15)     PUT VER IN USER DATA FIELD
+         MVI   STOWC,2            2HALFWORDS OF USER DATA
+CNOMAC   EQU   *
+         MVC   STONAM,STONAM-1    BLANK
+         EX    R14,STOMOV
+         L     R1,DCBAD
+         STOW  (1),STONAM,R      REPLACE IF EXIST
+         LTR   R15,R15            CHECK RC
+         BZ    CSREPL             REPLACED - 8 IS ADDED
+         C     R15,=F'8'          CHK REPLACED
+         BE    FREEBUF
+         C     R15,=F'12'
+         BE    CDIRFUL            NO ROOM IN DIRECTORY
+         MVC   MACT(13,R5),=C'ERROR ON STOW'
+         B     FREEBUF
+CDIRFUL  MVC   MACT(16,R5),=CL16'DIR FULL-NO STOW'
+         B     FREEBUF
+CSREPL   MVC   MACT(8,R5),=C' REPL IN' SHOW MEMBER REPLACED
+         B     FREEBUF
+CNORECS  MVC   MACT(14,R5),=CL14'NO REC-NO STOW'
+         B     FREEBUF
+CHKEOF   TM    DSW,DSTRNC         EOF WANTED
+         BO    FREEBUF            NO
+         L     R6,DCBAD
+         CLOSE ((R6),REREAD),TYPE=T   WRITE EOF AND POSITION TO START
+FREEBUF  L     R6,DCBAD
+         TM    DSBAD+3,1          ANY BUFFER (IF NO NOTHING PUT)
+         BCR   1,L4               NO, FORGET FREE
+         TM    DSW,DSNOTE         DO WANT NOTE
+         BZ    CNONOTE            NO
+         NOTE  (R6)
+         ST    R1,DSPNT           SAVE FOR POINT
+         NI    DSW,255-DSNOTE     TURN OFF REQUEST
+CNONOTE  EQU   *
+         USING IHADCB,R6
+         LH    R0,DCBBLKSI        LEN OF BUFFER
+         L     R1,DSBAD           START OF BUFFER
+         SVC   10                 FREEMAIN
+         DROP  R6
+         OI    DSBAD+3,1          SHOW NO BUFFER
+         BR    L4
+STOMOV   MVC   STONAM(0),PROG
+QCLOS    L     R6,DCBAD           CLOSE QSAM
+         CLOSE ((R6))
+         FREEPOOL (R6)            FREE BUFFERS
+         OI    DSW,DSCLSD         SHOW CLOSED
+         BR    L4
+LCLOS    TM    LIBSW,DSLMULT      DO THEY WANT IT LEFT IN
+         BCR   1,L4               YES
+         L     R15,FAIRAD         FAIR ROUTINE
+         LR    R6,R15
+         FAIR  CLS
+         DELETE EP=ACPFAIR
+         NI    LIBSW,255-LIBFIN-LIBOPN
+         OI    DSW,DSCLSD         SHOW CLOSED
+         BR    L4
+         SPACE 3
+*
+*     RDJFCB - READ A JFCB FOR DD REFERENCED BY DSCTL POINTED
+*        TO BY R2.
+*              RETURN TO L4 + 4 IF SUCCESFUL WITH JFCB ADDR IN EXJFCB
+*              RETURN TO L4 IF ERROR AFTER RELEASING JFCB CORE
+*
+RDJFCB   L     R6,DCBAD           ADDR OF DCB
+         GETMAIN R,LV=176         GET ROOM FOR JFCB
+         O     R1,EXJFCB            AND PLACE IN EXLST
+         ST    R1,EXJFCB
+         RDJFCB ((R6))            READ JFCB
+         LTR   R15,R15            WAS ERROR
+         BZ    4(,L4)             NO, RETURN
+         FREEMAIN R,LV=176,A=(1)  FREE CORE USED
+         XC    EXJFCB+1(3),EXJFCB+1  ZERO JFCB ADDR
+         BR    L4                 ERROR RETURN
+         SPACE 3
+*
+*    OPENJ - USED IN CONJUNCTION WITH RDJFCB
+*        DCB EXLST MUST POINT TO EXJFCB WHICH MUST CONTAIN ADDR
+*              OF AREA IN SUBPOOL ZERO.  NORMAL OPEN CHECKING
+*              WILL BE DONE
+*
+OPENJ    EQU   *
+         L     R6,DCBAD           ADDR OF DCB FROM DSCTL
+         TM    DSW,DSOP           IS IT O/P DATA SET
+         BO    OPENJO             YES
+         OPEN  ((R6)),TYPE=J      OPEN USING IN CORE JFCB
+         B     OPENJF             GO RELEASE JFCB CORE
+OPENJO   OPEN  ((R6),OUTPUT),TYPE=J
+OPENJF   L     R1,EXJFCB          GET ADDR OF JFCB IN SUBPOOL 0
+         FREEMAIN R,LV=176,A=(1)  RETURN JFCB CORE
+         XC    EXJFCB+1(3),EXJFCB+1   ZERO ADDR OF JFCB
+         B     CHKOPN             GO CHECK OPEN
+         SPACE 3
+*
+*   OPENS - OPEN SINGE FILE
+*
+OPENS    L     R6,DCBAD
+         TM    DSW,DSOP           IS IT OUTPUT
+         BO    OPENO
+         OPEN  ((R6))
+         B     CHKOPN
+OPENO    OPEN  ((R6),OUTPUT)
+         SPACE 2
+*   CHECK RESULTS OF OPEN MACRO
+         USING IHADCB,R6
+CHKOPN   EQU   *
+         NI    DSW,255-DSCLSD      TURN OFF CLOSED
+         TM    DCBOFLGS,X'10'     DID IT OPEN
+         BO    OPENOK             YES
+         OI    DSW,DSNODD         SHOW NO DD
+         BR    L4                  RETURN
+OPENOK   CLI   DCBMACRF,0         IS IT OUTPUT
+         BNE   OPENIP
+         LA    R6,1(,R6)          BUMP TO CHECK O/P MACRF
+OPENIP   TM    DCBMACRF,X'40'     GET PUT BIT
+         BO    OPENQS             IS QSAM
+         OI    DSBAD+3,1          SHOW NO BUFFER FOR BSAM
+         BR    L4                  RETURN
+OPENQS   OI    DSW,DSQS
+         BR    L4                 RETURN
+         SPACE 3
+*
+*     GENERAL CLOSE ROUTINE
+*
+         USING DSCTL,R3
+CLOSE    LM    R3,R5,DSTABCLS     LOOP CTL
+CLOSELP  L     R6,DCBAD
+         TM    DCBOFLGS,X'10'     IS IT OPEN
+         BZ    CNXTDCB            NO, SKIP IT
+         CLOSE ((R6))
+         TM    DSW,DSQS           WAS IT WSAM
+         BZ    CNXTDCB             NO
+         FREEPOOL (R6)             RELASE I/O BUFFERS
+CNXTDCB  BXLE  R3,R4,CLOSELP
+         BR    L4                 RETURN
+         DROP  R6,R3
+         SPACE 3
+*
+*     GETMAIN
+*        AMOUNT IN R0
+*        ADDR RETURNED IN R1
+*
+GETMAIN  EQU   *
+         GETMAIN R,LV=(0)
+         BR    L4
+         TITLE '   DATA SET CONTROL TABLE '
+*
+*   CONTROL RECORD FOR FILES. SEE DSCTL DSECT
+*
+DSTABCLS DC    A(DSTAB,DSCTLEN,DSCLSLST)
+DSTAB    EQU   *
+CTLDS    DC    AL1(DSCLSD),AL3(CTL),F'0',A(CARD),3F'0'
+AOTDS    DC    AL1(DSCLSD),AL3(AOT),5F'0'         ASM O/P
+LINDS    DC    AL1(DSCLSD+DSOP),AL3(LIN),5F'0'  LIBR I/P
+AINDS    DC    AL1(DSCLSD+DSOP),AL3(AIN),5F'0'   ASM I/P
+DIRDS    DC    AL1(DSCLSD),AL3(DIR),5F'0'       LIBR O/P PDS DIR
+LDATADS  DC    AL1(DSCLSD),AL3(LDATA),5F'0'      LIBR O/P DATA
+DSCLSLST EQU   *
+OBJDS    DC    AL1(DSCLSD+DSOP+DSTO),AL3(OBJ),5F'0'  OBJLIB
+         SPACE 3
+         PRINT NOGEN
+CTL      DCB   DDNAME=CTL,MACRF=GM,EODAD=GEOF,LRECL=80,RECFM=FB,       X
+               BUFNO=1,DSORG=PS
+DIR      DCB   DDNAME=OSJOB,MACRF=GL,EODAD=GEOF,BLKSIZE=256,RECFM=F,   X
+               BUFNO=1,DSORG=PS,LRECL=256,EXLST=EXJFCB
+LDATA    DCB   DDNAME=OSJOB,MACRF=(R),EODAD=GEOF,LRECL=80,RECFM=FB,    X
+               DSORG=PO,EXLST=EXJFCB
+AOT      DCB   DDNAME=SYSGO,MACRF=(RP),EODAD=GEOF,LRECL=80,RECFM=FB,   X
+               DSORG=PS
+AIN      DCB   DDNAME=SYSIN,MACRF=(WP),LRECL=80,RECFM=FB,DSORG=PS
+OBJ      DCB   DDNAME=OBJLIB,MACRF=(W),LRECL=80,RECFM=FB,DSORG=PO,     X
+               EXLST=EXJFCB
+MYPRINT  DCB   DDNAME=MYPRINT,MACRF=PL,RECFM=FBM,DSORG=PS,LRECL=121
+SYSPRINT DCB   DDNAME=SYSPRINT,MACRF=PL,RECFM=FBM,DSORG=PS,BUFNO=1,    X
+               EXLST=EXJFCB
+LIN      DCB   DDNAME=SYSIN,MACRF=PM,LRECL=80,RECFM=FB,DSORG=PS
+* NEXT DCB USED TO GET DSN OF LIBS USED
+DSNDCB   DCB   DDNAME=MASTER,DSORG=DA,EXLST=EXJFCB,MACRF=(RI)
+         SPACE 1
+LIBDS DC AL1(DSCLSD+DSLIB),AL3(0),F'0',A(BUF88),X'80',AL3(LIBDS+LIBRET-X
+               DSCTL),X'80',AL3(MACDD)
+         SPACE 3
+*
+*         DBL WORD ALIGNED
+*
+DWORD    DC    D'0'
+GNAM     DC    CL8'ASMG'
+FNAM     DC    CL8'IEUASM'        NAME OF ASSEMBLER F (IBM)
+LNAM     DC    CL8'IEWL'          NAME OF LINKAGE EDITOR
+ELNM     DC    CL8' '             MEMBER NAME FROM DD CARD
+UTILNAM  DC    CL8'UTILITY'
+         SPACE 3
+*
+*     FULL WORD ALIGNED
+*
+DLMPT    DC    A(DLMTAB)
+PCLPT    DC    A(PCLTAB)
+MCLPT    DC    A(MCLTAB)
+MPCLSAV  DC    F'0'
+SCNCTL   DC    3F'0'
+RCLIMIT  DC    F'0'               HIGHEST RET CODE TO ALLOW
+RETCOD   DC    F'0'               HIGHEST RET CODE ENCOUNTERED
+ASMRCOD  DC    F'0'               LAST RETURN CODE FROM ASSEMBLER
+TAD      DC    F'0'
+AINSTRT  DC    F'0'
+         DC    CL4' '
+STONAM   DC    CL8' '
+         DC    XL3'0'             TTR FIELD
+STOWC    DC    X'1'               NBR HALFWDS USER DATA
+STOWDAY  DC    H'0'               DDDZ: DDD=JUL DAY, Z=ZERO
+STOWVER  DC    H'0'               VER NBR OF MACROS
+EXJFCB   DC    0F'0',X'87',AL3(0)
+PBUFF    DC    F'0'               LAST PRINT BUFFER USED
+OBJUCB   DC    A(0)                WILL BE FILLED IN DURRING INIT
+         SPACE 3
+*
+*   HALF WORD ALIGNED
+*
+NAMLEN   DC    H'0'
+GRPLEN   DC    H'0'
+LNKPLEN  DC    AL2(L'LNKPDEF)
+LNKPDEF  DC    C'NCAL,LET,LIST,XREF'
+         DC    CL(74-L'LNKPDEF)' '
+ASMPLEN  DC    AL2(L'GDEFAULT)    LEN OF DEFAULT ASMG PARMS
+ASMP     EQU   *                  PARMS FOR COMPILER
+GDEFAULT DC    C'DOS,ESD,AX'      DEFAULT PARMS FOR ASSEMBLER G
+         DC    CL(74-L'GDEFAULT)' '  LEAVE ROOM FOR -ASMP CARD
+LIBPLEN  DC    AL2(L'LIBPDEF)
+LIBPDEF  DC    C'NRJS,NJTA,IEX=EXIT'
+         DC    CL(74-L'LIBPDEF)' '
+ASMFPARM DC    H'22',C'DECK,NOLOAD,NOXREF,DOS'
+PL1PARM  DC    0H'0',AL2(PL1PE-*-2)
+         DC    C'NST,M,SM=(2,72,1),A,X,E,NL,NT,NS2,ED,NLD,D'
+PL1PE    EQU   *
+STCPARM  DC    0H'0',AL2(L'SDEFAULT)
+SDEFAULT DC    C'SALVER=TS,SALSIZ=72000'
+LINCNT   DC    H'1'               NBR LINES LEFT + 1
+         SPACE 1
+DDASM    DC    H'80'              LEN OF LIST
+SYSLIN   DC    XL8'0'             DDNAMES FOR ASMG
+SYSTERM  DC    XL8'0'
+SYSUP    DC    XL8'0'
+SYSLIB   DC    XL8'0'
+SYSIN    DC    XL8'0'
+PRINT    DC    CL8'FPRINT'
+SYSPUNCH DC    CL8'SYSGO'
+SYSUT1   DC    XL8'0'
+SYSUT2   DC    XL8'0'
+SYSUT3   DC    XL8'0'
+         SPACE
+LNKDD    DC    H'64'               NBR BYTES DD NAMELIST FOR LINKEDIT
+LNKLIN   DC    CL8'SYSGO'          SYSLIN
+LNKNAME  DC    XL8'0'             NAME TO BE USED FOR MODULE
+SYSLMOD  DC    XL8'0'
+LNKLIB   DC    CL8'LNKLIB'         CALL LIBRARY
+         DC    CL8'0'             UNUSED
+LPRINT   DC    CL8'FPRINT'        SYSPRINT DATA SET
+         DC    CL8'0'             UNUSED
+LUT1     DC    XL8'0'
+         SPACE 3
+*
+*  NON ALIGNED
+*
+LINDD    DC    CL8'LIN'            USERS SYSLIN DDNAME
+MACDD    DC    CL16'MACRO'        DDNAME FOR INSTREAM MACROS
+QNAM     DC    CL8'ACP'
+RNAM     DC    CL6'OBJLIB'
+SWITCHES DS    0XL3
+CPYSW    DC    X'0'
+ENDIF    EQU   1                  USED TO REQUEST END CARD FROM COPY
+PNTDON   EQU   2                  USED BY RESCOPY
+NAMSW    DC    X'0'
+MEMBER   EQU   1                  MEMBER NAME IN DD CARD
+SEQOBJ   EQU   2                  O/P DS FOR OBJ IS SEQ
+DIRSW    DC    X'0'
+UPSW     DC    X'0'
+DOUPDAT  EQU   1
+DOMCL    EQU   2                  INSTREAM MACROS WERE WANTED
+DOPCL    EQU   4                  CALL PROGRAMS FROM LIBR FOASM
+UPONLY   EQU   8                  DONE AFTER LINK TO LIBRARIAN
+DODLM    EQU   X'10'               DELETE FROM OBJLIB
+USERLIN  EQU   X'20'              USER SUPPLIED SYSLIN FOR LINK
+STC      EQU   X'40'              STC RUN
+UTIL     EQU   X'80'              LIBRARIAN UTILITY OPTION
+UPSW2    DC    X'0'
+UTIL2    EQU   1       SECOND PASS TO LIBR ON UTILITY RUN
+         SPACE 1
+OPTIONS  DS    0XL2               OPTIONS FROM PARM FIELD
+OPT1     DC    X'0'
+*   EQUATES FOR OPT1
+ASM      EQU   X'80'              LINK TO ASSEMBLER
+LNK      EQU   X'40'              PASS ASM O/P TO LINKAGE EDITOR
+MIXIN    EQU   X'10'              MIX CARD AND -PCL INPUT FOR ASM
+NOSYSP   EQU   X'08'               DON'T USE ASSEMBLERS PRINT FILE
+PMAC     EQU   X'04'            HAVE ASEMBLER PRINT IN-STREAM MACROS
+WTO      EQU   X'02'              ISSUE WTO BEFORE LINK TO ASMBLR
+NODECK   EQU   X'01'              IGNORE ASMBLR O/P
+*
+*
+OPT2     DC    X'0'
+*    EQUATES FOR OPT2
+ENDO     EQU   X'80'              ADD END CARD TO ASSEM I/P
+NOGENO   EQU   X'40'              ADD PRINT NOGEN CARD IN FRONT
+CMNT     EQU   X'20'              ADD TITLE CARD AS COMMENT
+TITL     EQU   X'10'              ADD TITLE CARD
+STOMAC   EQU   X'08'              SHORTEN NAME BY 2 FOR STOW
+CPYONLY  EQU   X'04'              NO PROCESSING, ONLY COPY TO OBJ DS
+ONEIP    EQU   X'02'              MERGE TO ONE I/P FOR PROCESSOR
+SRCDSN   EQU   X'01'              PUT COMMENT CARD SHOWING DSN OF LIB
+*
+         DC    C' '
+TITLE    DC    CL80' '
+         ORG   TITLE
+TITLAB   DC    CL4' ',CL5' ',C'TITLE '''
+TITNAM   DC    CL8' '
+         DC    C' - '
+ONOF     DC    C'  O N',C' L I N E  P A R S  S E G M E N T'''
+         ORG   ,
+NOGEN    DC    CL9' ',CL71'PRINT  NOGEN'
+SCNSTP   DC    C' '
+FSTNAM   EQU   X'40'
+         DC    C' '               FOR BLANK
+PROG     DC    CL8' '
+GRPNAM   DC    CL8' '
+TYPRUN   DC    CL2'RT'
+*  FOLLOWING DC'S MUST BE TOGHETHER
+CARDCOD  DC    C'01'              MSG NBR FOR LISTING OF INPUT
+CARD     DC    CL80' '
+BUF88    DC    CL88' '
+         DC    CL12' '            FOR ACPFAIR
+*   END OF TOGETHER RESTRICTION
+DDNAM    DC    CL8'OBJLIB'        FOR TIOT SEARCH
+LOPT     DC    CL80'-OPT EXEC(R),RESEQ'
+ENDCD    DC    CL80'         END'
+EDITDAY  DC    X'4020'
+DATE     DC    X'2120612020612020'
+SHEAD    DC    C'TIME      CODE         TEXT'
+         LTORG
+         EJECT
+*
+*    ASMI MESSAGES PRINTED BY PRINTMY ROUTINES
+*
+*        FORMAT AS FOLLOWS
+*
+*              2 CHAR MESSAGE NUMBER.  00 TO 49 = INFO, 50 TO 99 = ERR
+*              VARIABLE LEN TEXT
+*
+*        LINK TO PRINTMY WITH
+*              ADDR OF MSG IN R5
+*              LEN OF TEXT + CODE IN R1
+*
+         SPACE 3
+*
+*    INFO MESSAGES
+*
+         SPACE 1
+MSG      EQU   *
+         DC    C'ASMI04  '        INCLUDES  ASMI FOR USE ON ASSEMBLER
+         DC    C'('
+MNAM     EQU   (*-MSG)+1          DISPL INTO PRINT LINE
+MSGNAM   DC    CL8' ',C') '
+MACT     EQU   (*-MSG)+1
+         DC    C'ADDED TO'
+MSPACE   EQU   *
+         DC    CL(16-(MSPACE-MSG-MACT))' '  ROOM FOR STOW ERRORS
+         DC    C' - '
+MDSN     EQU   (*-MSG)+1          DISPL INTO PRINT LINE
+DSN      DC    CL44' '            WILL BE FILLED IN FROM JFCB
+LN04     EQU   *-MSG              LEN OF MSG
+         SPACE 1
+SEQMSG   DC    CL(DSN-MSGNAM)'SEQ DATA SET CREATED'  OVRLY STOW MSG
+         SPACE 1
+LNKMSG   EQU   *
+         DC    C'02RETURN CODE FROM '
+LNKNAM   DC    CL9' ',C' ='
+LNKRC    DC    X'40212020',C' FOR '
+LNKPNAM  DC    CL8' '
+LN02     EQU   *-LNKMSG           LEN OF MSG
+         DC    C' SYSLMOD = '     APPENDED FOR LINK EDIT
+LNKDSN   DC    CL44'NO DD PROVIDED'
+LN02A    EQU   *-LNKMSG
+         SPACE 1
+ENDMSG   DC    C'03     *  E N D  O F  R U N  *'
+         SPACE 1
+IGNMSG   EQU   *
+         DC    C'ASMI07  '
+IGNAM    DC    CL8' ',C' OBJ IGNORED DUE TO NODECK PARM'
+LN07     EQU   *-IGNMSG
+         SPACE 1
+*   08  USED FOR DELETE MSG
+         SPACE 1
+MSG09    DC    C'09SOURCE LIBRARY = '
+MASTDSN  DC    CL44'NO DD CARD PROVIDED'
+LN09     EQU   *-MSG09
+         SPACE 1
+MSG10    DC    C'10SOURCE LIBRARY FOR -MCL = '
+MACDSN   DC    CL44'NO DD CARD PROVIDED'
+LN10     EQU   *-MSG10
+         SPACE 1
+*  NEXT AVAIL MSG NBR = 11
+         SPACE 3
+*
+*   ERROR MESSAGES
+*
+         SPACE 1
+ASMERMSG EQU   *
+         DC    C'ASMI50  '        USED ON ASSMBLR PRINT FILE
+AEMNAM   EQU   (*-ASMERMSG)+2     DISPL INTO PRINT LINE
+         DC    C'(        )'
+         DC    C' NOT PUT IN OBJECT LIBRARY'
+LN50     EQU   *-ASMERMSG
+         SPACE 1
+ERR1     DC    C'51RUN ABORTED DUE TO ERROR ON UPDATE'
+         SPACE 1
+ERR2     DC    C'52INVALID USE OF SEQ OBJLIB WITHOUT ONEIP PARM'
+         SPACE 1
+ERR3     DC    C'53PCL / MCL TABLE CAPACITY EXCEEDED'
+         SPACE 1
+ERR4     EQU   *
+         DC    C'54INVALID CARD NEAR COL'
+CCOL     DC    X'40212020'
+LN54     EQU   *-ERR4
+         SPACE 1
+ERR5     EQU   *
+         DC    C'55INVALID NAME NEAR COL'
+NCOL     DC    X'40212020'
+LN55     EQU   *-ERR5
+         SPACE 1
+ERR6     EQU   *
+         DC    C'56'
+NFNAM    DC    CL8' ',C' - NOT FOUND IN LIBRARIAN DATA SET'
+LN56     EQU   *-ERR6
+         SPACE 1
+ERR7     EQU   *
+         DC    C'57 '
+IPRM     DC    CL10' ',C' - INVALID PARM'
+LN57     EQU   *-ERR7
+         SPACE
+ERR8     DC    C'58INVALID USE OF PO OBJLIB WITH ONEIP PARM'
+         SPACE
+ERR9     DC    C'59ALL FUNCTIONS EXCEPT LIBRARIAN UPDATE ABORTED'
+         SPACE 1
+ERR10    DC    C'60 DELETE FROM OBJLIB IGNORED DUE TO LIBRARIAN R C'
+         SPACE 1
+ERR11    DC    C'60 DELETE FROM OBJLIB IGNORED DUE TO MISSING DD CARD'
+         SPACE 1
+ERR12    DC    C'60DELETE FROM OBJLIB IGNORED BECAUSE NOT PDS'
+         SPACE
+ERR13    DC    C'63INVALID REQUEST FOR LINK EDIT WITHOUT NAME'
+         SPACE
+ERR14     DC   C'64PROGNAME LINK EDIT IGNORED DUE TO ASSEMBLER ERROR'
+         SPACE
+ERR15    DC    C'65INVALID REQ FOR ''UTIL'' AND ''MIXIN'' RUN ABORTED'
+         SPACE
+ERR16    DC    C'66UNABLE TO FIND O/P FROM UTILITY PASS - RUN ABORTED'
+         SPACE
+ERR17    DC    C'67RUN ABORTED DUE TO ERROR DURRING UTILITY'
+         SPACE
+ERR18    DC    C'68UNABLE TO OPEN OSJOB DD - WILL CONTINUE WITH -PCL'
+         EJECT
+*
+*    REGISTER  EQUATES
+*
+R0       EQU   0
+R1       EQU   1
+R2       EQU   2
+R3       EQU   3
+R4       EQU   4
+R5       EQU   5
+R6       EQU   6
+R7       EQU   7
+R8       EQU   8
+R9       EQU   9
+R10      EQU   10
+R11      EQU   11
+R12      EQU   12
+R13      EQU   13
+R14      EQU   14
+R15      EQU   15
+L1       EQU   10                 LINKAGE REGS
+L2       EQU   9
+L3       EQU   8
+L4       EQU   7
+         TITLE ' D S E C T S '
+DSCTL    DSECT    DATA SET CONTROL
+DSW      DS    X                  SWITCHES
+DSTRNC   EQU   X'80'              DONT CLOSE O/P ON I/P EOF
+DSLIB    EQU   X'40'              LIBRARIAN
+DSQS     EQU   X'20'              QSAM
+DSNOTE   EQU   X'10'              NOTE AFTER 1ST BLOCK READ OR WRITTEN
+DSOP     EQU   X'08'              O/P
+DSTO     EQU   X'04'              DO STOW USING FULL NAME
+DSCLSD    EQU  X'02'              SHOW QSAM OR LIBR HAS BEEN CLOSED
+DSNODD   EQU   X'01'              DD MISSING
+         SPACE 1
+         ORG   DSW
+DCBAD    DS    A                  ADDR OF DCB FOR THIS DATA SET
+DSPNT    DS    XL3                TTR  FOR POINT
+DSPNTNXT DS    X                  1 FOR NXT RECORD, ZERO FOR LAST REC
+DSBAD    DS    F                  BUFFER ADDR
+DSBCTL   DS    3F                 NXT REC, LEN, LAST BYTE OF BUF
+DSCTLEN  EQU   *-DSCTL            LEN OF EACH ENTRY
+         ORG   DCBAD+1            REDEFINE FOR LIBRARIAN FILES
+LIBSW    DS    X                  MORE SWITCHES
+DSLMULT  EQU   X'80'              DONT CLOSE LIB ON EOF
+LIBGRP   EQU   X'40'              GROUP CALL
+LIBFIN   EQU   X'20'              FAIR ROUTINE LOADED
+LIBOPN   EQU   X'10'              LIBR OPENED
+LIBRET   DS    X                  RET CODE FROM LIBRARIAN
+         DS    X                  SPARE
+FAIRAD   DS    F                  ADDR OF LIBR ROUTINE
+FAIRBUF  DS    F                  ADDR OF 88 BYTE BUFFER
+FAIRP2   DS    A(LIBRET)          2ND PARAM FOR FAIR ROUTINE
+FAIRP3   DS    A(0)               3RD - ONLY USED FOR FAIROPN
+FAIROPN  EQU   0                  ENTRY POINT DISPLACEMENTS TO FAIR
+FAIRMOD  EQU   4
+FAIRRCD  EQU   8
+FAIRHST  EQU   12
+FAIRCLS  EQU   16
+         SPACE 3
+DIRENT   DSECT                    PDS DIRECTORY ENTRY
+DIRNAM   DS    CL8                MEMBER NAME
+DIRTT    DS    XL3                TTR OF START
+DIRC     DS    X                  SWITCHES & NBR HALFWORDS USER INFO
+         SPACE 3
+         DCBD  DSORG=BS,DEVD=DA
+         SPACE 3
+IEFJFCBN DSECT             JFCB DSECT FROM SYS1.MODGEN (DLIB02)
+         IEFJFCBN
+         SPACE 3
+         END

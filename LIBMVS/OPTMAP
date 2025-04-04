@@ -1,0 +1,272 @@
+//JEASOURC    JOB (1140,5),'J ABBEY',CLASS=T,COND=(0,NE)
+//COMPILE EXEC ASMFCL,L=H
+***********************************************************************
+*                    O P T M A P
+*
+*            THIS ROUTINE WILL LIST THE NAMES OF ALL THE MODULES HELD
+*        ON THE MVS CONTROL PROGRAM OPTIONAL MATERIAL TAPES.
+*            IT READS THE WHOLE TAPE WICH IS AN UNLABELLED FILE OF
+*        IEBUPDTE CONTROL CARDS AND FORMATS THE NAME OF EACH MEMBER
+*        NAME FOUND ALONG WITH ITS TAPE NUMBER AND FILE NUMBER, (EACH
+*        MEMBER IS A SEPARATE FILE), PLUS A COUNT OF THE RECORDS IN
+*        THAT FILE.
+*
+*            OPTIONALLY, IF THE JCL PARM FIELD CONTAINS THE NAME OF A
+*        MODULE, THAT MODULE WILL BE COPIED TO THE SYSUT2 DD STATEMENT
+*        AS A STREAM OF CARD IMAGES INCLUDING AN IEBUPDTE ADD CARD.
+*
+*
+*
+***********************************************************************
+         EJECT
+***********************************************************************
+*        INITIAL PROGRAM ENTRY HOUSEKEEPING
+***********************************************************************
+         SPACE 2
+OPTMAP   ZCSECT
+         EJECT
+***********************************************************************
+*        EXTRACT ANY PARM FIELD INFORMATION
+***********************************************************************
+         SPACE 2
+         NI    FLAG,255-PARMHERE   TURN OFF PARM PRESENT FLAG
+         L     REG2,0(REG1)        LOAD ADDRESS OF PARM FIELD
+         LH    REG1,0(REG2)        GET LENGTH OF PARM FIELD
+         LTR   REG1,REG1           ANYTHING PRESENT IN FACT ?
+         BZ    *+8                 NO. BYPASS BIT SETTING
+         OI    FLAG,PARMHERE       YES. TURN ON FLAG
+         LA    REG0,2(REG2)        LOAD START ADDRESS OF IT
+         ICM   REG1,8,=C' '        LOAD A PADDING CHARACTER
+         LA    REG14,PARMNAME      LOAD ADDRESS OF RECEIVING FIELD
+         LA    REG15,L'PARMNAME    AND LENGTH OF IT
+         MVCL  REG14,REG0          AND COPY OUT THE PARM FIELD
+         EJECT
+***********************************************************************
+*        OPEN THE INPUT AND OUTPUT FILES                            *
+***********************************************************************
+         SPACE 2
+OPEN     DS    0H
+         OPEN  (IN,INPUT,OUT,OUTPUT)        OPEN IN AND OUT FILES
+         TM    FLAG,PARMHERE       WAS A PARM FIELD CODED ?
+         BZ    NOSYSUT2            NO. DO NOT OPEN SYSUT2
+         OPEN  (SYSUT2,OUTPUT)     OPEN THE CARD IMAGE FILE
+         LA    REG1,SYSUT2         ADDRESS OF THE DCB
+         USING IHADCB,REG1         ADDRESSABILITY FOR IT
+         TM    DCBOFLGS,DCBOFOPN   DID OPEN WORK ?
+         BO    OPENOK              YES. CARRY ON
+         NI    FLAG,255-PARMHERE   NO. IGNORE HIS PARM FIELD
+OPENOK   EQU   *
+NOSYSUT2 EQU   *
+         ZAP   FILECNT,=P'1'       INITIALISE FILE NUMBERS
+         BAL   REG11,SETUPIN       INITIALISE INPUT BUFFERS
+         EJECT
+***********************************************************************
+*        EXTRACT THE VOLUME SERIAL AND PLACE IN PRINT LINE
+***********************************************************************
+         SPACE 2
+         RDJFCB (IN)               READ IN THE JFCB
+         LA    REG2,JFCB           ADDRESS OF THE JFCB
+         USING INFMJFCB,REG2       ADDRESSABILITY FOR IT
+         MVC   VOLSER,JFCBVOLS     MOVE IN VOLUME SERIAL NUMBER
+         DROP  REG2                RELEASE ADDRESSABILITY
+         EJECT
+***********************************************************************
+*        PRINT A HEADING
+***********************************************************************
+         SPACE 2
+         PUT   OUT,TITLE
+         PUT   OUT,HEADING
+         EJECT
+***********************************************************************
+*        PROCESS ALL THE RECORDS ON THE TAPE                         *
+***********************************************************************
+         SPACE 2
+         BAL   REG11,GET           OBTAIN FIRST RECORD
+         BAL   REG11,GETANAME      GO EXTRACT THE MEMBER NAME
+         B     JUSTDATA            AND ENTER THE PROCESSING LOOP
+MAINLOOP DS    0H
+         CLC   0(L'TESTTEXT,REG5),TESTTEXT IS THIS AN ADD CARD ?
+         BNE   JUSTDATA            NO. JUST DATA. CARRY ON
+         BAL   REG11,DOSTATS       GO OUTPUT DATA FOR THAT MEMBER
+         BAL   REG11,GETANAME      AND SAVE THE NAME OF THE NEXT MEMBER
+JUSTDATA EQU   *
+         AP    RECCNT,=P'1'        INCREMENT THE RECORD COUNT
+         BAL   REG11,DOSYSUT2      GO WRITE THE RECORD IF NECCESSARY
+         BAL   REG11,GET           GO FETCH THE NEXT BLOCK
+         B     MAINLOOP            AND CONTINUE TO PROCESS
+ALLENDS  EQU   *
+         BAL   REG11,DOSTATS       OUTPUT DATA FOR THE LAST MEMBER
+         B     EXITPGM             AND EXIT
+         EJECT
+***********************************************************************
+*        OUTPUT THE CURRENT RECORD TO SYSUT2 IF NECCESSARY
+***********************************************************************
+         SPACE 2
+DOSYSUT2 DS    0H
+         CLC   PARMNAME,MEMNAME    IS THIS THE CORRECT NAME
+         BNE   SYS2EXIT            NO. RETURN TO CALLER
+         PUT   SYSUT2,(5)          OTHERWISE OUTPUT THE RECORD
+SYS2EXIT EQU   *
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        TERMAINATE THIS FILE
+***********************************************************************
+         SPACE 2
+EODAD    DS    0H
+         TM    FLAG,EOFONE         ONE TAPE MARK READ ALREADY ?
+         BO    ALLENDS             YES. TERMAINATE THE PROGRAM
+         OI    FLAG,EOFONE         OTHERWISE TURN ON THE FLAG
+         READ  (10),SF,IN,MF=E     AND RE-READ THAT BLOCK
+         L     REG10,20(REG10)     AND GET ADDRESS OF NEXT DECB
+         OI    FLAG,RESETFNO       REQUEST 'DOSTATS' TO RESET FILE NO.
+         B     REREAD              AND CARRY ON
+         EJECT
+***********************************************************************
+*        OUTPUT THE STATISTICS FOR THIS MEMBER
+***********************************************************************
+         SPACE 2
+DOSTATS  DS    0H
+         MVC   RECNO,EDMASK        MOVE IN EDIT MASK
+         ED    RECNO,RECCNT        EDIT RECORD COUNT TO PRINT
+         MVC   FILENO,EDMASK       MOVE IN EDIT MASK
+         ED    FILENO,FILECNT      AND EDIT THE FILE NUMBER
+         PUT   OUT,DETAIL          AND OUTPUT THE LINE
+         ZAP   RECCNT,=P'1'        RESET THE RECORD COUNT
+         TM    FLAG,RESETFNO       TIME TO INCREMENT FILE NO.
+         BZ    FNOISOK             NO FILE NO IS OK
+         AP    FILECNT,=P'1'       INCREMENT FILE NO
+FNOISOK  NI    FLAG,255-RESETFNO   TURN OFF THE FLAG
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        EXTRACT THE NAME FROM THE ./ ADD CARD
+***********************************************************************
+         SPACE 2
+GETANAME DS    0H
+         LA    REG0,MEMNAME        LOAD ADDRESS OF RECEIVING FIELD
+         LA    REG1,L'MEMNAME      LOAD LENGTH OF RECEIVING FIELD
+         LA    REG14,33(REG5)      ADDRESS OF START OF NAME
+         LR    REG15,REG14         AND INITIALISE WORK REGISTER
+GETALOOP EQU   *
+         CLI   0(REG15),C','       END OF FIELD DETECTED ?
+         BE    GETASTOP            YES. GO COPY IT
+         LA    REG15,1(REG15)      NO. ADDRESS NEXT BYTE
+         B     GETALOOP            AND LOOP
+GETASTOP EQU   *
+         SR    REG15,REG14         LENGTH OF THE NAME
+         ICM   REG15,8,=C' '       LOAD A PADDING CHARACTER
+         MVCL  REG0,REG14          AND COPY THE NAME ACROSS
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        COMMON PROGRAM EXIT                                          *
+***********************************************************************
+         SPACE 2
+EXITPGM  DS    0H
+         CLOSE (IN,,OUT)           CLOSE THE FILES
+         LA    REG1,SYSUT2         ADDRESS OF OPTIONAL DCB
+         TM    DCBOFLGS,DCBOFOPN   DCB IS OPEN ?
+         BZ    NOCLOSE             NO. DO NOT CLOSE IT THEN
+         CLOSE (SYSUT2)            CLOSE THE OPTIONAL FILE
+NOCLOSE  EQU   *
+         ZRETURN RC=0
+         EJECT
+***********************************************************************
+*        INITIALISE THE INPUT I/O CONTROL BLOCKS                      *
+***********************************************************************
+         SPACE 2
+SETUPIN  DS    0H
+         GETBUF IN,10              OBTAIN ADDRESS FIRST INPUT BUFFER
+         ST    REG10,DECBIN1+12    SAVE ADDRESS IN DECB
+         GETBUF IN,10              OBTAIN ADDRESS SECOND BUFFER
+         ST    REG10,DECBIN2+12    SAVE THAT ALSO IN DECB
+         READ  DECBIN1,SF,MF=E     START TO READ FIRST BLOCK
+         LA    REG10,DECBIN2       INITIALISE INPUT CHAIN REGISTER
+         XC    GETREGS(12),GETREGS INITIALISE GET PARAMETER REGISTERS
+         BR    REG11               RTURN TO CALLER
+         SPACE 2
+         READ  DECBIN1,SF,IN,0,32767,MF=L FIRST READ DECB
+         DC    A(DECBIN2)          CHAIN FIELD FOR DECBS
+         READ  DECBIN2,SF,IN,0,32767,MF=L SECOND READ DECB
+         DC    A(DECBIN1)          CHAIN FIELD FOR DECBS
+         EJECT
+***********************************************************************
+*        LOCATE THE NEXT INPUT RECORD                                 *
+***********************************************************************
+         SPACE 2
+GET      DS    0H
+         NI    FLAG,255-EOFONE     RESET END OF FILE FLAG
+         LM    REG2,REG4,GETREGS   RELOAD PARAMETER REGISTERS
+         AR    REG2,REG3           FIND ADDRESS OF NEXT RECORD
+         CR    REG2,REG4           END OF BLOCK ?
+         BL    GOT                 NO. RETURN THE NEXT RECORD
+REREAD   READ  (10),SF,MF=E        READ INTO NEXT BUFFER
+         L     REG10,20(REG10)     LOAD ADDRESS NEXT DECB
+         CHECK (10)                AWAIT ARRIVAL OF NEXT BLOCK
+         L     REG1,16(REG10)      LOAD ADDRESS OF IOB
+         LH    REG4,IN+X'3E'       LOAD LENGTH OF READ
+         SH    REG4,14(REG1)       SUBTRACT RESIDUAL BYTE COUNT
+         L     REG2,12(REG10)      LOAD ADDRESS OF START OF BUFFER
+         AR    REG4,REG2           ADDRESS OF END OF BLOCK
+         LH    REG3,IN+X'52'       RELOAD LENGTH OF A RECORD
+GOT      EQU   *
+         LR    REG5,REG2           LOAD ADDRESS OF NEXT RECORD
+         STM   REG2,REG4,GETREGS   AND SAVE PARAMETER REGISTERS
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        CONSTANTS AND LITERALS                                       *
+***********************************************************************
+         SPACE 2
+GETREGS  DS    3F                  SAVE AREA FOR 'GET' WORK REGISTERS
+FILECNT  DC    PL5'0'
+RECCNT   DC    PL5'0'
+TESTTEXT DC    C'./'               IDENTIFIES IEBUPDTE CONTROL CARD
+EDMASK   DC    X'40202020202020202120'
+TITLE    DC    CL121'1**** MVS OPTIONAL MATERIAL MAP ROUTINE'
+HEADING  DC    CL121'0MEMBER    FILE NUMBER     RECORD COUNT    TAPE'
+DETAIL   DS    0CL121
+         DC    C' '
+MEMNAME  DC    CL8' '
+         DC    C' '
+FILENO   DC    CL12' '
+         DC    C' '
+RECNO    DC    CL12' '
+         DC    CL8' '              PADDING
+VOLSER   DC    CL6' '              VOLUME SERIAL
+         DC    CL72' '
+FLAG     DC    X'00'               FLAG FOR INTERNAL LOGIC
+EOFONE   EQU   X'80'               END OF FILE REACHED ON INPUT
+PARMHERE EQU   X'40'               A PARM FIELD HAS BEEN CODED
+RESETFNO EQU   X'20'               'DOSTATS' MUST INCREMENT FILE NO.
+PARMNAME DS    CL8                 NAME OF MODULE TO BE SELECETED
+EXLST    DS    0F                  DCB EXIT LIST
+         DC    X'87'               JFCB EXIT
+         DC    AL3(JFCB)           ADDRESS OF JFCB WORK AREA
+JFCB     DS    CL176               WORK AREA FOR JFCB
+         PRINT NOGEN
+IN       DCB   DDNAME=SYSUT1,DSORG=PS,MACRF=R,EODAD=EODAD,BUFNO=2,     X
+               NCP=2,EXLST=EXLST
+         SPACE 2
+OUT      DCB   DDNAME=SYSPRINT,DSORG=PS,MACRF=PM,LRECL=121,RECFM=FA,   X
+               BLKSIZE=121
+SYSUT2   DCB   DDNAME=SYSUT2,DSORG=PS,MACRF=PM,LRECL=80,RECFM=FB
+         LTORG
+         DCBD  DSORG=QS,DEVD=DA
+         IEFJFCBN
+         EJECT
+         END
+//LKED.SYSLMOD DD DSN=JEA.LOADLIB,DISP=SHR
+  NAME OPTMAP(R)
+/*
+//GO EXEC PGM=OPTMAP,REGION=128K,PARM=IEASMFEX
+//STEPLIB DD DSN=JEA.LOADLIB,DISP=SHR
+//SYSABEND DD SYSOUT=A
+//SYSUT1 DD DSN=X,UNIT=TAPE1600,VOL=SER=OPT002,LABEL=(,NL),
+// DISP=OLD,DCB=(LRECL=80,RECFM=FB,BLKSIZE=8000)
+//SYSPRINT DD SYSOUT=A
+//SYSUT2 DD DSN=&&FRED,SPACE=(CYL,(1,1)),UNIT=SYSDA,DISP=(,PASS),
+// DCB=(LRECL=80,RECFM=FB,BLKSIZE=6400)
+//ASSEMBLE EXEC ASMFC,L=H
+//SYSIN DD DSN=&&FRED,DISP=(OLD,DELETE)

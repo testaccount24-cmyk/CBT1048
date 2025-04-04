@@ -1,0 +1,168 @@
+UT380    START  0
+         SAVE  (2,12),T
+         BALR  12,0
+         USING *,12
+         ST    13,SV+4
+         LA    13,SV
+*                        REGISTER 1 POINTS TO THE FOLLOWING LIST
+*                        1 TABLE ADDRESS
+*                        2 NUMBER OF ENTRIES IN TABLE
+*                        3 LENGTH OF EACH ENTRY
+*                        4 SEARCH ARGUMENT ADDRESS
+*                        5 LENGTH OF SEARCH ARGUMENT
+*                        6 RETURN INDEX ADDRESS
+*                        7 FORM OF ARGUMENTS (ZONED,PACKED)
+*                        8 TYPE OF SEARCH (BINARY,SEQUENTIAL)
+*
+         EJECT
+*                   THE TABLE MUST BE SET UP WITH A LENGTH EQUAL TO THE
+*                   NEAREST POWER OF 2 ROUNDED UP LESS 1.
+*                   THE NUMBER OF SEARCHES REQUIRED IS EQUAL TO THE
+*                   EXPONENT OF THE NEAREST POWER OF 2 ROUNDED UP.
+*
+UT380X   L     3,4(1)
+         L     3,0(3)         LOAD THE NUMBER OF TABLE ENTRIES IN REG 3
+         LR    5,3             AND REG 5. -TO BE USED LATER-
+         LH    6,=H'32'       SET 32 IN REG 6. DECREMENT AND SHIFT
+         BCTR  6,0             UNTILL HIGH ORDER BIT DROPS OFF.
+         SLA   3,1              NUMBER LEFT IN REG6 IS EXPONENT
+         BC    2,*-6             OF THE NEAREST POWER OF 2 ROUNDED UP.
+*
+         L     3,=F'1'        LOAD A 1 BIT IN LOW ORDER OF REG 3.
+         STC   6,*+7           MODIFY SHIFT INSTRUCTION.
+         SLA   3,1              SHIFT. NEAREST POWER OF 2 IS NOW IN 3.
+*
+         L     8,8(1)         MULTIPLY BY LENGTH OF TABLE ENTRY.
+         L     8,0(8)
+         MR    2,8             RESULT IS LENGTH IN BYTES OF TABLE.
+*
+         MR    4,8            TRUE DISPLACEMENT OF TABLE
+         SR    5,8
+*
+         L     2,0(1)         TABLE ADDRESS
+         AR    5,2              PLUS TRUE LENGTH OF TABLE  REG 5
+*
+         L     4,12(1)        SEARCH ARGUMENT
+*
+*                        REGISTER ARE NOW SET
+*                        2 - STARTING TABLE ADDRESS
+*                        3 - LENGTH OF TABLE
+*                        4 - SEARCH ARGUMENT ADDRESS
+*                        5 - LIMIT OF SEARCH
+*                        6 - NUMBER OF LOOPS
+*
+         L     8,16(1)        SEARCH LENGTH
+         L     8,0(8)          IN REG 8
+*
+         L     7,24(1)        Q. WHAT TYPE OF DATA IS IN ARGUMENTS
+         CLI   0(7),C'P'
+         BE    PACKED           PACKED
+         S     8,=F'1'          ZONED
+         MVI   COMPARE,X'D5'  CLC OPERATION
+         B     BORS
+*
+PACKED   SRA   8,1            PACKED ARGUMENTS. LENGTH EQUALS SUBMITTED
+         LR    9,8             AMOUNT DIVIDED BY 2 LESS ONE IF
+         SLA   8,4              NUMBER IS ODD.
+         OR    8,9
+         MVI   COMPARE,X'F9'  COMPARE PACKED OPERATION
+*
+BORS     L     10,28(1)       LOAD TYPE OF SEARCH CHARACTER
+         CLI   0(10),C'S'      Q.  IS IT SEQUENTIAL
+         L     10,20(1)       LOAD REG 10 WITH INDEX ADCON
+*
+         BE    SEQUENT           SEQUENTIAL
+         EX    8,COMPARE      CHECK IF LOWER THAN
+         BE    SPEND1          LOWEST ENTRY
+         BH    TOOLO
+*
+         MVI   COMPARE+2,X'50'   CHECK IF HIGHER THAN
+         EX    8,COMPARE          HIGHEST
+         MVI   COMPARE+2,X'20'
+         BE    SPEND2
+         BL    TOOHI
+*
+         L     9,8(1)        ALIGN INDEXES - SUBTRACT LENGTH OF
+         S     2,0(9)         TABLE ENTRY.
+         ST    2,INDZERO       SAVE IT
+         SRA   3,1            CUT DISPLACEMENT IN HALF
+         AR    2,3             ADD TO TABLE ADDRESS
+         B     LOOK             AND LOOK.
+*
+SEQUENT  L     3,8(1)         LOAD LENGTH OF TABLE ENTRY
+         L     3,0(3)          IN REG 3 - THIS IS THE INCREMENT
+         SR    2,3           ALIGN INDEXES.
+         ST    2,INDZERO     SAVE INDEX ZERO ADCON.
+*
+         MVC   SEQ1,INST1     MOVE IN THE INSTRUCTIONS THAT CHANGE
+         MVC   SEQ2,INST2      THE ROUTINE FROM BINARY TO SEQUENTIAL.
+         MVC   SEQ3,INST3
+         B     LOWER
+*
+INST1    B     LOWER          THESE INSTRUCTIONS ALTER THE
+INST2    BNH   LOOK+4          SEARCH FROM BINARY TO SEQUENTIAL.
+INST3    B     NOFIND           THEY ARE MOVED AT OBJECT TIME.
+*
+         EJECT
+LOOK     SRA   3,1            DIVIDE BY 2
+         EX    8,COMPARE
+         BE    LOCATE         * * A FIND * *
+SEQ1     BL    LOWER          TABLE ARG LOW - BRANCH
+         SR    2,3             HIGH - LOOK A LITTLE LOWER
+DEC      BCT   6,LOOK           DECREMENT SEARCH COUNT
+         B     NOFIND            IF ZERO, YOU STRUCK OUT.
+*
+LOWER    AR    2,3            TABLE ARG LOW - LOOK A LITTLE HIGHER
+CKOVR    CR    2,5             BUT FIRST CHECK IF OVER THE TABLE LIMIT
+SEQ2     BNH   DEC              BRANCH ON OK
+*
+SEQ3     SRA   3,1            OUTSIDE - MOVE LOWER
+         SR    2,3
+         BCT   6,CKOVR         DECREMENT SEARCH COUNT
+         B     NOFIND            ZERO - THATS ALL CHARLIE.
+*
+COMPARE  CLC   0(0,2),0(4)
+*
+         EJECT
+*                 1 RETURN THE RESULTS TO THE CALLING PROGRAM.
+*                   IF THE TABLE ENTRY WAS LOCATED THE RESULT
+*                   WILL BE THE INDEX OF THE ENTRY.
+*                 2 IF THE SEARCH ARG WAS LOWER THAN THE FIRST
+*                   ENTRY THE INDEX RETURNED WILL BE -1.
+*                 3 IF THE SEARCH ARG WAS HIGHER THAN THE LAST
+*                   ENTRY THE INDEX RETURNED WILL BE -2.
+*                 4 IF THE SEARCH ARG WAS WITHIN THE RANGE OF THE
+*                   TABLE ARGUMENTS BUT NOT PRESENT
+*                   THE INDEX RETURNED WILL BE -3.
+*
+LOCATE   LR    3,2           CALCULATE INDEX.  FIND THE DISPLACMENT
+         S     3,INDZERO      FROM THE START OF THE TABLE.
+         SR    2,2
+         L     8,8(1)
+         L     8,0(8)
+         DR    2,8            DIVIDE BY TABLE LENGTH
+         ST    3,0(10)        STORE RESULT IN MAIN PROGRAM
+         B     GOBACK
+*
+TOOHI    MVC   0(4,10),=F'-2'     SEARCH ARGUMENT OVRR RANGE
+         B     GOBACK          OF THE TABLE
+*
+TOOLO    MVC   0(4,10),=F'-1'     SEARCH ARGUMENT LESS THAN LOWEST
+         B     GOBACK
+*
+SPEND1   MVC   0(4,10),=F'1'
+         B     GOBACK
+*
+SPEND2   L     8,4(1)        LOAD THE NUMBER OF ENTRIES ADCON
+         MVC   0(4,10),0(8)  MOVE NUMBER OF ENTRIES TO INDEX
+         B     GOBACK
+*
+NOFIND   MVC   0(4,10),=F'0'
+*
+GOBACK   L     13,SV+4        RETURN TO MAIN PROGRAM
+         RETURN  (14,12),T
+*
+SV       DS    18F
+INDZERO  DC    F'0'
+         LTORG
+         END

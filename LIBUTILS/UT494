@@ -1,0 +1,488 @@
+UT494    START 0
+         PRINT ON,GEN
+         SPACE 2
+*******************************************************************
+*                                                                 *
+*        PROGRAM ID. :             UT494                          *
+*                                                                 *
+*        DATE WRITTEN :            APRIL 1976.                    *
+*                                                                 *
+*        AUTHOR :                  J. NOLS                        *
+*                                                                 *
+*        LOCATION :                EUROPEAN COMPUTER CENTER       *
+*                                                                 *
+*******************************************************************
+         SPACE 3
+*******************************************************************
+*                                                                 *
+*        PURPOSE                                                  *
+*       ---------                                                 *
+*                                                                 *
+*                                                                 *
+*******************************************************************
+         EJECT
+*******************************************************************
+*                                                                 *
+*        LIMITATION                                               *
+*       ------------                                              *
+*                                                                 *
+*                                                                 *
+*******************************************************************
+         EJECT
+*******************************************************************
+*        REGISTER EQUATES AND USAGES.                             *
+*******************************************************************
+         SPACE 1
+R0       EQU   0    SVC COMMUNICATIONS AND WORK REGISTER
+R1       EQU   1    SVC COMMUNICATIONS AND WORK REGISTER
+R2       EQU   2    SUB-ROUTINE CONTROL INFORMATION AND WORK REG.
+R3       EQU   3    WORK REGISTER
+R4       EQU   4    BAL RETURN ADDRESS
+R5       EQU   5
+R6       EQU   6
+R7       EQU   7
+R8       EQU   8
+R9       EQU   9
+R10      EQU   10
+R11      EQU   11
+R12      EQU   12
+R13      EQU   13   SAVE AREA POINTER / BASE REGISTER 1
+R14      EQU   14   BALR RETURN ADDRESS
+R15      EQU   15   BALR ROUTINE ADDRESS AND WORK REGISTER
+         SPACE 3
+*******************************************************************
+*        HOUSEKEEPING                                             *
+*******************************************************************
+         SPACE 1
+         PGMIN EQUATES=NO,USING=(R13)        ESTABLISH ADDRESSABILITY
+         PRINT NOGEN               SUPPRESS MACRO EXPANSION
+         SPACE 3
+*******************************************************************
+*        SAVE ADDRESS AND LENGTH OF PARM OF EXEC CARD             *
+*******************************************************************
+         SPACE 1
+         L     R1,0(R1)            LOAD ADDRESS OF PARM INTO R1
+         MVC   PARMLGTH+2(2),0(R1) STORE LENGTH OF PARM INFO'S
+         LA    R1,2(R1)            GET ADDRESS OF PARM INFO'S
+         ST    R1,PARMADDR         STORE ADDRESS OF PARM INFO'S
+         EJECT
+*******************************************************************
+*        TEST WHICH ARE THE DD'S SUPPLIED, AND OPEN DATA SETS     *
+*         PRESENT.                                                *
+*******************************************************************
+         SPACE 1
+         LA    R3,MAXDS            ESTABLISH LOOP
+         LA    R2,DCBTABLE         POINT R2 AT DCB TABLE
+         OI    0(R2),DDINT         INDICATE DD INTEREST
+         BAL   R4,TESTIOT          GO TEST IF DD STATEMENT PRESENT
+         BAL   R4,OPEN             GO OPEN DATA SET
+         LA    R2,DCBNTRY(R2)      POINT AT NEXT TABLE ENTRY
+         BCT   R3,*-16             PROCESS NEXT DATA SET
+         SPACE 1
+         EJECT
+*******************************************************************
+*        PROCESS PARM OF EXEC CARD                                *
+*                                                                 *
+*        CREATE TABLE KEYWORDS                                    *
+*******************************************************************
+         SPACE 1
+PARM     CLC   PARMLGTH,ZEROWORD   TEST IF PARM SUPPLIED
+         BNE   PARMSP              BRANCH IF YES
+         WTO   'UT494 **  PARM NOT SUPPLIED               ***'
+PROCBYP  MVC   COMPCODE,COND16     SET CONDITION CODE TO 16
+         WTO   'UT494 **  PROCESSING BYPASSED             ***'
+         B     JOBEND              GO TO TERMINATION ROUTIME
+PARMSP   L     R1,PARMADDR         LOAD ADDRESS OF PARM INTO R1
+         L     R2,PARMLGTH         LOAD LENGTH OF PARM INTO R2
+         LA    R5,KEYWORDS-8       LOAD ADDR.OF 1ST ELEMENT OF TAB.KW
+PARMLOOP LA    R5,8(R5)            INCREMENT POINTER OF KW TABLE
+         CLC   0(8,R5),ENDKWT      TEST IF MORE THAN 20 ELEMENT
+         BNE   PARM1               BRANCH IF NO
+         WTO   'UT494 **  TOO MANY KEYWORDS IN PARM (>40) ***'
+         B     PROCBYP
+PARM1    XR    R7,R7               ZEROISE R7
+         LR    R8,R1
+PARM2    LA    R7,1(R7)            TEST IF LAST KEYWORD
+         CR    R2,R7                         IN PARM
+         BE    PARM4               BRANCH IF YES
+         BCTR  R7,0
+         CLI   1(R8),COMMA         TEST FOR COMMA
+         BE    PARM3               BRANCH IF YES
+         LA    R8,1(R8)            INCREMENT POINTER TO NEXT POSITION
+         LA    R7,1(R7)
+         C     R7,=F'8'            TEST IS LENGTH OF THIS KEYWORD > 8
+         BL    PARM2               BRANCH IF NO
+         WTO   'UT494 **  KEYWORD(S) > 8 POSITIONS        ***'
+         WTO   'UT494 **   IN PARM OF EXEC CARD           ***'
+         B     PROCBYP
+PARM3    EX    R7,STOREKW          EXECUTE MOVE INSTRUCTION
+         B     *+10                SKIP NEXT INSTRUCTION.
+STOREKW  MVC   0(0,R5),0(R1)       STORE KEYWORD IN TABLE
+         LA    R7,2(R7)            GET TRUE LENGTH + 1 FOR COMMA
+         AR    R1,R7               INCREMENT POINTER TO NEXT KEYWORD
+         SR    R2,R7               DECREMENT LENGTH OF PARM FIELDS
+         B     PARMLOOP            GO PROCESS NEXT KEYWORD
+PARM4    BCTR  R7,0
+         EX    R7,STOREKW          EXECUTE MOVE INSTRUCTION.
+         MVC   8(8,R5),ENDKWT      INDICATE END OF KEYWORDS TABLE
+         EJECT
+*******************************************************************
+*        TEST IF 'TABLE' DD STATEMENT PRESENT                     *
+*        ACQUIRE SPACE FOR INTERNAL TABLE                         *
+*        READ TABLE                                               *
+*                                                                 *
+*        A TABLE ELEMENT IS WRITTEN IN GETMAINED SPACE FOR EACH   *
+*        RECORD READ FROM TABLE DATA SET. EACH ELEMENT CONTAINS   *
+*        THE FOLLOWING THINGS :                                   *
+*             (A) LENGTH OF THIS ELEMENT        1 BYTE  BINARY    *
+*             (B) KEYWORD                       8 BYTES CHAR.     *
+*             (C) SORT INFORMATIONS FOR THIS KEYWORD              *
+*                  LENGTH = VALUE OF (A) - 9                      *
+*                                                                 *
+*******************************************************************
+         SPACE 1
+         TM    TABLESW,DDPRES      TEST IF TABLE DD PRESENT
+         BO    GETMAIN             BRANCH IF YES
+         WTO   'UT494 **  TABLE DD STATEMENT NOT SUPPLIED ***'
+         B     PROCBYP
+GETMAIN  L     R0,TABLELGH         LOAD LENGTH TO BE ACQUIRED
+         GETMAIN R,LV=(0)          ACQUIRE CORE FOR INTERNAL TABLE
+         LR    R11,R1              SAVE ADDRESS INTO R11
+         LR    R12,R1              SAVE ADDRESS INTO R12
+READTAB  BAL   R4,RUT1             READ TABLE
+         MVC   1(8,R11),0(R6)      STORE KEYWORD IN TABLE
+         CLI   8(R6),BLANK         TEST IF POS. 9 IS BLANK
+         BNE   ERRTAB              BRANCH IF NO
+         CLI   9(R6),BLANK         TEST IF POS.10 IS NOT BLANK
+         BE    ERRTAB              BRANCH IF YES
+         XR    R1,R1               ZEROISE R1
+         LA    R2,10(R6)           GET START ADDRESS OF SORT FIELD +1
+LOOPTAB  CLI   0(R2),BLANK         TEST IF NEXT POS. BLANK
+         BE    STAB                BRANCH IF YES
+         LA    R1,1(R1)            INCREMENT COUNTER FOR LENGTH(-1)
+         LA    R2,1(R2)            INCREMENT POINTER FOR TEST NEXT POS.
+         B     LOOPTAB             GO TEST NEXT POSITION
+STAB     EX    R1,MOVESFLD         EXECUTE MOVE INSTRUCTION
+         B     *+10                SKIP NEXT INSTRUCTION
+MOVESFLD MVC   9(0,R11),9(R6)      MOVE SORT FIELD IN TABLE
+         LA    R1,10(R1)           GET TRUE LENGTH OF THIS TABLE EL.
+         L     R0,TABLELGH
+         SR    R0,R1               SUB L' OF THIS ELEMENT
+         C     R0,=F'50'           TEST IF L' STILL AVAILABLE > 50
+         BH    TLOK                BRANCH IF YES
+         WTO   'UT494 ** SEE TSG, IT IS NEED TO INCREASE ***'
+         WTO   'UT494 **  VALUE OF ''TABLELGH'' DC.        ***'
+         ABEND 494,DUMP
+TLOK     ST    R0,TABLELGH
+         STC   R1,0(R11)           SAVE THIS LENGTH IN 1ST POS OF TABEL
+         LA    R11,0(R1,R11)       INCREMENT TABLE PTR OF THIS LENGTH
+         B     READTAB             GO READ NEXT TABLE RECORD
+         EJECT
+ERRTAB   EQU   *
+         PRINT GEN
+         CNOP 0,4
+         UNPK  DECIMAL,CNTUT1      UNPACK REC. COUNT OF 'TABLE' D/S
+         OI    DECIMAL+7,SIGN      FORCE SIGN TO 'F'
+         MVC   *+46(8),DECIMAL     MOVE REC. NUMBER IN MESSAGE WTO
+         WTO   'UT494 ** ERROR IN RECORD NUMBER           ***'
+         PRINT NOGEN
+         WTO   'UT494 **  FROM TABLE DATA SET             ***'
+         B     PROCBYP
+         EJECT
+*******************************************************************
+*        SCAN INTERNAL TABLE WITH AS  ARGUMENT OF RESEARCH THE    *
+*         KEYWORD(S) FROM PARM. AND CREATE THE SORT STATEMENT.    *
+*******************************************************************
+         SPACE 1
+EODUT1   EQU   *
+         MVC   0(8,R11),ENDINT     INDICATE END OF INTERNAL TABLE
+         TM    SORTSTSW,DDPRES     TEST IF SORTSTAT DD PRESENT
+         BO    PRES                BRANCH IF YES
+         WTO   'UT494 **  SORTSTAT DD STATEMENT NOT SUPPLIED ***'
+         B     PROCBYP
+PRES     LA    R1,KEYWORDS         LOAD ADDRESS OF KEYWORDS TABLE
+KWLOOP1  CLC   0(8,R1),ENDKWT      TEST IF END OF PARM KEYWORDS
+         BE    ENDSORTS            BRANCH IF YES
+         LR    R2,R12              LOAD INTO R2 ADDR OF 1ST ELEMENT(SF)
+KWLOOP2  CLC   0(8,R2),ENDINT      TEST IF END OF TABLE
+         BE    KWNOTF              BRANCH IF YES
+         CLC   0(8,R1),1(R2)       TEST IF CURRENT TABLE ELEMENT = KWP
+         BE    KWFOUND             BRANCH IF YES
+         XR    R3,R3               ZEROISE R3
+         IC    R3,0(R2)            LOAD LENGTH OF CURRENT ELEMENT
+         LA    R2,0(R3,R2)         GET ADDRESS ADDR OF NEXT ELEMENT
+         B     KWLOOP2             GO TEST NEXT ELEMENT
+KWNOTF   EQU   *
+         PRINT GEN
+         CNOP 2,4
+         MVC   *+32(8),0(R1)       MOVE KEYWORD IN MESSAGE WTO
+         WTO   'UT494 ** KEYWORD ''        '' NOT FOUND     ***'
+         PRINT NOGEN
+         B     PROCBYP
+         EJECT
+KWFOUND  CLI   ELNO,EL1
+         BNE   KWEL2
+         NOP   *+16                SWITCH
+         MVI   *-3,X'F0'               FIRST TIME
+         LA    R10,SORTST1         LOAD ADDRESS OF 'SORT FIELDS=('
+         B     *+8                 SKIP NEXT INSTRUCTION
+         LA    R10,SORTST2         LOAD ADDRESS OF CONTINUATION CARD
+         LA    R11,15(R10)
+         BAL   R4,PREPST
+         MVC   SFKW1,0(R1)
+         MVC   SFKW2,SFKW2-1
+         LA    R1,8(R1)
+         MVI   ELNO,EL2
+         B     KWLOOP1
+KWEL2    BAL   R4,PREPST
+         MVC   SFKW2,0(R1)
+         MVC   0(21,R11),SFKWS     MOVE TWO KW NAMES AS REFERENCE
+         LA    R1,8(R1)
+         MVI   ELNO,EL1
+         CLC   0(8,R1),ENDKWT      TEST IF END OF KEYWORDS TABLE
+         BE    ENDSORTS            BRANCH IF YES
+         BAL   R4,WUT2             GO WRITE THIS SORT STATEMENT
+         MVC   SORTST2+1(70),SORTST2    CLEAR WA
+         B     KWLOOP1             PROCESS NEXT KEYWORD
+ENDSORTS MVC   0(21,R11),SFKWS     MOVE TWO KW NAMES AS REFERENCE
+         BCTR  R11,0               DECREMENT POINTER OF ONE
+         MVI   0(R11),C')'         REPLACE ',' BY ')'
+         MVI   71(R10),BLANK       MOVE BLANK IN CONTINUATION CHAR.POS.
+         BAL   R4,WUT2             GO WRITE THIS SORT STATEMENT
+         B     JOBEND
+         SPACE 2
+PREPST   SUBIN ,
+         XR    R6,R6               ZEROISE R6
+         IC    R6,0(R2)            LOAD LENGTH OF CURRENT TABLE ELEMENT
+         SH    R6,=H'10'           SUBTRACT 10 OF THIS LENGTH
+         EX    R6,MVCSF            EXECUTE MOVE INSTRUCTION
+         B     *+10                SKIP NEXT INSTRUCTION
+MVCSF    MVC   0(0,R11),9(R2)      MOVE IN SORT STATEMENT THE SORT -
+         LA    R11,1(R6,R11)       INCR.PTR. MVC ',' / INFO'S FROM
+         MVI   0(R11),COMMA        MOVE COMMA        / CURRENT TABLE
+         LA    R11,1(R11)          INCR.PTR PAST ',' / ELEMENT
+         SUBOUT ,
+         EJECT
+*******************************************************************
+*        JOB TERMINATION ROUTINE -                                *
+*         CLOSE ANY OPEN DATA SETS,                               *
+*         SET A COMPLETION CODE IN REGISTER 15, AND RETURN.       *
+*******************************************************************
+         SPACE 1
+JOBEND   EQU   *
+         LA    R3,MAXDS            ESTABLISH LOOP
+         LA    R2,DCBTABLE         POINT AT START OF DCB TABLE
+         BAL   R4,CLOSE            CLOSE DATA SET IF OPEN
+         LA    R2,DCBNTRY(R2)      POINT AT NEXT TABLE ENTRY
+         BCT   R3,*-8              CLOSE NEXT DATA SET
+         PGMOUT RC=COMPCODE        SET COND CODE AND RETURN
+         TITLE 'I/O SUB-ROUTINES'
+*******************************************************************
+*        READ SUBROUTINE FOR TABLE                               *
+*******************************************************************
+         SPACE 1
+RUT1     SUBIN ,
+         GET   TABLE              READ RECORD FROM TABLE D/S
+         LR    R6,R1               SAVE RECORD ADDRESS
+         AP    CNTUT1,ONE          INCREMENT RECORD COUNTER
+         SUBOUT ,                  RETURN TO CALLER
+         SPACE 2
+*******************************************************************
+*        WRITE SUBROUTINE FOR SORTSTAT                              *
+*******************************************************************
+         SPACE 1
+WUT2     SUBIN SAVE=(R1,R2)
+         TM    SORTSTSW,DDINT+DDPRES+DDOPEN  TEST IF NEED TO WRITE
+         BNO   WUT2X               BRANCH IF NO
+         PUT   SORTSTAT,0(R10)     WRITE
+         AP    CNTUT2,ONE          INCREMENT RECORD COUNTER
+WUT2X    SUBOUT RESTORE=(R1,R2)    RETURN TO CALLER
+         SPACE 2
+         EJECT
+*******************************************************************
+*        SUPPLY DEFAULT RECORD LENGTH AND/OR BLOCK SIZE           *
+*         IF NOT CODED.                                           *
+*******************************************************************
+         SPACE 1
+BLKSZRTN SUBIN ,                   SUPPLY DEFAULT LRECL AND/OR BLKS
+         USING IHADCB,R1           ESTABLISH DCB ADDRESSABILITY
+         CLC   DCBLRECL,ZEROWORD   TEST IF LRECL SUPPLIED
+         BNE   *+8                 BYPASS DEFAULT IF YES
+         MVI   DCBLRECL+1,80       FORCE LRECL TO 80
+         CLC   DCBBLKSI,ZEROWORD   TEST IF BLKSIZE SUPPLIED
+         BNE   0(R14)              RETURN TO OPEN IF YES
+         MVC   DCBBLKSI,DCBLRECL   FORCE SINGLE BLOCKING
+         DROP  R1                  DROP DCB ADDRESSABILITY
+         SUBOUT RETURN=(R14)       RETURN TO OPEN ROUTINES
+         SPACE 2
+*******************************************************************
+*        I/O ERROR ROUTINE                                        *
+*******************************************************************
+         SPACE 1
+IOERROR  SUBIN ,                   ANALYSE I/O ERROR
+         MVC   COMPCODE,COND16     SET COMPLETION CODE
+         SYNADAF ACSMETH=QSAM      CALL ANALYSIS ROUTINE
+         MVC   WTOIOE+27(86),50(R1) ADD RESULT OF ANALYSIS TO LINE
+         SYNADRLS ,                RELEASE OS BUFFER
+         WTO   MF=(E,WTOIOE)       TELL OPERATOR OF ERROR
+         SUBOUT RETURN=JOBEND      TERMINATE JOB
+         EJECT
+*******************************************************************
+*        TEST IF A DD STATEMENT IS PRESENT BEFORE OPEN            *
+*******************************************************************
+         SPACE 1
+TESTIOT  SUBIN ,                   TEST TASK INPUT/OUTPUT TABLE
+         TESTIOT DDNAME=4(R2)      TEST IF DDNAME FOUND IN TIOT
+         B     *+4(R15)            TEST CONDITION CODE
+         OI    0(R2),DDPRES        TELL THAT DD STATEMENT SUPPLIED
+         SUBOUT ,                  RETURN TO CALLER
+         SPACE 3
+*******************************************************************
+*        OPEN ROUTINE                                             *
+*******************************************************************
+         SPACE 1
+OPEN     SUBIN SAVE=(R3)           OPEN DATA SET
+         TM    0(R2),DDINT+DDPRES  TEST IF DD INTERESTING AND
+         BNO   OPENX               BRANCH IF NO    / PRESENT.
+         L     R3,0(R2)            GET DCB ADDRESS
+         CLC   12(8,R2),=C'INPUT   ' TEST FOR INPUT D/S
+         BE    OPENZ               BRANCH IF INPUT D/S
+         OPEN  ((R3),(OUTPUT))     OPEN OUTPUT DATA SET
+         B     OPENY               GO SET SWITCH
+OPENZ    OPEN  ((R3),(INPUT))      OPEN INPUT DATA SET
+OPENY    OI    0(R2),DDOPEN        INDICATE DATA SET OPEN
+OPENX    SUBOUT RESTORE=(R3)       RETURN TO CALLER
+         SPACE 3
+*******************************************************************
+*        CLOSE ROUTINE                                            *
+*******************************************************************
+         SPACE 1
+CLOSE    SUBIN SAVE=(R3)           CLOSE DATA SET
+         TM    0(R2),DDOPEN        TEST IF DATA SET OPEN
+         BZ    CLOSEX              EXIT IF NOT
+         L     R3,0(R2)            GET DCB ADDRESS
+         CLOSE ((R3))              CLOSE DATA SET
+         NI    0(R2),FF-DDOPEN     SET OFF 'OPEN' SWITCH
+CLOSEX   SUBOUT RESTORE=(R3)       RETURN TO CALLER
+         TITLE 'DCB''S AND I/O CONTROL TABLES'
+*******************************************************************
+*        DCB'S TABLE                                              *
+*******************************************************************
+         SPACE 1
+DCBTABLE DS    0F
+TABLESW  DC   X'00',AL3(TABLE),CL8'TABLE',CL8'INPUT'
+SORTSTSW DC    X'00',AL3(SORTSTAT),CL8'SORTSTAT',CL8'OUTPUT'
+         SPACE 1
+TABSIZE  EQU   *-DCBTABLE          DCB'S TABLE SIZE
+DCBNTRY  EQU   20                  LENGTH OF ONE TABLE ELEMENT
+MAXDS    EQU   TABSIZE/DCBNTRY     MAXIMUN NUMBER OF DCB'S
+         SPACE 1
+DDINT    EQU   16                  DD INTEREST
+DDPRES   EQU   8                   DD PRESENT
+DDOPEN   EQU   1                   DATA SET IS OPEN
+         SPACE 2
+EXITLIST DC    X'85',AL3(BLKSZRTN) ENTRY FOR DCB MODIFICATION
+         SPACE 2
+WTOIOE   DS    0F
+         DC    AL2(WTOEND-*),H'0',CL109'******** - I/O ERROR -'
+WTOEND   EQU   *
+         EJECT
+*******************************************************************
+*        DATA CONTROL BLOCKS                                      *
+*******************************************************************
+         SPACE 1
+TABLE    DCB   DDNAME=TABLE,                                           C
+               LRECL=80,                                               C
+               DSORG=PS,                                               C
+               SYNAD=IOERROR,                                          C
+               EXLST=EXITLIST,                                         C
+               RECFM=FB,                                               C
+               MACRF=GL,                                               C
+               EODAD=EODUT1
+         SPACE 3
+SORTSTAT DCB   DDNAME=SORTSTAT,                                        C
+               LRECL=80,                                               C
+               DSORG=PS,                                               C
+               SYNAD=IOERROR,                                          C
+               EXLST=EXITLIST,                                         C
+               RECFM=FB,                                               C
+               MACRF=PM
+         SPACE 3
+         TITLE 'MISCELLANIOUS EQUATES, CONSTANTS AND WORK AREAS'
+*******************************************************************
+*        EQUATES                                                  *
+*******************************************************************
+         SPACE 1
+FF       EQU   255                 FOR 'NI' INSTRUCTION
+BLANK    EQU   X'40'               BLANK
+ON       EQU   X'FF'               ON
+OFF      EQU   X'00'               OFF
+HIGHVAL  EQU   X'FF'               HIGH VALUE
+LOWVAL   EQU   X'00'               LOW VALUE
+SIGN     EQU   X'F0'               FOR FORCE SIGN TO 'F'
+COMMA    EQU   C','
+EL1      EQU   C'1'
+EL2      EQU   C'2'
+         EJECT
+*******************************************************************
+*        CONSTANTS                                                *
+*******************************************************************
+         SPACE 1
+ZEROWORD DC    F'0'                BINARY ZERO FULLWORD FOR TESTS
+         SPACE 1
+COND4    DC    H'4'                COMPLETION CODE OF 4
+COND8    DC    H'8'                COMPLETION CODE OF 8
+COND12   DC    H'12'               COMPLETION CODE OF 12
+COND16   DC    H'16'               COMPLETION CODE OF 16
+         SPACE 1
+ZERO     DC    PL1'0'              PACKED CONSTANT OF ZERO
+ONE      DC    PL2'1'              PACKED CONSTANT OF ONE
+         EJECT
+*******************************************************************
+*        WORK AREAS                                               *
+*******************************************************************
+         SPACE 1
+DECIMAL  DS    D                   WA FOR DECIMAL OPERATIONS
+COMPCODE DC    H'0'                CONDITION CODE
+         SPACE 1
+PARMLGTH DC    F'0'                LENGTH OF PARM OF EXEC CARD
+PARMADDR DS    F                   ADDRESS OF PARM INFO'S
+         SPACE 1
+CNTUT1   DC    PL4'0'
+CNTUT2   DC    PL4'0'
+         SPACE 1
+KEYWORDS DC    40CL8' '            KEYWORDS TABLE , 40 ELEMENTS
+ENDKWT   DC    CL8'*'              INDICATED END OF KW TABLE
+         ORG   *-8
+ENDINT   DS    CL8
+         SPACE 1
+ELNO     DC    C'1'
+         SPACE 1
+SORTST1  DC    CL71'  SORT FIELDS=( '
+         DC    CL9'C'
+         SPACE 1
+SORTST2  DC    CL71' '
+         DC    CL9'C'
+         SPACE 1
+SFKWS    DC    CL21' '
+         ORG   *-18
+SFKW1    DS    CL8
+         DS    CL2
+SFKW2    DS    CL8
+         SPACE 1
+TABLELGH DC    F'8192'
+         EJECT
+*******************************************************************
+*        LITERAL POOL                                             *
+*******************************************************************
+         SPACE 1
+         LTORG
+         TITLE 'DCB DSECT'
+*******************************************************************
+*        DCB DSECT                                                *
+*******************************************************************
+         SPACE 1
+         PRINT GEN
+         DCBD  DSORG=PS            GENERATE DCB DSECT
+         PRINT NOGEN
+         END

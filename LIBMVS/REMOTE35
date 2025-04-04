@@ -1,0 +1,2876 @@
+OSRTP    TITLE 'O/S REMOTE TERMINAL PROGRAM - OPTION DEFINITIONS'
+         GBLA  &BUFSIZE            HASP TP BUF SIZE
+         GBLC  &XPARENT            TRANSPARENCY MODE
+         GBLC  &RMTID              STATION-ID
+         GBLA  &ERRMSG
+         LCLA  &ERRCNT             MAXIMUM ACCEPTABLE CONTINUOUS ERRORS
+         SPACE 3
+MTSRJE   START 0                   BEGIN RJE LINE CONTROL
+         SPACE 1
+***********************************************************************
+*                                                                     *
+*        THIS IS THE HIGHEST LEVEL OF THE PROGRAM TO DATE.            *
+*        IT IS DESIGNED TO BE MULTI-PURPOSE AND CAN BE USED FOR       *
+*        BOTH APPLICATIONS WITHIN MONSANTO (REMOTE35 AND RMT109)      *
+*        WITH MINIMAL ALTERATION SO IT IS NOT NECESSARY TO MAINTAIN   *
+*        TWO VERSIONS OF THE SOURCE CODE. THE ONLY CHANGES            *
+*        REQUIRED ARE TO THE FOLLOWING TWO ASSEMBLER STATEMENTS       *
+*        WHICH DEFINE THE MULTI-LEAVING BUFFER SIZE AND THE REMOTE    *
+*        IDENTIFICATION.THE VALUES FOR REMOTE35 ARE:                  *
+*                                                                     *
+*        &BUFSIZE    SETA   400         REMOTE35 TP BUF SIZE          *
+*        &RMTID      SETC   'REMOTE35'  REMOTES IDENT                 *
+*                                                                     *
+*        FOR RMT109 THESE SHOULD BE CHANGED TO:                       *
+*                                                                     *
+*        &BUFSIZE    SETA   808         RMT109 TP BUF SIZE            *
+*        &RMTID      SETC   'RMT109'    REMOTES IDENT                 *
+*                                                                     *
+*        THESE VARIABLES CONTROL ALL DIFFERENCES IN THE TWO           *
+*        VERSIONS, EVEN DOWN TO THE ASSEMBLY LISTING TITLES.          *
+*                                                                     *
+*        D.H.CARTWRIGHT  MONSANTO TSG/BRUSSELS   OCTOBER 1978         *
+*                                                                     *
+***********************************************************************
+         SPACE 2
+&BUFSIZE SETA  400                 R35 TP BUF SIZE
+&RMTID   SETC  'REMOTE35'          REMOTES IDENT
+&XPARENT SETC  'YES'               YES IF TRANSPARENCY
+&ERRMSG  SETA  1                   NON-ZERO TO LOG TP ERRORS
+&ERRCNT  SETA  32                  ACCEPTABLE CONSECUTIVE ERRORS
+         TITLE '&RMTID O/S REMOTE TERMINAL PROGRAM - TP MONITOR'
+**                       BSC  CONTROL  CHARACTERS                **
+         SPACE 2
+XSOH     EQU   X'01'               START OF HEADING
+XSTX     EQU   X'02'               START OF TEXT
+XETX     EQU   X'03'               END OF TEXT
+XDLE     EQU   X'10'               DATA LINK ESCAPE
+XETB     EQU   X'26'               END OF TEXT BLOCK
+XENQ     EQU   X'2D'               ENQUIRY
+XSYN     EQU   X'32'               SYNCHRONIZATION
+XEOT     EQU   X'37'               LOST BLOCK ALARM
+XNAK     EQU   X'3D'               NEGATIVE ACKNOWLEDGEMENT
+XACK1    EQU   X'61'               POSITIVE ACK-CONDITIONAL
+XACK0    EQU   X'70'               POSITIVE ACK
+         SPACE 2
+         AIF   ('&XPARENT' NE 'YES').NOTRANS
+XLDR     EQU   XDLE                TRANSPARENT HEADER
+XTRL     EQU   XDLE                TRANSPARENT TRAILER
+XCHN     EQU   X'60'               TRANSPARENT CCW CHAIN BITS
+.NOTRANS ANOP
+         AIF   ('&XPARENT' EQ 'YES').ISTRANS
+XLDR     EQU   XSOH                NON-TRANSP HEADER
+XTRL     EQU   XSYN                NON-TRANSP TRAILER
+XCHN     EQU   X'A0'               NON-TRANSP CCW CHAIN BITS
+.ISTRANS ANOP
+         SPACE 3
+**                  BLOCK  CONTROL  BYTE  INDICATORS             **
+         SPACE 2
+BCBIGNRE EQU   X'10'               IGNORE BLOCK COUNT INDICATOR
+BCBRESET EQU   X'20'               RESET BLOCK COUNT INDICATOR
+         EJECT
+TPBUF    DSECT
+BUFBEGIN DS    0F
+BUFSTAT1 DS    C                   BUFFER STATUS IND
+BUFSTAT2 DS    C                   UNUSED
+BUFCOUNT DS    H                   DATA COUNT +CTL CHARS, BCB, FCS, EOB
+BUFSTART DS    CL2                 TRANSMISSION CONTROL BYTES
+BUFBCB   DS    C                   BLOCK CONTROL BYTE
+BUFFCS   DS    CL2                 FUNCTION CONTROL SEQUENCE
+BUFDATA  DS    (&BUFSIZE-5)C       DATA PORTION OF BUFFER
+BUFEND   DS    0F                  ALIGNMENT FOR NEXT BUFFER
+         SPACE 3
+**             BUFSTAT1 BIT DEFINITIONS                          **
+         SPACE 3
+BUFFREE  EQU   X'00'               BUF AVAILABLE FOR USE
+BUFFAKE  EQU   X'01'               BUF IN USE AS DUMMY
+BUFRESP  EQU   X'02'               BUF IN USE FOR RESPONSE ONLY
+BUFNAK   EQU   X'04'               BUF IN USE FOR NAK RESPONSE
+BUFTEXT  EQU   X'08'               BUF IN USE FOR TEXT INFO
+BUFUCHEK EQU   X'10'               UNIT CHECK EXPECTED
+BUFINIT  EQU   X'20'               SIGN-ON BUFFER - ENQUIRY
+BUFWTOR  EQU   X'40'               OP INQ TO HASP BUFFER
+BUFREQ   EQU   X'80'               BUF IS REQ TO SEND
+         EJECT
+**       THE FOLLOWING SECTION IS THE SYSTEM TRAFFIC COP.  IT    **
+**       DETERMINES WHEN TO WAIT AND WHEN TO DISPATCH A FUNCTION **
+**       OF THE PROGRAM.  IT WAITS ON AN ECB THAT IS ONLY POSTED **
+**       BY TP I/O COMPLETION - PGM IS TP DRIVEN.
+         SPACE 3
+MTSRJE   CSECT
+         USING ACTIVE,11,12        ESTABLISH ADDRESSABILITY
+ACTIVE   WAIT  ECB=TASKECB         ONLY ECB FOR O/S WAIT
+         XC    TASKECB,TASKECB     CLEAR ECB FOR NEXT USE
+FINDWORK EQU   *                   DETERMINE WHAT TO DO
+         CLI   IOBECBCC,0          TP IOB BEEN POSTED
+         BE    MTSRJE              NO. PUT IN WAIT UNTIL IT IS
+         BAL   10,TPCHEND          YES. GO ANALYZE TP ACTIVITY
+CONINPUT EQU   *                   OPERATOR CON SUPPORT RTN
+         CLI   WTORECB,0           IS THERE A WTOR OUT
+         BNE   ANYOPIN             YES. GO SEE IF OP-INP YET
+         BAL   10,DOWTOR           NO. GO ISSUE ONE
+ANYOPIN  EQU   *                   LOOK FOR OP RESPONSE
+         TM    WTORECB,X'40'       HAS OP ENTERED A MSG
+         BZ    DISKIN              NO. GO LOOK FOR TRANS-DATA
+         BAL   10,OPINPUT          YES. GO ANALYZE & SERVICE OP MSG
+DISKIN   EQU   *                   MANAGE INPUT QUEUES
+INEOFSW1 BC    0,REOPEN            EOF CNTRL SW ONE
+INEOFSW2 BC    0,RECLOSE           EOF CNTRL SW TWO
+         CLI   IQUESW,0            ANY INPUT QUEUE ACTIVE
+         BNE   IQUEIO              YES. GO SERVICE ACTIVE QUE
+         LH    1,IDLCNT            NO. GET COUNT SINCE LAST ENQ
+         LA    1,1(1)              ADD FOR THIS TIME THRU
+         CH    1,IDLMAX            IS IT TIME TO TRY AGAIN
+         STH   1,IDLCNT            SAVE NEW COUNT FOR LATER
+         BL    DISKOUT             GO LOOK FOR RECEIVE DATA
+         BAL   10,DSKINENQ         GO TO ENQ ON INP QUEUES
+RETHERE  B     DISKOUT             RET HERE IF IN QUES EMPTY
+IQUEIO   EQU   *                   DSK ENQ RET HERE IF DATA TO SEND
+         CLI   INECB,0             IS A DISK READ REQUIRED
+         BNE   IRDDONE             NO. HAS ONE COMPLETED
+         BAL   10,DSKRD            YES. GO TRY TO DO A READ
+IRDDONE  EQU   *                   CHECK STATUS OF INP I/O
+         TM    INECB,X'40'         HAS I/O COMPLETED
+         BZ    DISKOUT             NO. GO CHECK ON OUTPUT I/O
+         BAL   10,RDCHK            YES. SEE HOW IT ENDED
+         EJECT
+DISKOUT  EQU   *                   OUTPUT QUEUE CONTROL
+         NOP   DSKOPOUT            AN OPEN REQUIRED
+RDJDONE  NOP   ENTROPEN            OUTPUT OPEN SW
+OPDONE   EQU   *
+         CLI   OQUEMODE,0          NOT IN DATA MODE
+         BE    ENDLIST             NO. GO TO ANY OTHER TASKS
+         BAL   10,DSKWRT           YES. TRY TO START A WRITE
+CHKCLOSE EQU   *                   SEE IF OUTPUT CLOSE NEEDED
+OCLOSSW  EQU   *+1                 CLOSE A QUE SWITCH
+         NOP   OSHUTQUE            CLOSE OUT QUE IF TIME
+ENDLIST  EQU   *
+         B     ACTIVE              CYCLE AGAIN
+         EJECT
+DOWTOR   EQU   *                   DO A WTOR FOR OP TO USE
+         XC    WTORECB,WTORECB     CLEAR THE ECB FOR WTOR
+         TM    CONSTAT1,BUFTEXT    TRYING TO SEND MSG
+         BO    0(10)               YES. DELAY WTOR
+         CLI   TASKSWS+3,255       HAS SIGNOFF BEEN ENTERED
+         BNE   WTORPASS            NO. GO DO WTOR
+         OI    WTORECB,2           YES. FAKE A SPECIAL WTOR
+         BR    10                  RETURN TO DISPATCHER
+WTORPASS EQU   *                   NOT SIGNOFF BYPASS
+         MVI   CONAREA,64          BLANK IN FIRST BYTE
+         MVC   CONAREA+1(62),CONAREA BLANK REST OF AREA
+         WTOR  'WTOR FOR RJE MESSAGES &RMTID',CONAREA,63,WTORECB
+         ST    R1,WTORID           SAVE MESSAGE IDENTIFICATION
+         OI    WTORECB,1           INDICATE RESP PENDING
+         BR    10                  RETURN TO DISPATCHER
+         SPACE 3
+OPINPUT  EQU   *                   CHECK MSG FROM OPERATOR
+         CLC   ABORT,CONAREA       REEQUEST FOR ABORT
+         BNE   SINOFFCK            NO. GO TEST FOR SIGNOFF
+         ABEND 0,DUMP              YES. ABORT RIGHT NOW
+SINOFFCK EQU   *
+         OC    CONAREA,WTOMSG      PUT OP MSG IN UPPER CASE
+         CLC   SINOFF,CONAREA      IS IT REQ FOR SIGNOFF
+         MVI   CONRCB,X'92'        ASSUME CONSOLE RCB
+         MVI   CONSRCB,X'80'       ASSUME CONSOLE SRCB
+         BNE   HASPINQ             NO. OP IS QUERYING HASP
+         CLI   IQUEMODE,0          ARE WE SENDING DATA
+         BCR   7,10                YES. HOLD SIGNOFF TILL DONE
+         L     1,TPQUE             FETCH FIRST QUE SLOT
+         LTR   1,1                 IS IT AVAILABLE
+         BCR   7,10                NO. HOLD SIGNOFF TILL FREE
+         LA    1,ASKBUF            POINT TO REQ-TO-SEND BUF
+         OI    ASKSTAT1,BUFTEXT    SHOW BUFFER HAS TEXT
+         MVC   ASKSTART(2),XSTXSEQ RESET LEADERS IN REQ BUF
+         MVI   ASKRCB,X'90'        PUT REQ-TO-SEND IN RCB
+         ST    1,TPQUE             QUE REQ BUFFER
+         MVI   CONRCB,X'93'        SET DATA RCB FOR SIGNOFF
+         MVI   CONSRCB,X'80'       SET DATA SRCB FOR SIGNOFF
+         MVI   TASKSWS+3,255       SET FLAG FOR FINAL EXIT
+HASPINQ  EQU   *                   OP MSG TO HASP
+         XR    1,1                 SET A WORK REG TO ZERO
+         LA    2,CONAREA           START OF OP MSG
+MSGLEN   CLI   0(2),64             USE BLANK TO END SCAN
+         BE    MSGEOM              AT END - GO SET UP BUF
+         CLI   0(2),0              EOB ALSO DELIMITER
+         BE    MSGEOM              AT END - GO SET UP BUF
+         LA    1,1(1)              ADD 1 TO MSG COUNT
+         LA    2,1(2)              ADJUST SCAN POINTER
+         B     MSGLEN              CONTINUE SCAN FOR END
+MSGEOM   MVC   0(2,2),CONEOB       PUT IN TERMINATORS
+         STC   1,CONSCB            PUT LENGTH IN SCB
+         OI    CONSCB,X'C0'        PUT IN STRING CONTROL BITS
+         LA    1,10(1)             COMPUTE REAL LENGTH
+         STH   1,CONCOUNT          PUT BUFL IN COUNT FIELD
+         MVC   CONSTART(2),XSTXSEQ PUT STX IN BUFFER
+         OI    CONSTAT1,BUFTEXT    SHOW BUFFER HAS TEXT
+         LA    2,CONMSG            PUT OP BUF ADDR IN REG
+         CLI   CONRCB,X'93'        IS THIS A SIGNOFF
+         BNE   CONSET              NO. GO PUT ON CONS QUE
+         ST    2,IQUE              YES. PUT ON DATA QUE
+         B     CONSET+L'CONSET     SKIP NEXT INSTR
+CONSET   ST    2,CONQUE            QUE THE BUF FOR TP HANDLER
+         MVI   WTORECB,0           CAUSE A NEW WTOR
+         BR    10                  RETURN TO DISPATCHER
+         EJECT
+DSKINENQ EQU   *                   CHECK QUES FOR INPUT DATA
+         XC    IDLCNT,IDLCNT       RESET ENQ COUNTER TO ZERO
+         LH    9,RNUM              GET RSTRT JOB NUM
+         LTR   9,9                 SEE IF IN RSTRT MODE
+         BZ    NORSTR              NO. DO NORMAL OPEN PROCESS
+         OI    RSTRMODE,255        SHOW RESTART IN PROCESS
+         CLI   RQUE,C'A'           RSTRT WITH QUE A
+         BNE   DSTWOENQ            NO. GO GET QUE B
+NORSTR   EQU   *                   NORMAL OPEN ROUTINE BYPASS
+         TM    DSOPSW,X'F0'        QUE A LAST SERVICED
+         BO    DSTWOENQ            YES. GO TRY QUE B
+         MVI   RNAMIN+L'RNAMIN-1,C'A'   SET ENQ NAME TO QUE A
+         LA    1,INENQLST          SET PARAM LIST ADDR
+         SVC   56                  ISSUE ENQ SVC
+         LTR   15,15               CHECK IF DATA SET ASSIGNED
+         BZ    OPNQUEA             YES. GO OPEN IT
+         CLI   RSTRMODE,255        NO. ARE WE IN RSTRT
+         BNE   DSTWOENQ            NO. GO TRY OTHER QUE
+         WTO   MF=(E,RENQERR)      YES. TELL OP OF ENQ FAIL
+         BC    15,0(10)            RETURN TO SERVICE OTHERS
+OPNQUEA  EQU   *                   ENQ WAS SUCCESSFUL
+         MVI   DSOPSW,X'F0'        SET IN-QUE ONE MASK
+         MVC   IDCB+40(8),INDD1    PUT DDNAME OF FIRST QUE IN DCB
+SETOPEN  MVI   TASKSWS,255         SET OPEN FLAG FOR TP APPENDAGE
+***      OPEN  (IDCB,(INPUT))      OPEN INPUT QUEUE         ***
+         LA    1,IDCBADR           SETUP LIST POINTER
+         SVC   19                  PERFORM OPEN SVC
+         XC    TRANSCNT(4),TRANSCNT CLEAR TRAN STATUS CNTRS
+         MVI   TASKSWS,0           ALLOW TP TO RESUME
+DSOPSW   EQU   *+1                 IN-QUE MASK INDICATOR
+         MVI   IQUESW,X'0F'        SET APPROPRIATE QUE MASK
+         MVI   INECB,0             CLEAR INP ECB TO ZERO
+         BC    15,4(10)            RET TO TEST DISK-IN STATUS
+         SPACE 2
+DSTWOENQ EQU   *                   TRY TO OBTAIN OTHER QUEUE
+         MVI   RNAMIN+L'RNAMIN-1,C'B'   SET ENQ NAME TO QUE B
+         LA    1,INENQLST          SET PARAM LIST ADDR
+         SVC   56                  ISSUE ENQ SVC
+         LTR   15,15               DID WE GET THE DATA SET
+         BZ    OPNQUEB             YES. GO OPEN IT
+         CLI   RSTRMODE,255        NO. ARE WE IN RSTRT
+         BNE   0(10)               NO. GO TO SERVICE OTHERS
+         WTO   MF=(E,RENQERR)      YES. TELL OP ENQ FAILED
+         BC    15,0(10)            RETURN TO SERVICE OTHERS
+OPNQUEB  EQU   *                   ENQ WAS SUCCESSFUL
+         MVI   DSOPSW,X'0F'        SET IN-QUE MASK INDICATOR
+         MVC   IDCB+40(8),INDD2    PUT ALT QUE DDNAME IN DCB
+         B     SETOPEN             GO OPEN THIS QUEUE
+         EJECT
+DSKRD    EQU   *                   START A READ FOR DISK QUE
+         L     2,IQUE              GET SECOND BUF ADDR
+         LTR   2,2                 IS THERE ONE QUEUED
+         BNZ   0(10)               YES. WAIT FOR TP I/O
+         CLI   IQUEMODE,0          IN DATA MODE YET
+         BNE   RGETBUF             YES. GO LOOK FOR BUF
+         L     3,TPQUE             NO. SEE IF ANY TP WRITES PENDING
+         LTR   3,3                 AN OUTPUT BUF BEING SERVICED
+         BNZ   0(10)               YES. WAIT FOR COMPLETION
+RGETBUF  EQU   *                   FIND A FREE BUFFER
+         LA    2,BUF1              START OF BUFFER POOL
+RDBUF    CLI   BUFSTAT1-BUFBEGIN(2),0 SEE IF BUFF IS FREE
+         BE    RDBUFOK             YES. GO START A READ
+         LA    2,BUFEND-BUFBEGIN(2) GET NEXT BUFFER ADDR
+         CLC   BUFSDONE,0(2)       IS IT END OF POOL
+         BNE   RDBUF               NO. GO CHECK NEXT BUF
+         BR    10                  YES. WAIT FOR A BUFFER
+RDBUFOK  EQU   *                   BUF FOUND - START A READ
+         OI    0(2),BUFTEXT        SHOW BUF USED FOR TEXT
+         LA    3,2(2)              DATA PORTION OF BUFFER
+         ST    3,INBCB             PUT ADDR IN BUFCB
+         READ  INECB,SF,IDCB,(3),'S' READ A BLOCK OF DATA
+         OI    INECB,1             SHOW WAITING ON DISK
+         ST    2,RDWAIT            SAVE BUF ADDR TILL END
+         BR    10                  RETURN TO DISPATCHER
+RDCHK    EQU   *                   CHECK READ FOR EOF
+         L     2,RDWAIT            GET ADDR OF INP BUF
+         CHECK INECB               CAUSE EOF EXIT IF DONE
+         MVI   INECB,0             SHOW NO DISK I/O ACTIVE
+         BAL   3,RJOBSCAN          GO SCAN BUF FOR JOBS
+         CLI   IQUEMODE,0          IS PERMISSION NEEDED
+         BNE   RDSEND              NO. GO SEND THIS BUF
+         CLI   RSTRMODE,255        SKIP FOR RESTART
+         BNE   RQUEID              NO. GO IDENTIFY ACTIVE QUE
+         LH    R3,RNUM             PICK UP RESTART NUMBER
+         LTR   R3,R3               TEST FOR 'MT'
+         BM    ENDINQUE            YES,EMPTY THIS QUEUE
+         CH    R3,RCNT             NO, TEST FOR RESTART POINT
+         BNH   RDCONT              YES. GO START TRANSMISSION
+         MVI   0(2),0              CLEAR BUF STAT - FREE IT
+         B     0(10)               RETURN TO DISPATCHER
+RDCONT   EQU   *
+         MVI   RSTRMODE,0          YES. TURN OFF RSTRT FLAG
+         XC    RNUM,RNUM           RESET RESTART COUNTER
+RQUEID   EQU   *                   START TRANS FROM QUE
+         MVI   TRANMSG+22,C'A'     PRESUME QUE A
+         TM    DSOPSW,X'F0'        WAS IT QUE A
+         BO    QWTOOK              YES. LEAVE MSG AS IS
+         MVI   TRANMSG+22,C'B'     NO. SET MSG TO QUE B
+QWTOOK   EQU   *
+         WTO   MF=(E,TRANMSG)      TELL OP QUE IS IN USE
+         MVI   IQUEMODE,255        YES. SHOW REQUEST MADE
+         OI    ASKSTAT1,BUFTEXT    SHOW BUFFER HAS TEXT
+         MVC   ASKSTART(2),XSTXSEQ RESET LEADERS IN REQ BUF
+         LA    1,ASKBUF            POINT TO SEND REQ BUF
+         MVI   ASKRCB,X'90'        PUT REQ-TO-SEND IN RCB
+         STM   1,2,TPQUE           QUE IT AND FIRST TEXT BUF
+         BR    10                  RETURN TO DISPATCHER
+RDSEND   EQU   *                   DATA BUF READY TO GO
+         LH    1,TRANSCNT          GET TRANS LOG COUNT
+         LA    1,1(,1)             INCREMENT BY 1
+         CH    1,IDLMAX            TIME TO GIVE STATUS
+         STH   1,TRANSCNT          PRESUME NOT YET
+         BL    TCNTPASS            NO. GO BY STATUS LOG
+         XC    TRANSCNT,TRANSCNT   YES. CLEAR STATUS CNTR
+         AH    1,TRANSTOT          COMPUTE NEW TOTAL
+         STH   1,TRANSTOT          AND SAVE IT
+         CVD   1,UNPKA             PUT COUNT IN DDECIMAL
+         UNPK  TSTATWTO+18(6),UNPKA+5(3) PUT IN ZONED
+         OI    TSTATWTO+23,240     SET SIGN TO ZONED
+         WTO   MF=(E,TSTATWTO)     LOG TRAN STATUS
+TCNTPASS EQU   *                   TRAN STATUS BYPASS
+         L     1,TPQUE             ANY BUF IN TRANSIT
+         LTR   1,1                 IS THERE ONE
+         BNZ   RDQUEBUF            YES. QUE SECOND BUF
+         ST    2,TPQUE             NO. QUE BUF AT TOP
+         B     DSKRD               START READING NEXT BUFFER
+RDQUEBUF ST    2,IQUE              STORE BUF AS SECOND
+         BR    10                  RETURN TO DISPATCHER
+ENDINQUE EQU   *                   END OF INP QUE
+         MVI   INECB,0             SHOW NO I/O ACTIVE
+         CLI   IQUEMODE,0          ENTRY DUE TO AN EMPTY QUE
+         BNE   RDEOF               NO. GO END THE STREAM
+         CLI   RSTRMODE,255        WAS THIS RESTART ATTEMPT
+         MVI   RSTRMODE,0          TURN OFF RESTART MODE
+         BNE   RFREBUF             NO. GO FREE ASSIGNED BUF
+         LH    R3,RNUM             YES,REMEBER NUMBER
+         XC    RNUM,RNUM           SET RSTRT JOB NO TO ZERO
+         WTO   MF=(E,RENDERR)      TELL OP RSTRT QUE EMPTY
+RFREBUF  EQU   *                   SKIP RSTRT DIAGNOSTIC
+         L     2,RDWAIT            ADDR OF RESERVED BUF
+         MVI   0(2),0              CLEAR BUF STAT - FREE IT
+         LTR   R3,R3               TEST FOR 'MT'
+         BM    QUEEOF+L'QUEEOF     YES,PURGE THIS QUEUE
+         MVI   TASKSWS,255         TELL APPENDAGE LOSING CTL
+UPDEOF   EQU   *                   END OF INPUT ROUTINE
+***      CLOSE IDCB                CLOSE THE QUEUE          ***
+         LA    1,IDCBADR           SETUP LIST POINTER       ***
+         SVC   20                  PERFORM CLOSE SVC
+         XC    RCNT,RCNT           RESET JOB NO CTR TO ZERO
+         MVI   TASKSWS,0           TURN OFF DELAY SW
+         TM    IQUESW,X'F0'        WAS FILE ONE JUST TRIED
+         MVI   IQUESW,0            RESET FILE OPEN INDICATOR
+         BZ    IDEQTWO             NO. GO RELEASE QUE TWO
+         LA    1,INDEQLST          SET PARAM LIST ADDR
+         SVC   48                  ISSUE DEQ SVC
+         LA    10,RETHERE          YES. CHANGE RET ADDR
+         BR    10                  GO SERVICE OTHER FUNCTIONS
+RDEOF    EQU   *                   END OF A STREAM
+         L     2,RDWAIT            ADDR OF BUF FOR NULL REC
+         MVC   BUFSTART-BUFBEGIN(2,2),XSTXSEQ SET TXT START
+         LA    3,9                 NULL BUF COUNT
+         STH   3,BUFCOUNT-BUFBEGIN(2) PUT COUNT FOR TP I/O
+         MVC   BUFDATA-BUFBEGIN(4,2),NULREC  PUT EOF REC
+         MVI   IQUEMODE,0          SHOW DATA MODE ENDED
+         L     3,TPQUE             PTR TO ACTIVE BUF
+         LTR   3,3                 IS ONE ACTIVE NOW
+         BNZ   QUEEOF              YES. QUE NULL BUF
+         ST    2,TPQUE             NO. QUE NULL BUF AS ACTIVE
+         B     QUEEOF+L'QUEEOF     SKIP NEXT INSTR
+QUEEOF   ST    2,IQUE              QUE NULL BUF AS 2ND BUF
+         MVI   TASKSWS,255         TELL APPENDAGE O/S IN CNTRL
+***      CLOSE IDCB                CLOSE FILE JUST ENDED
+         LA    1,IDCBADR           SETUP LIST POINTER
+         SVC   20                  PERFORM CLOSE SVC
+         XI    INEOFSW1+1,240      TURN ON EOF SW ONE
+         B     DISKOUT             GO DO OTHER WORK
+REOPEN   EQU   *                   RE-OPEN TO SET EOF
+         XI    INEOFSW1+1,240      TURN OFF EOF SW ONE
+         XI    INEOFSW2+1,240      TURN ON EOF SW TWO
+         OPEN  (IDCB,(OUTPUT))     PUT EOF AT BEGIN OF FILE
+         MVI   DONESEND+14,C'A'    PRESUME QUE A
+         TM    DSOPSW,X'F0'        WAS IT QUE A
+         BO    QCLOSOK             YES. LEAVE MSG AS IS
+         MVI   DONESEND+14,C'B'    NO. SET MSG TO QUE B
+QCLOSOK  EQU   *
+         WTO   MF=(E,DONESEND)     TELL OP QUE IS ENDED
+         B     DISKOUT             GO DO OTTHER WORK
+RECLOSE  EQU   *                   RE-CLOSE TO SET EOF
+         XI    INEOFSW2+1,240      TURN OFF EOF SW TWO
+         B     UPDEOF              GO DO THE CLOSE
+IDEQTWO  EQU   *
+         LA    1,INDEQLST          SET PARAM LIST ADDR
+         SVC   48                  ISSUE DEQ SVC
+         B     0(10)               RETURN TO DISPATCHER
+         EJECT
+RJOBSCAN EQU   *                   KEEP COUNT OF JOB NO IN QUE
+         LH    4,RCNT              COUNTER OF JOBS IN QUE
+         LA    5,BUFDATA-BUFBEGIN(2) POINT TO FIRST RCB
+RCBLAST  CLI   0(5),0              END OF BUF RCB
+         BE    RSAVCNT             YES. GO STORE CNT & EXIT
+         TM    1(5),1              SRCB INDICATE NEW JOB
+         BZ    *+8                 NO. SKIP COUNT INSTR
+         LA    4,1(4)              YES. ADD ONE TO COUNT
+         LA    5,2(5)              POINT TO FIRST SCB
+RSCBLOOP EQU   *                   LOOP THRU TILL NEXT RCB
+         MVC   SCBTEST,0(5)        PUT SCB IN WORK AREA
+         NI    SCBTEST,X'7F'       TURN OFF SCB INDIC BIT
+         BZ    REOREC              END OF RECORD IF ZERO RESULT
+         XR    6,6                 CLEAR TO USE FOR ADD
+         TM    SCBTEST,X'40'       CHAR STRING SCB
+         BZ    RDUPSCB             NO. GO ADJUST FOR COMPRESS SCB
+         NI    SCBTEST,X'3F'       TURN OFF STRING INDICATOR
+         IC    6,SCBTEST           SET COUNTER FOR ADD
+         B     RSCBCNT             GO COUNT THIS LENGTH
+RDUPSCB  TM    SCBTEST,X'20'       IS THIS BLANKS
+         BZ    *+8                 YES. SKIP NEXT INSTR
+         LA    6,1(6)              NO. COUNT PROTOTYPE CHAR
+RSCBCNT  AR    5,6                 ADD CHAR CNT
+         LA    5,1(5)              COUNT SCB
+         B     RSCBLOOP            GO DO IT AGAIN
+REOREC   LA    5,1(5)              COUNT EOR SCB
+         B     RCBLAST             GO CHECK NEXT RCB
+RSAVCNT  STH   4,RCNT              SAVE COUNT OF JOBS
+         BR    3                   RETURN TO CALLER
+NULREC   DC    XL4'93800000'       NULL RECORD FOR EOF
+ASKBUF   DS    0F                  BUF FOR PERMISSION TO SEND
+ASKSTAT1 DC    X'80'
+ASKSTAT2 DC    X'00'
+ASKCOUNT DC    H'9'
+ASKSTART DC    AL1(XLDR,XSTX)
+ASKBCB   DC    X'00'
+ASKFCS   DC    X'0000'
+ASKRCB   DC    X'90'
+ASKSRCB  DC    X'93'
+ASKEND   DC    X'0000'
+         EJECT
+DSKOPOUT DS    0H                  OPEN AN OUTPUT QUEUE
+         MVI   DISKOUT+1,0         TURN OFF OPEN SWITCH
+         CLI   OQUEMODE,255        ONE ALREADY OPEN
+         BE    OPDONE              YES. RETURN TO DISPATCHER
+         MVI   OQUEMODE,255        ALLOW ONLY ONE ENTRY
+         MVI   ODSOPSW,X'F0'       SET OUT-QUE ONE MASK
+OPENOUT  MVI   TASKSWS,255         SET FLAG FOR TP APPENDAGE
+         XI    RDJDONE+1,240       TURN ON OUTPUT SW
+         B     CHKCLOSE            BACK TO DISPATCHER
+ENTROPEN EQU   *                   CONTINUE IOTPUT OPEN
+         XI    RDJDONE+1,240       TURN OFF OUTPUT SW
+*        SR    R1,R1               INDICATE WE WANT OPEN'S
+*        CALL  OSRTPOUT            GO TO OUTPUT HANDLER
+         MVI   TASKSWS,0           ALLOW TP TO RESUME
+         XC    RCVECNT(4),RCVECNT  CLEAR RCVE STATUS CNTRS
+*        LTR   R15,R15             TEST RETURN
+*        BZ    OWTOOK              OK,CONTINUE
+*        ABEND 109,DUMP            ELSE BLOW UP
+OWTOOK   EQU   *
+ODSOPSW  EQU   *+1                 OUT-QUE MASK INDICATOR
+         MVI   OQUESW,X'F0'        SET APPROPRIATE QUE MASK
+         WTO   MF=(E,RCVEMSG)      TELL OP QUE IS IN USE
+         B     OPDONE              RET TO SHOW QUE OPENED
+         EJECT
+DSKWRT   EQU   *                   TRY TO START UP OUTPUT
+         L     2,OBUF1             IS ANY BUF ON QUE
+         LTR   2,2                 TEST FOR NONE
+         BNZ   WRTPEND             YES. GO SERVICE THE BUF
+         LH    3,ODONCNT           GET NO ACTIVITY CNT
+         LA    3,1(3)              ADD ONE TO IT
+         CH    3,ODONMAX           IS IT TIME FOR CLOSE
+         STH   3,ODONCNT           SAVE NEW COUNT
+         BL    0(10)               RETURN TO DISPATCHER
+         MVI   OCLOSSW,240         SET SHUT DOWN SWITCH
+         MVI   ODONCNT+1,0         RESET CLOSE CNTR
+         B     0(10)               RETURN TO DISPATCHER
+WRTPEND  EQU   *                   OUT BUF ON QUE
+         MVI   ODONCNT+1,0         RESET IDLE COUNTER
+         LA    3,2(2)              SET TO BUF DATA PORTION
+         ST    3,OUTBCB            PUT ADDR IN BUFCB
+         LA    R1,0(,R3)           POINT TO BUFFER
+         MVI   TASKSWS,255         SET FLAG FOR TP APPENDAGE
+         CALL  OSRTPOUT            GO TO OUTPUT HANDLER
+         MVI   TASKSWS,0           RESET FLAG FOR TP APPENDAGE
+         LTR   R15,R15             TEST RETURN
+         BZ    WRTCHKED            YES,CARRY ON
+         ABEND 209,DUMP            NO,BLOW UP
+         SPACE 1
+WRTCHKED DS    0H                  WRITE WAS SUCCESSFUL
+         ST    2,WRWAIT            SAVE BUF ADDR FOR LATER
+         LH    1,RCVECNT           GET RCVE LOG COUNT
+         LA    1,1(,1)             INCREMENT BY 1
+         CH    1,IDLMAX            TIME TO GIVE STATUS
+         STH   1,RCVECNT           PRESUME NOT YET
+         BL    RCNTPASS            NO. GO BY STATUS LOG
+         XC    RCVECNT,RCVECNT     YES. CLEAR STATUS CNTR
+         AH    1,RCVETOT           COMPUTE NEW TOTAL
+         STH   1,RCVETOT           AND SAVE IT
+         CVD   1,UNPKA             PUT COUNT IN DECIMAL
+         UNPK  RSTATWTO+18(6),UNPKA+5(3) PUT IN ZONED
+         OI    RSTATWTO+23,240     SET SIGN TO ZONED
+         WTO   MF=(E,RSTATWTO)     LOG RCVE STATUS
+RCNTPASS EQU   *                   RCVE STATUS BYPASS
+WRTCHK   EQU   *                   CHECK A DISK WRITE
+         L     2,WRWAIT            POINT TO ACTIVE BUF
+         NI    FCSOUT,X'BF'        TURN OFF WA2T-A-BIT
+         XC    OBUF1,OBUF1         SHOW BUF OFF QUE
+         NI    BUFSTAT1-BUFBEGIN(2),X'F1' RESET BUF STATUS
+         MVC   OBUF1,OBUF2         SECOND BUF IF ONE
+         XC    OBUF2,OBUF2         CLEAR 2ND QUE SLOT
+         B     DSKWRT              GO START WRITE IF NEEDED
+         SPACE 2
+OSHUTQUE EQU   *                   SHUT DOWN AN OUTPUT QUEUE
+         MVI   OCLOSSW,0           TURN OFF SHUT DOWN SWITCH
+         MVI   OQUEMODE,0          SHOW DATA MODE OVER
+         XC    NOQUECNT,NOQUECNT   RESET INTERLOCK COUNT
+         XC    ODONCNT,ODONCNT     RESET IDLE COUNT
+*        MVI   TASKSWS,255         SHOW O/S IN CONTROL
+***      CLOSE ODCB                CLOSE THE QUEUE
+*        LA    R1,1                SET A VALUE IN PARAMETER REG.
+*        LNR   R1,R1               SET IT NEGATIVE
+*        CALL  OSRTPOUT            PERFORM OUTPUT SERVICES
+*        LTR   R15,R15             TEST RETURN
+*        BZ    OCLOSOK             OK,PROCEED
+*        ABEND 309,DUMP            NO GOOD, ABEND
+         SPACE 1
+OCLOSOK  EQU   *
+*        MVI   TASKSWS,0           TURN TP STOP SWITCH
+         WTO   MF=(E,DONERCVE)     TELL OP QUE IS READY
+         MVI   OQUESW,0            RESET QUE INDICATOR
+         B     ENDLIST             SEE IF ANY OTHER TASK
+         EJECT
+ABXIT    EQU   *                   ABEND ASYNCH EXIT ROUTINE
+         LR    8,15                SET R8 AS BASE
+         USING ABXIT,8             ESTABLISH ADDRESSABILITY
+         DROP  11,12               KILL OTHER BASES TEMPORARILY
+         STM   14,12,12(13)        SAVE O/S REGS
+         LA    2,TPSAVE            ADDR OF THIS SAVE AREA
+         ST    2,8(0,13)           CHAIN TO STAE SAVE AREA
+         ST    13,TPSAVE+4         CHAIN STAE SAVE TO THIS ONE
+         LR    13,2                ESTABLISH LINKAGE REGISTER
+         LM    11,12,BASECONS      RESET OTHER BASE REGS
+         USING ACTIVE,11,12        ALLOW USE OF OTHER BASES
+         WTO   MF=(E,ABMSG)        WARN OPERATOR OF ABEND
+         TM    IQUEMODE,255        ANYTHING BEING TRANSMITTED
+         BO    ABRSTRT             YES. GO CREATE RSTRT MSG
+         CLI   RSTRMODE,255        ABEND IN RSTRT ATTEMPT
+         BNE   ABNOJOB             NO. NO RESTRT NEEDED
+         MVC   RCNT,RNUM           SET JOB CTR TO RSTRT VALUE
+         B     ABRSTRT             GO CREATE RESTART MSG
+ABNOJOB  WTO   MF=(E,RNONMSG)      TELL OP RSTRT NOT NEEDED
+ABCLOS   EQU   *                   RET HERE AFTER RSTRT MSG
+         TM    IQUESW,255          ANY INP QUE OPEN
+         BZ    ABCLOUT             NO. GO CHECK OUTPUT
+***      CLOSE IDCB                YES. CLOSE ACTIVE INP QUE  ***
+         LA    1,IDCBADR           SETUP LIST POINTER
+         SVC   20                  PERFORM CLOSE SVC
+ABCLOUT  DS    0H                  CHECK ON OUTPUT QUEUES
+***      CLOSE ODCB                CLOSE QUEUES AND SYSPRINT  ***
+         LA    R1,1                SET A VALUE IN R1
+         LNR   R1,R1               SET IT NEGATIVE
+         CALL  OSRTPOUT            PERFORM OUTPUT SERVICE
+ABRETURN EQU   *                   END OF ABEND EXIT ROUTINE
+         L     13,TPSAVE+4         LINK REG TO O/S SAVE
+         LM    14,12,12(13)        RESTORE ALL O/S REGS
+         XR    15,15               ZERO RETURN CODE FOR STAE
+         BR    14                  RETURN TO O/S CONTROL
+ABRSTRT  EQU   *                   DETERMINE RSTRT INFO
+         XR    7,7                 CLEAR WORK REG
+         LH    7,RCNT              GET NUM OF JOB IN ACTIVE QUE
+         LTR   7,7                 IS IT ZERO
+         BZ    ABNOJOB             YES. RSTRT NOT NEEDED
+         CVD   7,CCWDMOD           CONV TO PACKED
+         UNPK  CCWDMOD(8),CCWDMOD+6(2) CONV TO GRAPHIC
+         OI    CCWDMOD+7,240       PUT SIGN IN DISP FORM
+         MVC   RMSG+8(2),CCWDMOD+6 PUT JOB NUM IN WTO MSG
+         MVI   RMSG+18,C'A'        PRESUME INP QUE A
+         TM    DSOPSW,240          WAS IT QUE A
+         BO    ABWTOMSG            YES. GO WTO RSTRT MSG
+         MVI   RMSG+18,C'B'        NO. SET MSG TO QUE B
+ABWTOMSG WTO   MF=(E,RMSG)         ISSUE WTO OF RSTRT MSG
+         B     ABCLOS              GO CLOSE THE QUES
+BASECONS DC    A(MTSRJE,MTSRJE+4096)
+         DROP  8
+         EJECT
+RTPDCB   DCB   DDNAME=RDAU,MACRF=(E),DSORG=CX,                         C
+               CENDA=Z2,XENDA=Z1
+         SPACE 3
+**       THE FOLLOWING IS A USER DEFINED EXTENSION TO THE IOB    **
+**       FOR THE TP LINE.  USE IS TO PROVIDE APPENDAGES WITH THE **
+**       ABILITY TO ACCESS THE COMM-PGM - ESP THE TASKS ECB.     **
+         SPACE 3
+         DS    0D                  FORCE ALIGNMENT
+TASKECB  DC    F'0'                TASK ECB FOR O/S WAIT
+TASKSWS  DC    AL1(0,0,0,0)        SWITCHES FOR TP CONTROL
+         SPACE 1
+**       SYSTEM IOB DEFINITION FOLLOWS.                          **
+         SPACE 1
+IOBFL1   DC    X'C2'               COM-CHN + DAT-CHN + NO REL CH PGMS
+IOBFL2   DC    X'00'               USED BY THE SYSTEM
+IOBSENS0 DC    X'00'               FIRST SENSE BYTE IF UNIT CHECK
+IOBSENS1 DC    X'00'               SECND SENSE BYTE IF UNIT CHECK
+IOBECBCC DC    X'00'               I/O COMPLETION CODE
+IOBECBPT DC    AL3(TASKECB)        ADDR OF ECB TO POST
+IOBFL3   DC    X'00'               USED BY THE SYSTEM
+IOBCSW   DC    XL7'00'             LOW 7 BYTES OF CSW
+IOBSIOCC DC    X'00'               CC FIELD FOR THE SIO
+IOBSTART DC    AL3(INITSEQ)        POINTS TO INIT CCWS (TEMP)
+IOBNIL   DS    C                   RESERVED BY SYSTEM
+IOBDCB   DC    AL3(RTPDCB)         ADDR OF TP LINE DCB
+IOBRSTRT DC    A(0)                RESTART CCW IF ERR-RECOV
+IOBINCR  DC    H'0'                BLOCK CNT INCR FOR MAG TAPE
+IOBERRCT DC    H'0'                NUM RETRIES ATTEMPTED
+IOBXTNT  DC    X'00'               DEB EXTENT FOR CHAN-PGM
+IOBSEEK  DC    XL7'00'             SEEK ADDR IF DIR ACC
+         SPACE 2
+TPSAVE   DS    18F
+TPQUE    DC    F'0'
+IQUE     DC    F'0'
+OQUE     DC    F'0'
+IDLCNT   DC    H'49'
+IDLMAX   DC    H'50'
+TRANSCNT DC    H'0'
+TRANSTOT DC    H'0'
+RCVECNT  DC    H'0'
+RCVETOT  DC    H'0'
+WTORECB  DC    F'0'
+CONQUE   DC    F'0'
+IDCBADR  DC    X'80'
+         DC    AL3(IDCB)
+IQUESW   DC    X'00'
+IQUEMODE DC    X'00'
+XSTXSEQ  DC    AL1(XLDR,XSTX)
+XACKSEQ  DC    AL1(XDLE,XACK0)
+XETBSEQ  DC    AL1(XTRL,XETB)
+XNAKSEQ  DC    AL1(XSYN,XNAK)
+ABORT    DC    C'ABEND'
+OBUF1    DC    F'0'
+OBUF2    DC    F'0'
+QNAME    DC    C'HASPRTP '
+RNAMIN   DC    C'XMITA'
+         DS    0D
+INBCB    DC    A(BUF1)
+         DC    H'1'
+         DC    AL2(&BUFSIZE+1)
+SINOFF   DC    C'/*SIGNOFF'
+INDD1    DC    CL8'INQUEA'
+INDD2    DC    CL8'INQUEB'
+FCSIN    DC    X'8FCF'
+FCSOUT   DC    X'8FCF'
+LASTFCS  DC    X'8FCF'
+OQUEMODE DC    X'00'
+OQUESW   DC    X'00'
+RQUE     DC    C'A'
+NOQUECNT DC    H'0'
+ODONCNT  DC    H'0'
+         DC    CL8'*TRYING*'
+RNUM     DC    H'0'
+         DC    CL8'*GOT TO*'
+RCNT     DC    H'0'
+ODONMAX  DC    AL2(&ERRCNT+1)
+BADTPCNT DC    H'0'            COUNT OF CONSECUTIVE LINE ERRORS
+RSTRMODE DC    X'00'
+SCBTEST  DC    X'00'
+WRWAIT   DS    F
+RDWAIT   DS    F
+SNAPX    DS    0H              END OF CONTROL BLOCK SNAP
+         EJECT
+IDCB     DCB   DSORG=PS,DDNAME=INQUEA,BUFCB=INBCB,MACRF=(R,W),         C
+               EODAD=ENDINQUE,RECFM=F,LRECL=&BUFSIZE+1,                C
+               BLKSIZE=&BUFSIZE+1
+         DS    0D
+OUTBCB   DC    A(BUF1)
+         DC    H'1'
+         DC    AL2(&BUFSIZE+1)
+INENQLST ENQ   (QNAME,RNAMIN,E,5,SYSTEM),RET=USE,MF=L
+INDEQLST DEQ   (QNAME,RNAMIN,5,SYSTEM),MF=L
+CONMSG   DS    0F                  PSEUDO BUF FOR OP MSG
+CONSTAT1 DC    X'40'
+CONSTAT2 DC    X'00'
+CONCOUNT DC    H'0'
+CONSTART DC    AL1(XLDR,XSTX)
+CONBCB   DC    X'00'
+CONFCS   DC    X'0000'
+CONRCB   DC    X'92'
+CONSRCB  DC    X'80'
+CONSCB   DC    X'80'
+CONAREA  DC    CL63' '
+CONEOB   DC    H'0'
+WTORID   DS    F                   SYSTEM ID OF LAST WTOR
+         SPACE 2
+TRANMSG  WTO   'SENDING INPUT QUE A &RMTID',MF=L
+RCVEMSG  WTO   'OUTPUT QUE IS IN USE &RMTID',MF=L
+DONESEND WTO   'INPUT QUE A TRANSMITTED &RMTID',MF=L
+DONERCVE WTO   'OUTPUT QUE NOW CLOSED &RMTID',MF=L
+ABMSG    WTO   'RJE PGM HAS ABENDED &RMTID',MF=L
+RMSG     WTO   'JOB NN IN QUE X WAS IN TRANSIT &RMTID',MF=L
+RNONMSG  WTO   'NO TRANSMISSION ACTIVE &RMTID',MF=L
+RENQERR  WTO   'RESTART QUE NOT AVAILABLE &RMTID',MF=L
+RENDERR  WTO   'RESTART QUE IS EMPTY &RMTID',MF=L
+TSTATWTO WTO   'BXL. BLOCKS = 000000 &RMTID',MF=L
+RSTATWTO WTO   'STL. BLOCKS = 000000 &RMTID',MF=L
+TBOPMSG  DC    C';OUTPUT'          OUTPUT REMINDER MESSAGE TEXT
+         EJECT
+         DS    0H
+TPCHEND  EQU   *                   TP SUPERVISOR
+         ST    10,TPEXAD           SAVE R10 FOR RETURN
+         USING TPBUF,2             USE R2 FOR OUR BUFS
+         L     2,CBUFFER           ADDR OF CURRENTLY ACT BUF
+         TM    IOBSIOCC,X'10'      DID SIO FAIL
+         BZ    TPSIOOK             NO. GO CHECK STATUS
+         LH    3,BADSIOCT          YES. GET CONSECUTIVE CTR
+         LA    3,1(3)              ADD ONE TO COUNT
+         STH   3,BADSIOCT          SAVE FOR NEXT ENTRY
+         NI    BADSIOCT,255        SEE IF GT 255
+         BNZ   TPBADDAU            YES. ASSUME 270X FAILURE
+         MVC   CCWA(24),CCWSAVE    NO. RESET CHAN PGM
+         XC    IOBSIOCC,IOBSIOCC   CLEAR SIO CC FIELD
+         B     CECBCLR             GO TRY CHAN PGM AGAIN
+         EJECT
+***********************************************************************
+*        ROUTINE TO CANCEL SESSION DUE TO LINE ERRORS                 *
+*        THIS DOES MUCH THE SAME AS THE ESTAE EXIT BUT DOES           *
+*        NOT CALL ON THE ESTAE IN ORDER TO PREVENT A DUMP FOR THIS    *
+*        ROUTINE OCCURENCE.                                           *
+***********************************************************************
+         SPACE 2
+TPBADDAU EQU   *                   TELL OPERATOR AND QUIT
+         CLI   WTORECB,0           WTOR OUTSTANDING?
+         BE    TPBNODOM            NO,SKIP PURGE OF MESSAGE
+         TM    WTORECB,X'42'       HAS HE REPLIED OR SIGNED-OFF?
+         BNZ   TPBNODOM            YES,NO MESSAGE TO PURGE
+         L     R1,WTORID           PICK UP MESSAGE NUMBER
+         DOM   MSG=(1),REPLY=YES   DELETE LAST MESSAGE
+TPBNODOM DS    0H                  HAVE NOW GOT NO OUTSTANDING WTOR
+         WTO   'HARDWARE FAILURE - RJE ABORT &RMTID'
+         WTO   MF=(E,ABMSG)        WARN OPERATOR OF ABEND
+         TM    IQUEMODE,255        ANYTHING BEING TRANSMITTED
+         BO    TBRSTRT             YES. GO CREATE RSTRT MSG
+         CLI   RSTRMODE,255        ABEND IN RSTRT ATTEMPT
+         BNE   TBNOJOB             NO. NO RESTRT NEEDED
+         MVC   RCNT,RNUM           SET JOB CTR TO RSTRT VALUE
+         B     TBRSTRT             GO CREATE RESTART MSG
+TBNOJOB  DS    0H                  NOW CHECK ON OUTPUT FUNCTIONS
+TBCLOS   EQU   *                   RET HERE AFTER RSTRT MSG
+         TM    IQUESW,255          ANY INP QUE OPEN
+         BZ    TBCLOUT             NO. GO CHECK OUTPUT
+***      CLOSE IDCB                YES. CLOSE ACTIVE INP QUE  ***
+         LA    1,IDCBADR           SETUP LIST POINTER
+         SVC   20                  PERFORM CLOSE SVC
+         SPACE 1
+TBCLOUT  DS    0H                  CHECK ON OUTPUT QUEUES
+***      CLOSE ODCB                CLOSE QUEUES AND SYSPRINT  ***
+         LA    R1,1                SET A VALUE IN R1
+         LNR   R1,R1               SET IT NEGATIVE
+         CALL  OSRTPOUT            PERFORM OUTPUT SERVICE CLOSE
+         CLI   OQUEMODE,0          ANY OUT QUE OPEN
+         BE    TBRETURN            NO. GO RETURN TO O/S
+         MVC   TBMSGOP(L'TBOPMSG),TBOPMSG TEL OP. OF OUTPUT FUNCTION
+         SPACE 1
+TBRETURN EQU   *                   END OF HARDWARE EXIT ROUTINE
+         XC    WTORECB,WTORECB     CLEAR ECB
+TBMSG    WTOR  'RESTART=00,A<------.YOUR INITIALS? &RMTID',IREP,3,     C
+               WTORECB             GET OPERATOR ACKNOWLEDGEMENT
+         SPACE 1
+*        TP ERROR MESSAGE OFFSETS
+TBMSGHDR EQU   X'10'               LENGTH OF MCS FLAGS ETC.
+         ORG   TBMSG+TBMSGHDR+8    RESTART JOB NUMBER POSITION
+TBMSGNO  EQU   *                   RESTART JOB NUMBER
+         ORG   TBMSG+TBMSGHDR+11   RESTART JOB QUEUE POSITION
+TBMSGQ   EQU   *                   RESTART JOB QUEUE
+         ORG   TBMSG+TBMSGHDR+12   OUTPUT RESTART NEEDED POSITION
+TBMSGOP  EQU   *                   OUTPUT RESTART NEEDED
+         ORG
+         SPACE 1
+         WAIT  ECB=WTORECB         AWAIT REPLY
+         L     13,TPSAVE+4         LINK REG TO O/S SAVE
+         LM    14,12,12(13)        RESTORE ALL O/S REGS
+         XR    15,15               ZERO RETURN CODE FOR STAE
+         BR    14                  RETURN TO O/S CONTROL
+         SPACE 2
+TBRSTRT  EQU   *                   DETERMINE RSTRT INFO
+         XR    7,7                 CLEAR WORK REG
+         LH    7,RCNT              GET NUM OF JOB IN ACTIVE QUE
+         LTR   7,7                 IS IT ZERO
+         BZ    TBNOJOB             YES. RSTRT NOT NEEDED
+         CVD   7,CCWDMOD           CONV TO PACKED
+         UNPK  CCWDMOD(8),CCWDMOD+6(2) CONV TO GRAPHIC
+         OI    CCWDMOD+7,240       PUT SIGN IN DISP FORM
+         MVC   TBMSGNO(2),CCWDMOD+6 PUT JOB NUM IN WTO MSG
+         MVI   TBMSGQ,C'A'         PRESUME INP QUE A
+         TM    DSOPSW,240          WAS IT QUE A
+         BO    *+4+4               YES. LEAVE MSG AS IS
+         MVI   TBMSGQ,C'B'         NO. SET MSG TO QUE B
+         B     TBCLOS              GO CLOSE THE QUES
+         EJECT
+TPSIOOK  EQU   *                   SIO WAS SUCCESSFUL
+         TM    TASKSWS+1,1         IS LOG ALL FLAG ON
+         BZ    CTESTEND            NO. BYPASS LOG ALL CHAN ENDS
+         AIF   (&ERRMSG EQ 0).LOGNONE
+         BAL   10,CERRLOG          YES. GO LOG CHAN END
+.LOGNONE ANOP
+CTESTEND EQU   *                   SKIP LOG OF CHAN ENDS
+         XC    BADSIOCT,BADSIOCT   CLEAR SIO FAILED CTR
+CFAKRD   EQU   *+1                 LABEL SW COND CODE
+         NOP   CECBCLR             DUMMY READ BYPASS
+         TM    IOBCSW+4,X'BF'      TEST FOR UNEXPECTED ERRORS
+         BNZ   CBADERR             BR TO HANDLE THEM IF ANY
+         TM    IOBCSW+3,X'F3'      TEST FOR OTHER BAD ENDS
+         BNZ   CERROR              GO HANDLE THOSE ALSO
+         EJECT
+**             CHANNEL-END, DEVICE END, FALL THRU
+         SPACE 3
+         TM    BUFSTAT1,16         WAS IT A LOST DATA READ
+         BO    WRTABUF             YES. GO LOOK FOR OUTPUT
+         MVC   CRESP,BUFSTART      GET FIRST BYTE OF BUFFER
+         CLI   CRESP,XDLE          IS IT DLE LEADER
+         BNE   CNODLE              NO. SKIP FETCH OF NEXT BYTE
+         MVC   CRESP,BUFSTART+1    YES. GET REAL RESPONSE
+CNODLE   EQU   *                   DECIDE COURSE OF ACTION
+         CLI   CRESP,XSOH          DID BUF HAVE NON-TRANS TEXT
+         BE    CINBUF              YES. GO PROCESS INPUT
+         CLI   CRESP,XSTX          DID IT HAVE TRANSPARENT TEXT
+         BE    CINBUF              YES. GO PROCESS INPUT
+         CLI   CRESP,XACK0         WAS RESP WRITE ACKNOWLEDGE
+         BE    CACKED              GO TO WRITE ROUTINE
+         CLI   CRESP,XNAK          WAS RESPONSE A NAK
+         BE    CNAKED              YES. GO WORK ON NAK
+         B     CRESPBAD            NO. GO WORK ON BAD RESPONSE
+         EJECT
+**                                                               **
+**             POSITIVE ACK TO LAST WRITE RECEIVED FROM HASP.    **
+**                                                               **
+         SPACE 3
+CACKED   EQU   *                   ACKNOWLEDGEMENT WAS ACK
+         XC    BADTPCNT,BADTPCNT   CLEAR ERROR COUNT
+         NI    FCSIN,X'BF'         TURN OFF PREVIOUS WAIT-A-BIT
+         NI    BUFSTAT1,X'F1'      RESET BUFFER STATUS
+WRTABUF  EQU   *                   WRITE NEXT BUFFER
+*        TSGSNAP PDATA=REGS,STORAGE=(TASKECB,SNAPX,FIRSTBUF,BUFSDUN)
+         TM    FCSIN,X'40'         WAIT-A-BIT FROM HASP
+         BZ    CNOWAIT             NO. SKIP 1 SECOND DELAY
+CDELAY   DS    0H                  YES. KILL A SECOND
+*        TSGSNAP PDATA=REGS,STORAGE=(TASKECB,SNAPX,FIRSTBUF,BUFSDUN)
+         STIMER WAIT,BINTVL=ONSEC  WAIT,KILL A SECOND
+         NI    FCSIN,X'BF'         TURN OFF WAIT-A-BIT
+         B     CRESPOND            GO SEND A RESPONSE TO HASP
+CNOWAIT  EQU   *                   CHECK IF SENDING ALLOWED
+SENDREQ  EQU   *+1                 CC BYTE IN SW INSTR
+         NOP   CRESPOND            DONT WRITE DATA UNTIL ALLOWED
+         TM    FCSIN,X'08'         HASP STOPPING ME
+         BZ    CDELAY              YES. PAUSE & RESPOND
+         L     2,CONQUE            NO. WTO CHECK
+         XC    CONQUE,CONQUE       CLEAR THE POINTER
+         LTR   2,2                 WAS IT CLEAR ALREADY
+         BNZ   CSETFCS             NO. THEN SEND WTO BUF
+         L     2,TPQUE             ADDR OF NEXT OUTPUT BUFFER
+         LTR   2,2                 IS THERE ONE QUEUED
+         BNZ   CWRITE              YES. GO PROCESS IT
+         L     2,IQUE              NO. ONE ON NEXT QUE SLOT
+         LTR   2,2                 TEST FOR A BUFFER READY
+         BZ    CRESPOND            NO,JUST RESPOND
+         XC    IQUE,IQUE           CLEAR BUF QUE POINTER
+         B     CREQTEST            GO SEE IF REQ BUF
+CWRITE   EQU   *                   HERE IF FIRST FULL
+         XC    TPQUE,TPQUE         CLEAR BUF QUE POINTER
+CREQTEST EQU   *                   SKIP CLEAR OF QUE SLOT
+         TM    BUFSTAT1,BUFREQ     IS THIS ASK PERM TO SEND
+         BZ    *+8                 NO. BYPASS SWITCH SET
+         MVI   SENDREQ,240         YES. STOP TRANS UNTIL ANSWER
+CSETFCS  EQU   *                   FCS SETUP FOR OUT BUF
+         MVC   BUFFCS,FCSOUT       PUT FCS IN CURRENT BUF
+         TM    BUFSTAT1,X'C1'      STOP HASP SENDING
+         BZ    CFCSOK              NO. FCS IS OK
+         OI    BUFFCS,X'40'        YES. SEND WAIT-A-BIT
+CFCSOK   EQU   *                   NOW CHECK BCB BYTE
+         TM    BUFSTAT1,X'CE'      DOES BUF NEED BCB
+         MVI   BUFBCB,X'90'        PRESUME NOT - SET TO IGNORE
+         BZ    CBCBOK              NO. BCB NOT NEEDED
+         MVC   BUFBCB,OBCB         PUT CURRENT BCB IN BUF
+         LH    3,OBCBLDR           GET BCB HFWD
+         AH    3,HONE              INCREMENT TO NEXT BCB
+         STH   3,OBCBLDR           SAVE FOR NEXT BUF
+         NI    OBCB,X'8F'          MAKE IT MODULO 16
+CBCBOK   EQU   *                   CHECK START OF BUF
+         CLI   BUFSTART+1,XSTX     SENDING TEXT TO HASP
+         BNE   CNWRITE             NO. FIRST CHAR OK
+         MVI   BUFSTART,XLDR       YES. SET TO DLE OR SOH
+CNWRITE  EQU   *                   READY TO WRITE SOMETHING
+         ST    2,CBUFFER           SAVE BUF ADDR FOR LATER
+         LA    3,BUFSTART          POINT TO DATA IN BUF
+         ST    3,CCWA              PUT DATA ADR IN WRITE CCW
+         MVI   CCWA,1              RESET CCW OP TO A WRITE
+         ST    3,CCWC              SET RETURN DATA ADDR
+         MVI   CCWC,2              RESET CCW OP TO A READ
+         MVC   CCWA+6(2),BUFCOUNT  SET LENGTH OF WRITE
+         MVI   CCWA+4,XCHN         SET CHAINING BITS
+         MVI   CCWB,1              SET 2ND CCW TO WRITE
+         TM    BUFSTAT1,BUFRESP    IS THIS A RESPONSE BUF
+         BZ    CREWRITE            NO. GO START A WRITE
+         MVI   CCWA+4,X'60'        FORCE CCWS COM-CHAINED
+         MVC   CCWA+6(3),RESPNOP   WRITE 2 BYTES & NOP CCWB
+         B     CECBCLR             GO CLEAR THE ECB
+CREWRITE EQU   *                   SETUP IOB FOR EXCP
+         MVC   LASTFCS,FCSOUT      SAVE CURRENT FCS
+CECBCLR  MVI   IOBECBCC,0          CLEAR ECB PRIOR TO I/O
+         XC    IOBFL2(3),IOBFL2    CLEAR FLAG 2 AND SENSE
+         MVI   IOBFL3,0            CLEAR FLAG 3
+         XC    IOBCSW,IOBCSW       CLEAR CSW IN IOB
+         LA    3,CCWA              START OF CHAN PGM
+         ST    3,IOBSIOCC          POINT IOB TO CHAN PGM
+         MVC   CCWSAVE,CCWA        SAVE THE CHAN PGM
+         CLC   BUFDATA+3(9),SINOFF IS THIS A SINOFF
+         BNE   *+8                 NO. SHIP NEXT INSTR
+         MVI   TASKSWS+2,255       SET END FLAG FOR NEXT CHAN END
+         MVI   CFAKRD,0            CLEAR DUMMY READ SW
+CWRTXIO  EXCP  IOBFL1              START THE CHAN PGM
+TPIOEXIT EQU   *                   EXIT TP I/O ROUTINE
+         L     10,TPEXAD           PUT RETURN ADDR IN LINK REG
+         BR    10                  RETURN TO DISPATCHER
+         EJECT
+CRESPOND EQU   *                   NO OUTPUT QUEUED ROUTINE
+         LA    2,BUF1              SET BUF REG TO START OF POOL
+CNEEDBUF CLI   BUFSTAT1,0          IS IT A FREE BUF
+         BE    CRSPBUF             YES. USE IT TO RESPOND
+         LA    2,BUFEND-BUFBEGIN(2) GET NEXT BUFFER ADDR
+         CLC   BUFSDONE,0(2)       AT END OF BUF POOL?
+         BNE   CNEEDBUF            NO. CONTINUE HUNT
+CDUMRESP EQU   *                   USE A DUMMY BUF
+         LA    2,CDUMMY            POINT BUF REG TO DUMMY
+         MVI   BUFDATA,0           SHOW NULL BUF
+         MVI   BUFSTAT1,1          SHOW DUMMY + RESPONSE
+         MVC   BUFSTART,XSTXSEQ    SET TEXT LEADERS
+         B     CSETFCS             GO SEND IT AND WAIT-A-BIT
+CRSPBUF  EQU   *                   BUF READY FOR TP USE
+         XC    BUFDATA(4),BUFDATA  SHOW NULL BUFFER
+         LA    3,6                 FOR WRITE COUNT
+         STH   3,BUFCOUNT          SET COUNT FOR CCW
+         CLI   TASKSWS+2,255       WAS SIGNOFF SENT
+         BE    COFFRESP            YES. FORCE RESP BUF
+         MVI   BUFSTAT1,BUFTEXT    PRESUME USE AS TEXT BUF
+         MVC   BUFSTART,XSTXSEQ    PRESUME TEXT LEADERS
+         CLC   LASTFCS,FCSOUT      HAS FCS BEEN CHANGED
+         BNE   CSETFCS             YES. GO SEND NEW FCS
+         MVC   BUFSTART,XACKSEQ    NO. PUT RESP CHARS IN BUF
+         MVI   BUFSTAT1,BUFRESP    SHOW THIS A RESP BUF
+         B     CNWRITE             GO WRITE RESP BUF
+COFFRESP EQU   *
+         MVC   BUFSTART,XSTXSEQ    SET TXT START
+         LA    3,9                 NULL BUF COUNT
+         STH   3,BUFCOUNT          PUT COUNT FOR I/O
+         MVC   BUFDATA(4),NULREC   PUT EOF REC
+         MVI   BUFSTAT1,BUFTEXT    SHOW AS TEXT BUF
+         B     CSETFCS             GO SET FCS & BCB
+         SPACE 3
+CDUMMY   DS    0F
+         DC    X'01000006'         BUF STATS + COUNT
+         DC    AL1(XLDR,XSTX)      BUF START FIELDS
+         DC    X'00000000'         FCS, BCB, RCB(EOB)
+         DS    0H
+CNAKED   EQU   *                   HASP RETURNED A NAK
+         AIF   (&ERRMSG EQ 0).LOGNAK
+         BAL   10,CERRLOG          LOG NAK ON CONSOLE
+.LOGNAK  ANOP
+         TM    BUFSTAT1,BUFNAK     WERE WE SENDING NAK
+         BO    CWASNAK             YES. GO HANDLE NAK/NAK
+         MVI   BUFSTART,XLDR       NO. PUT OUR LEADER BACK
+         MVC   CCWA(24),CCWSAVE    RESET THE CHAN PGM
+         TM    BUFSTAT1,BUFTEXT    WAS THIS A TEXT BUF
+         BZ    CECBCLR             NO. GO RESTART CHAN PGM
+CNAKRET  MVC   BUFFCS,FCSOUT       YES. MAKE FCS CURRENT
+         B     CREWRITE            GO RETRY THE CHAN PGM
+CWASNAK  EQU   *                   GOT NAK WHEN SENT A NAK
+         TM    BUFSTAT1,BUFTEXT    WAS ORIG BUF TEXT
+         BO    CWASTXT             YES. GO TRY IT OVER
+         NI    BUFSTAT1,X'F1'      NO. RESET BUF STATUS
+         B     WRTABUF             GO FIND SOME WORK
+CWASTXT  MVC   CCWA(24),CCWSAVE    RESTORE CHAN PGM
+         MVI   CCWB,1              RESET ETB WRITE CCW
+         MVC   CCWA+6(2),BUFCOUNT  RESET DATA LENGTH
+         MVC   BUFSTART,XSTXSEQ    PUT LEADERS BACK
+         NI    BUFSTAT1,X'F9'      TURN OFF NAK + RESP
+         B     CNAKRET             RETRY THE CHAN PGM
+CRESPBAD EQU   *                   JUNK FROM HASP
+         AIF   (&ERRMSG EQ 0).LOGRESP
+         BAL   10,CERRLOG          LOG BAD RESPONSE
+.LOGRESP ANOP
+CRESPUCK EQU   *
+         MVC   BUFSTART,XNAKSEQ    SET UP NAK RESP
+         OI    BUFSTAT1,6          SHOW BUF RESP + NAK
+         B     CNWRITE             GO WRITE NAK RESPONSE
+CINBUF   EQU   *
+         CLI   BUFDATA,X'E0'       BAD BCB REC FROM HASP
+         BNE   CBCBPAS             NO. PASS THE BUF ON
+         ABEND 300,DUMP            YES. DUMP IT
+CBCBPAS  EQU   *                   ABEND BYPASS TAG
+         LA    15,BUFSTART+&BUFSIZE-1 COMPUTE EOB ADDR
+         SH    15,IOBCSW+5         REDUCE BY RESIDUAL COUNT
+         CLI   0(15),XETB          IS ENDING SEQ CORRECT
+         BNE   CRESPBAD            NO. GO SEND A NAK
+         LA    14,BUFSTART-1       TO COMPUTE DATA LENGTH
+         SR    15,14               END - START = LENGTH
+         STH   15,BUFCOUNT         PUT COUNT IN BUFFER
+         MVC   FCSIN,BUFFCS        SAVE FCS FROM HASP
+         MVC   CBCB(1),BUFBCB      GET BCB COUNT
+CBCB     EQU   *+1                 COUNT BYTE COMPARE
+         CLI   IBCB,0              DOES HASP BCB MATCH
+         BNE   CBCBCHEK            NO. GO ANALYZE ERROR
+         LH    15,IBCBLDR          GET OLD BDB COUNT
+         AH    15,HONE             INCREMENT TO LAST
+         STH   15,IBCBLDR          PUT BACK FOR NEXT BLOCK
+         NI    IBCB,X'8F'          MAKE SURE MODULO 16
+CBCBOKEY EQU   *                   RETURN IF IGNORE BCB
+         TM    BUFSTAT1,X'C1'      IS THIS A PLAY BUF
+         BZ    CDATABUF            NO. GO DO SOMETHING
+         NI    BUFSTAT1,X'F1'      RESET NORMAL STAT BITS
+         B     WRTABUF             GO LOOK FOR OUTPUT
+CDATABUF EQU   *
+         CLI   BUFDATA,0           IS IT A NULL BUF
+         BNE   CREQCHK             NO. GO CHECK FOR REQ/PERM
+CRESETBF NI    BUFSTAT1,X'F0'      RESET STATUS OF BUF
+         B     WRTABUF             GO LOOK FOR OUTPUT
+CREQCHK  CLI   BUFDATA,X'A0'       IS THIS PERMISSION TO SEND
+         BNE   CTXTBUF             NO. GO SEE IF DATA
+         MVI   SENDREQ,0           YES. ALLOW TRANS TO START
+         MVC   TPQUE,IQUE          FIRST DATA BUF TO NEXT
+         XC    IQUE,IQUE           SHOW QUE SLOT AVAILABLE
+         B     CRESETBF            GO FREE BUF & LOOK FOR OUTPUT
+CTXTBUF  EQU   *                   LOOK FOR REQ OR TXT
+         CLI   BUFDATA,X'90'       HASP ASKING PERMISSION
+         BNE   CSOMETXT            NO. IS TEXT OR WTO
+         CLI   OQUEMODE,0          YES. QUE OPEN ALREADY
+         BNE   COUTOK              YES. BYPASS SW SETTING
+         MVI   DISKOUT+1,240       CAUSE ENTRY TO OPEN QUEUE
+COUTOK   MVI   BUFDATA,X'A0'       SEND PERMISSION TO HASP
+         NI    BUFSTAT1,X'F0'      TURN OFF RESP BITS IF ANY
+         OI    BUFSTAT1,BUFTEXT    TURN ON TEXT FLAG
+         LA    15,9                SET COUNT OF PERM BUF
+         STH   15,BUFCOUNT              IN BUFCOUNT
+         B     CSETFCS             GO TRANSMIT PERMISSION
+CSOMETXT EQU   *                   BUF IS TEXT OR WTO
+         CLI   BUFDATA,X'91'       IS IT A CONSOLE MSG
+         BNE   CISTEXT             NO. GO QUEUE UP TEXT BUF
+         LA    3,BUFDATA           SET PTR FOR MSG DECODE
+NEXTWTO  MVI   WTOMSG,64           PUT BLANK IN WTO AREA
+         MVC   WTOMSG+1(120),WTOMSG CLEAR REST OF MSG AREA
+         LA    4,WTOMSG            ADDR OF RECVE FIELD
+         CLI   0(3),0              RCB = ZERO
+         BNE   WTOINBUF            NO. A OP MSG IN BUF
+         NI    BUFSTAT1,X'F0'      RESET BUF STATUS
+         B     WRTABUF             GO LOOK FOR OUTPUT
+WTOINBUF EQU   *                   BREAK OUT AN OP MSG
+         MVC   GSCB(1),2(3)        SET SCB IN COMPARE
+         NI    GSCB,X'7F'          TURN OFF HI-BIT
+         BZ    GENDREC             END OF RECORD
+         TM    GSCB,X'40'          IS THIS A CHAR STRING
+         BZ    GPROP               BRANCH IF NOT
+         NI    GSCB,X'3F'          TURN OFF STRING BIT
+         MVC   0(0,4),3(3)         MOVE STRING (+1)
+GSCB     EQU   *-5                 SCB AND COUNT
+         LH    5,GSCB-1            GET MOVE COUNT
+         SH    5,GD200             REMOVE MOVE OP-CODE
+         AR    3,5                 COUNT INPUT STRING
+GCONT    AR    4,5                 COUNT OUTPUT STRING
+         LA    3,1(3)              COUNT SCB
+         B     WTOINBUF            CONTINUE WITH RECORD
+GPROP    EQU   *
+         TM    GSCB,X'20'          IS THIS BLANKS
+         BZ    GBLANKS             BR IF YES
+         NI    GSCB,X'1F'          NO. REMOVE INDICATOR
+         MVC   0(1,4),3(3)         SET SAMPLE CHARACTER
+         MVC   GMOV+1(1),GSCB      SET COUNT
+GMOV     MVC   1(1,4),0(4)         PROPAGATE COUNT (+2)
+         LH    5,GSCB-1            PROPAGATION COUNT
+         SH    5,GD200             REMOVE MOVE OP-CODE
+         LA    3,1(3)              COUNT SAMPLE CHAR
+         B     GCONT               AND ENTER FLOW
+GBLANKS  EQU   *
+         MVI   0(4),64             SET SAMPLE CHAR
+         MVC   *+7(1),GSCB         SET COUNT
+         MVC   1(1,4),0(4)         PROPAGATE BLANKS
+         LH    5,GSCB-1            GET MOVE COUNT
+         SH    5,GD200             REMOVE MOVE OPCODE
+         B     GCONT               AND ENTER FLOW
+GENDREC  LA    5,WTOMSG            START OF MSG AREA
+         SR    4,5                 COMPUTE MSG LENGTH
+         LA    4,4(4)              ADD IN WTO CONTROL FIELDS
+         STH   4,WTOLEN            SET WTO LENGTH
+         LA    1,WTOLEN            SET WTO PARAM LIST
+         SVC   35                  DO THE WTO
+         LA    3,3(3)              TO NEXT RCB
+         B     NEXTWTO             GO LOOK FOR EOB
+CISTEXT  EQU   *                   INCOMING IS TEXT BUFFER
+         CLI   BUFDATA,0           IS THIS A NULL BUFF
+         BNE   CNOTNULL            NO. GO PROCESS TXT
+         NI    BUFSTAT1,X'F1'      YES. RESET BUF STATUS
+         B     WRTABUF             GO LOOK FOR OUTPUT
+CNOTNULL EQU   *                   NULL BUFF BYPASS TAG
+         NI    BUFSTAT1,X'F0'      TURN OFF OTHER FLAGS
+         OI    BUFSTAT1,BUFTEXT    SHOW BUFFER IS TEXT
+         L     3,OBUF1             AND OUTPUT BUFS ON QUE
+         LTR   3,3                 TEST FOR NONE
+         BZ    COUTBOK             NONE. DONT STOP HASP
+         OI    FCSOUT,X'40'        SET WAIT-A-BIT TO HASP
+         L     3,OBUF2             POSSIBLE 2ND BUF ON QUE
+         LTR   3,3                 TEST FOR A 2ND BUF
+         BZ    COUTBOK             NONE. OK TO QUE THIS ONE
+         ABEND 100,DUMP            WAIT-A-BIT IGNORED
+COUTBOK  EQU   *
+         L     3,OBUF1             WHERE TO QUE BUF
+         LTR   3,3                 FIRST QUE SLOF FULL
+         BNZ   CQUETWO             YES. QUE AS 2ND BUF
+         ST    2,OBUF1             NO. QUE AS 1ST BUF
+         B     WRTABUF             GO LOOK FOR OUTPUT
+CQUETWO  ST    2,OBUF2             QUE AS 2ND INP BUF
+         B     WRTABUF             GO LOOK FOR OUTPUT
+         EJECT
+CBCBCHEK EQU   *
+         TM    CBCB,BCBIGNRE       IS IGNORE BIT ON
+         BO    CBCBOKEY            YES. ACCEPT BUF IS SO
+         TM    CBCB,BCBRESET       IS RESET BIT ON
+         BZ    CBCBBAD             NO. ANALYZE BAD BCB
+         MVN   IBCB,CBCB           YES. RESETT THE COUNT
+         B     CBCBOKEY            GO ACCEPT THE BUF
+CBCBBAD  EQU   *                   NO MATCH ON BLK COUNT
+         MVC   BCBWRK+1(1),CBCB    ISOLATE RECEIVED COUNT
+         LH    15,IBCBLDR          GET EXPECTED CNT
+         SH    15,BCBWRK           LESS RECEIVED
+         BP    *+8                 BR IF WAS TOO LOW
+         AH    15,H16              MAKE DIFF POSITIVE
+         CH    15,MAXDUP           IS DIFF REASONABLE
+         BH    CBLKLOST            NO. GO TELL HASP
+         NI    BUFSTAT1,X'F1'      RESET BUF STATUS
+         B     WRTABUF             GO LOOK FOR OUTPUT
+         SPACE 3
+CBLKLOST EQU   *                   TELL HASP ABOUT ERROR
+         LA    2,LOSTBUF           POINT TO LOST DATA BUF
+         MVN   LOSTBCB,CBCB        SET RECEIVED BCB
+         MVN   LOSTSRCB,IBCB       SET EXPECTED BCB
+         ST    2,CBUFFER           MAKE THIS CURRENT BUF
+         B     CNWRITE             GO SEND IT
+LOSTBUF  DS    0H
+         DC    X'01'
+         DC    X'00'
+         DC    H'9'
+         DC    AL1(XLDR,XSTX)
+LOSTBCB  DC    X'90'
+         DC    AL2(0)
+         DC    X'E0'
+LOSTSRCB DC    X'80'
+         DC    AL2(0)
+CBLKEND  DS    0H
+         EJECT
+CERROR   EQU   *                   TP ERROR PROCEDURE
+         TM    TASKSWS+3,255       SIGNOFF IN PROCESS
+         BZ    CHENDERR            NO. GO ANALYZE CE
+         XC    IOBCSW,IOBCSW       CLEAR IOB FOR TP I/O
+         XC    IOBFL2(3),IOBFL2    CLEAR ACCESS METHOD FLAGS
+         MVI   IOBECBCC,0          CLEAR IOB ECB
+         LA    14,CCWX             ADDR OF CHANNEL PGM
+         ST    14,IOBSIOCC         PUT IT IN IOB
+         EXCP  IOBFL1              EXEC DISABLE CCW
+         WAIT  ECB=TASKECB         WAIT FOR CHAN-END
+***      CLOSE ODCB                YES. CLOSE ACTIVE OUT QUE  ***
+         LA    R1,1                SET A VALUE IN R1
+         LNR   R1,R1               SET IT NEGATIVE
+         CALL  OSRTPOUT            PERFORM OUTPUT SERVICE
+         L     13,TPSAVE+4         YES. SET TO O/S SAVE
+         LM    14,12,12(13)        RETURN REGS FOR O/S
+         BR    14                  RETURN TO O/S
+CHENDERR EQU   *                   NOT SIGNOFF BYPASS
+         TM    IOBCSW+3,2          DID WE HAVE UNIT CHECK
+         BO    CUNITCHK            YES. GO WORK ON IT
+         TM    IOBCSW+3,1          DID WE HAVE UNIT EXCEPTION
+         BO    CUNITEXC            YES. GO WORK ON IT
+CUNITCHK EQU   *                   UNIT CHECK OCCURRED
+         TM    BUFSTAT1,BUFUCHEK   WAS IT A LOST DATA READ
+         BO    WRTABUF             YES. GO RETRY WRITE
+         CLC   IOBCSW(3),LOSTDATA  WAS THIS READ FOR LOST DATA
+         BE    CNOUCK              YES. BYPASS ERROR LOGGING
+CBADERR  EQU   *                   ENTRY FOR UNUSUAL ERROR
+         AIF   (&ERRMSG EQ 0).LOGUC
+         BAL   10,CERRLOG          LOG UNIT CHECKS
+.LOGUC   ANOP
+CNOUCK   EQU   *
+         MVI   IOBFL3,0            CLEAR O/S FLAG THREE
+         L     15,IOBFL3           GET COMM ADDR FROM CSW
+         LTR   15,15               IS IT ZERO
+         BNZ   CHANCHK             NO. LOOK FOR A CHAN CHK
+CUCHKEX  EQU   *                   EXIT TO RETRY
+         MVC   CCWA(24),CCWSAVE    RESET THE CHAN PGM
+         B     CREWRITE            GO RETRY THE CCWS
+CHANCHK  TM    IOBCSW+4,4          WAS IT CHAN PGM CHECK
+         BO    CUCHKEX             YES. GO DO A RETRY
+         LA    14,8                SET R14 TO BACK UP R15
+         SR    15,14               BACK UP TO BAD CCW
+         CLI   0(15),1             WAS IT A WRITE
+         BE    CUCHKEX             YES. TRY IT AGAIN
+         B     CRESPUCK            NO. GO SEND A NAK
+         EJECT
+CUNITEXC EQU   *                   UNIT EXCEPTION OCCURRED
+         AIF   (&ERRMSG EQ 0).LOGUE
+         BAL   10,CERRLOG          LOG UNIT EXCEPTION
+.LOGUE   ANOP
+         MVI   IOBFL3,0            CLEAR O/S FLAG THREE
+         L     15,IOBFL3           GET ADDR STORED IN CSW
+         LA    14,8                SET TO BACK UP R15
+         SR    15,14               BACK UP TO BAD CCW
+         CLI   0(15),1             WAS THIS A WRITE
+         BNE   CRESPBAD            NO. GO SEND A NAK
+         MVI   CFAKRD,240          SET DUMMY READ SWITCH
+         MVC   CCWD(8),CCWDMOD     RESTORE LOST DATA CCW
+         XC    IOBCSW,IOBCSW       CLEAR CSW BYTES
+         XC    IOBFL2(3),IOBFL2    CLEAR FLAG + SENSE
+         MVI   IOBECBCC,0          CLEAR ECB
+         LA    14,CCWD             GET IOBSTART
+         ST    14,IOBSIOCC         PUT ADDR IN IOB
+         EXCP  IOBFL1              START THE CHAN PGM
+         B     TPIOEXIT            LEAVE TP SUPERVISOR
+         EJECT
+         AIF   (&ERRMSG EQ 0).NOLOG
+CERRLOG  EQU   *                   TP LINE ERROR LOG ROUTINE
+         L     3,IOBFL3            GET ADDR FROM CSW
+         LA    3,0(3)              CLEAR HI ORDER BYTE
+         LTR   3,3                 CAS CSW STORED
+         BZ    CNOCSW              NO. FORMAT MSG WITHOUT CSW
+         LA    14,8                CONSTANT TO BACK UP CSW ADDR
+         SR    3,14                BACK UP TP LAST CSW
+         UNPK  UNPKA,0(2,3)        UNPK CCW OP CODE
+         TR    UNPKA+5(2),UPTRAN   TRANSLATE TO GRAPHIC
+         MVC   CERRMSG+4(2),UNPKA+5 PUT CCW OP IN WTO MSG
+         UNPK  UNPKA,IOBCSW+3(3)   UNPK STATUS BYTES
+         TR    UNPKA+3(4),UPTRAN   TRANSLATE TO GRAPHIC
+         MVC   CERRMSG+7(4),UNPKA+3 PUT CCW OP IN WTO MSG
+CONSENSE EQU   *                   RETURN HERE WHEN NO CSW
+         UNPK  UNPKA,IOBSENS0(2)   UNPK SENSE BYTES
+         TR    UNPKA+5(2),UPTRAN   TRANSLATE TO GRAPHICS
+         MVC   CERRMSG+12(2),UNPKA+5 PUT SENSE IN WTO MSG
+         UNPK  UNPKA,BUFSTART(3)   UNPK RESPONSE/LEADERS
+         TR    UNPKA+3(4),UPTRAN   TRANSLATE TO GRAPHICS
+         MVC   CERRMSG+15(4),UNPKA+3 PUT RESP/LDRS IN WTO MSG
+         WTL   MF=(E,CERRMSG)      LOG THE ERROR
+         TM    TASKSWS+1,1         LOG ALL FLAG ON?
+         BOR   10                  YES,RETURN
+         LH    3,BADTPCNT          GET COUNTER
+         LA    3,1(,3)             INCREMENT FOR THIS ERROR
+         STH   3,BADTPCNT          SAVE NEW CONSECUTIVE COUNT
+         NI    BADTPCNT+1,&ERRCNT-1 IS IT GT. 31?
+         BZ    TPBADDAU            YES, ABORT THE PROGRAM
+         BR    10                  NO,RETURN TO CALLER
+CNOCSW   EQU   *                   PUT ZEROS IN OP AND STATUS
+         MVI   CERRMSG+4,C'0'      PUT ZERO IN FIRST BYTE
+         MVC   CERRMSG+5(6),CERRMSG+4 PROPAGATE THE ZERO
+         MVI   CERRMSG+6,C','      RESTORE THE COMMA
+         B     CONSENSE            GO FORMAT SENSE BYTES
+.NOLOG   ANOP
+         EJECT
+         DS    0D
+CCWDMOD  DC    X'02'
+         DC    AL3(*)
+         DC    AL1(X'30')
+         DC    AL3(65000)
+CCWD     DC    X'02'
+         DC    AL3(*)
+         DC    AL1(X'30')
+         DC    AL3(65000)
+CUCHKBUF DC    X'10',AL3(0),AL4(0)
+TPEXAD   DS    F
+CBUFFER  DS    F
+UNPKA    DC    D'0'
+ONSEC    DC    F'100'
+LOSTDATA DC    AL3(CCWD+8)
+CRESP    DS    C
+         DS    0H
+OBCBLDR  DC    X'00'
+OBCB     DC    X'80'
+IBCBLDR  DC    X'00'
+IBCB     DC    X'80'
+HONE     DC    H'1'
+RESPNOP  DC    X'000203'
+         DS    0H
+GD200    DC    X'D200'
+BCBWRK   DC    H'0'
+WTOLEN   DS    0F
+         DC    H'120'
+         DC    H'0'
+WTOMSG   DC    CL122' '
+BADSIOCT DC    H'0'
+H16      DC    H'16'
+MAXDUP   DC    H'3'
+CCWX     CCW   47,*,X'20',1
+CCWA     CCW   1,*,X'60',2
+CCWB     CCW   1,XETBSEQ,X'60',2
+CCWC     CCW   2,*,X'20',&BUFSIZE
+CCWSAVE  DS    CL24
+         EJECT
+         AIF   (&ERRMSG EQ 0).LOGCONS
+UPTRAN   EQU   *-C'0'
+         DC    C'0123456789ABCDEF'
+CERRMSG  WTO   'XX,XXXX,XX,XXXX *** LINE ERROR *** &RMTID',MF=L
+.LOGCONS ANOP
+         EJECT
+BUFSDONE DC    X'FFFF'             BUFFER DELIMITER CHARACTERS
+FIRSTBUF DS    0F
+BUF1     DS    (&BUFSIZE+4)C
+         DS    0F
+BUF2     DS    (&BUFSIZE+4)C
+         DS    0F
+BUF3     DS    (&BUFSIZE+4)C
+         DS    0F
+BUF4     DS    (&BUFSIZE+4)C
+         DS    0F
+         DC    X'FFFF'             BUFFER DELIMITER STRING
+BUFSDUN  EQU   *                   END OF BUFFER POOL
+         TITLE '&RMTID O/S REMOTE TERMINAL PROGRAM - INITIALISATION'
+         ORG   FIRSTBUF            SET LOC-CTR TO START OF BUFS
+         ENTRY ISIGNON             INITIAL PGM START
+ISIGNON  EQU   *                   ENTRY POINT FOR RJE
+         STM   14,12,12(13)        SAVE O/S REGISTERS
+         LR    10,15               SET UP BASE FOR INITIALIZATIO
+         USING ISIGNON,10          ESTABLISH ADDRESSABILITY
+         LM    11,12,TPBASES       SET UP MAIN BASE REGS
+         LA    2,TPSAVE            GET ADDR OF SAVE AREA
+         ST    2,8(0,13)           CHAIN O/S TO US
+         ST    13,TPSAVE+4         CHAIN US TO O/S
+         LR    13,2                ESTABLISH LINKAGE REG
+         L     1,0(1)              GET ADDR OF PARM INFO
+         LH    2,0(1)              GET PARM LENGTH
+         LTR   2,2                 PARM FIELD OMITTED
+         BZ    IWTOLOOP            YES. GO CHECK RESTART
+         LA    1,2(,1)             MOVE PAST LENGTH PREFIX
+IPARMBEG XR    3,3                 SUBPARM LENGTH COUNTER
+IPARMCHK EQU   *                   SUBPARM DECIPHER ROUTINE
+         CLI   0(1),C','           SCAN FOR DELIMITER
+         BE    IFLDONE             GO SEE WHICH PARM
+         LA    3,1(,3)             ADD 1 TO LENGTH
+         LA    1,1(,1)             MOVE SCAN TO NEXT BYTE
+         BCT   2,IPARMCHK          CONTINUE SCAN OF PARM
+IFLDONE  BCTR  2,0                 REDUCE PARM LENGTH BY ONE
+         LR    4,1                 ADDR OF END + 1
+         SR    4,3                 CALC START OF FIELD
+         LA    1,1(,1)             START OF NEXT FIELD
+IONEXIT  EQU   *+1                 PARM BYPASS SWITCH
+         BC    0,IFLDTWO           TO NEXT PARM WHEN SET
+         MVI   IONEXIT,240         SET NEXT PARM EXIT
+         LTR   3,3                 SEE IF NULL ELEMENT
+         BZ    IENDCHK             YES. GO SEE IF DONE
+         LA    5,IRMID             ADDR OF RMTID IN SIGNON
+         AR    5,3                 SET TO LOC OF COMMA
+         BCTR  3,0                 SET LENGTH TO MACH FORM
+         STC   3,*+5               PUT IT IN MVC
+         MVC   IRMID,0(4)          PUT RMTID IN SIGNON
+IENDCHK  LTR   2,2                 ANY MORE PARM INFO
+         BP    IPARMBEG            YES. GO GET IT
+         B     IWTOLOOP            NO. ALL FINISHED
+IFLDTWO  EQU   *                   2ND SUBPARM ROUTINE
+ITWOXIT  EQU   *+1                 PARM BYPASS SWITCH
+         BC    0,IFLDTHRE          TO NEXT PARM WHEN SET
+         MVI   ITWOXIT,240         SET NEXT PARM EXIT
+         LTR   3,3                 SEE IF NULL ELEMENT
+         BZ    IENDCHK             YES. GO SEE IF DONE
+         BCTR  3,0                 SET LENGTH TO MACH FORM
+         STC   3,*+5               PUT IT IN MVC
+         MVC   0(1,5),0(4)         PUT PASSWORD IN SIGNON
+         B     IENDCHK             GO SEE IF FINISHED
+IFLDTHRE EQU   *                   ADD MORE PARMS HERE
+IWTOLOOP XC    WTORECB,WTORECB     CLEAR ECB FOR WTOR
+         WTOR  'ENTER &RMTID WARM START INFO AS - NN,Q',IREP,4,        C
+               WTORECB             ASK OPERATOR WHAT TO DO
+         SR    R1,R1               SHOW WE WANT OPENS
+         CALL  OSRTPOUT            GO OPEN SYSPRINT WHILE WAITING
+         WAIT  ECB=WTORECB         WAIT FOR RSTRT INFO
+         MVI   WTORECB,0           CLEAR WTOR ECB
+         OC    IREP,SS+50          INSURE UPPER CASE
+         CLC   MT,IREP             TEST FOR REPLY 'MT'
+         BE    EMPTYIT             YES,SET UP TO PURGE QUEUE
+         CLC   IREP,DFLTREP        HAS HE ENTERED BLANK?
+         BE    ISTAE               YES,SKIP ALL THIS STUFF
+         TM    IREP,240            FIRST BYTE NUMERIC
+         BNO   IWTOLOOP            MAKE OPERATOR REPLY AGAIN IF NOT
+         TM    IREP+1,240          SECOND BYTE NUMERIC
+         BO    ITWOBYTS            YES. 2 BYTE JOB NUM
+         LA    9,IREP+1            NO. POINT TO COMMA IN BYTE 2
+         MVC   IJNUM+7(1),IREP     SETUP JOB NUMBER FOR PACK
+         B     IPACK               GO CONVERT THE NUMBER
+ITWOBYTS LA    9,IREP+2            POINT TO COMMA IN BYTE 3
+         MVC   IJNUM+6(2),IREP     SETUP JOB NUMBER FOR PACK
+IPACK    PACK  IJNUM,IJNUM         PACK THE RESTART JOB NUM
+         CVB   8,IJNUM             CONVERT IT TO BINARY
+         STH   8,RNUM              SAVE IT FOR LATER
+*        LTR   8,8                 CHECK FOR NO RESTART
+*        BZ    ISTAE               NONE. GO ISSUE STAE
+         SPACE 1
+IQRSRT   DS    0H                  DETERMINE WHICH QUEUE
+         CLI   0(9),C','           PARM SEPERATOR PRESENT
+         BNE   IBADANSR            NO. OP RESP WAS BAD
+         MVC   RQUE,1(9)           GET QUE DESIGNATOR
+         CLI   1(9),C'A'           IS IT AN A
+         BE    ISTAE               YES. A IS VALID
+         CLI   1(9),C'B'           IS IT A B
+         BE    ISTAE               YES. B IS VALID
+IBADANSR MVI   IJNUM,240           ZERO FIRST BYTE OF PACK AREA
+         MVC   IJNUM+1(7),IJNUM    ZERO REST OF PACK AREA
+         MVC   IREP,DFLTREP        RESET REPLY AREA
+         SYSEVENT DONTSWAP         SET NON-SWAPPABLE FOR MVS
+         B     IWTOLOOP            GO TRY WTOR AGAIN
+         SPACE 1
+EMPTYIT  DS    0H                  OPERATOR WANTS TO PURGE A QUEUE
+         LA    R9,1                SET A VALUE
+         LNR   R9,R9               MAKE IT NEGATIVE
+         STH   R9,RNUM             SAVE NEGATIVE RESTART NO.
+         LA    R9,IREP+2           POINT TO COMMA
+         B     IQRSRT              GO SORT OUT WHICH QUEUE
+         EJECT
+ISTAE    EQU   *                   SETUP ABEND EXIT ADDRESS
+         SPACE 1
+         STAE  ABXIT,CT,XCTL=NO    ACTIVATE STAE ENVIRONMENT
+         LTR   15,15               WAS CONTROL BLOCK CREATED
+         BZ    SENDENQ             YES. GO DO INIT ENQUIRY
+         ABEND 16,DUMP             NO. ABORT THE TASK
+         SPACE 1
+TPBASES  DC    A(MTSRJE,MTSRJE+4096)
+         EJECT
+SENDENQ  EQU   *                   SYNCHRONIZE WITH HASP
+         OPEN  RTPDCB              ALLOW TP TO START
+         OI    RTPDCB+44,X'0C'     TELL IOS NO ERR RECOV
+RETINIT  EQU   *                   RETURN HERE UNTIL SYNCH
+         LA    9,INITCCW           ADDR OF START CHAN PGM
+         ST    9,IOBSIOCC          PUT IT IN IOBSTART
+         MVI   IOBFL1,X'C2'        SET IOB FLAG1
+         XC    IOBFL2(4),IOBFL2    CLEAR FLG2, SENSE, ECBCC
+         XC    IOBFL3(9),IOBFL3    CLEAR FLG3, CSW, SIOCC
+         XC    IOBERRCT,IOBERRCT   CLEAR ERR CNT FOR IOS
+         EXCP IOBFL1               START INITIAL CHAN PGM
+         WAIT  ECB=TASKECB         WAIT FOR IT TO END
+         XC    TASKECB,TASKECB     CLEAR ECB FOR NEXT USE
+         MVI   INITCCW,4           CHANGE DISABLE TO SENSE
+         MVI   INITSM,3            CHANGE SET MODE TO NOP
+         CLC   ICHANEND,IOBCSW+3   GOOD CHANNEL END
+         BNE   RETINIT             NO RETRY CHAN PGM
+         CLI   IOBECBCC,X'7F'      EVENT POSTED NORMAL
+         BNE   RETINIT             NO. RETRY CHAN PGM
+         CLC   IREADRES,GOODACK    GOOD RESP FROM HASP
+         BNE   RETINIT             NO. RETRY CHAN PGM
+         SPACE 2
+**       SET STAT BYTES IN BUFFERS AND SETUP A BUFFER FOR SIGNON **
+         SPACE 2
+         LA    2,BUF1              START OF BUF POOL
+BUFINITS CLC   0(2,2),BUFSDONE     END OF POOL
+         BE    BILDSION            YES. GO BUILD SIGNON REC
+         XC    0(4,2),0(2)         ZERO FIRST FOUR BYTES
+         LA    2,BUFEND-BUFBEGIN(2) GET NEXT BUFFER ADDR
+         B     BUFINITS            GO CHECK FOR END OF POOL
+BILDSION EQU   *                   BUILD SIGN-ON BUF
+         LA    2,BUF1              USE FIRST BUF FOR SIGN-ON
+         USING TPBUF,2             BUF ADDRESSABILITY
+         OI    BUFSTAT1,BUFTEXT    SHOW BUF IN USE FOR TEXT
+         MVC   BUFCOUNT(SE-SS),SS  PUT SIGN-ON IN BUF
+         ST    2,TPQUE             QUEUE THE BUFFER FOR TP
+         DROP  2
+         ST    11,TPEXAD           SET UP FIRST EXIT
+         B     WRTABUF             GO SEND THE BUF
+SS       DS    0H                  SIGN-ON RECORD
+         DC    AL2(SE-*-2)         BUFCOUNT
+         DC    AL1(XLDR,XSTX)      BUFSTART
+         DC    X'00'               BUFBCB
+         DC    AL2(0)              BUFFCS
+         DC    X'F0'               GENERAL CONTROL RCB
+         DC    C'A'                SIGN-ON ID
+         DC    CL15'/*SIGNON'      SIGNON CARD
+IRMID    DC    CL65'&RMTID'        STATION-ID
+         DC    AL1(0)              EOR
+SE       EQU   *
+         DS    0D
+INITCCW  DC    X'2F'               DISABLE - CHANGED TO SENSE
+         DC    AL3(INITCCW+5)      STORE SENSE HERE
+         DC    X'60'               CHAIN CCW AND SLI
+         DC    AL3(1)              CCW COUNT FIELD
+INITSM   DC    X'23'               SET MODE - CHANGED TO NOP
+         DC    AL3(INITSM+5)       SET MODE BYTE ADDR
+         DC    X'60'               CHAIN CCW AND SLI
+         DC    AL3(1)              CCW COUNT FIELD
+ININENAB DC    X'27'               ENABLE
+         DC    AL3(0)              NO DATA ADDR
+         DC    X'60'               CHAIN CCW AND SLI
+         DC    AL3(1)              CCW COUNT FIELD
+INITNR   DC    X'01'               WRITE RESPONSE SEQUENCE
+         DC    AL3(INITSEQ)        WRITE DATA ADDR - SOH/ENQ
+         DC    X'60'               CHAIN CCW AND SLI
+         DC    AL3(2)              CCW COUNT FIELD
+INITRD   DC    X'02'               READ RESPONSE FROM HASP
+         DC    AL3(IREADRES)       READ DATA ADDR
+         DC    X'20'               END OF CHAIN AND SLI
+         DC    AL3(2)              CCW COUNT FIELD
+INITSEQ  DC    AL1(XSOH,XENQ)      PRE SIGN ON RESPONSE
+IREADRES DC    AL2(0)              RESPONSE CHARS FROM HASP
+ICHANEND DC    X'0C00'             GOOD CHANNEL END STATUS
+GOODACK  DC    AL1(XDLE,XACK0)     EXPECTED HASP RESPONSE
+IREP     DC    CL4' '
+DFLTREP  DC    CL4' '              NULL RESPONSE - DEFAULT
+MT       DC    CL2'MT'             RESPONSE TO EMPTY A QUEUE
+IJNUM    DS    0D
+         DC    CL8'00000000'
+         ORG
+         DROP  10
+         TITLE 'HASP O/S REMOTE TERMINAL PROGRAM OUTPUT PROCESSOR'
+         SPACE 1
+***********************************************************************
+*                                                                     *
+*        PROGRAM ID. :             OSRTPOUT                           *
+*                                                                     *
+*        DATE WRITTEN :            DECEMBER 1970                      *
+*                                  MAY      1978                      *
+*                                                                     *
+*        AUTHOR :                  D.R.HURTGEN (1970)                 *
+*                                  D.H.CARTWRIGHT (1978)              *
+*                                                                     *
+*        LOCATION :                MONSANTO COMPANY - CREVE COEUR     *
+*                                  EUROPEAN COMPUTER CENTER           *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*                                                                     *
+*        PURPOSE                                                      *
+*       ---------                                                     *
+*        THIS ROUTINE IS AN ADAPTION OF THE ST.LOUIS                  *
+*        O/S REMOTE TERMINAL PROGRAM OUTPUT PROCESSOR (OSRTPOUT).     *
+*        IT IS PASSED OUTPUT BLOCKS FROM THE OSRTP PROGRAM AND        *
+*        DE-COMPRESSES THE DATA.IT THEN OUTPUTS THE DATA AS A JOB     *
+*        THROUGH THE JES2 INTERNAL READER USING THE MONSANTO EUROPE   *
+*        JES2 /*GIMMEX FACILITY FOR PRINT OR 'COPY' JCL FOR PUNCHED   *
+*        OUTPUT.IN THIS WAY OUTPUT FROM ST.LOUIS CAN BE DISTRIBUTED   *
+*        OVER THE EUROPEAN JES2 NETWORK.                              *
+*                                                                     *
+***********************************************************************
+         EJECT
+         SPACE 5
+***********************************************************************
+*                                                                     *
+*        INPUT.                                                       *
+*        ------                                                       *
+*                                                                     *
+*        THIS ROUTINE IS CALLED FROM THE O/S REMOTE TERMINAL          *
+*        PROGRAM TO DECOMPRESS AND OUTPUT LINES AND CARDS RECEIVED    *
+*        FROM THE HOST SYSTEM.REGISTER ONE IS USED TO PASS            *
+*        INFORMATION FROM THE OSRTP TO THIS ROUTINE AS FOLLOWS:       *
+*        R1    = ZERO              OPEN FILES AND PREPARE FOR OUTPUT  *
+*        R1    = +VE               R1 CONTAINS ADDRESS OF A TP BUFFER *
+*        R1    = -VE               CLOSE FILES                        *
+*                                                                     *
+***********************************************************************
+         EJECT
+         SPACE 5
+***********************************************************************
+*                                                                     *
+*        OUTPUT.                                                      *
+*        -------                                                      *
+*                                                                     *
+*        SYSPRINT-OPTIONAL MESSAGE DATASET                            *
+*                                                                     *
+*        PRINTER1 & 2 - OUTPUT DATASET OF JCL CARD IMAGES TO RECREATE *
+*        PRINT LINES FROM ST.LOUIS.THE JOB STREAM IS A /*GIMMEX JOB   *
+*        WITH APPROPRIATE ROUTING AND FORMS INFORMATION.THIS IS       *
+*        NORMALLY DIRECTED TO THE JES2 INTERNAL READER.               *
+*                                                                     *
+*        PUNCH1, 2 & 3- OUTPUT DATASET OF JCL CARD IMAGES TO RECREATE *
+*        PUNCH CARDS FROM ST.LOUIS.THE JOB STREAM INVOKES A PROCEDURE *
+*        WITH APPROPRIATE ROUTING AND FORMS INFORMATION.THIS IS       *
+*        NORMALLY DIRECTED TO THE JES2 INTERNAL READER.               *
+*                                                                     *
+***********************************************************************
+         EJECT
+         SPACE 5
+***********************************************************************
+*                                                                     *
+*        TECHNIQUE.                                                   *
+*        ----------                                                   *
+*                                                                     *
+* THIS PROGRAM IS PASSED TRANSMISSION BLOCKS BY THE OS RTP PROGRAM    *
+* TRANSMISSION PROCESSOR. PUNCHED CARD AND PRINT RECORDS ARE DE-      *
+* COMPRESSED AND SENT TO THE APPROPRIATE UNIT RECORD DEVICES.ALL OTHER*
+* RECORD TYPES WHICH MAY BE PRESENT IN THE BLOCKS, ARE PRESENTLY DIS- *
+* CARDED.                                                             *
+***********************************************************************
+         TITLE 'HASP O/S REMOTE TERMINAL PROGRAM OUTPUT PROCESSOR - INIX
+               TIALIZATION SECTION'
+         PRINT ON
+OSRTPOUT CSECT
+         PRINT ON,GEN
+         TITLE '&RMTID OSRTPOUT - DSECTS USED IN THIS PROGRAM'
+***********************************************************************
+*        DCB DSECT                                                    *
+***********************************************************************
+         SPACE 1
+         PRINT NOGEN
+         DCBD  DSORG=PS            GENERATE DCB DSECT
+         EJECT
+***********************************************************************
+*        OUTPUT DEVICE CONTROL TABLE FORMAT                           *
+***********************************************************************
+         SPACE 1
+ODCT     DSECT                     OUTPUT DEVICE CONTROL TABLE ENTRY
+ODCTID   DS    CL4'ODCT'           CONTROL BLOCK NAME
+ODCTLDCB DS    A                   ADDRESS OF DCB LIST ENTRY
+ODCTBUFF DS    A                   ADDRESS OF OUTPUT BUFFER
+ODCTRCB  DS    XL1                 PROTOTYPE RECORD CONTROL BYTE
+ODCTFLAG DS    XL1                 DELIMITER FLAGS
+*        VALUES OF ODCTFLAG BYTES
+NONE     EQU   X'00'               NO DELIMITER (DEFAULT)
+EOT      EQU   X'80'               /*EOT CARD NEEDED
+DLM      EQU   X'40'               SPECIAL DLM= USED
+DATA     EQU   X'20'               WE ARE LOOKING FOR PUNCHED DATA
+JOB      EQU   X'08'               WE ARE LOOKING AT A JOB STREAM
+PUNCH    EQU   X'04'               ODCT IS FOR A PUNCH (DEFAULT PRINT)
+CONT     EQU   X'02'               WE ARE LOOKING AT PRINT CONTINUATION
+         SPACE 1
+ODCTJNAM DS    CL8                 JOB NAME
+ODCTJNUM DS    CL4                 JOB NUMBER (EBCDIC)
+ODCTRMT  DS    CL2                 JOB ROUTING
+ODCTICNT DS    PL4                 INPUT RECORD COUNT
+ODCTOCNT DS    PL4                 OUTPUT RECORD COUNT
+ODCTFORM DS    0CL9'(A,,1611)'     OUTPUT CLASS AND FORMS
+ODCTCLS1 DS    CL1                 CLASS OR '('
+ODCTCLS2 DS    CL1                 CLASS IF SPECIAL FORMS
+         DS    CL7
+         DS    0F                  UNUSED ALIGNMENT BYTES
+         SPACE 2
+ODCTLGTH EQU   *-ODCT              LENGTH OF OUTPUT DEVICE TABLE ENTRY
+         EJECT
+***********************************************************************
+*        FORMAT OF DCB TABLE LIST                                     *
+***********************************************************************
+         SPACE 1
+LDCB     DSECT                     LIST OF DCB'S TABLE ENTRY
+LDCBDCB  DS    0F                  ADDRESS OF O/S DCB
+LDCBFLAG DS    XL1                 FLAGS
+         SPACE 1
+*        VALUES OF LDCBFLAG BYTES
+         SPACE 1
+DDINT    EQU   16                  DD INTEREST
+DDPRES   EQU   8                   DD PRESENT
+DDEOF    EQU   4                   DD AT E-O-F
+DDOPEN   EQU   1                   DATA SET IS OPEN
+         SPACE 1
+LDCBADCB DS    AL3                 ADDRESS OF O/S DCB
+LDCBDNAM DS    CL8                 DDNAME
+LDCBTYPE DS    CL8                 INPUT OR OUTPUT (CHARS)
+LDCBFMT  DS    F                   ADDRESS OF DEFAULT RECORD FORMAT
+LDCBRECL DS    F                   ADDRESS OF DEFAULT RECORD LENGTH
+LDCBBLKS DS    F                   ADDRESS OF DEFAULT BLOCK SIZE
+         SPACE 1
+LDCBLGTH EQU   *-LDCB              LENGTH OF ONE LDCB LIST ENTRY
+         EJECT
+***********************************************************************
+*        FORMAT OF ST. LOUIS JES2 PAGE SEPARATOR LINE                 *
+***********************************************************************
+         SPACE 1
+STLPRSEP DSECT                     FORMAT OF ST.LOUIS SEPARATOR LINE
+STLSEPAR DS    0CL133              PAGE SEPARATOR
+STLASA   DS    CL1                 ASA CONTROL CHARACTER
+STLSASTR DS    CL4'****'           SEPARATOR CHARACTERS
+STLSCLSS DS    CL1' '              JOB CLASS
+         DS    CL2' '
+STLSTYPE DS    CL4'CONT'           SEPARATOR TYPE
+         DS    CL7' '
+STLSJNUM DS    CL4                 JOB NUMBER
+         DS    CL2                 BLANKS
+STLSJNAM DS    CL8' '              JOB NAME
+         DS    CL2' '
+STLSPNAM DS    0CL6                PROGRAMMER NAME
+         DS    CL2'SF'             NAME=SFXXXX FOR SPECIAL FORMS
+STLSFRM  DS    CL4'1611'           FORMS NUMBER REQUIRED
+         DS    CL16' '
+STLSEPID DS    CL5'BIN'            FIELD TO TEST FOR SEPARATOR
+STLSBIN  DS    CL2'14'             BIN NUMBER
+         DS    CL69' '             MORE RUBBISH
+         EJECT
+***********************************************************************
+*        FORMAT OF ST. LOUIS HASP PUNCH SEPARATOR CARD                *
+***********************************************************************
+         SPACE 1
+PCDDSECT DSECT                     PUNCH SEPARATOR FORMAT
+PCDSEPAR DS    0CL81               SEPARATOR CARD
+PCDCC    DS    XL1                 MACHINE CONTROL CHARACTER
+         SPACE 1
+PCDDATA  DS    0CL80               DATA FIELD
+PCDSEPID DS    CL1                 IDENTIFIER (11-12 OVERPUNCH)
+PCDBIN1  DS    CL8                 1ST CHARACTER OF BIN NUMBER
+         DS    CL2
+PCDBIN2  DS    CL8                 2ND CHARACTER OF BIN NUMBER
+         DS    CL2
+PCDBIN3  DS    CL8                 3RD CHARACTER OF BIN NUMBER
+         DS    CL2
+PCDBIN4  DS    CL8                 4TH CHARACTER OF BIN NUMBER
+         DS    CL2
+PCDJOB1  DS    CL8                 1ST CHARACTER OF JOB NUMBER
+         DS    CL2
+PCDJOB2  DS    CL8                 2ND CHARACTER OF JOB NUMBER
+         DS    CL2
+PCDJOB3  DS    CL8                 3RD CHARACTER OF JOB NUMBER
+         DS    CL2
+PCDJOB4  DS    CL8                 4TH CHARACTER OF JOB NUMBER
+         DS    CL1
+         SPACE 2
+PCDLNGTH EQU   *-PCDSEPAR          LENGTH OF SEPARATOR RECORD
+         EJECT
+***********************************************************************
+*        PUNCH CARD OUTPUT FORMAT                                     *
+***********************************************************************
+         SPACE 1
+CARDDSCT DSECT                     PUNCH CARD AREA
+CARD     DS    0CL80               CARD IMAGE AREA
+CARDCC   DS    0XL1                /*GIMMEX PRINTER CONTROL CHARACTER
+CARD1    DS    0CL80               FIRST CARD OF O/P PRINT - FULL
+CARD2    DS    CL53                SECOND O/P CARD - REST OF LINE
+CARDPAD  DS    CL27                PADDING
+         SPACE 1
+CARDLGTH EQU   *-CARD2             LENGTH OF A CARD IMAGE
+         SPACE 3
+OSRTPOUT CSECT                     END OF DSECTS
+         TITLE '&RMTID OSRTPOUT - ST.LOUIS OUTPUT POST-PROCESSOR'
+***********************************************************************
+*        REGISTER EQUATES AND USAGES.                                 *
+***********************************************************************
+         SPACE 1
+R0       EQU   0    SVC COMMUNICATIONS AND WORK REGISTER
+R1       EQU   1    SVC, PARAMETER AND WORK REGISTER
+R2       EQU   2    WORK REGISTER
+WA       EQU   R2   WORK REGISTER
+R3       EQU   3    WORK REGISTER
+WB       EQU   R3   WORK REGISTER
+R4       EQU   4    BAL RETURN ADDRESS
+LINKREG  EQU   R4   INTERNAL LINKAGE REGISTER
+R5       EQU   5    DCB LIST ENTRY POINTER
+R6       EQU   6    OUTPUT BUFFER POINTER
+R7       EQU   7    WORK REGISTER, LOOP COUNTER
+R8       EQU   8    INPUT AREA POINTER
+IPR      EQU   R8   INPUT AREA POINTER
+R9       EQU   9    OUTPUT DEVICE CONTROL TABLE POINTER
+R10      EQU   10   SYSPRINT OUTPUT AREA POINTER
+R11      EQU   11   OUTPUT AREA POINTER
+OPR      EQU   R11  OUTPUT AREA POINTER
+R12      EQU   12   BASE REGISTER 2
+R13      EQU   13   SAVE AREA POINTER / BASE REGISTER 1
+R14      EQU   14   BALR RETURN ADDRESS
+R15      EQU   15   BALR ROUTINE ADDRESS AND WORK REGISTER
+         SPACE 3
+***********************************************************************
+*        HOUSEKEEPING AND DISPATCHER                                  *
+***********************************************************************
+         SPACE 1
+         PRINT GEN                 MACRO EXPANSION OPTION
+         PGMIN EQUATES=NO,USING=(R13,R12)    ESTABLISH ADDRESSABILITY
+         SPACE 1
+         USING LDCB,R5             ESTABLISH DCB LIST ADDRESSABILITY
+         USING ODCT,R9             ESTABLISH DEVICE TABLE ADDRESSING
+         L     R10,PRINTBUF        PICK UP PRINTER BUFFER
+         LTR   R1,R1               TEST PARAMETERS
+         BZ    INITIAL             IF NONE,OPEN FILES
+         BNP   JOBEND              IF NEGATIVE, CLOSE FILES
+         B     READDISK            ELSE PROCESS A BUFFER
+         EJECT
+***********************************************************************
+*        INITIALISE INPUT, OUTPUT AND MESSAGE DATA SETS               *
+***********************************************************************
+         SPACE 1
+INITIAL  DS    0H                  OPEN FILES ROUTINE
+         LA    R5,PRINTSW          POINT TO SYSPRINT DCB LIST
+         OI    LDCBFLAG,DDINT      EXPRESS INTEREST IN IT
+         BAL   R4,TESTIOT          FIND OUT IF PRESENT
+         BAL   R4,OPEN             OPEN IT IF PRESENT
+         LA    R10,HEADER1         SET INITIAL POINTER IN CASE NO DD
+         BAL   R4,PRINT            GET A BUFFER
+         BAL   R4,HEADING          SET UP PAGE HEADINGS
+         SPACE 1
+         B     RETURN              SYSPRINT OPENED,GO BACK TO RTP
+         TITLE '&RMTID OSRTPOUT - MAIN SECTION'
+READDISK DS    0H                  PROCESS A TP BUFFER
+         LA    IPR,0(,R1)          IPR = CURRENT BUFFER LOCATION
+         LH    WA,0(,IPR)          GET LENGTH OF DATA
+         AR    WA,IPR              POINT TO END OF DATA MINUS TWO TO
+         BCTR  WA,0                  CHECK FOR EOR SCB, EOB RCB, & ETB
+         CLC   0(3,WA),=X'000026'  Q.-O.K.
+         BE    BLOCKOK             B.-YES
+         L     1,=X'80000004'      THIS BLOCK NOT SAFE TO PROCESS
+         SVC   ABEND               MAKE A SPECTACULAR EXIT
+BLOCKOK  LA    IPR,5(,IPR)         BUMP PAST CONTROL CHARACTERS
+         SPACE 1
+GETNEXT  LA    IPR,2(,IPR)         BUMP TO NEXT RCB
+         CLC   =X'80000026',1(IPR) IS IT ETX?
+         BNE   GOTNEXT             NO, PROCESS IT
+         BAL   R4,FINDODCT         FIND OUTPUT DEVICE TABLE ENTRY
+         BAL   R4,UPFILE           GO DELIMIT IT
+         BAL   R4,CLOSE            THEN CLOSE IT
+         MVC   ODCTJNAM,BLANKS     CLEAR JOB NAME
+         MVC   ODCTJNUM,BLANKS     AND NUMBER
+         NI    LDCBFLAG,FF-DDINT   NO LONGER INTERESTED IN FILE
+         B     RETURN              GO GET NEXT REAL BLOCK
+         SPACE 1
+GOTNEXT  DS    0H                  DATA TO HANDLE
+         TM    0(IPR),PRINTRCB     Q.-PRINT RECORD RCB
+         BNO   CKFORPUN            B.-NO, CHECK FOR PUNCH
+         TM    0(IPR),NOPRTRCB     ANY EXCESS BITS ON?
+         BNZ   CKFORPUN            YES,SO IT'S NOT A PRINT RCB
+         BAL   R4,FINDODCT         FIND OUTPUT DEVICE TABLE ENTRY
+         LA    OPR,PRTAREAA        GET OUTPUT AREA ADDRESS
+         IC    WA,1(,IPR)          GET SRCB AND CONVERT TO PRINTER
+         SLL   WA,3                  COMMAND CODE
+         STC   WA,0(,OPR)
+         OI    0(OPR),1            DEFAULT TO PRINT AND SPACE AFTER
+         TM    1(IPR),X'20'        Q.-IMMEDIATE SPACE
+         BZ    ISPRTCMD            B.-NO
+         OI    0(OPR),2            SET IMMEDIATE COMMAND BIT AND
+         LA    WA,2                  DEFAULT LENGTH
+         BAL   LINKREG,PRINTRTN    GO IMMEDIATE SKIP
+         MVI   0(OPR),9            SET DEFAULT WRITE AND SPACE ONE
+ISPRTCMD BAL   LINKREG,EXPAND      NOW GO EXPAND THE COMPRESSED DATA
+         BZ    GETNEXT             B.-IF DATA LENGTH IS ZERO
+         LA    WA,1(,WA)           BUMP OUTPUT LENGTH FOR COMMAND CODE
+         BAL   LINKREG,PRINTRTN      AND PRINT THE LINE
+         B     GETNEXT             GET NEXT RECORD
+         EJECT
+CKFORPUN TM    0(IPR),PUNCHRCB     Q.-PUNCH RECORD RCB
+         BNO   CKFOREOB            B.-NO, CHECK FOR END OF BLOCK
+         TM    0(IPR),NOPUNRCB     ANY EXCESS BITS ON?
+         BNZ   CKFOREOB            YES,IT'S NOT A PUNCH RCB
+         BAL   R4,FINDODCT         FIND DEVICE TABLE ENTRY
+         LA    OPR,PUNAREAA        GET OUTPUT AREA ADDRESS
+         BAL   LINKREG,EXPAND      GO EXPAND THE COMPRESSED DATA
+         BZ    GETNEXT             B.-IF DATA LENGTH IS ZERO
+         MVI   0(OPR),X'41'        SET PUNCH COMMAND CODE AND
+         LA    WA,1(,WA)             BUMP COUNT FOR IT
+         BAL   R4,PUNCHREC         GO PROCESS RECORD
+         B     GETNEXT
+         SPACE 2
+CKFOREOB CLI   0(IPR),0            Q.-END OF BLOCK
+         BE    RETURN              B.-YES, GET NEXT BLOCK
+         SR    WA,WA               UNRECOGNIZABLE RCB - SCAN INPUT
+CKFOREOR LA    IPR,1(,IPR)         BUMP FOR SCB
+         NI    1(IPR),X'7F'        Q.-END OF RECORD
+         BZ    GETNEXT             B.-YES, CHECK NEXT RCB
+         TM    1(IPR),X'40'        Q.-CHARACTER STRING
+         BZ    ISDUPSCB            B.-NO
+         NI    1(IPR),X'3F'        ISOLATE COUNT
+         IC    WA,1(,IPR)          WA = COUNT
+         AR    IPR,WA              BUMP INPUT POINTER FOR STRING LENGTH
+         B     CKFOREOR            GO CHECK NEXT SCB
+ISDUPSCB TM    1(IPR),X'20'        Q.-DUPLICATES ARE BLANKS
+         BZ    CKFOREOR            B.-YES, CHECK NEXT SCB
+         LA    IPR,1(,IPR)         BUMP FOR SAMPLE CHARACTER
+         B     CKFOREOR            CHECK NEXT SCB
+         TITLE '&RMTID OSRTPOUT - SUBROUTINES'
+*                   EXPAND DATA COMPRESSED BY HASP
+EXPAND   LR    WA,OPR              WA = START OF OUTPUT BUFFER
+         SR    WB,WB               RESET WB
+NEXTSCB  LA    IPR,1(,IPR)         BUMP FOR SCB
+         NI    1(IPR),X'7F'        TURN OFF HIGH ORDER BIT IN SCB
+         BZ    AWDUN               B.-IF END OF RECORD
+         MVC   SCBWORK(1),1(IPR)   SCB TO WORK AREA
+         TM    SCBWORK,X'40'       Q.-CHARACTER STRING
+         BZ    AREDUPS             B.-NO, GO PROCESS DUP. CHARACTERS
+         NI    SCBWORK,X'3F'       TURN OFF CHARACTER STRING FLAG
+         BZ    NEXTSCB             IGNORE 'NUL'
+         MVC   1(0,WA),2(IPR)      CHARACTER STRING TO OUTPUT AREA
+SCBWORK  EQU   *-5
+         IC    WB,SCBWORK          WB = NUMBER OF CHARACTERS MOVED
+         AR    IPR,WB              BUMP INPUT AND
+         AR    WA,WB                 OUTPUT POINTERS FOR DATA MOVED
+         B     NEXTSCB             GO LOOK AT NEXT SCB
+AREDUPS  NI    1(IPR),X'1F'        ISOLATE DUPLICATE COUNT
+         BZ    NEXTSCB             FORGET IT IF NONE
+         IC    WB,1(,IPR)          WB = NUMBER OF DUPLICATE CHARACTERS
+         MVI   1(WA),C' '          INSERT SAMPLE BLANK
+         TM    SCBWORK,X'20'       Q.-DUPLICATES ARE BLANKS
+         BZ    PROPAGAT            B.-YES
+         MVC   1(1,WA),2(IPR)      INSERT SAMPLE CHARACTER
+         LA    IPR,1(,IPR)         BUMP INPUT POINTER FOR SAMPLE CHAR.
+PROPAGAT EX    WB,MVC              PROPAGATE DUPLICATE CHARACTER
+         AR    WA,WB               BUMP FOR NUMBER MOVED
+         B     NEXTSCB             LOOK AT NEXT SCB
+AWDUN    MVC   1(2,WA),BLANKS      CLEAR LAST CHARACTERS
+         SR    WA,OPR              WA = LENGTH OF DATA IN BUFFER
+         BR    LINKREG             RETURN WITH CONDITION CODE SET
+MVC      MVC   2(0,WA),1(WA)
+         TITLE '&RMTID OSRTPOUT - PRINT LINE HANDLING'
+***********************************************************************
+*        PRINT LINE HANDLING ROUTINE                                  *
+***********************************************************************
+         SPACE 2
+PRINTRTN SUBIN SAVE=(R4)           HANDLE A PRINT RECORD
+         USING STLPRSEP,OPR        ESTABLISH ADDRESSABILITY OF RECORD
+         USING CARDDSCT,R6         ESTABLISH OUTPUT BUFFER ADDRESSING
+         CLC   STLSASTR,PRTSEPAS   COULD IT BE A SEPARATOR?
+         BNE   PRINTOK             NO WAY,CARRY ON
+         CLC   STLSEPID,PRTSEPCH   IS IT A SEPARATOR?
+         BNE   PRINTOK             NO,JUST OUTPUT LINE
+         CLC   STLSJNAM,ODCTJNAM   IS IT THE SAME JOB NAME?
+         BNE   PRINTSEP            NO,NEW JOB.SEPARATE IT.
+         CLC   STLSJNUM,ODCTJNUM   IS IT REALLY THE SAME JOB?
+         BNE   PRINTSEP            NO,HE'S JUST KIDDING.STOP IT.
+         CLC   STLSCLSS,ODCTCLS1   IS IT THE SAME OUTPUT DATASET?
+         BE    PRNTCONT            YES,DEAL WITH SEPARATOR
+         CLI   ODCTCLS1,C'('       WAS HE ON SPECIAL FORMS?
+         BNE   PRINTSEP            NO, SO IT IS A NEW SYSOUT CLASS
+         CLC   STLSCLSS,ODCTCLS2   YES,TEST FOR SAME SYSOUT CLASS
+         BNE   PRINTSEP            NO, GO SEPARATE OUTPUTS
+         SPACE 1
+PRNTCONT DS    0H                  PROCESS 'CONT' SEPARATOR
+         TM    ODCTFLAG,CONT       ALREADY PROCESSED?
+         BO    PRINTOK2            YES,JUST OUTPUT IT
+         CLC   STLSTYPE,SEPEND     IS IT AN END SEPARATOR?
+         BE    PRINTOK             YES,TREAT AS NORMAL OUTPUT LINE
+         BAL   R4,OUTPUT           OUTPUT PREVIOUS RECORD
+         MVI   CARDCC,IMMDSKIP     SET UP A SKIP TO NEW PAGE
+         BAL   R4,OUTPUT           OUTPUT IT
+         OI    ODCTFLAG,CONT       REMEMBER THIS SEPARATOR
+         B     PRINTOK2            GO OUTPUT THE RECEIVED LINE
+         SPACE 1
+PRINTOK  DS    0H                  COPY A LINE TO OUTPUT
+         NI    ODCTFLAG,FF-CONT    IF NOT A SEPARATOR RESET FLAG
+PRINTOK2 DS    0H                  OUTPUT LINE OR 'CONT' SEPARATOR
+         AP    ODCTICNT,ONE        COUNT INPUT RECORDS
+         BAL   R4,OUTPUT           OUTPUT PREVIOUS RECORD,GET BUFFER
+         MVC   CARD1,PRTAREAA      COPY FIRST PART OF LINE
+         BAL   R4,OUTPUT           OUTPUT IT
+         MVC   CARDPAD,BLANKS      BLANK PADDING
+         MVC   CARD2,PRTAREAB      COPY REMAINDER OF LINE
+         MVC   PRTAREAA,PRTAREAC   BLANK OUT INPUT AREA
+         SPACE 1
+PRINTEXT SUBOUT RESTORE=(R4)       RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        PROCESS ST.LOUIS HASP PRINT SEPARATOR PAGE                   *
+***********************************************************************
+         SPACE 1
+PRINTSEP DS    0H
+         BAL   R4,UPFILE           GO CLOSE CURRENT FILE,OPEN NEXT
+         OI    ODCTFLAG,EOT+CONT   REMIND MYSELF WHAT DELIMITER
+         MVC   PRTSOUT,BLANKS      SET DEFAULT FORMS (NONE)
+         MVC   PRTRCLS1,STLSCLSS   MOVE SYSOUT CLASS TO /*GIMMEX CARD
+         MVC   PRTJNAM,STLSJNAM    COPY JOB NAME
+         MVC   PRTPNAM,STLSPNAM    COPY PROGRAMMER NAME
+         CLC   STLSFRMD,STLSPNAM   IS THIS A CODED FORM NUMBER?
+         BNE   MOREPO1             NO,LEAVE DEFAULT
+         MVC   PRTSOUT,FORMSOUT    YES,COPY FORM SYSOUT SPEC.
+         MVC   PRTFORM,STLSFRM     COPY REQUIRED FORM NUMBER
+         MVC   PRTRCLS2,STLSCLSS   COPY SYSOUT CLASS
+         SPACE 1
+MOREPO1  DS    0H                  FORM NUMBER SET
+         MVC   PRTRRMT,STLSBIN     MOVE BIN NO. TO /*GIMMEX CARD
+         CLC   PRTRRMT,=C'30'      IS IT VALID REMOTE
+         BNH   *+18                YES,CARRY ON
+         CLI   PRTRRMT+1,C' '      THOUGH IT MIGHT BE SINGLE-DIGIT
+         BE    *+10                YES,CARRY ON
+         MVC   PRTRRMT,PRTRRMTD    NO,SET DEFAULT
+         CLI   PRTRRMT,C'0'        TEST FOR INVALID REMOTE NUMBER
+         BH    MOREPO2             OK - CARRY ON
+         MVC   PRTRRMT(1),PRTRRMT+1 USE SECOND DIGIT ONLY
+         MVI   PRTRRMT+1,C' '      FOLLOWED BY BLANK
+         CLI   PRTRRMT,C'0'        IS IT VALID NOW?
+         BH    MOREPO2             YES,CONTINUE
+         MVC   PRTRRMT,PRTRRMTD    NO,SET DEFAULT
+         SPACE 1
+MOREPO2  DS    0H                  JOB STREAM NOW SET UP
+         MVC   ODCTJNAM,PRTJNAM    SAVE JOB NAME
+         MVC   ODCTJNUM,STLSJNUM   SAVE NEW CURRENT JOBNUMBER
+         MVC   ODCTFORM,PRTSOUT    SYSOUT CLASS AND FORMS
+         MVC   ODCTRMT,PRTRRMT     REMOTE ROUTING
+         BAL   R4,OUTPUT           OUTPUT PREVIOUS RECORD,GET BUFFER
+         MVC   CARD,PRTJOB         MOVE JOB CARD TO BUFFER
+         BAL   R4,OUTPUT           OUTPUT IT
+         MVC   CARD,PRTROUTE       MOVE /*GIMMEX CARD TO BUFFER
+         B     PRINTOK2            GO CARRY ON
+         SPACE 2
+         DROP  OPR,R6              END SEPARATOR,BUFFER ADDRESSABILITY
+         TITLE '&RMTID OSRTPOUT - PUNCH OUTPUT HANDLING'
+***********************************************************************
+*        PUNCHED CARD HANDLING ROUTINE                                *
+***********************************************************************
+         SPACE 2
+PUNCHREC SUBIN SAVE=(R4,R9)        ROUTINE TO HANDLE PUNCHED CARDS
+         SPACE 1
+PUNCHIT  DS    0H                  PROCESS A RECORD IN INPUT BUFFER
+         USING PCDDSECT,OPR        ESTABLISH SEPARATOR ADDRESSABILITY
+         CLI   PCDSEPID,PCDSEPCH   IS IT A SEPARATOR?
+         BE    PUNCHSEP            YES,EXAMINE IT MORE CLOSELY
+         TM    ODCTFLAG,DATA       DOES BUFFER CONTAIN DELIMITER?
+         BZ    PUNCHOK             NO,THAT'S ALRIGHT THEN
+         CLC   PCDDATA,BLANKS      YES,NEXT CARD MAY BE BLANK
+         BE    PUNCHEXT            IT IS,DROP IT
+         NI    ODCTFLAG,FF-DATA    RESET FLAG
+         B     MOREPP4             GO EXAMINE THE DATA
+         SPACE 1
+PUNCHOK  DS    0H                  OUTPUT PUNCH RECORD
+         USING CARDDSCT,R6         ESTABLISH OUTPUT BUFFER ADDRESSING
+         BAL   R4,OUTPUT           OUTPUT PREVIOUS RECORD,GET BUFFER
+         MVC   CARD,PCDDATA        COPY CARD BUT FOR CONTROL CHARACTER
+         TM    ODCTFLAG,DATA       DOES BUFFER CONTAIN DELIMITER?
+         BO    PUNCHEXT            YES,DON'T COUNT IT
+         AP    ODCTICNT,ONE        COUNT INPUT RECORDS
+         SPACE 1
+PUNCHEXT DS    0H                  RETURN TO CALLER
+         MVC   PUNAREAA,PUNAREAB   BLANK OUT INPUT AREA
+         SUBOUT RESTORE=(R4,R9)    RETURN TO CALLER
+         SPACE 1
+         EJECT
+***********************************************************************
+*        PROCESS ST.LOUIS HASP PUNCH SEPARATOR CARD                   *
+***********************************************************************
+         SPACE 2
+PUNCHSEP DS    0H
+         BAL   R4,UPFILE           START A NEW FILE
+         CLC   PCDSEPID,PCDBIN1    DO WE HAVE ANY ROUTING?
+         BNE   *+4+6+4             YES,GO SORT IT OUT
+         MVC   PUNRRMT,PUNRRMTD    NO,SET DEFAULT
+         B     MOREPP3             AND SKIP OTHER TESTS
+         OC    PCDBIN1,ZEROES      ENSURE NUMERIC ROUTING
+         MVC   PUNRRMT(1),PCDBIN1  MOVE IN FIRST ROUTE DIGIT
+         CLC   PCDSEPID,PCDBIN2    ONLY ONE?
+         BNE   *+4+4+4             NO,GET NEXT ONE
+         MVI   PUNRRMT+1,C' '      ENSURE ONLY ONE CHARACTER
+         B     MOREPP2             GO GET JOB NAME
+         OC    PCDBIN2,ZEROES      ENSURE NUMERIC ROUTING
+         MVC   PUNRRMT+1(1),PCDBIN2 GET SECOND DIGIT OF BIN NUMBER
+         SPACE 2
+MOREPP2  DS    0H                  TEST ROUTING,SET UP JOB NAME
+         CLC   PUNRRMT,=C'30'      IS IT VALID REMOTE
+         BNH   *+18                YES,CARRY ON
+         CLI   PUNRRMT+1,C' '      THOUGH IT MIGHT BE SINGLE-DIGIT
+         BE    *+10                YES,CARRY ON
+         MVC   PUNRRMT,PUNRRMTD    NO,SET DEFAULT
+         CLI   PUNRRMT,C'0'        TEST FOR INVALID REMOTE NUMBER
+         BH    MOREPP3             OK - CARRY ON
+         MVC   PUNRRMT(1),PUNRRMT+1 USE SECOND DIGIT ONLY
+         MVI   PUNRRMT+1,C' '      FOLLOWED BY BLANK
+         CLI   PUNRRMT,C'0'        IS IT VALID NOW?
+         BH    MOREPP3             YES,CONTINUE
+         MVC   PUNRRMT,PUNRRMTD    NO,SET DEFAULT
+         EJECT
+MOREPP3  DS    0H
+         MVC   PUNJNAM,ZEROES      SET DEFAULT JOB NAME
+         CLI   PCDJOB1,PCDSEPCH    IS THIS DIGIT PRESENT?
+         BE    *+4+6               NO,LEAVE DEFAULT
+         MVC   PUNJNO1,PCDJOB1     COPY 1ST DIGIT OF JOB NUMBER
+         CLI   PCDJOB2,PCDSEPCH    IS THIS DIGIT PRESENT?
+         BE    *+4+6               NO,LEAVE DEFAULT
+         MVC   PUNJNO2,PCDJOB2          2ND
+         CLI   PCDJOB3,PCDSEPCH    IS THIS DIGIT PRESENT?
+         BE    *+4+6               NO,LEAVE DEFAULT
+         MVC   PUNJNO3,PCDJOB3          3RD
+         CLI   PCDJOB4,PCDSEPCH    IS THIS DIGIT PRESENT?
+         BE    *+4+6               NO,LEAVE DEFAULT
+         MVC   PUNJNO4,PCDJOB4          4TH
+         MVC   PUNLISTR,PUNRRMT    SEND LISTING TO SAME PLACE
+         OC    PUNJNAM,ZEROES      ENSURE NUMERIC
+         MVC   PUNJTYP,PUNJCRD     COMPLETE JOB NAME
+         MVC   ODCTJNUM,PUNJNO1    SAVE NEW JOB NUMBER
+         MVC   ODCTJNAM,PUNJNAM    SAVE NEW JOB NAME
+         MVC   ODCTRMT,PUNRRMT     SAVE REMOUTE ROUTING
+         MVI   ODCTFORM,PUNCLASS   REMEBER OUTPUT CLASS
+         OI    ODCTFLAG,DATA       RECALL THAT WE HAVE A SEPARATOR
+         B     PUNCHOK             AND OFFT WE JOLLY WELL GO
+         EJECT
+***********************************************************************
+*        EXAMINE FIRST PUNCHED DATA CARD                              *
+***********************************************************************
+         SPACE 2
+MOREPP4  DS    0H                  EXAMINE FIRST PUNCHED DATA CARD
+         MVC   PUNDATA,PCDDATA     SAVE FIRST DATA CARD
+         CLC   PUNSLASH,PUNDATA    TEST FOR JCL
+         BNE   MOREPP5             NO WAY
+         SCAN  PUNDATA,JOBCARD,LIMIT=LASTCOLM IS IT A JOB CARD?
+         B     MOREPP5             NO,JUST PUNCHED CARDS
+         MVC   ODCTJNAM,PUNDATA+2  REPORT ASSUMES 8-CHAR JOB NAME
+         MVC   CARD,PUNDATA        OVERWRITE BUFFER WITH NEW JOB CARD
+         AP    ODCTICNT,ONE        COUNT IT
+         MVI   ODCTFLAG,JOB+PUNCH  RESET FLAG
+         B     PUNCHEXT            THEN GO BACK FOR MORE
+         SPACE 2
+MOREPP5  DS    0H                  INPUT IS JUST PUNCHED CARDS
+         LA    R3,PUNJOB           POINT TO START OF JOB STREAM
+         LA    R7,PUNNUM-1         SET NUMBER OF CARDS
+         OI    ODCTFLAG,DLM        REMEMBER TO OUTPUT DELIMITER
+         SPACE 1
+PUNLOOPY DS    0H                  OUTPUT JOBSTREAM
+         MVC   CARD,0(R3)          MOVE RECORD TO BUFFER
+         BAL   R4,OUTPUT           OUTPUT IT,GET ANOTHER BUFFER
+         LA    R3,CARDLGTH(,R3)    INCREMENT POINTER
+         BCT   R7,PUNLOOPY         OUTPUT THE JCL
+         MVC   CARD,0(R3)          INCLUDING THE LAST CARD
+         SPACE 1
+         B     PUNCHOK             THEN THE DATA
+         SPACE 1
+         DROP  OPR,R6              END BUFFER ADDRESSABILITIES
+         TITLE '&RMTID OSRTPOUT - TERMINATION ROUTINES'
+***********************************************************************
+*        JOB TERMINATION ROUTINE -                                    *
+*         CLOSE ANY OPEN DATA SETS,                                   *
+*         SET A COMPLETION CODE IN REGISTER 15, AND RETURN.           *
+***********************************************************************
+         SPACE 1
+JOBEND   DS    0H
+         LA    R9,PRINTER1         POINT TO FIRST ODCT ENTRY
+         LA    R7,NUMBODCT         SET NUMBER OF SEARCHES
+         SPACE 1
+CLOSLOOP DS    0H                  CLOSE ALL OPEN OUTPUT FILES
+         L     R5,ODCTLDCB         PICK UP LDCB ADDRESS
+         TM    LDCBFLAG,DDOPEN     IS THE DCB OPEN?
+         BNO   CLOSNEXT            NO,TRY THE NEXT ONE
+         BAL   R4,UPFILE           YES, DELIMIT THIS JOB
+         BAL   R4,CLOSE            GO CLOSE FILE
+         MVC   ODCTJNAM,BLANKS     CLEAR JOB NAME
+         MVC   ODCTJNUM,BLANKS     AND NUMBER
+         NI    LDCBFLAG,FF-DDINT   NO LONGER INTERESTED IN FILE
+         SPACE 1
+CLOSNEXT DS    0H                  FIND ANOTHER FILE
+         LA    R9,ODCTLGTH(,R9)    INCREMENT TO NEXT ODCT
+         BCT   R7,CLOSLOOP         TEST EACH AVAILABLE ODCT
+         SPACE 1
+         CALL  UT458,UTOPCODE      GET END TIME
+         MVC   ENDDAY,UTDD         COPY DATE AS DD/MM/YY - DD
+         MVC   ENDMNTH,UTMM                                MM
+         MVC   ENDYEAR,UTYY                                YY
+         MVC   ENDTIME(2),UTHHMMSS HOURS
+         MVI   ENDTIME+2,C'.'      DELIMIT THEM
+         MVC   ENDTIME+3(2),UTHHMMSS+2  MINUTES
+         MVC   0(LINEWIDE,R10),ENDMSG PUT END MESSAGE IN LIST
+         LA    R5,PRINTSW          POINT TO SYSPRINT LDCB
+         BAL   R4,CLOSE            GO CLOSE IT
+         SPACE 2
+RETURN   DS    0H                  RETURN TO OSRTP
+         PGMOUT RC=COMPCODE        SET COND CODE AND RETURN
+         EJECT
+***********************************************************************
+*        ROUTINE TO DELIMIT CURRENT OUTPUT FILE                       *
+***********************************************************************
+         SPACE 1
+UPFILE   SUBIN SAVE=(R2,R4)        CLOSE OUT CURRENT FILE
+         SPACE 1
+         CP    ODCTICNT,ONE        TEST FOR INPUT
+         BNH   UPFILEX             EXIT IF NONE
+         USING CARDDSCT,R6         ESTABLISH BUFFER ADDRESSABILITY
+         TM    ODCTFLAG,PUNCH      TEST FOR PUNCH
+         BO    UPFILESP            YES,GO DO IT
+         CLI   ODCTFLAG,NONE       DO WE NEED IT?
+         BE    UPFILEOP            NO,FORGET IT
+         TM    ODCTFLAG,EOT        DO WE WANT A /*EOT CARD?
+         BNO   UPFILESP            NO,TRY A 'SPECIAL'
+         BAL   R4,OUTPUT           YES,OUTPUT PREVIOUS,GET BUFFER
+         MVC   CARD,EOTCARD        MOVE DELIMITER TO BUFFER
+         B     UPFILEOP            GO OUTPUT IT
+         DROP  R6                  END BUFFER ADDRESSABILITY
+         SPACE 1
+UPFILESP DS    0H                  TEST FOR SPECIAL DELIMITER
+         TM    ODCTFLAG,JOB+DLM    ANYTHING THERE AT ALL?
+         BZ    UPFILEOP            NO,I GIVE UP
+         USING CARDDSCT,R6         ESTABLISH BUFFER ADDRESSABILITY
+         CLC   CARD,BLANK          WAS LAST CARD BLANK?
+         BE    UPFILES2            YES,SKIP THE WRITE
+         AP    ODCTICNT,ONE        FRIG THE INPUT COUNT
+         TM    ODCTFLAG,DLM        DO WE WANT A DELIMITER?
+         BZ    UPFILES2            NO,DO THE REPORT
+         BAL   R4,OUTPUT           OUTPUT PREVIOUS,GET BUFFER
+UPFILES2 DS    0H                  OUTPUT DELIMITER RECORD
+         SP    ODCTICNT,ONE        CORRECT INPUT COUNT
+         TM    ODCTFLAG,DLM        DO WE WANT A DELIMITER?
+         BZ    UPFILEOP            NO,DO THE REPORT
+         MVC   CARD,DLMCARD        MOVE DELIMITER TO BUFFER
+         DROP  R6                  END BUFFER ADDRESSABILITY
+         SPACE 1
+UPFILEOP DS    0H                  THINK ABOUT TELLING THE WORLD
+         TM    PRINTSW,DDOPEN      DO WE WANT MESSAGES?
+         BNO   *+4+4               NO,SO SKIP THE GORY DETAILS
+         BAL   R4,DETAIL           YES,TELL HIM WHAT'S OCCURRED
+         SP    ODCTICNT,ODCTICNT   RESET INPUT COUNT
+         SP    ODCTOCNT,ODCTOCNT   RESET OUTPUT COUNT
+         NI    ODCTFLAG,NONE+PUNCH RESET DELIMITER FLAG
+         SPACE 1
+UPFILEX  DS    0H                  RETURN TO CALLER
+         SUBOUT RESTORE=(R2,R4)    RETURN TO CALLER
+         TITLE '&RMTID OSRTPOUT - PRINT SUB-ROUTINES'
+***********************************************************************
+*        FORMAT PRINT PAGE HEADINGS.                                  *
+***********************************************************************
+         SPACE 1
+HEADING  SUBIN SAVE=(R4)           PRINT SYSPRINT HEADINGS
+         TM    PRINTSW,DDINT+DDPRES+DDOPEN DO WE WANT MESSAGES?
+         BNO   HEADINGX            NO
+         SPACE 1
+         CP    PAGECOUN,ONE        IS THIS THE FIRST ENTRY?
+         BL    HEADING2            YES,JES SETS UP A SKIP
+         MVI   0(R10),IMMDSKIP     NO,THROW A PAGE
+         BAL   R4,PRINT            IMMEDIATELY
+         SPACE 1
+HEADING2 DS    0H                  NOW AT TOP OF PAGE
+         AP    PAGECOUN,ONE        INCREASE PAGE COUNT
+         MVC   HDR1PAGE,PAGEMASK   COPY EDIT MASK
+         ED    HDR1PAGE,PAGECOUN   MAKE IT PRINTABLE
+         SP    LINECOUN,LINECOUN   RESET LINE COUNT
+         SPACE 1
+         CALL  UT458,UTOPCODE      GET TIME AND DATE
+         MVC   HDR1DAY,UTDAYNAM    COPY DAY
+         MVC   HDR1DATE,UTREPORT   DATE
+         MVC   HDR1TIME(2),UTHHMMSS HOURS
+         MVI   HDR1TIME+2,C'.'     DELIMIT HOURS
+         MVC   HDR1TIME+3(2),UTHHMMSS+2 MINUTES
+         MVC   0(L'HEADER1,R10),HEADER1 PUT PAGE HEADING INTO IT
+         BAL   R4,PRINT            OUTPUT HEADING,GET NEXT BUFFER
+         MVC   0(L'HEADER2,R10),HEADER2 PUT NEXT HEADING INTO IT
+         BAL   R4,PRINT            OUTPUT HEADING,GET NEXT BUFFER
+         MVC   0(L'HEADER3,R10),HEADER3 PUT THIRD HEADING INTO IT
+         BAL   R4,PRINT            OUTPUT HEADING,GET NEXT BUFFER
+         SPACE 2
+HEADINGX DS    0H                  END OF HEADING ROUTINE
+         SUBOUT RESTORE=(R4)       RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        FORMAT DETAIL PRINT LINE                                     *
+***********************************************************************
+         SPACE 1
+DETAIL   SUBIN SAVE=(R4)           END OF INPUT JOB
+         TM    PRINTSW,DDINT+DDPRES+DDOPEN DO WE WANT MESSAGES?
+         BNO   DETAILX             NO
+         SPACE 1
+         MVC   0(LINEWIDE,R10),POLINE SET UP MASKS
+         OC    ODCTJNUM,ZEROES     ENSURE JOB NUMBER NUMERIC
+         MVC   POJCLASS-POLINE(L'POJCLASS,R10),ODCTCLS1 JOB CLASS
+         CLI   ODCTCLS1,C'('       IS IT SPECIAL FORMS?
+         BNE   *+4+6               NO,LEAVE IT AS IS
+         MVC   POJCLASS-POLINE(L'ODCTFORM,R10),ODCTFORM CLASS+FORMS
+         L     R5,ODCTLDCB         PICK UP LDCB ENTRY
+         MVC   POJDEVNM-POLINE(L'POJDEVNM,R10),LDCBDNAM DEVICE NAME
+         MVC   POJNUM-POLINE(L'POJNUM,R10),ODCTJNUM JOB NUMBER
+         MVC   POJNAME-POLINE(L'POJNAME,R10),ODCTJNAM JOB NAME
+         MVC   POJROUTE-POLINE(L'POJROUTE,R10),ODCTRMT  JOB ROUTE
+         ED    UT1OFF(UT1MLNTH,R10),ODCTICNT INPUT  COUNT
+         TM    ODCTFLAG,PUNCH      IS IT A PUNCH JOB?
+         BO    DETAIL2             YES,GO FILL IN RECORD COUNT
+         ED    UT2OFF(UT2MLNTH,R10),ODCTOCNT OUTPUT COUNT
+         MVC   UT3OFF(UT3MLNTH,R10),BLANKS NO PUNCH COUNT
+         B     DETAIL3             GO OUTPUT LINE
+         SPACE 1
+DETAIL2  DS    0H                  PUNCH COUNT
+         ED    UT3OFF(UT3MLNTH,R10),ODCTOCNT PUNCH COUNT
+         MVC   UT2OFF(UT2MLNTH,R10),BLANKS NO PRINT COUNT
+         SPACE 1
+DETAIL3  DS    0H                  PRINT LINE
+         BAL   R4,PRINT            OUTPUT LINE,GET NEXT BUFFER
+         AP    LINECOUN,ONE        COUNT THIS LINE
+         CP    MAXLINE,LINECOUN    HAVE WE OVER-FLOWED?
+         BH    DETAILX             NO, LEAVE HEADINGS
+         BAL   R4,HEADING          YES, GO TO A NEW PAGE
+         SPACE 2
+DETAILX  SUBOUT RESTORE=(R4)       RETURN TO CALLER
+         TITLE '&RMTID OSRTPOUT - ERROR ROUTINES'
+***********************************************************************
+*        USER ERROR HANDLING ROUTINES                                 *
+***********************************************************************
+         SPACE 1
+ERROR1   DS    0H                  MISSING DD CARD
+         MVC   COMPCODE,COND8      SET COMPETION CODE
+         TM    PRINTSW,DDINT+DDPRES+DDOPEN DO WE WANT MESSAGES?
+         BNO   JOBEND              NO,SO EXIT
+         MVC   0(LINEWIDE,R10),ERR1LINE YES,TELL USER ERROR
+         BAL   R4,PRINT            ON MESSAGE DATASET
+         B     JOBEND              THEN EXIT
+         SPACE 1
+ERROR3   DS    0H                  INVALID INPUT
+         MVC   COMPCODE,COND12     SET COMPLETION CODE
+         TM    PRINTSW,DDINT+DDPRES+DDOPEN DO WE WANT MESSAGES?
+         BNO   JOBEND              NO,SO EXIT
+         MVC   0(LINEWIDE,R10),ERR3LINE YES,TELL USER ERROR
+         B     JOBEND              THEN EXIT
+         SPACE 1
+ERROR4   DS    0H                  PROCESSING ERROR
+         ABEND 495,DUMP            ABANDON RUN
+         EJECT
+***********************************************************************
+*        I/O ERROR ROUTINE                                            *
+***********************************************************************
+         SPACE 1
+IOERROR  SUBIN SAVE=(R4)           ANALYSE I/O ERROR
+         MVC   COMPCODE,COND16     SET COMPLETION CODE
+         LA    R4,WTOIOE           POINT TO MESSAGE SKELETON
+         SYNADAF ACSMETH=QSAM      CALL ANALYSIS ROUTINE
+         MVC   27(86,R4),50(R1)    ADD RESULT OF ANALYSIS TO LINE
+         SYNADRLS ,                RELEASE OS BUFFER
+         WTO   MF=(E,WTOIOE)       TELL OPERATOR OF ERROR
+         SUBOUT RESTORE=(R4),RETURN=JOBEND      TERMINATE JOB
+         TITLE '&RMTID OSRTPOUT - I/O SUB-ROUTINES'
+***********************************************************************
+*        WRITE SUBROUTINE FOR SYSPRINT                                *
+***********************************************************************
+         SPACE 1
+PRINT    SUBIN ,
+         TM    PRINTSW,DDINT+DDPRES+DDOPEN   TEST IF NEED TO WRITE
+         BNO   PRINTX              BRANCH IF NO
+         PUT   SYSPRINT            WRITE RECORD TO SYSPRINT D/S
+         LR    R10,R1              SAVE BUFFER ADDRESS
+         ST    R10,PRINTBUF        SAVE BUFFER ADDRESS
+PRINTX   SUBOUT ,                  RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        WRITE SUBROUTINE FOR JOB OUTPUT FILES                        *
+***********************************************************************
+         SPACE 1
+OUTPUT   SUBIN SAVE=(R4)           OUTPUT SUB-ROUTINE
+         L     R5,ODCTLDCB         PICK UP LDCB ADDRESS
+         TM    LDCBFLAG,DDINT+DDPRES+DDOPEN  TEST IF NEED TO OPEN
+         BNO   OUTOPEN             BRANCH IF NEEDED
+         SPACE 1
+OUTPUT2  DS    0H                  SECOND PART FOR NEW FILE
+         L     R1,LDCBDCB          PICK UP DCB ADDRESS
+         PUT   (R1)                WRITE RECORD TO OUTPUT D/S
+         LR    R6,R1               SAVE BUFFER ADDRESS
+         ST    R1,ODCTBUFF         AND PUT IN ODCT ENTRY
+         AP    ODCTOCNT,ONE        INCREMENT RECORD COUNTER
+         SPACE 1
+OUTPUTX  SUBOUT RESTORE=(R4)       RETURN TO CALLER
+         SPACE 3
+OUTOPEN  DS    0H                  GO OPEN DATASETS ON DEMAND
+         OI    LDCBFLAG,DDINT      EXPRESS INTEREST IN DCB
+         TM    LDCBFLAG,DDPRES     DO WE KNOW IT'S THERE?
+         BO    OUTOPEN2            YES, SKIP TESTING AGAIN
+         BAL   R4,TESTIOT          TEST FOR DDCARD PRESENT
+         TM    LDCBFLAG,DDPRES     IS IT THERE?
+         BNO   ERROR1              NO,CRASH
+         SPACE 1
+OUTOPEN2 DS    0H                  READY TO OPEN FILE
+         BAL   R4,OPEN             GO OPEN FILE
+         TM    LDCBFLAG,DDINT+DDPRES+DDOPEN ALRIGHT NOW?
+         BNO   ERROR4              NO,CRASH
+         B     OUTPUT2             YES,GET ON WITH THE JOB
+         EJECT
+***********************************************************************
+*        SUB-ROUTINE TO FIND OUTPUT DEVICE CONTROL TABLE ENTRY        *
+***********************************************************************
+         SPACE 2
+FINDODCT SUBIN ,                   SUB-ROUTINE ENTRY
+         LA    R9,PRINTER1         POINT TO FIRST ODCT ENTRY
+         LA    R7,NUMBODCT         SET NUMBER OF SEARCHES
+         SPACE 1
+ODCTLOOP DS    0H                  SCAN EACH ODCT ENTRY
+         CLC   ODCTRCB,0(IPR)      IS THIS THE RIGHT DEVICE?
+         BE    GOTODCT             YES, NORMAL EXIT
+         LA    R9,ODCTLGTH(,R9)    NO,TRY NEXT
+         BCT   R7,ODCTLOOP         UNTIL END OF LIST
+         MVC   COMPCODE,COND12     IF NO GOOD SET RETURN CODE
+         B     RETURN              THEN LET OSRTP ABEND
+         SPACE 1
+GOTODCT  DS    0H                  FOUND ODCT ENTRY
+         L     R6,ODCTBUFF         PICK UP OUTPUT BUFFER
+         SUBOUT ,                  RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        SUPPLY DEFAULT RECORD LENGTH AND/OR BLOCK SIZE               *
+*         IF NOT CODED.                                               *
+***********************************************************************
+         SPACE 1
+BLKSZRTN SUBIN SAVE=(R1,R2,R3,R4)  SUPPLY DEFAULT DCB VALUES
+         L     R5,SAVEFILE         LOAD ADDRESS OF INPUT DCB LIST
+         L     R1,LDCBDCB          PICK UP DCB ADDRESS
+         USING IHADCB,R1           ESTABLISH DCB ADDRESSABILITY
+         SPACE 1
+         CLI   DCBRECFM,X'00'      RECFM SUPPLIED IN JCL?
+         BNE   *+4+4+6             YES - BYPASS FORWARD CHAINING
+         L     R4,LDCBFMT          GET DEFAULT RECFM ADDRESS
+         MVC   DCBRECFM,0(R4)      MOVE IT INTO DCB
+         CLC   DCBBLKSI,=X'0000'   BLKSIZE SPECIFIED IN JCL?
+         BNE   *+4+4+6             YES - BYPASS FORWARD CHAINING
+         L     R4,LDCBBLKS         GET DEFAULT BLOCKSIZE ADDRESS
+         MVC   DCBBLKSI,0(R4)      MOVE TO DCB
+         CLC   DCBLRECL,=X'0000'   LRECL SPECIFIED IN JCL?
+         BNE   *+4+4+6             YES - BYPASS FORWARD CHAINING
+         L     R4,LDCBRECL         GET DEFAULT LRECL ADDRESS
+         MVC   DCBLRECL,0(R4)      MOVE INTO DCB
+DCBMODX  EQU   *
+         SUBOUT RESTORE=(R1,R2,R3,R4),RETURN=(R14) RETURN TO OPEN
+         DROP  R1                  DROP DCB ADDRESSABILITY
+         SPACE 2
+***********************************************************************
+*        TEST IF A DD STATEMENT IS PRESENT BEFORE OPEN                *
+***********************************************************************
+         SPACE 1
+TESTIOT  SUBIN ,                   TEST TASK INPUT/OUTPUT TABLE
+         TESTIOT DDNAME=LDCBDNAM   TEST IF DDNAME FOUND IN TIOT
+         B     *+4(R15)            TEST CONDITION CODE
+         OI    LDCBFLAG,DDPRES     TELL THAT DD STATEMENT SUPPLIED
+         SUBOUT ,                  RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        OPEN ROUTINE                                                 *
+***********************************************************************
+         SPACE 1
+OPEN     SUBIN SAVE=(R3)           OPEN DATA SET
+         TM    LDCBFLAG,DDINT+DDPRES TEST IF DD INTERESTING AND
+         BNO   OPENX               BRANCH IF NO    / PRESENT.
+         TM    LDCBFLAG,DDOPEN     TEST IF ALREADY OPEN
+         BO    OPENX               BRANCH IF YES
+         L     R3,LDCBDCB          GET DCB ADDRESS
+         ST    R5,SAVEFILE         SAVE LIST FOR EXIT PROCESSING
+         CLC   LDCBTYPE,=C'INPUT   ' TEST FOR INPUT D/S
+         BE    OPENZ               BRANCH IF INPUT D/S
+         OPEN  ((R3),(OUTPUT))     OPEN OUTPUT DATA SET
+         B     OPENY               GO SET SWITCH
+OPENZ    OPEN  ((R3),(INPUT))      OPEN INPUT DATA SET
+OPENY    OI    LDCBFLAG,DDOPEN     INDICATE DATA SET OPEN
+OPENX    SUBOUT RESTORE=(R3)       RETURN TO CALLER
+         SPACE 3
+***********************************************************************
+*        CLOSE ROUTINE                                                *
+***********************************************************************
+         SPACE 1
+CLOSE    SUBIN SAVE=(R3)           CLOSE DATA SET
+         TM    LDCBFLAG,DDOPEN     TEST IF DATA SET OPEN
+         BZ    CLOSEX              EXIT IF NOT
+         L     R3,LDCBDCB          GET DCB ADDRESS
+         CLOSE ((R3),LEAVE)        CLOSE DATA SET
+         NI    LDCBFLAG,FF-DDOPEN  SET OFF 'OPEN' SWITCH
+CLOSEX   SUBOUT RESTORE=(R3)       RETURN TO CALLER
+         TITLE '&RMTID OSRTPOUT - DCB''S AND I/O CONTROL TABLES'
+***********************************************************************
+*        DCB'S TABLE                                                  *
+***********************************************************************
+         SPACE 1
+DCBTABLE DS    0F
+PRINTSW  DC    AL1(DDPRES),AL3(SYSPRINT),CL8'SYSPRINT',CL8'OUTPUT'
+         DC    AL4(CARDRECF,CARDRECL,CARDRECL)
+SYSUT2SW DC    AL1(DDPRES),AL3(SYSUT2),CL8'PRINTER1',CL8'OUTPUT'
+         DC    AL4(CARDRECF,CARDRECL,CARDBLKS)
+SYSUT3SW DC    AL1(DDPRES),AL3(SYSUT3),CL8'PUNCH1',CL8'OUTPUT'
+         DC    AL4(CARDRECF,CARDRECL,CARDBLKS)
+SYSUT4SW DC    AL1(DDPRES),AL3(SYSUT4),CL8'PRINTER2',CL8'OUTPUT'
+         DC    AL4(CARDRECF,CARDRECL,CARDBLKS)
+SYSUT5SW DC    AL1(DDPRES),AL3(SYSUT5),CL8'PUNCH2',CL8'OUTPUT'
+         DC    AL4(CARDRECF,CARDRECL,CARDBLKS)
+SYSUT6SW DC    AL1(DDPRES),AL3(SYSUT6),CL8'PUNCH3',CL8'OUTPUT'
+         DC    AL4(CARDRECF,CARDRECL,CARDBLKS)
+         SPACE 1
+TABSIZE  EQU   *-DCBTABLE          DCB'S TABLE SIZE
+DCBNTRY  EQU   SYSUT2SW-PRINTSW    LENGTH OF ONE TABLE ELEMENT
+MAXDS    EQU   TABSIZE/DCBNTRY     MAXIMUN NUMBER OF DCB'S
+SAVEFILE DS    F                   SAVE AREA FOR DCB ADDRESS
+         SPACE 2
+EXITLIST DC    X'85',AL3(BLKSZRTN) ENTRY FOR DCB MODIFICATION
+         SPACE 2
+WTOIOE   DS    0F
+         DC    AL2(WTOEND-*),H'0',CL109'******** - I/O ERROR -'
+WTOEND   DS    0H
+         EJECT
+***********************************************************************
+*        OUTPUT DEVICE CONTROL TABLE                                  *
+***********************************************************************
+         SPACE 1
+PRINTER1 DS    0F                  ALIGN TABLE ENTRIES
+         DC    CL4'ODCT'           DUMP IDENTIFIER
+         DC    A(SYSUT2SW)         LDCB ADDRESS
+         DC    A(0)                BUFFER ADDRESS
+         DC    AL1(PRINTRCB+DEV1RCB) RCB FOR THIS ODCT
+         DC    AL1(NONE)           ODCTFLAGS
+         DC    CL8' '              JOB NAME
+         DC    CL4' '              JOB NUMBER
+         DC    CL2' '              ROUTING
+         DC    PL4'0'              INPUT COUNT
+         DC    PL4'0'              OUTPUT COUNT
+         DC    CL9' '              SYSOUT CLASS AND FORMS
+         SPACE 2
+PRINTER2 DS    0F                  ALIGN TABLE ENTRIES
+         DC    CL4'ODCT'           DUMP IDENTIFIER
+         DC    A(SYSUT4SW)         LDCB ADDRESS
+         DC    A(0)                BUFFER ADDRESS
+         DC    AL1(PRINTRCB+DEV2RCB) RCB FOR THIS ODCT
+         DC    AL1(NONE)           ODCTFLAGS
+         DC    CL8' '              JOB NAME
+         DC    CL4' '              JOB NUMBER
+         DC    CL2' '              ROUTING
+         DC    PL4'0'              INPUT COUNT
+         DC    PL4'0'              OUTPUT COUNT
+         DC    CL9' '              SYSOUT CLASS AND FORMS
+         EJECT
+         SPACE 2
+*        PUNCH DEVICE ENTRIES
+         SPACE 1
+PUNCH1   DS    0F                  ALIGN TABLE ENTRIES
+         DC    CL4'ODCT'           DUMP IDENTIFIER
+         DC    A(SYSUT3SW)         LDCB ADDRESS
+         DC    A(0)                BUFFER ADDRESS
+         DC    AL1(PUNCHRCB+DEV1RCB) RCB FOR THIS ODCT
+         DC    AL1(PUNCH)          ODCTFLAGS
+         DC    CL8' '              JOB NAME
+         DC    CL4' '              JOB NUMBER
+         DC    CL2' '              ROUTING
+         DC    PL4'0'              INPUT COUNT
+         DC    PL4'0'              OUTPUT COUNT
+         DC    CL9' '              SYSOUT CLASS AND FORMS
+         SPACE 2
+PUNCH2   DS    0F                  ALIGN TABLE ENTRIES
+         DC    CL4'ODCT'           DUMP IDENTIFIER
+         DC    A(SYSUT5SW)         LDCB ADDRESS
+         DC    A(0)                BUFFER ADDRESS
+         DC    AL1(PUNCHRCB+DEV2RCB) RCB FOR THIS ODCT
+         DC    AL1(PUNCH)          ODCTFLAGS
+         DC    CL8' '              JOB NAME
+         DC    CL4' '              JOB NUMBER
+         DC    CL2' '              ROUTING
+         DC    PL4'0'              INPUT COUNT
+         DC    PL4'0'              OUTPUT COUNT
+         DC    CL9' '              SYSOUT CLASS AND FORMS
+         SPACE 2
+PUNCH3   DS    0F                  ALIGN TABLE ENTRIES
+         DC    CL4'ODCT'           DUMP IDENTIFIER
+         DC    A(SYSUT6SW)         LDCB ADDRESS
+         DC    A(0)                BUFFER ADDRESS
+         DC    AL1(PUNCHRCB+DEV3RCB) RCB FOR THIS ODCT
+         DC    AL1(PUNCH)          ODCTFLAGS
+         DC    CL8' '              JOB NAME
+         DC    CL4' '              JOB NUMBER
+         DC    CL2' '              ROUTING
+         DC    PL4'0'              INPUT COUNT
+         DC    PL4'0'              OUTPUT COUNT
+         DC    CL9' '              SYSOUT CLASS AND FORMS
+         DS    0F                  ALIGNMENT BYTES
+         SPACE 2
+LENODCT  EQU   *-PRINTER1          LENGTH OF TABLE
+NUMBODCT EQU   LENODCT/ODCTLGTH    NUMBER OF DEVICES SUPPORTED
+         EJECT
+***********************************************************************
+*        DATA CONTROL BLOCKS                                          *
+***********************************************************************
+         SPACE 1
+SYSPRINT DCB   DDNAME=SYSPRINT,                                        C
+               DSORG=PS,                                               C
+               SYNAD=IOERROR,                                          C
+               EXLST=EXITLIST,                                         C
+               RECFM=FBM,                                              C
+               MACRF=PL,                                               C
+               LRECL=133,                                              C
+               BLKSIZE=133
+         EJECT
+SYSUT2   DCB   DDNAME=PRINTER1,                                        C
+               DSORG=PS,                                               C
+               SYNAD=IOERROR,                                          C
+               EXLST=EXITLIST,                                         C
+               MACRF=PL
+         EJECT
+SYSUT3   DCB   DDNAME=PUNCH1,                                          C
+               DSORG=PS,                                               C
+               SYNAD=IOERROR,                                          C
+               EXLST=EXITLIST,                                         C
+               MACRF=PL
+         EJECT
+SYSUT4   DCB   DDNAME=PRINTER2,                                        C
+               DSORG=PS,                                               C
+               SYNAD=IOERROR,                                          C
+               EXLST=EXITLIST,                                         C
+               MACRF=PL
+         EJECT
+SYSUT5   DCB   DDNAME=PUNCH2,                                          C
+               DSORG=PS,                                               C
+               SYNAD=IOERROR,                                          C
+               EXLST=EXITLIST,                                         C
+               MACRF=PL
+         EJECT
+SYSUT6   DCB   DDNAME=PUNCH3,                                          C
+               DSORG=PS,                                               C
+               SYNAD=IOERROR,                                          C
+               EXLST=EXITLIST,                                         C
+               MACRF=PL
+         TITLE '&RMTID OSRTPOUT - EQUATES,CONSTANTS AND WORK AREAS'
+***********************************************************************
+*        EQUATES                                                      *
+***********************************************************************
+         SPACE 1
+FF       EQU   255                 FOR 'NI' INSTRUCTION
+BLANK    EQU   X'40'               BLANK
+ON       EQU   X'FF'               ON
+OFF      EQU   X'00'               OFF
+HIGHVAL  EQU   X'FF'               HIGH VALUE
+LOWVAL   EQU   X'00'               LOW VALUE
+SIGN     EQU   X'F0'               FOR FORCE SIGN TO 'F'
+         SPACE 1
+SPCE1AFT EQU   X'09'               SPACE 1 AFTER PRINTING
+SPCE2AFT EQU   X'11'               SPACE 2 AFTER PRINTING
+SPCE3AFT EQU   X'19'               SPACE 3 AFTER PRINTING
+PAGESKIP EQU   X'89'               SKIP TO NEW PAGE
+IMMDSKIP EQU   X'8B'               SKIP TO NEW PAGE IMMEDIATELY
+         EJECT
+***********************************************************************
+*        CONSTANTS                                                    *
+***********************************************************************
+         SPACE 1
+ZEROWORD DC    F'0'                BINARY ZERO FULLWORD FOR TESTS
+         SPACE 1
+COND4    DC    H'4'                COMPLETION CODE OF 4
+COND8    DC    H'8'                COMPLETION CODE OF 8
+COND12   DC    H'12'               COMPLETION CODE OF 12
+COND16   DC    H'16'               COMPLETION CODE OF 16
+         SPACE 1
+ZERO     DC    PL1'0'              PACKED CONSTANT OF ZERO
+ONE      DC    PL2'1'              PACKED CONSTANT OF ONE
+         SPACE 1
+ZEROES   DC    CL8'00000000'       NUMERIC BASE
+         SPACE 2
+CARDRECF DC    AL1(DCBRECF+DCBRECBR) DEFAULT PUNCH FORMAT-FB
+CARDBLKS DC    AL2(640)            DEFAULT PUNCH BLOCKSIZE
+CARDRECL DC    AL2(80)             DEFAULT PUNCH RECORD LENGTH
+         EJECT
+*******************************************************************
+*        PRINT JOB CONTROL LANGUAGE SKELETON                      *
+*******************************************************************
+         SPACE 1
+PRTJOB   DS    0CL80               JOB CARD
+         DC    CL2'//'
+PRTJNAM  DC    CL8'JOBNAME'        JOB NAME
+         DC    CL18' JOB (1304,6,,,53,'
+PRTJFRM  DC    CL4',,,,'           JOB FORMS
+         DC    CL3'),'''
+PRTPNAM  DC    CL6'PRINT'          PROGRAMMER NAME
+         DC    CL39''',CLASS=N,MSGLEVEL=(0,0)'
+         SPACE 1
+PRTROUTE DS    0CL80               JES2 GIMMEX CARD
+         DC    CL21'/*GIMMEX 00133 REMOTE'
+PRTRRMT  DC    CL2'14'             EUROPEAN TERMINAL NUMBER
+         DC    CL7' '
+         DC    CL7'SYSOUT=A'       GIMMEX CONTROL
+PRTSOUT  DS    0CL9'(A,,1611)'     FORMS CONTROL
+PRTRCLS1 DC    CL1' '              SYSOUT CLASS (STANDARD)
+PRTRCLS2 DC    CL1' '              CLASS (WITH FORM NO.)
+         DC    CL2' '              COMMAS
+PRTFORM  DC    CL4' '              FORM NUMBER
+         DC    CL35' '             BLANK PADDING
+         EJECT
+*******************************************************************
+*        PUNCH JOB CONTROL LANGUAGE SKELETON                      *
+*******************************************************************
+         SPACE 1
+PUNJOB   DS    0CL80               JOB CARD
+         DC    CL2'//'
+PUNJNAM  DS    0CL8'JOBNAME'       JOB NAME
+PUNJTYP  DS    CL4                 CARD
+PUNJNO1  DS    CL1                 1ST DIGIT OF JOB NUMBER
+PUNJNO2  DS    CL1                 2ND
+PUNJNO3  DS    CL1                 3RD
+PUNJNO4  DS    CL1                 4TH
+         DC    CL17' JOB (1304,6,,,52'
+         DC    CL3'),'''
+PUNPNAM  DC    CL6'PUNCH'          PROGRAMMER NAME
+         DC    CL44''',CLASS=N,MSGLEVEL=(1,1)'
+         SPACE 1
+PUNROUTE DS    0CL80               HASP ROUTE CARD
+         DC    CL21'/*ROUTE  PUNCH REMOTE'
+PUNRRMT  DC    CL2'14'             EUROPEAN TERMINAL NUMBER
+         DC    CL57' '
+PUNLIST  DS    0CL80               ROUTE PRINT CARD
+         DC    CL21'/*ROUTE  PRINT REMOTE'
+PUNLISTR DC    CL2'14'             EUROPEAN TERMINAL NUMBER
+         DC    CL57' '
+         SPACE 1
+PUNPARMS DC    CL80'/*JOBPARM      T=15,C=9999' JOBPARMS CARD
+         SPACE 2
+PUNEXEC  DS    0CL80               EXEC CARD
+         DC    CL80'//PUNCH  EXEC PGM=COPY'
+         SPACE 1
+*        DD CARDS
+         SPACE 1
+         DC    CL80'//SYSPRINT DD SYSOUT=A'
+         DC    CL80'//SYSUT2   DD SYSOUT=B'
+         DC    CL80'//SYSUT1   DD DATA,DLM=''+%'''
+         SPACE 2
+PUNSLEN  EQU   *-PUNJOB            LENGTH OF SHORT JOBSTREAM
+PUNNUM   EQU   PUNSLEN/CARDLGTH    NUMBER OF CARDS TO PUNCH
+PUNCLASS EQU   C'B'                PUNCH SYSOUT CLASS
+         EJECT
+***********************************************************************
+*        WORK AREAS                                                   *
+***********************************************************************
+         SPACE 1
+DECIMAL  DS    D                   WA FOR DECIMAL OPERATIONS
+COMPCODE DC    H'0'                CONDITION CODE
+         SPACE 1
+PAGECOUN DC    PL2'0'              COUNT OF PAGES
+PAGEMASK DC    XL4'40202120'       EDIT MASK FOR PAGE NUMBER
+LINECOUN DC    PL2'0'              COUNT OF LINES
+MAXLINE  DC    PL2'40'             MAXIMUM NUMBER OF LINES PER PAGE
+         SPACE 3
+SEPCONT  DC    CL4'CONT'           CONTINUATION SEPARATOR TYPE
+SEPEND   DC    CL4' END'           END SEPARATOR TYPE
+PRTSEPAS DC    CL4'****'           SEPARATOR IDENTIFIER
+PRTSEPCH DC    CL5'BIN'            ST.LOUIS SEPARATOR UNIQUE CHARS.
+PRTRRMTD DC    CL2'14'             DEFAULT EUROPEAN LOCATION
+FORMSOUT DC    CL9'(A,,1611)'      SPECIAL FORMS SPECIFICATION
+STLSFRMD DC    CL2'SF'             FROMS IDENTIFIER CODE
+         SPACE 1
+PCDSEPCH EQU   X'6A'               SEPARATOR CARD IDENTIFIER
+         EJECT
+*******************************************************************
+*        FIRST PUNCHED CARD DATA AREA                             *
+*******************************************************************
+         SPACE 2
+PUNDATA  DS    CL80                DATA AREA
+LASTCOLM EQU   PUNDATA+71          LAST COLUMN FOR JCL
+         SPACE 1
+PUNDATAL EQU   *-PUNDATA           LENGTH OF DATA CARD
+         SPACE 2
+PUNRRMTD DC    CL2'14'             DEFAULT PUNCH ROUTING
+PUNJCRD  DC    CL4'CARD'           DEFAULT JOB TYPE
+PUNSLASH DC    CL2'//'             JCL IDENTIFIER
+JOBCARD  DC    CL5' JOB '          JOB CARD IDENTIFIER
+BLANKS   DC    CL80' '             BLANK CARD
+EOTCARD  DC    CL80'/*EOT'         GIMMEX DELIMITER CARD
+DLMCARD  DC    CL80'+%'            SPECIAL DELIMITER CARD
+         EJECT
+***********************************************************************
+*        UT458 DATE ROUTINE PARAMETER AREAS                           *
+***********************************************************************
+         SPACE 1
+UTOPCODE DC    CL1'0'              REQUEST TIME AND DATE
+UTMMDDYY DS    CL6  *                                                 *
+         ORG   *-6  *    YY = YEAR NUMBER                             *
+UTMM     DS    CL2  *    MM = MONTH NUMBER                            *
+UTDD     DS    CL2  *    DD = DAY NUMBER OF THE MONTH                 *
+UTYY     DS    CL2  *    WW = WEEK NUMBER                             *
+UTDDMMYY DS    CL6  *    DDD = DAY NUMBER OF THE YEAR                 *
+UTYYMMDD DS    CL6  *    D = DAY NUMBER OF THE WEEK  ( 0 = SUNDAY,    *
+UTDWWYY  DS    CL5  *                                  1 = MONDAY,    *
+UTYYWWD  DS    CL5  *                                  2 = TUESDAY,   *
+         ORG   *-3  *                                  3 = WEDNESDAY, *
+UTWW     DS    CL2  *                                  4 = THURSDAY,  *
+UTD      DS    CL1  *                                  5 = FRIDAY,    *
+UTYYDDD  DS    CL5  *                                  6 = SATURDAY ) *
+         ORG   *-3  *                                                 *
+UTDDD    DS    CL3  *                                                 *
+UTREPORT DS    0CL9 *    <--- DATE FOR REPORT (DD MMM YY)             *
+         DC    CL9'ENGLISH'        LANGUAGE
+UTLASTM  DS    CL9  *    <--- NAME OF LAST MONTH                      *
+UTTHISM  DS    CL9  *    <--- NAME OF THIS MONTH                      *
+UTNEXTM  DS    CL9  *    <--- NAME OF NEXT MONTH                      *
+UTDAYNAM DS    CL9  *    <--- NAME OF THE DAY                         *
+UTHHMMSS DS    CL6  *    <-- HH = HOUR , MM = MINUTE , SS = SECOND .  *
+UTRTCODE DS    C  *****************************************************
+         EJECT
+***********************************************************************
+*        SYSPRINT MESSAGE SKELETONS                                   *
+***********************************************************************
+         SPACE 1
+PRINTBUF DS    A(HEADER1)          ADDRESS OF PRINTER BUFFER
+         SPACE 1
+LINEWIDE EQU   133                 LENGTH OF PRINT LINE
+HEADER1  DS    0CL133              PAGE HEADING
+         DC    XL1'19'             SPACE 3
+         DC    CL83' &RMTID - MONSANTO DATA TRANSMISSION UTILITY'
+HDR1DAY  DC    CL9' '              DAY NAME
+         DC    CL3' '
+HDR1DATE DC    CL9' '              DATE DD MMM YY
+         DC    CL8'   TIME='
+HDR1TIME DC    CL5' '              TIME HH.MM
+         DC    CL2' '
+         DC    CL4'PAGE'
+HDR1PAGE DC    CL4' '              PAGE NUMBER
+         DC    CL5' '
+         SPACE 1
+HEADER2  DS    0CL133              SECONDARY HEADER LINE 1
+         DC    X'09'               SPACE 1
+         DC    CL12'  DEVICE'
+         DC    CL80'JOB        JOB         REMOTE  SYSOUT'
+         DC    CL40'     RECORD COUNTS'
+         SPACE 1
+HEADER3  DS    0CL133              SECONDARY HEADER LINE 3
+         DC    X'11'               SPACE 2
+         DC    CL12' '
+         DC    CL80' NO        NAME          NO.   CLASS'
+         DC    CL40'INPUT   PRINT   PUNCH'
+         SPACE 1
+POLINE   DS    0CL133              DETAIL LINE FORMAT
+         DC    X'09'               SPACE 1
+         DC    CL1' '
+POJDEVNM DC    CL8' '              DEVICE NAME
+         DC    CL2' '
+POJNUM   DC    CL4' '              JOB NUMBER
+         DC    CL6' '
+POJNAME  DC    CL8' '              JOB NAME
+         DC    CL8' '
+POJROUTE DC    CL2'  '             REMOTE NUMBER
+         DC    CL6' '
+POJCLASS DC    CL9' '              SYSOUT CLASS
+         DC    CL35' '
+UT1OFF   EQU   *-POLINE            SYSUT1 COUNT OFFSET - COMMON
+UT1MASK  DC    XL8'4020202020202120' SYSUT1 COUNT EDIT MASK
+UT1MLNTH EQU   *-UT1MASK           LENGTH OF MASK
+UT2OFF   EQU   *-POLINE            SYSUT2 COUNT OFFSET - COMMON
+UT2MASK  DC    XL8'4020202020202120' SYSUT2 COUNT EDIT MASK
+UT2MLNTH EQU   *-UT2MASK           LENGTH OF MASK
+UT3OFF   EQU   *-POLINE            SYSUT3 COUNT OFFSET - COMMON
+UT3MASK  DC    XL8'4020202020202120' SYSUT3 COUNT EDIT MASK
+UT3MLNTH EQU   *-UT3MASK           LENGTH OF MASK
+         DC    CL20' '
+         SPACE 1
+ENDMSG   DS    0CL133              END MESSAGE
+         DC    AL1(SPCE3AFT)       SPACE AFTER
+         DC    CL41' '             BLANKS
+         DC    CL7'*****'
+ENDDAY   DC    CL2' '              DD
+         DC    CL1'/'
+ENDMNTH  DC    CL2' '              MM
+         DC    CL1'/'
+ENDYEAR  DC    CL2' '              YY
+         DC    CL16'   END OF RUN'
+         DC    CL5'TIME='
+ENDTIME  DC    CL5' '              TIME HH.MM
+         DC    CL50'   *****'      BLANKS
+         EJECT
+***********************************************************************
+*        ERROR MESSAGES                                               *
+***********************************************************************
+         SPACE 1
+ERR1LINE DS    0CL133              MISSING DD CARD MESSAGE
+         DC    X'09'               SPACE 1
+         DC    CL133'  *** ERROR ***  -  AN OUTPUT DATASET NOT DEFINED'
+         SPACE 1
+ERR3LINE DS    0CL133              INVALID INPUT MESSAGE
+         DC    X'09'               SPACE 1
+         DC    CL133'  *** ERROR ***  -  INPUT FORMAT INCORRECT'
+         EJECT
+***********************************************************************
+*        LITERAL POOL                                                 *
+***********************************************************************
+         SPACE 1
+         LTORG
+         SPACE 3
+*                        EQUATES USED IN THIS PROGRAM
+         SPACE 1
+*                             SUPERVISOR CALLS
+         SPACE 1
+WAIT     EQU   1
+ABEND    EQU   13
+OPENIT   EQU   19
+CLOSEIT  EQU   20
+WTO      EQU   35
+WTOR     EQU   35
+DEQ      EQU   48
+ENQ      EQU   56
+         SPACE 1
+*                             ALL OTHERS
+         SPACE 1
+DDNAM    EQU   40
+PRINTRCB EQU   X'84'               RCB BITS FOR A PRINT STREAM
+NOPRTRCB EQU   X'0B'               NON-PRINT RCB BITS
+PUNCHRCB EQU   X'85'               RCB BITS FOR A PUNCH STREAM
+NOPUNRCB EQU   X'0A'               NON-PUNCH RCB BITS
+DEV1RCB  EQU   X'10'               RCB BITS FOR FIRST DEVICE
+DEV2RCB  EQU   X'20'               RCB BITS FOR SECOND DEVICE
+DEV3RCB  EQU   X'30'               RCB BITS FOR THIRD DEVICE
+         EJECT
+*                        CONSTANTS AND WORK AREAS
+         LTORG *
+SAVEAREA DS    18F
+         SPACE 2
+PRTAREAA DS    0CL133              PRINT LINE AREA
+         DC    CL80' '             FIRST PART OF LINE
+PRTAREAB DC    CL53' '             REMAINDER OF LINE
+PRTAREAC DC    CL133' '            BLANK PRINT LINE
+         SPACE 2
+PUNAREAA DC    CL81' '             PUNCH CARD AREA
+PUNAREAB DC    CL81' '             BLANK PUNCH CARD AREA
+         END   ISIGNON             PROGRAM ENTRY POINT

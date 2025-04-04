@@ -1,0 +1,350 @@
+T580P180 CSECT
+         PRINT ON,NOGEN
+R0       EQU   0                   COMMUNICATIONS
+R1       EQU   1                       DITTO
+R2       EQU   2                   WORK
+R3       EQU   3                   WORK
+R4       EQU   4                   LINK
+R5       EQU   5                   CSECT START ADDRESS
+R6       EQU   6                   CSECT OFFSET
+R7       EQU   7                   DELETIONS POINTER
+R8       EQU   8                   ADDITIONS POINTER
+R9       EQU   9                   END OF PROJECT TABLE ADDRESS
+R10      EQU   10                  ZAP OFFSET ADDRESS
+R11      EQU   11                  PROJECT CODE IN BUNARY
+R12      EQU   12                  BASE
+R13      EQU   13                  BASE
+R14      EQU   14                  O.S. RETURN
+R15      EQU   15                  O.S. BRANCH / RETURN CODE
+         PGMIN EQUATES=NO
+         ST    R1,PARMPTR          STORE POINTO EXEC PARM
+         OPEN  (UPDATES,INPUT)     OPEN UPDATE FILE
+READUPDT EQU   *
+         GET   UPDATES             READ NEXT UPDATE RECORD
+         MVC   UPDATE,4(R1)        SAVE UPDATE
+         CLI   0(R1),C'T'          ADDITION OR DELETION?
+         BNE   CHCKDUMP            NO. CHECK FO DUMP REQUEST
+         CLC   4(4,R1),SPACES      PROJECT NO SUPPLIED?
+         BE    READUPDT            NO. READ NEXT CARD
+         CLC   4(4,R1),FRSTPROJ    DOES THIS EQUATE TO THE KEY PROJECT
+         BE    READUPDT            YES. READ NEXT CARD
+         CLC   16(6,R1),=C'DELETE' PROJECT TO BE DELETED?
+         BE    CHCKDEL             YES. ADD TO DELETION CHAIN
+         CLI   75(R1),C' '         PROJECT TO BE OPENED OR OPEN?
+         BNE   CHCKDEL             NO. ADD TO DELETIONS
+         L     R3,ADDBASE          GET ADDRESS OF NEXT CHAIN ENTRY
+         LA    R2,ADDBASE          GET ADDRESS FOR CHAINING TO
+         B     CHAINADD            ADD ADDTION TO CHAIN
+         SPACE
+CHCKDEL  EQU   *
+         L     R3,DELBASE          DITTO AS ABOVE FOR A DELETEION
+         LA    R2,DELBASE
+         SPACE
+CHAINADD EQU   *                   ADD UPDATES TO CORRECT CHAIN
+*                                  WITH DUPLICATE CHECK
+         LTR   R3,R3               NO CHAIN PRESENT?
+         BZ    CHNUPDTE            YES. START IT WITH FIRST UPDATE
+CHNLOOP  EQU   *
+         CLC   4(4,R3),UPDATE      DOES THIS UPDATE = ANY PREVIOUS?
+         BE    READUPDT            YES. IGNORE THIS ONE. READ NEXT?
+         LR    R2,R3               SAVE CURRENT CHAIN LOCATION
+         L     R3,0(0,R3)          GO ONTO NEXT IN CHAIN
+         LTR   R3,R3               END OF CURRENT CHAIN
+         BZ    CHNUPDTE            YES. ADD UPDATE TO IT
+         B     CHNLOOP             GO ROUND LOOP AGAIN
+         SPACE
+CHNUPDTE EQU   *
+         GETMAIN R,LV=8            GET 8 BYTES OF CORE
+         LA    R1,0(0,R1)          CLEAR HIGH ORDER BYTE
+         ST    R1,0(0,R2)          STORE CHAIN POINTER IN CURRENT ENTRY
+         MVC   4(4,R1),UPDATE      STORE UPDATE IN NEW ENTRY
+         XC    0(4,R1),0(R1)       INDICATE END OF CHAIN
+         B     READUPDT            READ NEXT UPDATE
+         SPACE
+CHCKDUMP EQU   *
+         CLC   0(4,R1),=C'DUMP'    IS DUMP OF WHOLE TABLE REQD.
+         BNE   CHCKOFST            NO. CHECK FOR NEW OFFSET REQD
+         OI    SWS,DUMPSW          TURN ON DUMP SWITCH
+         B     READUPDT
+         SPACE
+CHCKOFST EQU   *
+         CLC   0(7,R1),=C'OFFSET=' IS NEW OFFSET REQUIRED IN SUPERZAP
+         BNE   CHCKCCHH            NO. CHECK IF NEW CCHHR SUPPLIED
+         OI    SWS,OFSTSUPP        SET SWITCH
+         PACK  DWORD+6(2),7(3,R1)  PACK DECIMAL OFFSET
+         CVB   R10,DWORD           CONVERT TO HEX. STORE IN R10
+         B     READUPDT
+         SPACE
+CHCKCCHH EQU   *
+         CLC   0(6,R1),=C'CCHHR=' NEW CCHHR SUPPLIED?
+         BNE   READUPDT
+         OI    SWS,CCHHSUPP        SET SWITCH.
+         MVC   ZABSADDR(10),6(R1)  MOVE NEW ABSOLUTE TRACK ADDRESS
+         B     READUPDT            NEXT CARD
+         SPACE
+READUPND EQU   *
+         CLOSE UPDATES             CLOSE UPDATE INPUT FILE
+         SPACE 5
+*
+*        READ  OVERLAY LIBRARY TO FIND PROJECT CODE VALIDATION CSECT
+*
+         SPACE
+FINDOVLY EQU   *
+         OPEN  (HASPOLIB,INPUT)    OPEN OVERLAY LIBRARY
+OVLYLOOP EQU   *
+         GET   HASPOLIB            GET NEXT RECORD
+         CLC   0(4,R1),OVRLYID     IS THIS THE ONE WANTED
+         BNE   OVLYLOOP            NO. GET NEXT
+         LR    R5,R1               R5 = CSECT START ADDRESS
+         B     TABPROC             GO PROCESS PROJECT TABLE
+         SPACE
+OVLYEND  EQU   *                   END OF DATASET BEFORE OVERLAY FOUND
+         BAL   R4,BADEND
+         SPACE 5
+*
+*        TROUBLE IN PROGRAM SO ABEND.
+*
+         SPACE
+BADEND   EQU   *
+         ABEND 1140,DUMP,STEP
+         SPACE 5
+*
+*        PROCESS PROJECT TABLE AND PRODUCE SUPERZAP CONTROL D/S
+*
+         SPACE
+TABPROC  EQU   *
+         LH    R2,CSECTEND         GET CSECT END ADDRESS
+         LA    R9,0(R2,R5)         GENERATE ABSOLUTE END ADDRESS
+         SR    R6,R6               INIT OFFSET POINTER
+LOCTABST EQU   *
+         LA    R6,2(0,R6)          INCREMENT OFFSET
+         LA    R2,0(R5,R6)         GET ABS. ADDRESS
+         CR    R2,R9               END OF CSECT?
+         BNL   TABERR              YES. SOME THINS WRONG ABORT
+         CLC   0(2,R2),PTABEND     END OF TABLE?
+         BE    TABERR              YES. ERROR
+         CLC   XFSTPROJ,0(R2)      TABLE START FOUND?
+         BNE   LOCTABST            NO. GO ROUND AGAIN
+         TM    SWS,OFSTSUPP        OFFSET FOR ZAP SUPPLIED?
+         BO    TABOK               YES. SKIP NEXT FEW INSTNS.
+         LR    R10,R6              NO. USE EXISTING OFFSET
+         B     TABOK               SKIP OVER ERROR RTN.
+         SPACE
+TABERR   EQU   *
+         BAL   R4,BADEND           NO. LINK TO BADEND OF PROGRAM
+         SPACE
+TABOK    EQU   *
+         OPEN  (ZAPDS,OUTPUT)      OPEN ZAP DATASET
+         MVC   ZCCHHR(5),=C'CCHHR' MOVE CONSTANT
+         TM    SWS,CCHHSUPP        NEW CCHHR SUPPLIED?
+         BO    BYPSCCHH            YES. BYPASS SETUP OF CCHHR
+         LA    R1,HASPOLIB+5+3     GET ADDRESS OF CCHH FROM DCB
+         BAL   R4,HEXPAND          CONVERT TO DISPLAY FORMAT
+         MVC   ZABSADDR(8),HEXOUTPT MOVE TO ZAPREC
+         LA    R1,HASPOLIB+5+3+4   GET ADDRESS OF R IN CCHHR
+         BAL   R4,HEXPAND          CONVERT TO DISPLAY
+         MVC   ZABSADDR+8(2),HEXOUTPT MOVE TO ZAPREC
+BYPSCCHH EQU   *
+         PUT   ZAPDS,ZAPREC        WRITE HEADER RECORD
+         MVC   ZVERREP(5),=CL5'VER' START SECOND RECORD
+         MVI   ZPROJCT-1,C' '
+         STH   R10,OFSTSTOR        SAVE ZAP OFFSET FOR TABLE START
+         LA    R1,OFSTSTOR         POINT TO STORE
+         BAL   R4,HEXPAND          CONVERT TO DISPLAY
+         MVC   ZOFFSET(4),HEXOUTPT MOVE TO ZAPREC
+         LA    R1,XFSTPROJ         ADDRESS OF FIRST PROJECT IN TABLE
+         BAL   R4,HEXPAND          DISPLAY  FORMAT
+         MVC   ZPROJCT(4),HEXOUTPT TO ZAPREC
+         MVC   ZPROJCT+4(4),SPACES ENSURE NO GARBAGE AROUND
+         PUT   ZAPDS,ZAPREC        WRITE SECOND RECORD
+         SPACE
+NEXTUPDT EQU   *         ***  MAIN-LINE LOOP  ***
+         NI    SWS,255-ZAPSW-ADDSW TURN OFF ZAPSWITCH
+         LA    R6,2(0,R6)          INCREMENT TO NEXT PROJECT ENTRY
+         LA    R10,2(0,R10)        INCREMENT ZAP OFFSET
+*                                  FIRST PROJECT MAY NOT BE CHANGED.
+         LA    R2,0(R5,R6)         GET ABSOLUTE ADDRESS OF ENTRY
+         LH    R1,0(,R2)           PICK UP ENTRY
+         CVD   R1,DWORD            CONVERT BACK TO DECIMAL
+         OI    DWORD+7,X'0F'       ENSURE POSITIVE
+         UNPK  DWORD(5),DWORD+5(3) MAKE IT EBCDIC
+         MVC   HOLDUPDT,DWORD+1    SAVE IT IN CASE NOT UPDATED
+         MVC   R2HOLD,HOLDUPDT     SAVE IT FOR CHECKING
+         CR    R2,R9               END OF CSECT?
+         BL    *+8                 NO. JUMP NEXT INSTRUCTION.
+         BAL   R4,BADEND           ERROR SOMEWHERE. ABORT PROGRAM
+         CLC   PTABEND,0(R2)       END OF PROJECT TABLE?
+         BE    ENDPROJS            YES. GO TO WIND-UP
+         CLC   0(2,R2),SPACES      END OF ACTIVE TABLE?
+         BE    SRCHADD2            JUMP ADD DUP AND DELETION SEARCHES
+SRCHADD1 EQU   *
+         L     R8,ADDBASE          POINT  TO FIRST ADDITION
+         LTR   R8,R8               NO ADDITIONS?
+         BZ    SRCHDEL             IF SO JUMP TO DELETIONS
+ADDLOOP1 EQU   *
+         CLC   R2HOLD,4(R8)        PROJECT NUMBERS SAME?
+         BNE   ADDAGN1             NO. LOOK AT NEXT ADDITION
+         TM    0(R8),ACTNFLAG      THIS ADDITION BEEN ACTIONED?
+         BNO   *+14                NO. JUST MAKE SURE FLAG IS ON
+         MVC   HOLDUPDT,DELTPROJ   YES. DUPLICATE,DELETE THIS ONE
+         OI    SWS,ZAPSW           TURN ON SW FOR SUPERZAP
+         OI    0(R8),ACTNFLAG      TURN ON ACTIONED FLAG
+ADDAGN1  EQU   *
+         L     R8,0(0,R8)          JUMP TO NEXT ENTRY
+         LA    R8,0(0,R8)          CLEAR HIGH ORDER BYTE
+         LTR   R8,R8               IS IT NOT THERE?
+         BZ    SRCHDEL             YES. JUMP TO DELETION SEARCH
+         B     ADDLOOP1            NEXT ENTRY EXISTS. PROCESS IT
+         SPACE
+SRCHDEL  EQU   *
+         L     R7,DELBASE          POINT TO FIRST DELETION
+         LTR   R7,R7               ANY DELETIONS
+         BZ    SRCHADD2            NO. GO TO SECOND ADDITION PASS
+DELLOOP  EQU   *
+         CLC   R2HOLD,4(R7)        PROJECT OT BE DELETED
+         BNE   DELAGN              NO. LOOK AT NEXT DELETION
+         MVC   HOLDUPDT,DELTPROJ   DELETE PROJECT FROM TABLE
+         OI    SWS,ZAPSW           TURN ON SUPERZAP SWITCH
+         OI    0(R7),ACTNFLAG      NOTE DELETION AS BEING ACTIONED
+         B     SRCHADD2            GO TO SECOND ADD SEARCH
+         SPACE
+DELAGN   EQU   *
+         L     R7,0(0,R7)          JUMP TO NEXT ENTRY
+         LA    R7,0(0,R7)          CLEAR HIGH ORDER BYTE
+         LTR   R7,R7               END OF CHAIN?
+         BZ    SRCHADD2            YES. SECOND LOOK AT ADDITIONS
+         B     DELLOOP             GO LOOK AT NEXT DELETION
+         SPACE
+SRCHADD2 EQU   *
+         L     R8,ADDBASE          POINT TO FIRST ADDITION
+         LTR   R8,R8               NONE?
+         BZ    CHCKZAP             GO CHECK IF ZAP IS REQD
+         CLC   HOLDUPDT,DELTPROJ   HAS PROJECT BEEN DELETED?
+         BE    ADDLOOP2            YES. LOOK FOR REPLACEMENT
+         CLC   0(2,R2),SPACES      END OF ACTIVE TABLE?
+         BNE   CHCKZAP             NO. JUMP OVER ADDITIONS SEARCH
+ADDLOOP2 EQU   *
+         TM    0(R8),ACTNFLAG      THIS ADD BEEN ACTIONED?
+         BO    ADDAGN2             SKIP ANY ACTIONED ENTRIES.
+         MVC   HOLDUPDT,4(R8)      NO. MOVE NEW PROJECT TO TABLE
+         OI    0(R8),ACTNFLAG      NOTE IS AS BEING ACTIONED
+         OI    SWS,ZAPSW+ADDSW     TURN ON ZAPSWITCH
+         B     CHCKZAP             WRITE OUT ZAP RECORD
+         SPACE
+ADDAGN2  EQU   *
+         L     R8,0(0,R8)          NEXT ADD ENTRY.
+         LA    R8,0(0,R8)          CLEAR HIGH ORDER BYTE
+         LTR   R8,R8               END?
+         BNZ   ADDLOOP2            NO. CHECK NEXT ADDITION
+         SPACE 3
+*
+*        CHECK ZAP AND DUMP SWITCHES  FOR ZAP OUTPUT REQUIRED
+*
+         SPACE
+CHCKZAP  EQU   *
+         TM    SWS,ZAPSW+DUMPSW    SUPERZAP OUTPUT REQD?
+         BZ    NEXTUPDT            NO. CHECK NEXT PROJECT IN TABLE
+         CLI   HOLDUPDT,C'0'       IS THIS A DUMMY PROJECT?
+         BE    NEXTUPDT            YES,BYPASS ZAP
+         STH   R10,OFSTSTOR        STORE ZAP OFFSET
+         LA    R1,OFSTSTOR         POINT TO IT
+         BAL   R4,HEXPAND          CHANGE TO DISPLAY
+         MVC   ZOFFSET(4),HEXOUTPT MOVE ADDRESS TO ZAP CARD
+         TM    SWS,DUMPSW          WHOLE TABLE REQD?
+         BO    DUMPZAP             YES. THEN SKIP ALL VERIFICATION
+         MVC   ZVERREP(4),=CL4'VER' MOVE CONSTANT
+         LR    R1,R2               ADDRESS OF PROJECT IN TABLE
+         BAL   R4,HEXPAND          DISPLAY FORMAT
+         MVC   ZPROJCT(4),HEXOUTPT MOVE PROJECT NO. TO VER CARD
+         PUT   ZAPDS,ZAPREC
+DUMPZAP  EQU   *
+         CLC   0(2,R2),SPACES      ARE WE ADDING?
+         BNE   DUMPZP2             NO,CARRY ON
+         LTR   R8,R8               ANY MORE ADDITIONS?
+         BZ    ENDPROJS            NO,FINISH
+DUMPZP2  DS    0H                  ELSE CARRY ON
+         MVC   ZVERREP(4),=CL4'REP' MOVE CONSTANT
+         PACK  DWORD,HOLDUPDT      CONVERT PROJECT NUMBER
+         CVB   R1,DWORD            TO BINARY
+         ST    R1,DWORD            SAVE IT
+         LA    R1,DWORD            POINT TO IT
+         BAL   R4,HEXPAND          CHANGE TO DISPLAY
+         MVC   ZPROJCT(4),HEXOUTPT+4 MOVE PROJECT TO ZAP CARD
+         MVC   ZPROJCT+4(4),SPACES ENSURE NO GARBAGE AROUND
+         PUT   ZAPDS,ZAPREC        WRITE ZAP RECORD
+         B     NEXTUPDT
+         SPACE 5
+*
+*        ALL  PROJECTS PROCESSED. END OF JOB ROUTINE.
+*
+ENDPROJS EQU   *
+         CLOSE (ZAPDS,,HASPOLIB)   CLOSE DATASETS
+         PGMOUT
+         SPACE 5
+*
+*        EXPAND 4-BYTES INTERNAL HEX FORMAT TO A DISPLAY FORMAT
+*        R1 - POINTS TO THE FULLWORD TO BE EXPANDED
+         SPACE 3
+HEXPAND  SUBIN SAVE=(R2,R3)
+         LA    R2,8
+         LA    R3,HEXOUTPT
+         MVC   HEXOUTPT(4),0(R1)   MOVE FULLWORD TO WORKAREA
+HEXLOOP  EQU   *
+         MVO   0(5,R3),0(4,R3)     MOVE 4-BYTES ONE TO THE RIGHT
+*                                  LEAVE ZERO IN FIRST FOUR BITS
+*                                  AND DIGIT PORTIN IN SECOND FOUR
+         LA    R3,1(0,R3)          POINT TO NEXT BYTE OF WORKAREA
+         BCT   R2,HEXLOOP
+         TR    HEXOUTPT(8),HEXTABLE ADD ZONES TO EACH DIGIT PORTION
+         SUBOUT RESTORE=(R2,R3)
+         SPACE
+HEXTABLE DC    XL16'F0F1F2F3F4F5F6F7F8F9C1C2C3C4C5C6'
+         SPACE 5
+*
+*        DATA CONTROL BLOCKS
+*
+         SPACE
+UPDATES  DCB   DDNAME=SYSIN,MACRF=(GL),DSORG=PS,                       C
+               RECFM=FB,LRECL=80,EODAD=READUPND
+         SPACE
+HASPOLIB DCB   DDNAME=HASPOLIB,MACRF=(GL),DSORG=PS,                    C
+               RECFM=U,BLKSIZE=1024,BUFNO=1,EODAD=OVLYEND
+         SPACE
+ZAPDS    DCB   DDNAME=ZAPDS,MACRF=(PM),DSORG=PS,                       C
+               RECFM=FB,LRECL=80
+         SPACE 3
+*
+*        CONSTANTS DATA AREAS ETC.
+*
+         SPACE
+DWORD    DC    D'0'
+CSECTEND DC    H'1024'
+PTABEND  DC    X'FFFF'      '
+ADDBASE  DC    F'0'
+DELBASE  DC    F'0'
+OVRLYID  DC    CL4'RJBV'
+FRSTPROJ DC    CL4'1140'
+DELTPROJ DC    CL4'0000'
+XFSTPROJ DC    H'1140'
+PARMPTR  DC    F'0'
+UPDATE   DC    CL4' '
+SPACES   DC    CL4' '
+OFSTSTOR DC    H'0'
+SWS      DC    X'00'
+ZAPSW    EQU   128
+DUMPSW   EQU    64
+ADDSW    EQU   32
+OFSTSUPP EQU   16
+CCHHSUPP EQU   8
+ACTNFLAG EQU   128
+ZAPREC   DC    CL80' '
+ZCCHHR   EQU   ZAPREC+5
+ZVERREP  EQU   ZAPREC+5
+ZABSADDR EQU   ZAPREC+12
+ZOFFSET  EQU   ZAPREC+9
+ZPROJCT  EQU   ZAPREC+14
+HEXOUTPT DC    CL12' '
+HOLDUPDT DC    CL4' '
+R2HOLD   DC    CL4' '
+         LTORG
+         END   T580P180

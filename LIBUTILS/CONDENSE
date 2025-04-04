@@ -1,0 +1,1546 @@
+***********************************************************************
+***********************************************************************
+**                                                                   **
+**       F U N C T I O N                                             **
+**                                                                   **
+**       THIS PROGRAM COMPRESSES PARTITIONED DATA SETS EXCEPT        **
+**       DATA SETS NAMED SYS1.LINKLIB AND SYS1.SVCLIB.               **
+**       THE DEVICES THE DATA SETS RESIDE ON, MUST BE 2311 OR 2314   **
+**                                                                   **
+**                                                                   **
+**       R E G I O N  S I Z E                                        **
+**                                                                   **
+**       MINIMUM CORE SPACE IS ABOUT 50K BYTES, EXCLUDING BUFFERS.   **
+**       UP TO 128 BUFFERS WILL BE USED.                             **
+**       THE NUMBER OF BUFFERS DEPENDS ON THE REGION SPACE AVAILABLE **
+**       FOR USE.                                                    **
+**       AFTER HAVING CONDENSED A DATA SET                           **
+**       BUFNO, BUFL, AND UNUSED CORE SPACE                          **
+**       WILL BE PRINTED ON SYSPRINT, SO YOU CAN OPTIMIZE            **
+**       CORE UTILIZATION AND EXECUTION TIME                         **
+**                                                                   **
+**       E X E C U T I O N  T I M E                                  **
+**                                                                   **
+**       FOR A GOOD PERFORMANCE, CHOOSE THE REGION                   **
+**       AS BIG AS POSSIBLE, BECAUSE                                 **
+**       EXECUTION TIME CAN BE INFLUENCED BY THE NUMBER OF BUFFERS   **
+**       AVAILABLE FOR I/O.                                          **
+**                                                                   **
+**       J O B  C O N T R O L  L A N G U A G E                       **
+**                                                                   **
+**       //STEPNAME EXEC PGM=CONDENSE                                **
+**       //SYSPRINT DD SYSOUT=SYSOUTCLASS                            **
+**       //SYSSNAP DD SYSOUT=SYSOUTCLASS,DCB=BLKSIZE=882             **
+**       //SYSLIB DD DSN=DATASETNAME,DISP=OLD                        **
+**                                                                   **
+**       IN CASE OF AN I/O ERROR SYSSNAP IS USED FOR A DUMP          **
+**       AT ERROR DETECTION TIME.                                    **
+**       FOR BLKSIZE VALUE SEE SRL                                   **
+**       ** SUPERVISOR AND MACRO INSTRUCTIONS **                     **
+**       SYSLIB IS THE DD-STATEMENT FOR THE DATA SET TO BE CONDENSED,**
+**       DISPOSITION MUST BE OLD.                                    **
+**                                                                   **
+**                                                                   **
+**       C O N D I T I O N  C O D E S                                **
+**                                                                   **
+**       00 -  NORMAL RETURN                                         **
+**                                                                   **
+**       04 -  I/O ERROR WHILE WRITING A BLOCK                       **
+**                                                                   **
+**       08 -  I/O ERROR WHILE ERASING A TRACK                       **
+**                                                                   **
+**       12 -  I/O ERROR WHILE WRITING A NOTE LIST                   **
+**                                                                   **
+**       16 -  I/O ERROR WHILE READING A NOTE LIST                   **
+**                                                                   **
+**       20 -  I/O ERROR WHILE READING A BLOCK                       **
+**                                                                   **
+**       24 -  LACK OF CORE SPACE, REGION IS TOO SMALL               **
+**                                                                   **
+**       28 -  I/O ERROR WHILE WRITING THE DIRECTORY,                **
+**             DATA SET HAS BEEN DESTROYED                           **
+**                                                                   **
+**       32 -  REQUEST TO CONDENSE A SYSTEM DATA SET                 **
+**                                                                   **
+**       36 -  MORE THAN 2000 MEMBERS AND ALIASES IN DIRECTORY       **
+**                                                                   **
+**       40 -  DISPOSITION IS NOT OLD                                **
+**                                                                   **
+**       44 -  I/O ERROR WHILE READING THE DIRECTORY                 **
+**                                                                   **
+**       48 -  UNIT ON WHICH THE DATA SET RESIDES IS NOT A DISK      **
+**                                                                   **
+**       52 -  DATA SET IS NOT PARTITIONED ORGANIZED                 **
+**                                                                   **
+**                                                                   **
+**       ON SOME ERRORS YOU MAY GET THE MESSAGE                      **
+**       ***** TO REFRESH THE DATA SET RESTORE                       **
+**       ***** MEMBER=(A,B,C,......N)                                **
+**       DO SO, IT IS NOT NECESSARY TO RESTORE THE WHOLE DATA SET    **
+**                                                                   **
+**                                                                   **
+**       IN CASE OF AN I/O ERROR A CONSOL MESSAGE WILL BE DISPLAYED  **
+**                                                                   **
+**       CONDS99I  UNITNAME,                     3 BYTES             **
+**                 ERROR REASON,                12 BYTES             **
+**                 COMMAND CODE,                 2 BYTES             **
+**                 CSW,                          2 BYTES             **
+**                 SENSE BYTES,                  5 BYTES             **
+**                 FULL DIRECT ACCESS ADDRESS,   8 BYTES             **
+**                 VOLUME SERIAL,                6 BYTES             **
+**                 JOBNAME                       8 BYTES             **
+**                                                                   **
+***********************************************************************
+***********************************************************************
+         EJECT
+         PRINT ON,NOGEN
+*             MACRO FOR CHANNEL COMMAND WORD
+         SPACE 2
+         MACRO
+&ADD     CKW   &OP,&ADDR,&MODE,&COUNT
+         DS    0D
+&ADD     DC    AL1(&OP),AL3(&ADDR),AL2(&MODE),H'&COUNT'
+         MEND
+         EJECT
+*              SAVE REGISTERS, ESTABLISH ADDRESSABILITY,
+*              OPEN SYSPRINT AND PRINT HEADLINE
+         SPACE 2
+CONDENSE CSECT
+         SAVE  (14,12)
+         LR    BASE,15
+         USING CONDENSE,BASE
+         LA    H,4095(BASE)
+         LA    H,1(H)
+         USING CONDENSE+4096,H
+         LA    14,SAVE
+         ST    13,4(14)
+         ST    14,8(13)
+         LR    13,14
+         SR    V,V
+         OPEN  (SYSPRINT,(OUTPUT))
+         OPEN  (SNAP,(OUTPUT))
+         MVI   OBUF-1,X'F1'
+         MVC   OBUF+20(L'TEXT1),TEXT1
+         MVC   OBUF+30+L'TEXT1(L'TEXT2),TEXT2
+         TIME  DEC
+         ST    1,DISKADD+4
+         UNPK  OBUF+35+L'TEXT1(5),DISKADD+5(3)
+         OI    OBUF+35+L'TEXT1+4,X'F0'
+         ST    0,DISKADD+4
+         OI    DISKADD+7,X'0F'
+         UNPK  OBUF+31+L'TEXT1+L'TEXT2(7),DISKADD+4(4)
+         MVI   OBUF+31+L'TEXT1+L'TEXT2+6,C' '
+         BAL   W,PRINT
+         MVI   OBUF-1,X'60'
+         BAL   W,PRINT
+         EJECT
+*              OPEN PDS AND CHECK A LITTLE
+         SPACE 2
+OPENDIR  RDJFCB MF=(E,EX)
+         TM    JFCB+87,X'08'
+         BO    ERRL                SHR
+         OPEN  (DOOF,(OUTPUT))
+         LH    0,DOOF+62
+         MVC   BLKSIZE,DOOF+62     SAVE BLKSIZE FOR LATER USE
+         MVC   TRBAL,DOOF+18
+         CLOSE (DOOF)
+         OPEN  MF=(E,EX)
+         OI    PDSDCB+48,X'92'     TO UPDATE THE DSCB
+         L     R,ADEBPDS           DEB ADDRESS
+         MVC   NEWCNT(4),38(R)     STARTING CCHH
+         MVC   CC(4),NEWCNT
+         TM    PDSDCB+17,X'D0'      CH DA DEVICE
+         BC    5,ERRF
+         TM    PDSDCB+17,X'09'      CHECK 2311 OR 2314
+         BC    9,ERRF
+         TM    PDSDCB+17,X'01'      CHECK 2311
+         BZ    CHECKA
+         MVC   MAXCOUNT(DEV2311),MAX2311
+CHECKA   TM    PDSDCB+26,X'02'     CHECK DSORG
+         BZ    ERRG
+         CLC   =C'SYS1.SVCLIB ',DSN DO NOT CONDENSE THES LIBRARIES
+         BZ    ERRH
+         CLC   =C'SYS1.LINKLIB ',DSN
+         BZ    ERRH
+         MVI   OBUF-1,X'40'
+         EJECT
+*              READ THE DIRECTORY
+         SPACE 2
+READDIR  GETMAIN R,LV=8000         LIST OF POINTERS TO DIR ENTRIES
+         LR    RE,1
+         USING ENTRY,RE
+         ST    RE,FIRSTENT         SAVE START ADD OF ENTRY LIST
+         A     1,=A(8000)
+         ST    1,ENDENT
+         LA    RSECT,SECT          SECTOR LIST
+RDIRD    LA    RCOMP,16           # OF BLOCKS PER SECTOR - 1
+         LA    RINCR,1             INCREMENT IS ONE
+         GETMAIN R,LV=4352         GET A SECTOR
+         SR    RBLKI,RBLKI         ZEROISE INTERMEDIATE BLOCK COUNT
+         ST    1,0(RSECT)          STORE SECTOR ADDRESS IN SECTOR LIST
+         LA    RSECT,4(RSECT)
+         LR    RBLKA,1             SET BLOCK ADDRESS
+RDIRC    ST    RBLKA,FULL         MOVE BLOCK ADDRESS INTO
+         MVC   CPDRD+1(3),FULL+1   ADEQUATE CCW
+         BAL   W,EXCP              READ A BLOCK
+RDIRX    B     RDIR7F
+         B     ENDDIR
+         B     ERRA
+         B     ERRA
+BRDIRC   B     RDIRC
+RDIR7F   CLC   0(2,RBLKA),NULL
+         BE    RDIRC
+         LH    1,BLKC              INCR BLOCK COUNT
+         LA    1,1(1)
+         STH   1,BLKC
+         LH    RBYTEC,0(RBLKA)     GET # BYTES FOR THIS BLOCK
+         BCTR  RBYTEC,0
+         BCTR  RBYTEC,0
+         LA    RENTA,2(RBLKA)      SET ENTRY ADDRESS
+RDIRB    ST    RENTA,EADD          SAVE ENTRY ADDRESS IN POINTER LIST
+         LR    W,RENTA
+         CLI   0(RENTA),X'FF'
+         BE    RDIRBX
+         LA    RE,LENTRY(RE)       INCR FOR NEXT ENTRY
+         C     RE,ENDENT
+         BE    ERRI
+RDIRBX   IC    1,11(RENTA)
+         N     1,=F'31'            GET # OF USER HALFWORDS
+         LA    1,12(1,1)           GET LENGTH OF ENTRY
+         AR    RENTA,1             SET FOR NEXT ENTRY
+         SR    RBYTEC,1            DECR BYTE COUNT
+         BNZ   RDIRB               GO PROCESS NEXT ENTRY
+         CLI   0(W),X'FF'
+         BNE   RDIRBA
+         MVC   RDIRX,BRDIRC
+RDIRBA   LA    RBLKA,256(RBLKA)    SET TO NEXT BLOCK
+         ST    RBLKA,ENDBLOCK      SAVE END OF BLOCKS
+         MVC   KEY,0(W)            SET NEXT KEY SEARCHED FOR
+         ST    RE,LASTENT          LAST POINTER IN ENTRY TABLE
+         ST    RSECT,ESECT         POINTER TO END OF SECTOR LIST
+         BXLE  RBLKI,RINCR,RDIRC   READ NEXT BLOCK
+         B     RDIRD               GET A NEW SECTOR
+ENDDIR   EQU   *
+         MVC   DISKADD,NULL
+         MVC   DISKADD+3(5),NEWCNT
+         BAL   W,WADCONV
+         SRDL  0,16
+         MH    0,BLOCK             TT*BLOCK+R-1 IS NUMBER OF
+         SRL   1,24                DIRECTORY BLOCKS ALLOCATED
+         AR    0,1
+         BCTR  0,0
+         BAL   W,DEC
+         MVC   OBUF(L'DIRM1),DIRM1
+         MVC   OBUF+3(3),FULL+1
+         LH    0,BLKC
+         BAL   W,DEC
+         MVC   OBUF+35(3),FULL+1
+         BAL   W,PRINT
+         DROP  RE
+         EJECT
+*              SORT THE DIRECTORY BY TTR
+         SPACE 2
+SORTTTR  LA    RINCR,LENTRY        SET INCREMENT
+         L     RCOMP,LASTENT       SET COMPARAND
+         L     RENTA,FIRSTENT      INIT
+         LR    0,RINCR
+SORTA    SR    RCOMP,RINCR
+         LTR   0,0
+         BE    RW
+         LR    RC,RENTA
+         SR    0,0                 CLEAR INDICATOR
+SORTD    LR    RE,RC               SET TO NEXT PAIR
+         BXH   RC,RINCR,SORTA      CHECK END OF SORT STEP
+         LM    S,R,0(RE)
+         CLC   8(3,S),8(R)
+         BH    EXCHANGE
+         BL    SORTD
+         CLC   11(1,S),11(R)       CHECK FOR ALIAS
+         BNH   SORTD
+EXCHANGE XR    S,R                 EXCHANGE POINTERS
+         XR    R,S
+         XR    S,R
+         STM   S,R,0(RE)
+         LR    0,RE                SET INDICATOR
+         B     SORTD
+         EJECT
+PATCH    DC    146CL2'PA'          PATCH AREA, NOT TO BE USED -- I HOPE
+         EJECT
+*              COMMON SUBROUTINES
+         SPACE 5
+*              PRINT A LINE AND CLEAR THE OUTPUT BUFFER
+         SPACE 2
+PRINT    ST    W,HSAVE
+         WRITE PECB,SF,SYSPRINT,OBUF-1,'S'
+         CHECK PECB
+         L     W,HSAVE
+CLEARBUF MVI   OBUF,C' '
+         MVC   OBUF+1(131),OBUF
+         BR    W
+         SPACE 5
+SIOW     L     1,SIOWCOUN          UPDATE # OF WRITE SIO'S
+         LA    1,1(1)
+         ST    1,SIOWCOUN
+         BR    15
+         SPACE 5
+SIOR     L     1,SIORCOUN          UPDATE # OF READ SIO'S
+         LA    1,1(1)
+         ST    1,SIORCOUN
+         BR    15
+         SPACE 5
+WADCONV  STM   9,15,HSAVE          CONVERTS DISKADD TO TTRN
+         L     15,16
+         L     15,32(15)
+         B     CONVA
+         SPACE 5
+TTRNCONV STM   9,15,HSAVE          CONVERTS TTRN TO DISKADD
+         L     15,16
+         L     15,28(15)
+CONVA    L     1,ADEBPDS
+         LA    2,DISKADD
+         BALR  14,15
+         LM    9,15,HSAVE
+         BR    W
+         SPACE 5
+UPBR     CLC   TTRS,NULL           *  THIS CODING DUE TO
+         BE    UPBRB               *  AN ERROR IN THE
+         L     1,CPR3              *  STANDARD SOFTWARE!
+         SH    1,HLPARM            *  NO CORRESPONDING
+         USING WBUF,1              *  RECORD TO THE MEMBER TTR
+         MVC   DISKADD+3(L'BRAD),BRAD *
+         MVC   DISKADD(L'BEX),BEX  *  INSTEAD THE MEMBER
+         ST    W,WSAVE             *  BEGINS ON THE
+         BAL   W,WADCONV           *  NEXT TRACK
+         ST    0,TTRS              *
+         L     1,CPR3              *
+         SH    1,HLPARM            *
+         L     W,WSAVE             *  THIS CODING UPDATES
+         MVC   WSAVE+1(3),BRE      *  THE MEMBER TTR
+         DROP  1                   *
+         L     1,WSAVE             *
+         USING ENTRY,1             *
+         L     1,EADD              *
+         DROP  1                   *
+         MVC   8(3,1),TTRS         *
+UPBRB    L     1,CSW-1
+         SH    1,=H'8'
+         CLI   0(1),RCKDMT         CHECK FOR READ COUNT&KEY&DATA CCW
+         BE    UPBRC               CCW = READ COUNT+KEY+DATA
+         B     *+4(WS)
+         L     BR,BUFAD
+         BR    W
+UPBRC    MVC   TTRS,NULL           *
+         L     1,0(1)              POINT TO BUFFER
+         LA    BR,0(1)             GET BUFFER ADDRESS
+         SH    BR,HLPARM
+         USING WBUF,BR
+         ST    W,WSAVE
+         LR    15,BR               POINT TO LAST BUFFER
+         L     BR,CPR3
+         LA    BR,0(BR)
+         SH    BR,HLPARM           POINT TO FIRST BUFFER
+         LR    R,BR
+         LA    S,8(BR)
+         AH    S,HLPARM
+         MVC   HALF,WCOUNT
+         AH    S,HALF              'TO' ADDRESS
+         DROP  BR
+         USING WBUF,R
+SHIFTA   CR    R,15
+         BE    SHIFTR
+         AH    R,BUFMIN+2          'FROM' ADDRESS
+         MVC   HALF,WCOUNT
+         LH    1,HALF
+         AH    1,HLPARM8
+         BCTR  1,0                 LENGTH IN REG 1
+         LA    0,256
+         LR    BR,S
+         LR    W,R                 USE ALL AVAILABLE BUFFER SPACE
+SHIFTC   CR    1,0                 BY SHIFTING THE RECORDS READ
+         BL    SHIFTB              ACCORDING THEIR ACTUAL LENGTHS
+         CR    S,W
+         BE    NOMOVA
+         EX    0,BMOVE
+NOMOVA   AR    W,0
+         AR    S,0
+         SR    1,0
+         B     SHIFTC
+SHIFTB   CR    S,W
+         BE    NOMOVB
+         EX    1,BMOVE
+NOMOVB   LA    S,1(S,1)
+         B     SHIFTA
+SHIFTR   L     W,WSAVE
+         DROP  R
+         USING WBUF,BR
+         MVC   RAD,BWAD
+         L     1,BUFEND            INDICATE 'BUFFER FULL' OR
+         SR    1,S                 'BUFFER NOT FULL' BY MOVING A NOP
+         MVC   FILLER,ONOP         OR A BRANCH INSTRUCTION TO THE
+         SH    1,BUFMIN+2          INSTRUCTION TO BE EXECUTED
+         BCR   2,W                 FOR CHECKING
+         MVC   FILLER,OBRANCH
+         BR    W
+BMOVE    MVC   0(256,S),0(W)
+ONOP     NOP   *
+OBRANCH  B     FILL
+NEXTB    L     1,WBUFEND
+         MVC   HALF,WCOUNT
+         AH    BR,HALF
+         AH    BR,HLPARM8
+         CR    BR,1
+         BR    W
+         DROP  BR
+         SPACE 5
+DEC      LR    1,0                 CONVERTS CONTENT OF REG 0 TO DEC
+         CVD   1,DOUBLE            PRINTABLE CHARACTERS
+         UNPK  FULL(4),DOUBLE+5(3)
+         OI    FULL+3,X'F0'
+         BR    W
+         SPACE 5
+CHEX     SR    RENTA,RENTA         CONVERTS HEX BYTES INTO
+CHEXA    SR    2,2                 PRINTABLE CHARACTERS
+         SLDL  2,4
+         IC    2,HEX(2)
+         STC   2,DOPPELT(RENTA)
+         LA    RENTA,1(RENTA)
+         CR    RENTA,NP
+         BNE   CHEXA
+         BR    W
+         SPACE 5
+UPWAD    LH    1,WAD+3             UPDATE WRITE ADDRESS - SUBROUTINE
+         LA    1,256(1)
+         STH   1,WAD+3
+         CH    1,ETRACK
+         BL    TTR2H
+         MVC   WAD+2(2),NULL       UPDATE CYLINDER
+         LH    1,WAD+1
+         LA    1,256(1)
+         STH   1,WAD+1
+TTR2H    MVI   WAD+4,0
+         MVC   WSTRTADD,=AL3(CPW1)
+         BR    W
+         SPACE 5
+UPTTR    L     RE,VOLL             UPDATE TTR'S IN DIRECTORY ENTRY FOR
+         USING WBUF,BR
+         USING ENTRY,RE
+         L     R,EADD              MODULE AND ALIASES
+         IC    S,11(R)
+         N     S,=A(96)
+         CH    S,WORD-8(NP)
+         BCR   4,W                 BL
+TTRB     AR    R,NP
+         CLC   0(3,R),BRTTR
+         BNE   TTRA
+         MVC   0(3,R),BWTTR
+TTRA     LA    RE,LENTRY(RE)       TRY NEXT ENTRY
+         C     RE,LASTENT          IS LAST ENTRY
+         BCR   8,W                 BE
+         L     R,EADD
+         TM    11(R),X'80'
+         BO    TTRB                IS AN ALIAS - GO UPDATE
+         BR    W
+         DROP  RE,BR
+         SPACE 5
+*              EXECUTE AN INPUT CHANNEL PROGRAM
+         SPACE 2
+EXCP     MVC   CCHHR,NEWCNT        SET DISK ADDRESS
+REXCP    NI    PDSDCB+44,B'00111111' CLEAR DCB EXCEPTION BITS
+         MVI   ECB,0
+         EXCP  IOB
+         BAL   15,SIOR
+         TM    ECB,X'40'
+         BO    EXCPA
+         WAIT  ECB=ECB
+EXCPA    MVC   XECB,ECB
+EXCPB    CLI   XECB,X'7F'          NORMAL RETURN
+         BZ    0(W)
+         CLI   XECB,X'41'          UNIT EXCEPTION
+         BZ    4(W)
+         CLI   XECB,X'42'          END OF EXTENT
+         BZ    8(W)
+         B     12(W)               ELSE
+         SPACE 5
+*              EXECUTE AN OUTPUT CHANNEL PROGRAM
+         SPACE 2
+WEXCP    NI    PDSDCB+44,B'00111111' CLEAR DCB EXCEPTION BITS
+         MVI   WECB,0
+         EXCP  WIOB
+         BAL   15,SIOW
+         TM    WECB,X'40'
+         BO    WEXCPA
+         WAIT  ECB=WECB
+WEXCPA   MVC   XECB,WECB
+         B     EXCPB
+         SPACE 5
+*              SEEK TO READ
+         SPACE 2
+RSEEK    MVC   SIOB(L'IOB),IOB
+         MVC   SIOB+17(3),=AL3(CPSR)
+         BAL   15,SIOR
+         B     EEXCP
+         SPACE 5
+*              SEEK TO WRITE
+         SPACE 2
+SEEK     MVC   SIOB(L'WIOB),WIOB
+         MVC   SIOB+17(3),=AL3(CPS)
+         SPACE 5
+EEXCPA   BAL   15,SIOW
+EEXCP    MVC   SIOB+5(3),=AL3(SECB)
+         NI    PDSDCB+44,B'00111111'
+         MVI   SECB,0
+         EXCP  SIOB
+         BR    W
+EXT      SR    1,1
+         IC    1,M-IOB(15)
+         LA    1,1(1)
+         STC   1,M-IOB(15)
+         SLL   1,4
+         A     1,ADEBPDS
+         MVC   RAD-IOB(4,15),38(1)
+         MVI   RAD+4-IOB(15),0
+         BR    W
+         EJECT
+*              READING AND WRITING OF MEMBERS
+         SPACE 2
+RW       MVC   RAD,NEWCNT          INITIALIZE R/W ADDRESS
+         MVC   STRTADD,=AL3(CPR1)
+         MVC   WSTRTADD,=AL3(CPW1)
+         LH    1,BLKSIZE
+         LA    1,8(1)
+         STH   1,MINSIZE
+         LA    1,LPARM(1)
+         ST    1,BUFMIN            MIN BUFSIZE=BLKSIZE+LPARM+8
+         SLL   1,7
+         ST    1,BUFMAX            MAX BUFSIZE=BUFMIN*128
+         GETMAIN R,LV=2048         MAIN FOR SYSUDUMP
+         LR    NP,1
+         GETMAIN VU,LA=BUFMIN,A=BUFAD    GET BUFFER
+         L     1,BUFL              CALCULATE BUFFER END
+         SR    0,0
+         D     0,BUFMIN
+         STH   1,BUFNO
+         MH    1,BUFMIN+2
+         A     1,BUFAD
+         ST    1,BUFEND
+         GETMAIN VC,LA=SPAREMIN,A=SPAREADD
+         LTR   15,15
+         BNZ   FREE
+         MVC   SPARE,SPARELEN
+         FREEMAIN V,A=SPAREADD
+FREE     LR    1,NP
+         FREEMAIN R,LV=2048,A=(1)
+         L     RE,FIRSTENT
+         USING ENTRY,RE
+         SH    RE,LDSECT           SET TO FIRST MEMBER -1
+         SR    WS,WS               CLEAR WRITE SWITCH
+         L     BR,BUFAD            CALC PHYS RECL
+         LH    1,BLKSIZE
+         MH    1,MULT
+         LH    NP,DIV
+         SRL   1,0(NP)
+         AH    1,GAPLEN
+         ST    1,FULL
+         LH    1,MAXCOUNT          CHECK BUFNO SUFFICIENT
+         SH    1,BLKSIZE
+         SR    0,0
+         D     0,FULL
+         LA    1,1(1)
+         C     1,BUFNO
+         BC    10,ERRJ             REGION/PARTITION TOO SMALL
+RWC      LA    RE,LENTRY(RE)       SET TO NEXT MEMBER
+         C     RE,LASTENT
+         BE    READFIN
+RWCONT   L     R,EADD              GET ENTRY ADDRESS
+         TM    11(R),X'80'         CHECK FOR ALIAS
+         BO    RWC                 IS AN ALIAS
+         MVC   VOLL(3),8(R)        GET TTR OF MEMBER
+         L     0,VOLL
+         IC    0,NULL
+         ST    0,TTRS
+         S     0,=A(256)           SUBTRACT ONE
+         BAL   W,TTRNCONV          CONVERT TTR-1 TO ABS. DISK ADDRESS
+         B     *+4(WS)
+         EX    0,WADRAD            MOVE RAD TO WAD
+         MVC   MBBCCHHR,DISKADD
+         CLC   RAD,WAD             CHECK WRITE NECESSARY
+         BC    12,READ             NO, RAD IS HI OR EQ WAD
+         CLI   RAD+4,X'0'
+         BE    READ                NO, BEGIN OF A TRACK
+         LA    WS,4                YES, SET WRITE SWITCH
+         EJECT
+*              READ MEMBER RECORDS TO FILL THE BUFFER
+         SPACE 2
+READ     MVC   RCCW+6(2),MINSIZE
+         LA    RENTA,CPR3-8
+         USING WBUF,BR
+RWB      LA    S,BWAD              CREATE READ-CCW CHAIN
+         ST    S,RCCW
+         MVI   RCCW,RCKDMT
+         LA    RENTA,8(RENTA)
+         MVC   0(8,RENTA),RCCW
+         MVC   BEX,M               NOTE # OF EXTENT
+         ST    RE,VOLL
+         MVC   BRE,VOLL+1          NOTE POINTER TO ENTRY
+         AH    BR,BUFMIN+2
+         L     1,BUFEND
+         SH    1,BUFMIN+2
+         CR    BR,1                CHECK FOR END OF BUFFERS
+         BL    RWB
+         NI    4(RENTA),B'10111111' CLEAR COMMAND CHAINING
+         MVC   STRTADD,=AL3(CPR1)
+READX    BAL   W,REXCP             READ A BLOCK
+         B     READ7F
+         B     READ41
+         B     READ42
+         B     ERRB
+READ7F   EQU   *                   UPDATE BUFFER REGISTER
+         BAL   W,UPBR
+         EX    0,FILLER
+         BAL   W,NEXTB             SET BR TO NEXT BUFFER
+         B     *+4(WS)
+         L     BR,BUFAD
+         B     READ
+FILL     B     *+4(WS)
+         B     FILLD
+         ST    BR,LP
+         MVC   FP,NULL
+         L     BR,BUFAD
+FILLA    CLI   BWAD+4,1            FIND LAST RECORD WITH RECNO = 1
+         BNE   FILLB
+         ST    BR,FP
+         MVC   RAD,BWAD
+         MVI   RAD+4,0
+FILLB    C     BR,LP
+         BE    FILLC
+         BAL   W,NEXTB
+         B     FILLA
+FILLC    CLC   FP,NULL
+         BE    ERRJ
+         L     BR,FP
+         B     WRITE
+FILLD    L     BR,BUFAD
+         TM    CSW+3,X'01'         TEST UNIT EXCEPTION
+         BZ    READ                CONTINUE READING
+         B     RWC                 GO TO READ NEXT MEMBER
+READ41   TM    CSW+3,X'1'          CHECK UNIT EXCEPTION
+         BZ    ERRB                I/O-ERROR
+         BAL   W,UPBR
+         EX    0,FILLER
+         BAL   W,NEXTB
+         B     *+4(WS)
+         L     BR,BUFAD
+         B     RWC
+READ42   L     1,CSW-1             FIND NEXT EXTENT
+         LA    1,0(1)
+         SH    1,=H'8'
+         ST    1,CSW-1
+         BP    READ42A
+READ42C  LA    15,IOB
+         BAL   W,EXT
+         L     1,CPR3
+         LA    BR,0(1)
+         SH    BR,HLPARM
+         C     BR,BUFAD
+         BE    READ
+         B     READ42B
+READ42A  SH    1,=H'8'
+         CLI   0(1),RCKDMT
+         BNE   READ42C
+         BAL   W,UPBR
+         LA    15,IOB
+         BAL   W,EXT
+         C     BR,BUFAD
+         BE    READ
+         BAL   W,NEXTB
+READ42B  B     *+4(WS)
+         B     FILL
+         B     WRITE
+READFIN  C     BR,BUFAD
+         BE    RWFIN
+         B     *+4(WS)
+         B     RWFIN
+         B     WRITE
+WADRAD   MVC   WAD-3(8),RAD-3
+         DROP  RE,BR
+         EJECT
+*              WRITE RECORDS TO EMPTY THE BUFFER
+         SPACE 2
+WRITE    ST    BR,WBUFEND          SAVE END OF BUFFERS
+         TS    ERASS               CHECK TRACK BALANCE VALID
+         BNZ   WRITEQ              ERASING NOT NECESSARY
+         MVC   WSTRTADD,=AL3(CPE)
+         MVC   CPE+1(3),=AL3(WAD)
+         BAL   W,WEXCP             ERASE REMAINDER OF TRACK
+         B     ERRASE
+         B     WRITER
+         B     ERRASE
+         B     ERRASE
+WRITER   LH    1,CPER+14           32 K
+         SH    1,WCSW+5            - RES COUNT
+         SH    1,TOLERANC          - DEVICE TOLERANCE
+         STH   1,TRBAL             IS TRACK BALANCE
+WRITEQ   MVC   DISKADD(3),NULL
+         L     BR,BUFAD            POINT TO FIRST BUFFER BLOCK
+         USING WBUF,BR
+         BAL   W,SEEK              SEEK TO WAD
+WRITET   MVC   DISKADD(L'BEX),BEX  SET EXTENT #
+         MVC   DISKADD+3(L'BWAD),BRAD
+         BAL   W,WADCONV           CALCULATE READ TTR
+         ST    0,VOLL
+         MVC   BRTTR,VOLL
+         BAL   W,NEXTB
+         BNE   WRITET
+         L     BR,BUFAD            POINT TO FIRST BUFFER
+WRITEL   LA    RENTA,CPW3-8
+         MVC   WWAD,WAD
+WRITEJ   LA    S,LPARM(BR)         POINT TO ID FIELD
+         ST    S,WCCW
+         MVI   WCCW,WCKD           SET OP CODE WRITE COUNT KEY DATA
+         IC    NP,WWAD+4
+         LA    NP,1(NP)
+         STC   NP,WWAD+4           INCR WRITE REC
+         MVC   BWAD,WWAD           UPDATE ID FIELD
+         MVC   DISKADD(3),WAD-3    SET # OF EXTENT
+         MVC   DISKADD+3(L'BWAD),BWAD
+         BAL   W,WADCONV           CONVERT WRITE ADDRESS TO TTR
+         ST    0,VOLL
+         MVC   BWTTR,VOLL
+         MVC   HALF,WCOUNT
+         LH    NP,HALF             SET COUNT IN ID FIELD
+         AH    NP,=H'8'
+         STH   NP,WCCW+6
+         LH    1,TRBAL             CHECK CAPACITY
+         SH    1,HALF
+         BL    WRITEP              NOT SUFFICIENT
+         LA    RENTA,8(RENTA)
+         MVC   0(8,RENTA),WCCW     STORE CCW IN CHAIN
+         LH    1,HALF
+         MH    1,MULT
+         LH    NP,DIV
+         SRL   1,0(NP)
+         AH    1,GAPLEN
+         LH    NP,TRBAL            CALCULATE TRACK BALANCE
+         SR    NP,1
+         STH   NP,TRBAL
+         BAL   W,NEXTB
+         BNE   WRITEJ
+         B     WRITEU
+WRITEP   C     RENTA,=A(CPW3-8)
+         BE    WRITE7FC
+WRITEU   NI    4(RENTA),B'10111111' STOP COMMAND CHAINING
+         MVC   WSTRTADD,=AL3(CPW1)
+         BAL   W,WEXCP             WRITE THE BUFFERS
+         B     WRITE7F
+         B     ERRC
+         B     WRITE42
+         B     ERRC
+WRITE42  EQU   *
+         MVC   TRBAL,MAXCOUNT
+         LA    15,WIOB
+         BAL   W,EXT               GET NEXT EXTENT
+         L     BR,CPW3
+         SH    BR,HLPARM
+         LA    BR,0(BR)
+         B     WRITEL
+WRITE7F  EQU   *
+         C     BR,WBUFEND
+         BE    WRITE7FA
+WRITE7FC MVC   TRBAL,MAXCOUNT      NEXT TRACK IS EMPTY
+         BAL   W,UPWAD             UPDATE WRITE ADD TO NEXT TRACK
+         B     WRITEL              WRITE NEXT TRACK
+WRITE7FA L     BR,WCSW-1
+         SH    BR,=H'8'
+         L     BR,0(BR)
+         LA    BR,0(BR)
+         SH    BR,HLPARM
+         TM    TRBAL,X'80'
+         BZ    UPDATE
+         BAL   W,UPWAD
+         MVC   TRBAL,MAXCOUNT
+         B     UPDATEF
+         EJECT
+*              UPDATE TTR'S AND NOTE LISTS
+         SPACE 2
+UPDATE   MVC   WAD,BWAD
+UPDATEF  L     BR,BUFAD
+         BAL   W,RSEEK             SEEK FOR RAD
+UPDATEA  MVC   VOLL+1(3),BRE       GET MEMBER POINTER
+         LA    NP,8
+         BAL   W,UPTTR             MEMBER AND ALIAS TTR'S
+         LA    NP,12
+         BAL   W,UPTTR             TEXT TTR
+         LA    NP,16
+         BAL   W,UPTTR             NOTE TTR
+         LA    NP,20
+         BAL   W,UPTTR             ADD. TTR
+         BAL   W,NEXTB
+         BNE   UPDATEA             LOOP FOR NEXT BUFFER
+         L     BR,BUFAD
+         MVC   OLDVOLL,NULL
+UPDATEH  MVC   VOLL+1(3),BRE
+         L     RE,VOLL
+         USING ENTRY,RE
+         MVI   MSTAT,X'FF'         INDICATE 'MEMBER MOVED'
+         L     R,EADD
+         IC    S,11(R)
+         N     S,=A(96)
+         CH    S,=H'64'
+         BL    UPDATER             NO NOTE LIST
+         IC    S,19(R)
+         SLA   S,2
+         BE    UPDATER             NO NOTE COUNT
+         STH   S,CPNR+6            SET NOTE COUNT IN CP TO READ NOTE LI
+         LR    0,S
+         GETMAIN R,LV=(0)
+         ST    1,ANOTE
+         MVC   CPNR+1(3),ANOTE+1
+         MVC   CPNWW+1(3),ANOTE+1
+         AR    S,1
+         ST    S,ENOTE             SAVE END OF NOTE LIST
+         MVC   DOUBLE,MBBCCHHR     SAVE RAD
+         MVC   FULL,16(R)          CONV. NOTE TTR GIVING RAD
+         MVI   FULL+3,0
+         L     0,FULL
+         BAL   W,TTRNCONV
+         MVC   MBBCCHHR,DISKADD
+         MVC   STRTADD,=AL3(CPN)
+         BAL   W,REXCP             READ NOTE LIST
+         B     UP7F
+         B     ERRK
+         B     ERRK
+         B     ERRK
+UP7F     MVC   MBBCCHHR,DOUBLE     RESTORE RAD
+         L     NP,ANOTE
+         SH    NP,=H'4'
+UPDATEC  LA    NP,4(NP)
+         C     NP,ENOTE            CHECK FOR END OF NOTE LIST
+         BE    UPDATED
+UPDATEE  CLC   BRTTR,0(NP)         COMPARE RTTR AND NOTE ENTRY
+         BL    UPDATEB             LO, NEXT BUFFER
+         BNE   UPDATEC             HI, NEXT NOTE ENTRY
+         MVC   0(L'BRTTR,NP),BWTTR EQUAL, REPLACE RTTR BY WTTR
+UPDATEB  BAL   W,NEXTB
+         BE    UPDATED
+         CLC   BRE,VOLL+1          CHECK FOR END OF THIS MEMBER
+         BE    UPDATEE
+UPDATED  MVC   CPNWW+6(2),CPNR+6   SET COUNT
+         MVC   WSTRTADD,=AL3(CPNW)
+         MVC   DOUBLE,WAD-3
+         MVC   WAD-3(8),DISKADD
+         BAL   W,WEXCP             WRITE NOTE LIST
+         B     UPDATEX
+         B     ERRNOTE
+         B     ERRNOTE
+         B     ERRNOTE
+UPDATEX  MVC   WAD-3(8),DOUBLE
+         LH    0,CPNR+6
+         L     1,ANOTE
+         FREEMAIN R,LV=(0),A=(1)
+         C     BR,WBUFEND
+         BE    UPDATEG
+UPDATER  BAL   W,NEXTB
+         BE    UPDATEG
+         CLC   BRE,OLDVOLL
+         BE    UPDATER
+         MVC   OLDVOLL,VOLL+1
+         B     UPDATEH
+UPDATEG  ST    BR,LP
+         L     BR,BUFAD
+UPDT     LR    NP,BR
+         BAL   W,NEXTB
+         C     BR,LP
+         BNE   UPDT
+         LR    BR,NP
+         MVC   VOLL+1(3),BRE
+         L     RE,VOLL
+         CLC   WCOUNT,NULL         CHECK EOF RECORD
+         L     BR,BUFAD
+         BNE   READ
+         LA    RE,LENTRY(RE)       POINT TO NEXT DIR ENTRY
+         C     RE,LASTENT          CHECK END OF DIRECTORY
+         BNE   RWCONT              CONTINUE READING OF THIS MEMBER
+         EJECT
+*              FINAL PROCESSING OF READ/WRITE
+         SPACE 2
+RWFIN    B     *+4(WS)
+         EX    0,WADRAD
+         MVC   FDAD,WAD-3          SAVE FULL DIRECT ACCESS ADDRESS
+         SR    1,1
+         MVC   PDSDCB+18(2),KEY    SET TRACK BALANCE NEGATIVE
+         IC    1,WAD-3
+         MVC   PDSDCB+5(8),NULL
+         STC   1,PDSDCB+5
+         SLL   1,4
+         A     1,ADEBPDS
+         MVC   PDSDCB+8(4),42(1)   END OF THIS EXTENT
+         MVI   PDSDCB+12,1
+         CLC   FDAD,PDSDCB+5
+         BL    RDWRX
+         MVC   PDSDCB+5(8),FDAD
+RDWRX    OI    PDSDCB+48,X'92'
+         MVI   DSN+44,C' '
+         MVC   OBUF(L'RM1),RM1
+         LA    1,DSN
+RDWRY    CLI   1(1),C' '
+         LA    1,1(1)
+         BNE   RDWRY
+         S     1,=A(DSN-1)
+         EX    1,MOVE
+         LA    1,OBUF+L'RM1(1)
+         MVC   0(L'RM2,1),RM2
+         BAL   W,PRINT
+         MVC   OBUF(L'RM6),RM6
+         L     0,SIORCOUN
+         BAL   W,DEC
+         MVC   OBUF+L'RM6(4),FULL
+         MVC   OBUF+L'RM6+4(L'RM7),RM7
+         L     0,SIOWCOUN
+         BAL   W,DEC
+         MVC   OBUF+L'RM6+4+5(4),FULL
+         BAL   W,PRINT
+         MVC   OBUF(L'RM11),RM11
+         MVC   DISKADD,FDAD
+         BAL   W,WADCONV
+         ST    3,HSAVE
+         LR    3,0
+         LA    NP,6
+         BAL   W,CHEX
+         MVC   OBUF+22(6),DOPPELT
+         IC    2,FDAD
+         IC    2,HEX(2)
+         STC   2,OBUF+L'RM11+1
+         L     3,HSAVE
+         BAL   W,PRINT
+         EJECT
+*              WRITE THE UPDATED DIRECTORY
+         SPACE 2
+WRITEDIR LA    0,256               SET DIRECTORY TTR TO 001
+         BAL   W,TTRNCONV
+         MVC   WAD-3(8),DISKADD    SET DISK ADDRESS
+         LH    NP,BLKC
+         LA    R,SECT              POINT TO SECTOR LIST
+WDIRF    L     S,0(R)              POINT TO A SECTOR
+         LA    I,17                SET MAX BLOCK COUNT
+WDIRD    ST    S,FULL
+         MVC   CPWDW+1(3),FULL+1   MOVE BLOCK ADDR TO CHANNEL PROGRAM
+         LH    1,RCODE
+         LTR   1,1
+         BNZ   WDIRG
+         MVI   PDSDCB+72,X'18'     RELEASE UNUSED SPACE
+WDIRG    MVC   WSTRTADD,=AL3(CPWD) CHANGE WIOB TO WRITE DIRECTORY
+         BAL   W,WEXCP             WRITE A BLOCK
+         B     WDIRA
+         B     WDIRI              NO REC FOUND, WRITE ON NEXT TRACK
+         B     ERRD
+         B     ERRD
+WDIRA    LA    S,256(S)            POINT TO NEXT BLOCK
+         BCT   NP,WDIRH
+         B     FREEDIR
+WDIRH    C     S,ENDBLOCK          CHECK FOR LAST BLOCK
+         BE    FREEDIR
+         LH    1,WAD+3             UPDATE R
+         LA    1,1(1)
+         STH   1,WAD+3
+         BCT   I,WDIRD             CHECK FOR LAST BLOCK
+         LA    R,4(R)              INCR SECTOR POINTER
+         B     WDIRF
+WDIRI    BAL   W,UPWAD
+         MVI   WAD+4,1             SET WAD TO NEXT TRACK
+         B     WDIRG              WRITE AGAIN
+FREEDIR  L     RE,FIRSTENT
+         USING ENTRY,RE
+         MVC   OBUF(L'RM15),RM15
+         BAL   W,PRINT
+         LA    WS,OBUF+10
+LIMB     L     R,EADD
+         MVC   1(8,WS),0(R)
+         MVI   0(WS),C' '
+         CLI   MSTAT,0
+         BE    LIMC
+         MVI   0(WS),C'*'
+         LH    1,WC
+         LA    1,1(1)
+         STH   1,WC
+LIMC     LA    WS,10(WS)
+         C     WS,=A(OBUF+110)
+         BNE   LIMA
+         BAL   W,PRINT
+         LA    WS,OBUF+10
+LIMA     LA    RE,LENTRY(RE)
+         LH    1,RDC               INCR MEMBER COUNT
+         LA    1,1(1)
+         STH   1,RDC
+         C     RE,LASTENT
+         BNE   LIMB
+         BAL   W,PRINT
+         MVC   OBUF(L'RM3),RM3
+         LH    0,RDC
+         BAL   W,DEC
+         MVC   OBUF+L'RM3(4),FULL
+         MVC   OBUF+L'RM3+4(L'RM4),RM4
+         LH    0,WC
+         BAL   W,DEC
+         MVC   OBUF+L'RM3+L'RM4+4(4),FULL
+         MVC   OBUF+L'RM3+L'RM4+8(L'RM5),RM5
+         BAL   W,PRINT
+         MVC   OBUF(L'RM16),RM16
+         LH    0,BUFNO
+         BAL   W,DEC
+         MVC   OBUF+6(3),FULL+1
+         LH    0,BUFMIN+2
+         BAL   W,DEC
+         MVC   OBUF+16(4),FULL
+         L     1,BUFL
+         A     1,BUFAD
+         S     1,BUFEND
+         A     1,SPARE
+         CVD   1,DOUBLE
+         UNPK  OBUF+52(6),DOUBLE+4(4)
+         OI    OBUF+57,X'F0'
+         BAL   W,PRINT
+         MVC   OBUF(L'RM12),RM12
+         LH    0,RCODE
+         BAL   W,DEC
+         MVC   OBUF+15(2),FULL+2
+         CLC   =CL2'00',FULL+2
+         BE    ENDPRINT
+         MVC   OBUF+19(L'RM13),RM13
+ENDPRINT BAL   W,PRINT
+FINISH   CLOSE (SYSPRINT)
+         CLOSE (PDSDCB)
+         CLOSE (SNAP)
+         OPEN  (DOOF,(OUTPUT))
+         MVC   DOOF+5(8),FDAD      RESTORE FULL ADDRESS
+         MVC   DOOF+18(2),TRBAL    RESTORE TRACK BALANCE
+         OI    DOOF+48,X'92'       SET TTRLL
+         CLOSE (DOOF)
+RETURN   L     13,4(13)
+         LH    15,RCODE
+         RETURN (14,12),RC=(15)
+         EJECT
+*              ERROR MESSAGE HANDLER
+         SPACE 2
+ERRG     LA    V,1(V)
+ERRF     LA    V,1(V)
+ERRA     LA    V,1(V)
+ERRL     LA    V,1(V)
+ERRI     LA    V,1(V)
+ERRH     LA    V,1(V)
+ERRD     LA    V,1(V)
+ERRJ     LA    V,1(V)
+ERRB     LA    V,1(V)
+ERRK     LA    V,1(V)
+ERRNOTE  LA    V,1(V)
+ERRE     LA    V,1(V)
+ERRASE   EQU   ERRE
+ERRC     LA    V,1(V)
+ERR      MVI   OBUF-1,X'40'
+         MVC   OBUF(L'OBUF),OBUF-1
+         SLL   V,2
+         STC   V,RCODE+1
+         LR    0,V
+         BAL   W,DEC
+         MVC   OBUF(5),=C'CONDS'
+         MVC   OBUF+5(2),FULL+2
+         L     W,LERRMSG-4(V)
+         L     1,ERRMSG-4(V)
+         EX    W,ERRMOVE
+         BAL   W,PRINT
+         SNAP  DCB=SNAP,ID=99,PDATA=(ALL)
+*                                  I/O ERROR WTO FOR MESSAGES
+*                                  1,2,3,4,5,7,AND 11
+         LA    15,IOB-IOB          IOB
+         CH    V,=H'16'
+         BL    EWIOB
+         CH    V,=H'28'
+         BNE   NOWERR
+EWIOB    LA    15,WIOB-IOB         WIOB
+WTOX     SR    R,R
+         IC    R,M(15)
+         SLL   R,4
+         A     R,ADEBPDS
+         L     S,32(R)             UCBAD EXTENT M
+         MVC   WTOA+63(6),28(S)    VOLSER
+         L     3,24(S)
+         LA    NP,6
+         BAL   W,CHEX
+         MVC   WTOA+39(6),DOPPELT  ADD SENSE INF
+         LH    3,22(S)
+         ST    3,FULL
+         SLL   3,16
+         LA    NP,4
+         BAL   W,CHEX
+         MVC   WTOA+35(4),DOPPELT  FIRST TWO SENSE BYTES
+         MVC   WTOA+10(3),13(S)    UNIT NAME
+         L     1,CSW-1(15)
+         SH    1,=H'8'
+         L     3,0(1)
+         LA    NP,2
+         BAL   W,CHEX
+         MVC   WTOA+27(2),DOPPELT  COMMAND
+         LH    3,CSW+3(15)
+         SLL   3,16
+         LA    NP,4
+         BAL   W,CHEX
+         MVC   WTOA+30(4),DOPPELT  CSW 2 BYTES
+         L     3,M
+         LA    NP,8
+         BAL   W,CHEX
+         MVC   WTOA+46(8),DOPPELT  MBBC
+         L     3,M+4
+         BAL   W,CHEX
+         MVC   WTOA+54(8),DOPPELT  CHHR
+         L     1,16
+         L     1,0(1)
+         L     1,4(1)
+         L     1,12(1)
+         MVC   WTOA+70(8),0(1)     JOBNAME
+         SR    W,W
+         SR    1,1
+         IC    1,CSW+4(15)
+         SLL   1,16
+         AH    1,FULL+2
+         N     1,BIMU
+         SLL   1,12
+         BZ    WTO
+LOOPA    LTR   1,1
+         BM    EREADY
+         LA    W,1(W)
+         SLL   1,1
+         B     LOOPA
+EREADY   SLL   W,2
+         L     W,ERAD(W)
+         MVC   WTOA+14(12),0(W)
+        CNOP  0,4
+WTO      WTO   'CONDS99I  UUU,   I/O ERROR,CC,CSW2,SENSESENSE,MMBBBBCCC*
+               CHHHHRR,VOLUME,JOBNAME '
+WTOA     EQU   WTO+8
+NOWTO    CLI   RCODE+1,28
+         BE    FREEDIR             NO HOPEFULL MESSAGE
+         BH    RETURN
+         CLI   RCODE+1,24
+         BE    RETURN
+         B     *+4(WS)
+         B     WRITEDIR
+         CLI   RCODE+1,20
+         BNE   HOPE
+         L     1,CSW-1
+         SH    1,=H'8'
+SREAD    CLI   0(1),RCKDMT
+         BE    RFOUND
+         LA    1,8(1)
+         B     SREAD
+RFOUND   MVC   WBUFEND+1(3),1(1)
+         MVI   ONLY,X'FF'
+HOPE     MVC   OBUF(L'RM8),RM8
+         BAL   W,PRINT
+         MVC   OBUF(L'RM9),RM9
+         MVC   VOLL,NULL
+         L     BR,BUFAD
+         USING WBUF,BR
+         LA    15,OBUF+L'RM9
+LOOP     CLC   BRE,VOLL+1
+         BE    OLDMEM
+         MVC   VOLL+1(3),BRE
+         L     R,VOLL
+         L     S,0(R)
+         LTR   S,S
+         BP    NOW
+         MVC   0(8,15),0(S)
+         MVI   8(15),C','
+         LA    15,9(15)
+NOW      CLI   ONLY,X'FF'
+         BNE   OLDMEM
+         C     15,=A(OBUF+L'RM9)
+         BE    STOPA
+         B     STOP
+OLDMEM   BAL   W,NEXTB
+         BL    LOOP
+STOP     BCTR  15,0
+STOPA    MVC   0(L'RM10,15),RM10
+         BAL   W,PRINT
+         B     WRITEDIR
+NOWERR   CH    V,=H'44'
+         BE    WTOX
+         CH    V,=H'20'
+         BE    WTOX
+         B     NOWTO
+MOVE     MVC   OBUF+L'RM1(1),DSN
+ERRMOVE  MVC   OBUF+8(1),0(1)
+         EJECT
+*              CONSTANTS FOR ERROR MESSAGE HANDLER
+         SPACE 2
+ERRMSG   DC    A(MSG1)
+         DC    A(MSG2)
+         DC    A(MSG3)
+         DC    A(MSG4)
+         DC    A(MSG5)
+         DC    A(MSG6)
+         DC    A(MSG7)
+         DC    A(MSG8)
+         DC    A(MSG9)
+         DC    A(MSG10)
+         DC    A(MSG11)
+         DC    A(MSG12)
+         DC    A(MSG13)
+LERRMSG  DC    A(L'MSG1-1)
+         DC    A(L'MSG2-1)
+         DC    A(L'MSG3-1)
+         DC    A(L'MSG4-1)
+         DC    A(L'MSG5-1)
+         DC    A(L'MSG6-1)
+         DC    A(L'MSG7-1)
+         DC    A(L'MSG8-1)
+         DC    A(L'MSG9-1)
+         DC    A(L'MSG10-1)
+         DC    A(L'MSG11-1)
+         DC    A(L'MSG12-1)
+         DC    A(L'MSG13-1)
+ERAD     DC    A(ERT1,ERT2,ERT3,ERT4,ERT5)
+         DC    A(0)
+         DC    A(ERT6,ERT7,ERT8,ERT9)
+         DC    A(0)
+         DC    A(ERT10)
+         DC    A(0,0,0,0)
+         DC    A(ERT11)
+         DC    A(0)
+         DC    A(ERT12)
+BIMU     DC    XL4'0FBD0A'
+        EJECT
+*              MESSAGES
+         SPACE 2
+RM1      DC    C'DATA SET '
+RM2      DC    C' IS NOW CONDENSED.'
+RM3      DC    C'OF '
+RM4      DC    C' MEMBERS TOTAL, '
+RM5      DC    C' MEMBERS HAVE BEEN MOVED'
+RM6      DC    C'NUMBER OF READ- AND WRITE-SIO''S FOR MEMBER RECORDS WA*
+               S '
+RM7      DC    C' AND XXXX RESPECTIVELY.'
+RM8      DC    C'***** TO REFRESH THE DATA SET RESTORE'
+RM9      DC    C'***** MEMBER=('
+RM10     DC    C') *****'
+RM11     DC    C'TTR OF LAST RECORD IS XXXXXX IN EXTENT'
+RM12     DC    C'RETURN CODE IS XX. HUMMEL HUMMEL'
+RM13     DC    C'MORS MORS    '
+RM15     DC    C'COMPLETE LIST OF MEMBERS, MEMBERS MOVED ARE MARKED BY *
+               AN ASTERISK'
+RM16     DC    C'BUFNO=XXX, BUFL=XXXX, UNUSED REGION/PARTITION SPACE=XX*
+               XXXX BYTES'
+TEXT1    DC    C'CONDENSE VERSION 5  UPDATED 8/5/70 '
+TEXT2    DC    C'DATE YYDDD TIME'
+DIRM1    DC    C'OF XXX DIRECTORY BLOCKS ALLOCATED, XXX ARE USED'
+MSG1     DC    C'I/O ERROR WHILE WRITING A BLOCK'
+MSG2     DC    C'I/O ERROR WHILE ERASING A TRACK'
+MSG3     DC    C'I/O ERROR WHILE WRITING A NOTE LIST'
+MSG4     DC    C'I/O ERROR WHILE READING A NOTE LIST'
+MSG5     DC    C'I/O ERROR WHILE READING A BLOCK'
+MSG6     DC    C'LACK OF CORE SPACE, RESUBMIT THE JOB WITHIN A LARGER RC
+               EGION'
+MSG7     DC    C'***** SORRY, YOUR DATA SET HAS BEEN DESTROYED BECAUSE C
+               OF AN I/O ERROR WHILE WRITING THE DIRECTORY'
+MSG8     DC    C'REQUEST REJECTED - THAT''S TOO DANGEROUS'
+MSG9     DC    C'JOB TERMINATED - TOO MANY MEMBERS IN DIRECTORY'
+MSG10    DC    C'REQUEST REJECTED - DISP IS NOT OLD'
+MSG11    DC    C'I/O ERROR WHILE READING THE DIRECTORY'
+MSG12    DC    C'REQUEST REJECTED - UNIT IS NOT A DISK'
+MSG13    DC    C'REQUEST REJECTED - DSORG IS NOT PO'
+ERT1     DC    CL12'CHAN DATA CK'
+ERT2     DC    CL12'CHAN CTL CK'
+ERT3     DC    CL12'INTF CTL CK'
+ERT4     DC    CL12'CHAIN CHECK'
+ERT5     DC    CL12'CMD REJECT'
+ERT6     DC    CL12'BUS OUT CK'
+ERT7     DC    CL12'EQUIP CHECK'
+ERT8     DC    CL12'DATA CHECK'
+ERT9     DC    CL12'OVERRUN'
+ERT10    DC    CL12'SEEK CHECK'
+ERT11    DC    CL12'NO REC FOUND'
+ERT12    DC    CL12'MISSING A.M.'
+         EJECT
+*              CHANNEL COMMAND OPERATION AND FLAG EQUATES
+         SPACE 2
+ERAS     EQU   17                  ERASE
+NOP      EQU   X'03'               NO OPERATION
+RD       EQU   6                   READ DATA
+RCKDMT   EQU   158                 READ COUNT&KEY&DATA, MULTI-TRACK
+RCMT     EQU   146                 READ COUNT, MULTI-TRACK
+RKD      EQU   14                  READ KEY&DATA
+SHA      EQU   57                  SEARCH HOME ADDRESS
+SIDEQ    EQU   49                  SEARCH ID EQUAL
+SKHIEQ   EQU   105                 SEARCH KEY HIGH OR EQUAL
+TIC      EQU   8                   TRANSFER IN CHANNEL
+WCKD     EQU   29                  WRITE COUNT&KEY&DATA
+WD       EQU   5                   WRITE DATA
+SIT      EQU   X'1000'             SUPPRESS INFORMATION TRANSFER
+SLI      EQU   X'2000'             SUPPRESS INCORRECT LENGTH INDICATION
+KC       EQU   X'4000'             COMMAND CHAINING
+DC       EQU   X'8000'             DATA CHAINING
+         SPACE 5
+*              REGISTER USAGE
+         SPACE 2
+W        EQU   14
+RENTA    EQU   12
+RE       EQU   11
+RBYTEC   EQU   10
+RC       EQU   10
+NP       EQU   RC
+V        EQU   9                   ERROR REGISTER
+RBLKA    EQU   8
+WS       EQU   8
+H        EQU   7                   BASE REGISTER 2
+R        EQU   6
+RSECT    EQU   6
+RBLKI    EQU   5
+S        EQU   5
+BASE     EQU   4
+BR       EQU   3
+RCOMP    EQU   3
+RINCR    EQU   2
+I        EQU   2
+         SPACE 5
+*              CHANNEL PROGRAM TO READ A DIRECTORY BLOCK
+         SPACE 2
+CPD      CKW   SIDEQ,CCHHR,KC,5    SEARCH ID EQUAL
+         CKW   TIC,CPD,0,0         TIC
+CPDRC    CKW   RCMT,NEWCNT,KC,8    READ COUNT, MULTI-TRACK
+CPDSK    CKW   SKHIEQ,KEY,KC,8     SEARCH KEY HIGH OR EQUAL
+         CKW   TIC,CPDRC,0,0       TIC
+CPDRD    CKW   RD,0,0,256          READ DATA
+         SPACE  5
+*              CHANNEL PROGRAM TO WRITE A DIRECTORY BLOCK
+         SPACE 2
+CPWD     CKW   SIDEQ,WAD,KC,5      SEARCH ID EQ
+         CKW   TIC,CPWD,0,0        TIC
+CPWDW    CKW   WD,0,0,256          WRITE DATA
+         SPACE 5
+*              CHANNEL PROGRAM TO ERASE A TRACK
+         SPACE 2
+CPE      CKW   SIDEQ,SIOB+35,KC,5  SEARCH ID EQUAL
+         CKW   TIC,CPE,0,0         TIC
+CPER     CKW   ERAS,WWAD,DC+SLI,8
+         CKW   ERAS,CONDENSE,SLI,32767
+         SPACE 5
+*              READ NOTE LIST
+         SPACE 2
+CPN      CKW   SIDEQ,RAD,KC,5
+         CKW   TIC,CPN,0,0
+CPNR     CKW   RD,0,0,0
+         SPACE 5
+*              WRITE NOTE LIST
+         SPACE 2
+CPNW     CKW   SIDEQ,WAD,KC,5
+         CKW   TIC,CPNW,0,0
+CPNWW    CKW   WD,0,0,0
+         SPACE 5
+*              DUMMY SEARCH TO READ
+         SPACE 2
+CPSR     CKW   SIDEQ,SIOB+35,KC,5
+         CKW   TIC,CPSR,0,0
+         CKW   RD,CPSR,SLI+SIT,1
+         SPACE 5
+*              DUMMY SEARCH TO WRITE
+         SPACE 2
+CPS      CKW   SIDEQ,SIOB+35,KC,5
+         CKW   TIC,CPS,0,0         TIC
+         CKW   RD,CPS,SLI+SIT,1
+         EJECT
+*              CONSTANTS, CONTROL BLOCKS, AND AUXILIARY STORAGE
+         SPACE 2
+NEWCNT   DC    XL8'0'
+KEY      DC    XL8'0'
+DISKADD  DC    XL8'0'
+NULL     DC    XL8'0'
+FDAD     DS    D
+DOUBLE   DS    D
+DOPPELT  EQU   DOUBLE
+HEX      DC    C'0123456789ABCDEF'
+RCCW     CKW   RCKDMT,0,KC+SLI,0
+WCCW     CKW   WCKD,0,KC,0
+FP       DS    A
+LP       DS    A
+WSAVE    DS    F
+ECB      DC    XL4'FFFFFFFF'
+WECB     DC    XL4'FFFFFFFF'
+SECB     DC    XL4'FFFFFFFF'
+XECB     DS    F
+ENOTE    DS    F
+FILLER   DS    F
+WBUFEND  DS    F
+BUFMIN   DS    F
+BUFMAX   DS    F
+BUFAD    DS    F
+BUFL     DS    F
+BUFEND   DS    F
+ENDBLOCK DS    F
+ESECT    DS    F
+FULL     DS    F
+ANOTE    DS    F
+SPAREMIN DC    F'8'
+         DC    F'1024000'
+SPAREADD DC    F'0'
+SPARELEN DC    F'0'
+SPARE    DC    F'0'
+TTRS     DC    F'0'
+VOLL     DC    F'0'
+SIORCOUN DC    F'0'
+SIOWCOUN DC    F'0'
+ENDENT   DS    F
+SECT     DC    A(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)
+FIRSTENT DS    A
+LASTENT  DS    A
+EXLST    DC    X'87'
+         DC    AL3(JFCB)
+JFCB     DC    XL176'0'
+DSN      EQU   JFCB
+HSAVE    EQU   DSN+120
+         ORG   DSN+148
+         DS    C
+OBUF     DC    CL132' '
+ONLY     DC    X'0'
+SAVE     DS    18F
+         EJECT
+IOB      DS    CL40                READ IOB
+         ORG   IOB
+FLAGS1   DC    B'01000010'
+FLAGS2   DC    X'0'
+SENSE    DC    H'0'
+ECBCODE  DC    X'0'
+ECBADD   DC    AL3(ECB)
+FLAGS3   DC    X'0'
+CSW      DC    XL7'0'
+SIOCC    DC    X'0'
+STRTADD  DC    AL3(CPD)
+         DC    X'0'
+DCBADD   DC    AL3(PDSDCB)
+REPOS    DC    X'0'
+RESTADD  DC    AL3(0)
+BLCOUNT  DC    H'0'
+ERRCOUNT DC    H'0'
+MBBCCHHR DS    CL8
+         ORG   MBBCCHHR
+M        DC    X'0'
+BBCCHHR  DS    CL7
+         ORG   BBCCHHR
+BB       DC    XL2'0'
+CCHHR    DS    CL5
+RAD      EQU   CCHHR
+         ORG   CCHHR
+CC       DC    XL2'00'
+HH       DC    XL2'00'
+REC      DC    X'0'
+         SPACE 5
+WIOB     DS    CL40                WRITE IOB
+         ORG   WIOB
+WFLAGS1  DC    B'11000010'
+WFLAGS2  DC    X'0'
+WSENSE   DC    H'0'
+WECBCODE DC    X'0'
+WECBADD  DC    AL3(WECB)
+WFLAGS3  DC    X'0'
+WCSW     DC    XL7'0'
+WSIOCC   DC    X'0'
+WSTRTADD DC    AL3(CPW1)
+         DC    X'0'
+WDCBADD  DC    AL3(PDSDCB)
+WREPOS   DC    X'0'
+WRESTADD DC    AL3(0)
+WBLCOUNT DC    H'0'
+WERRCOUN DC    H'0'
+WMBB     DC    XL3'0'
+WAD      DS    CL5
+SIOB     DC    40X'FF'
+         SPACE 5
+WORD     DC    H'0'
+MINSIZE  DC    H'0'
+         DC    H'1'
+RCODE    DC    H'0'
+         DC    H'2'
+TRBAL    DC    H'0'
+         DC    H'3'
+RDC      DC    H'0'
+WC       DC    H'0'
+HALF     DC    H'0'
+BUFNO    DS    H
+BLKSIZE  DS    H
+BLKC     DC    H'0'
+MAXCOUNT DC    H'7294'
+TOLERANC DC    H'422'
+GAPLEN   DC    H'101'
+MULT     DC    H'2137'
+DIV      DC    H'11'
+ETRACK   DC    AL2(20*256)
+BLOCK    DC    H'17'
+MAX2311  DC    H'3625'
+         DC    H'215'
+         DC    H'61'
+         DC    H'537'
+         DC    H'9'
+         DC    AL2(10*256)
+         DC    H'10'
+DEV2311  EQU   *-MAX2311
+LDSECT   DC    AL2(LENTRY)
+HLPARM   DC    AL2(LPARM)
+HLPARM8  DC    AL2(LPARM+8)
+ERASS    DC    X'0'
+WWAD     DS    CL5
+         DC    X'0'
+         DC    X'7FFF'
+OLDVOLL  DC    XL3'0'
+         SPACE 5
+EX       RDJFCB (PDSDCB,(UPDAT)),MF=L
+SNAP     DCB   DDNAME=SYSSNAP,DSORG=PS,RECFM=VBA,MACRF=(W),            *
+               LRECL=125
+         SPACE 5
+DOOF     DCB   DDNAME=SYSLIB,DEVD=DA,MACRF=(W),DSORG=PO
+         SPACE 2
+PDSDCB   DCB   DDNAME=SYSLIB,DEVD=DA,MACRF=(E),DSORG=PO,               *
+               EXLST=EXLST,CENDA=WZ
+ADEBPDS  EQU   PDSDCB+44
+         SPACE 2
+         DC    H'0'                SET TO 10 BY WRITEDIR FOR CH END APP
+         SPACE 2
+SYSPRINT DCB   DDNAME=SYSPRINT,DEVD=DA,DSORG=PS,MACRF=(W),RECFM=FA,    *
+               BLKSIZE=133,LRECL=133
+         SPACE 5
+*              DUMMY SECTIONS FOR BUFFER AND ENTRY TABLE
+         SPACE 2
+WBUF     DSECT
+BRE      DS    CL3                 POINTER TO ENTRY LIST
+BEX      DS    C                   EXTENT #
+BRTTR    DS    CL3                 TTR OF RECORD READ
+BWTTR    DS    CL3                 TTR OF RECORD TO BE WRITTEN
+LPARM    EQU   *-WBUF
+BWAD     DS    CL5                 WRITE ADDRESS
+BRAD     EQU   BWAD                READ ADDRESS
+BWKEYL   DS    C                   KEY LENGTH
+WCOUNT   DS    CL2
+WDATA    DS    0C
+         SPACE 2
+ENTRY    DSECT
+MSTAT    DS    C                   MOVE STATUS
+         ORG   MSTAT
+EADD     DS    A                   ENTRY ADDRESS
+LENTRY   EQU   *-ENTRY
+         EJECT
+*              LITERALS
+         SPACE 2
+CONDENSE CSECT
+         LTORG
+         EJECT
+*              CHANNEL PROGRAM TO WRITE AND VERIFY AMEMBER
+         SPACE 2
+         DS    0D
+CPW1     CKW   SHA,WAD,KC,4        SEARCH HOME ADDRESS
+         CKW   TIC,CPW1,0,0        TIC
+CPWW     CKW   SIDEQ,WAD,KC,5      SEARCH ID EQUAL
+CPW2     CKW   TIC,CPWW,0,0        TIC
+CPW3     DS    70D
+         SPACE 5
+*              CHANNEL PROGRAM TO READ A BLOCK
+         SPACE 2
+CPR1     CKW   SIDEQ,RAD,KC,5      SEARCH ID EQUAL
+CPR2     CKW   TIC,CPR1,0,0        TIC
+CPR3     DS    128D
+         END   CONDENSE

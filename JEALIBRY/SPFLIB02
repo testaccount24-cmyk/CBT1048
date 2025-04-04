@@ -1,0 +1,492 @@
+//JEASPF02 JOB (1330,5),'J ABBEY',CLASS=N,NOTIFY=JEA
+//SPFLIB02 EXEC LIBRARYN,FILE=TESTLIB,BLKSIZE=800
+-OPT NOLIST,EXEC
+-DLM SPFLIB02,SPF2
+-ADD SPFLIB02,SPF2
+-PGMR JEABBEY
+-DESC SPF/LIBRARYN INTERFACE - SPFLIB02
+***********************************************************************
+*
+*                           S P F L I B 0 2
+*
+*            THIS ROUTINE IS INVOKED BY THE HIGH LEVEL DRIVER WHEN THE
+*        CALLER WISHES TO RETRIEVE A MODULE FROM LIBRARYN INTO A NORMAL
+*        O.S. FILE FOR ACCESS BY SPF. ON ENTRY TO THIS ROUTINE,
+*        REGISTER 1 WILL CONTAIN THE ADDRESS OF THE COMMON WORK AREA.
+*            THE ROUTINE OPERATES BY PERFORMING THE FOLLOWING STEPS:
+*
+*        1)    ISSUE A MENU TO THE CALLER AND RETRIEVE ALL THE
+*              NECESSARY DATA TO PROCESS THE REQUEST. THE SPF MENU
+*              HANDLERS 'MHA' AND 'MERR' ARE USED TO PROCESS THE
+*              SCREEN. (SEE COMMENTS IN 'SPFLIB01').
+*        2)    ASCERTAIN THAT ALL REQUIRED FIELDS ARE ENTERED.
+*        3)    CALL 'SPFLIB06' TO ALLOCATE THE LIBRARYN MASTER FILE.
+*        4)    CALL 'MASTOPN' (FAIR ROUTINE) TO OPEN THE LIBRARYN.
+*        5)    CALL 'MASTMOD' (FAIR ROUTINE) TO RETRIEVE ALL THE
+*              CONTROL DATA FOR THE REQUESTED MODULE (PASSWORD ETC).
+*        6)    CALL 'SPFLIB07' TO BUILD THE DATA SET NAME OF THE
+*              RECEIVING FILE AND ALLOCATE IT
+*        7)    READ THE CONTROL FILE FOR A MATCHING ENTRY AND DETERMINE
+*              IF THE REQUEST HAS ANY LOGICAL ERRORS SUCH AS DUPLICATE
+*              RETRIEVAL. IF ANY EXIST, AN ERROR MENU IS DISPLAYED
+*              GIVING THE USER OPPORTUNITY TO ABORT THE REQUEST.
+*        8)    COPY ACROSS THE DATA TO THE RECEIVING FILE USING THE
+*              FAIR ROUTINE 'MASTRCD' TO RETRIEVE RECORDS FROM LIBRARYN
+*        10)   UPDATE THE CONTROL FILE ACCORDING TO THE RESULTS OF THE
+*              OPERATION.
+*        11)   CLOSE AND FREE ALL OPEN AND /OR ALLOCATED FILES.
+***********************************************************************
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING
+***********************************************************************
+         SPACE 2
+SPFLIB02 ZCSECT
+         LR    REG10,REG1          LOAD ADDRESS OF COMMON WORK AREA
+         USING DATAAREA,REG10      AND GET ADDRESSABILITY FOR IT
+         L     REG8,LTDADDR        LOAD ADDRESS OF THE LTD
+         EJECT
+***********************************************************************
+*        GET HOLD OF DATE AND TIME
+***********************************************************************
+         SPACE 2
+         UT458
+         EJECT
+***********************************************************************
+*        ASK HIM TO ENTER ALL RELEVANT DETAILS
+***********************************************************************
+         SPACE 2
+RETRASK1 DS    0H
+         L     REG15,X'7C'(REG8)   ADDRESS OF THE PTC
+         L     REG15,X'104'(REG15) ADDRESS OF THE MHA ROUTINE
+         CALL  (15),((8),SCREEN2,ZERO,LIBFNAME,PGMNAME,PROJECT,LIBRARY,X
+               TYPE,MEMBER,DSNAME,VOLSER),VL,MF=(E,CALLLIST)
+RETRASK2 EQU   *
+         TM    X'C6'(REG8),X'80'   END KEY PRESSED ?
+         BO    RETREXIT            YES. RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        CHECK WE HAVE ENOUGH DATA TO AVOID WASTING TIME
+***********************************************************************
+         SPACE 2
+         CLI   LIBFNAME,C'?'       LIBRARYN NAME BLANK ?
+         BE    DATALOST            YES. GO AND MOAN AT HIM
+         CLI   PGMNAME,C'?'        LIBRARYN MEMBER NAME ?
+         BE    NOPGMNAM            NONE. GO ASK FOR IT
+         LA    REG15,7             ASSUME CURSOR FOR 'OTHER' DSN
+         ST    REG15,DSNCURS       AND SET FOR PICKUP BY ERROR RTNS
+         CLI   DSNAME,C' '         'OTHER' DATA SET CODED
+         BNE   GOTODSN             YES. LEAVE DSNAME CHECKING
+         LA    REG15,3             RESET CURSOR FOR NORMAL SPF NAME
+         ST    REG15,DSNCURS       AND SET FOR PICKUP BY ERROR RTNS
+         CLI   PROJECT,C'?'        SPF LIBRARY NAME PART 1
+         BE    DATALST2            MISSING. GO TELL HIM
+         LA    REG15,4             LOAD PARAMETER NO FOR CURSOR
+         CLI   LIBRARY,C'?'        SPF LIBRARY NAME PART 2
+         BE    DATALST2            MISSING. GO TELL HIM
+         LA    REG15,5             LOAD PARAMETER NO FOR CURSOR
+         CLI   TYPE,C'?'           SPF LIBRARY NAME PART 3
+         BE    DATALST2            MISSING. GO TELL HIM
+GOTODSN  EQU   *
+         EJECT
+***********************************************************************
+*        ALLOCATE THE LIBRARYN FILE
+***********************************************************************
+         SPACE 2
+         LR    REG1,REG10          LOAD ADDRESS OF COMMON AREA
+         CALL  SPFLIB06            INVOKE THE UTILITY FUNCTION
+         LTR   REG15,REG15         ALLOCATION WAS SUCCESSFUL ?
+         BNZ   NOLIBRYN            NO. LIBRARYN MASTER UNAVAILABLE
+ALLCGOOD EQU   *
+         OI    WRKFLAG1,MASTALLC   SIGNAL MASTER IS ALLOCATED
+         LA    REG2,MSTOPNRC       LOAD ADDRESS OF RETURN CODE AREA
+         CALL  MASTOPN,(0,(2)),VL,MF=(E,CALLLIST) CALL 'FAIR' TO OPEN
+         CLI   MSTOPNRC,C'0'       TEST FOR GOOD OPEN OF THE FILE
+         BNE   NOLIBRYN            NO. CANNOT OPEN IT
+         OI    WRKFLAG1,MASTOPEN   SIGNAL MASTER IS OPEN
+         EJECT
+***********************************************************************
+*        EXTRACT THE DETAILS OF THE REQUESTED MODULE
+***********************************************************************
+         SPACE 2
+         CALL  MASTMOD,(PGMNAME,MSTMODRC,MASTDATA),VL,MF=(E,CALLLIST)
+         CLI   MSTMODRC,C'1'       WAS MODULE PRESENT ON FILE
+         BE    BADPNAME            NO. GO TELL HIM AND ASK AGAIN
+         CLI   MSTMODRC,C'0'       OTHERWISE WAS IT GOOD ?
+         BNE   LIBERROR            NO. SOME KIND OF OPEN ERROR
+         EJECT
+***********************************************************************
+*        INITIALISE THE CONTROL RECORD
+***********************************************************************
+         SPACE 2
+         MVC   CTLLIBNM,LIBFNAME   SET UP THE IDENTIFYING FIELDS
+         MVC   CTLPGMNM,PGMNAME    IN THE CONTROL RECORD MAPPING AREA
+         MVC   CTLPSSWD,LMPASSWD   SO THAT A DIRECT COMPARE CAN BE MADE
+         L     REG1,16             LOAD ADDRESS OF THE CVT
+         L     REG1,0(REG1)        ADDRESS OF TCB WORDS
+         L     REG1,4(REG1)        ADDRESS OF CURRENT TCB
+         L     REG1,12(REG1)       ADDRESS OF THE TIOT
+         MVC   CTLTSOID,0(REG1)    GET THE TSO USER ID
+         MVC   CTLDATE,UTMMDDYY    GET DATE OF THIS REQUEST
+         MVC   CTLUPDTE,LMDTEUPD   GET DATE OF LAST UPDATE
+         MVI   CTLFLAGS,CTLFRETR   SET THE LOGIC FLAG
+         EJECT
+***********************************************************************
+*        CHECK TO SEE IF MODULE HAS ALREADY BEEN RETRIEVED
+***********************************************************************
+         SPACE 2
+         LA    REG2,CNTLFILE       ADDRESS OF CONTROL FILE DCB
+         OPEN  ((2),INPUT)         OPEN THE CONTROL FILE
+         OI    WRKFLAG4,CNTLOPEN   SIGNAL THAT CONTROL FILE OPEN
+         LA    REG1,NOMATCH        ADDRESS OF END OF FILE EXIT
+         ST    REG1,DCBEOF         AND SET UP EOF POINTER
+CNTLLOOP EQU   *
+         GET   CNTLFILE            READ FIRST RECORD ON CONTROL FILE
+         TM    CTLFLAGS-CNTLREC(REG1),CTLFFREE FREE RECORD ?
+         BZ    *+12                NO. CARRY ON
+         OI    WRKFLAG4,SPACEAV    SPACE IS AVAILABLE ON THE FILE
+         B     CNTLLOOP            GO READ NEXT RECORD
+         CLC   CNTLREC(20),0(REG1) MATCHING RECORD
+         BNE   CNTLLOOP            NO. KEEP READING
+         MVC   CNTLREC(CTLRECL),0(REG1) COPY THAT INTO WORK AREA
+         OI    CTLFLAGS,CTLFMULT   SIGNAL MULTIPLE OVERLAPPING RETRIEVE
+         BAL   REG11,WARNHIM       OTHERWISE WARN HIM OF CONDITION
+NOMATCH  EQU   *
+         EJECT
+***********************************************************************
+*        ALLOCATE THE RECEIVING O.S. DATA SET
+***********************************************************************
+         SPACE 2
+         LR    REG1,REG10          LOAD ADDRESS OF THE COMMON AREA
+         CALL  SPFLIB07            CALL SERVICE ROUTINE
+         B     *+4(REG15)          TAKE APPROPRIATE ROUTING
+         B     ALL2GOOD            ALLOCATION WAS SUCCESSFUL
+         B     BADOSDSN            DATA SET CANNOT BE ALLOCATED
+         B     BADDSORG            DSORG IS NOT VALID
+         B     MEMANDPS            MEMBER NAME CODED WITH SEQUENTIAL
+ALL2GOOD EQU   *
+         OI    WRKFLAG2,OSDSALLC   SIGNAL OS DATA SET IS ALLOCATED
+         EJECT
+***********************************************************************
+*        TEST TO SEE IF 'OPEN' HAS A CHANCE TO SUCCEED
+***********************************************************************
+         SPACE 2
+         LH    REG2,OSOUTPUT+X'52' GET DEFAULT BLOCKSIZE
+         CH    REG2,DS1LRECL       OUTPUT FILE HAS SAME
+         BNE   BADATTRB            NO. GO TELL OF ERROR
+         TM    DS1RECFM,X'80'      FIXED LENGTH RECORDS ?
+         BNO   BADATTRB            NO. GO SHOUT AT HIM
+         NC    DS1BLKL,DS1BLKL     IS A BLOCKSIZE PROVIDED
+         BNZ   YESBLKLS            YES. BLOCKSIZE AVAILABLE
+         STH   REG2,OSOUTPUT+X'3E' OTHERWISE PUT ONE IN THE DCB
+YESBLKLS EQU   *
+         EJECT
+***********************************************************************
+*        CHECK FOR NON-EMPTY OUTPUT FILE
+***********************************************************************
+         SPACE 2
+         MVC   SHOWREC1,SPACES     INITIALISE SHORT DISPLAY
+         MVC   SHOWREC2,SPACES     INITIALISE SHORT DISPLAY
+         MVC   SHOWREC3,SPACES     INITIALISE SHORT DISPLAY
+         LA    REG1,OPENABND       ADDRESS OF OPEN ABEND PROCESSOR
+         STCM  REG1,7,DCBABEND+1   AND SAVE IN DCB EXIT LIST
+         LA    REG1,ITSNULL        EXPECT TO GO THERE FIRST READ
+         ST    REG1,DCBEOF         AND SET IT UP AS AN EODAD
+         LA    REG2,OSOUTPUT       ADDRESS OF THE DCB
+         OPEN  ((2),INPUT),TYPE=J  OPEN THE FILE FOR A QUICK READ
+         TM    OSOUTPUT+48,X'10'   DID OPEN SUCCEED
+         BZ    AITSNULL            NO. ASSUME MEMBER NOT FOUND FOR NOW
+         OI    WRKFLAG2,OSDSOPEN   SIGNAL OS FILE IS OPEN
+         GET   OSOUTPUT            READ A RECORD
+         MVC   SHOWREC1,0(REG1)    PREPARE TO SHOW IT TO HIM
+         LA    REG1,NOTNULL        GET A NEW EODAD ADDRESS
+         ST    REG1,DCBEOF         AND SETUP A NEW EOF EXIT
+         GET   OSOUTPUT            READ AGAIN
+         MVC   SHOWREC2,0(REG1)    SET UP SECOND RECORD
+         GET   OSOUTPUT            READ AGAIN
+         MVC   SHOWREC3,0(REG1)    AND FINAL RECORD IN SHORT DISPLAY
+NOTNULL  EQU   *
+         BAL   REG11,WARNHIM2      AND GO TELL OF ERROR
+ITSNULL  EQU   *                   EITHER NULL OR HE DOESNT MIND
+         LA    REG2,OSOUTPUT       ADDRESS OF THE DCB
+         CLOSE ((2))               AND CLOSE THE FILE AGAIN
+         NI    WRKFLAG2,255-OSDSOPEN TURN OFF THE LOGIC FLAG
+AITSNULL EQU   *                   EITHER NULL OR HE DOESNT MIND
+         MVC   OSOUTPUT(96),COPYDCB REFRESH DCB AGAINST CORRUPTION
+         EJECT
+***********************************************************************
+*        OPEN THE OUTPUT OS DATA SET
+***********************************************************************
+         SPACE 2
+         NI    WRKFLAG4,255-FULLOSDS INITIALISE 'X37' FLAG
+         LA    REG2,OSOUTPUT       ADDRESS OF THE DCB
+         OPEN  ((2),OUTPUT),TYPE=J OPEN THE FILE
+         TM    OSOUTPUT+48,X'10'   FILE IS OPEN O.K.
+         BZ    OPENFAIL            NO. GO SIGNAL OPEN FAILURE
+         OI    WRKFLAG2,OSDSOPEN   SIGNAL THAT FILE IS OPEN
+         EJECT
+***********************************************************************
+*        COPY ACCROSS THE DATA FROM LIBRARYN
+***********************************************************************
+         SPACE 2
+COPYLOOP EQU   *
+         CALL  MASTRCD,(LIBRECRD,MSTRCDRC),VL,MF=(E,CALLLIST) GET RCD
+         CLI   MSTRCDRC,C'1'       END OF FILE ?
+         BE    COPYDONE            YES. ALL RECORDS COPIED
+         PUT   OSOUTPUT,LIBRECRD   WRITE TO OUTPUT FILE
+         TM    WRKFLAG4,FULLOSDS   ERROR ON OUTPUT DATA SET
+         BO    OSDSX37             YES. GO GIVE ERROR
+         B     COPYLOOP            AND CONTINUE
+COPYDONE EQU   *
+         EJECT
+***********************************************************************
+*        UPDATE THE CONTROL FILE
+***********************************************************************
+         SPACE 2
+         LA    REG2,CNTLFILE       ADDRESS OF CONTROL FILE DCB
+         CLOSE ((2))               CLOSE IT
+         NI    WRKFLAG4,255-CNTLOPEN SIGNAL CONTROL FILE CLOSED
+         LA    REG1,DAMMIT         EOF ADDRESS FOR THIS PART
+         ST    REG1,DCBEOF         AND UPDATE THE DCB EODAD
+         LA    REG3,QNAME          ADDRESS OF ENQ MAJOR NAME
+         LA    REG4,RNAME          ADDRESS OF ENQ MINOR NAME
+         ENQ   ((3),(4),E,8,SYSTEM) ENQ FOR FILE UPDATE
+         TM    CTLFLAGS,CTLFMULT   DOES A RECORD ALREADY EXIST
+         BO    DOUPDATE            YES. GO UPDATE IT
+         TM    WRKFLAG4,SPACEAV    IS SPACE AVAILABLE
+         BO    DOUPDATE            YES. DO A DIRECT UPDATE
+ADDITON  EQU   *
+         OPEN  ((2),EXTEND)        OTHERWISE ADD TO THE END
+         OI    WRKFLAG4,CNTLOPEN   SIGNAL CONTROL FILE OPEN
+         PUT   CNTLFILE,CNTLREC    OUTPUT THE NEW CONTROL RECORD
+         B     CNTLDONE            AND CONTINUE
+DOUPDATE EQU   *
+         OPEN  ((2),UPDAT)         OPEN THE FILE FOR UPDATE
+         OI    WRKFLAG4,CNTLOPEN   SIGNAL CONTROL FILE OPEN
+UPDATLP  EQU   *
+         GET   CNTLFILE            READ FIRST/NEXT RECORD
+         TM    CTLFLAGS,CTLFMULT   ARE WE LOOKING FOR SAME RECORD
+         BZ    LOOKFREE            NO. GO LOOK FOR ANY FREE RECORD
+         TM    CTLFLAGS-CNTLREC(REG1),CTLFFREE FREE RECORD ?
+         BO    UPDATLP             YES. IGNORE IT
+         CLC   CNTLREC(20),0(REG1) IS THIS IT ?
+         BNE   UPDATLP             NO. KEEP LOOKING
+         B     REWRITE             YES. GO UPDATE THE RECORD
+LOOKFREE EQU   *
+         TM    CTLFLAGS-CNTLREC(REG1),CTLFFREE FREE RECORD ?
+         BZ    UPDATLP             NO. CONTINUE TO READ THE RECS
+REWRITE  EQU   *
+         MVC   0(CTLRECL,REG1),CNTLREC COPY THE NEW RECORD TO BUFFER
+         PUTX  CNTLFILE            AND REPLACE IT IN THE CONTROL FILE
+         NI    WRKFLAG4,255-SPACEAV TURN OF SPACE AVAILABLE FLAG
+CNTLDONE EQU   *
+         CLOSE ((2))               AND FINALLY CLOSE THE CONTROL FILE
+         NI    WRKFLAG4,255-CNTLOPEN SIGNAL CONTROL FILE NOT OPEN
+         DEQ   ((3),(4),8,SYSTEM)  AND FREE THE ENQ AGAIN
+         B     GOODBYE             GO GIVE FINAL MESSAGE
+         EJECT
+***********************************************************************
+*        SHIT. SOMEONE CHANGED CONTROL FILE TWIXT MY READ AND ENQ
+***********************************************************************
+         SPACE 2
+DAMMIT   DS    0H
+         LA    REG2,CNTLFILE       ADDRESS OF THE CONTROL FILE
+         CLOSE ((2))               CLOSE IT
+         NI    WRKFLAG4,255-CNTLOPEN SIGNAL CONTROL FILE CLOSED
+         NI    WRKFLAG4,255-SPACEAV TURN OFF IN CASE IT'S ON
+         B     ADDITON             AND GO ADD THE RECORD TO END
+         EJECT
+***********************************************************************
+*        RETURN TO CALLER OF RETRIEVE ROUTINE
+***********************************************************************
+         SPACE 2
+RETREXIT DS    0H
+         BAL   REG11,CLEARUP1      CLEARUP ANY ALLOCATIONS
+         ZRETURN
+         EJECT
+***********************************************************************
+*        WARN THE USER THAT HE ALREADY HAS CONTROL OF THIS MODULE
+***********************************************************************
+         SPACE 2
+WARNHIM  DS    0H
+         L     REG15,X'7C'(REG8)   ADDRESS OF THE PTC
+         L     REG15,X'104'(REG15) ADDRESS OF THE MHA ROUTINE
+         CALL  (15),((8),SCREEN98,ZERO,PGMNAME,CTLTSOID,CTLDATE,       X
+               LMDTEUPD),VL,MF=(E,CALLLIST)
+         TM    X'C6'(REG8),X'80'   PF3 WAS PRESSED ?
+         BO    ABORTED             YES. GO ABORT THE RETRIEVE
+         BR    REG11               CONTINUE IF HE'S HAPPY ABOUT IT
+         EJECT
+***********************************************************************
+*        WARN THE USER THAT OUTPUT FILE IS NOT EMPTY
+***********************************************************************
+         SPACE 2
+WARNHIM2 DS    0H
+         L     REG15,X'7C'(REG8)   ADDRESS OF THE PTC
+         L     REG15,X'104'(REG15) ADDRESS OF THE MHA ROUTINE
+         CALL  (15),((8),SCREEN94,ZERO,PGMNAME,OSDSN2,SHOWREC1,        X
+               SHOWREC2,SHOWREC3),VL,MF=(E,CALLLIST)
+         TM    X'C6'(REG8),X'80'   PF3 WAS PRESSED ?
+         BO    ABORTED             YES. GO ABORT THE RETRIEVE
+         BR    REG11               CONTINUE IF HE'S HAPPY ABOUT IT
+         EJECT
+***********************************************************************
+*        DCB OPEN AND PROCESSING ROUTINE. INVOKED BY DCB ABEND EXIT
+***********************************************************************
+         SPACE 2
+OPENABND DS    0H
+         PUSH  USING               SAVE ADDRESSABILITY
+         USING *,REG15             TEMPORARY ADDRESSABILITY
+         CLC   0(2,REG1),=X'0130'  OPEN FAILURE
+         BE    IGNOREIT            YES. SAFE TO IGNORE IT
+         CLI   1(REG1),X'37'       EOV ERROR OF SOME SORT ?
+         BNE   0(REG14)            NO. LET THE ABEND HAPPEN
+         OI    WRKFLAG4,FULLOSDS   OUTPUT DATA SET IS FULL (ASSUME)
+IGNOREIT EQU   *
+         MVI   3(REG1),4           SIGNAL TO IGNORE THE ERROR
+         BR    REG14               AND RETURN TO THE SYSTEM
+         DROP  REG15               RELEASE TEMPORARY ADDRESSABILITY
+         POP   USING               AND REINSTATE THE OLD ONE
+         EJECT
+***********************************************************************
+*        ERROR ROUTINES
+***********************************************************************
+         SPACE 2
+DATALOST DS    0H
+         LA    REG15,1             CURSOR POSITION
+         BAL   REG1,ERREXIT        LOAD ADDRESS ERROR DETAILS
+         DC    CL4'Z001'           NO LIBRARYN FILE NAME
+NOLIBRYN DS    0H
+         LA    REG15,1             POSITION CURSOR
+         BAL   REG1,ERREXIT       AND GO REISSUE THE SCREEN
+         DC    CL4'Z002'           LIBRARYN MASTER UNAVAILABLE
+NOPGMNAM DS    0H
+         LA    REG15,2             CURSOR POSITION
+         BAL   REG1,ERREXIT       AND GO RE-ISSUE SCREEN
+         DC    CL4'Z003'          NO MODULE NAME
+BADPNAME DS    0H
+         LA    REG15,2             POSITION CURSOR
+         BAL   REG1,ERREXIT       AND GO RE-ISSUE SCREEN
+         DC    CL4'Z004'          MODULE DOES NOT EXIST
+LIBERROR DS    0H
+         LA    REG15,1             POSITION CURSOR
+         BAL   REG1,ERREXIT       AND GO RE-ISSUE SCREEN
+         DC    CL4'Z005'          LIBRARYN ERROR
+BADOSDSN DS    0H
+         L     REG15,DSNCURS       POSITION CURSOR
+         BAL   REG1,ERREXIT       AND GO RE-ISSUE SCREEN
+         DC    CL4'Z006'          ALLOCATION FAILED FOR SPF FILE
+DATALST2 DS    0H
+         BAL   REG1,ERREXIT       AND GO RE-ISSUE SCREEN
+         DC    CL4'Z007'          SPF DATA SET NAME MISSING
+BADDSORG DS    0H
+         L     REG15,DSNCURS       POSITION CURSOR
+         BAL   REG1,ERREXIT       AND GO RE-ISSUE SCREEN
+         DC    CL4'Z008'          SPF DSN DSORG IS NO GOOD
+MEMANDPS DS    0H
+         L     REG15,DSNCURS       POSITION CURSOR
+         BAL   REG1,ERREXIT       AND GO RE-ISSUE SCREEN
+         DC    CL4'Z009'          DATA SET NOT PO AND MEMNAME CODED
+OPENFAIL DS    0H
+         L     REG15,DSNCURS       POSITION CURSOR
+         BAL   REG1,ERREXIT       AND GO RE-ISSUE SCREEN
+         DC    CL4'Z010'          OPEN FAILED FOR SPF FILE
+BADATTRB DS    0H
+         L     REG15,DSNCURS       POSITION CURSOR
+         BAL   REG1,ERREXIT       AND GO RE-ISSUE SCREEN
+         DC    CL4'Z011'          LRECL IS NOT 80
+OSDSX37  DS    0H
+         L     REG15,DSNCURS       POSITION CURSOR
+         BAL   REG1,ERREXIT       AND GO RE-ISSUE SCREEN
+         DC    CL4'Z012'          OUTPUT FILE HAS 'E37'
+ABORTED  DS    0H
+         LA    REG15,1             POSITION CURSOR
+         BAL   REG1,ERREXIT       AND GO RE-ISSUE SCREEN
+         DC    CL4'Z013'          RETRIEVAL ABORTED
+GOODBYE  DS    0H
+         LA    REG15,1             POSITION CURSOR
+         BAL   REG1,ERREXIT       AND GO RE-ISSUE SCREEN
+         DC    CL4'Z014'          TERMINATION MESSAGE
+         EJECT
+***********************************************************************
+*        ISSUE THE ERROR MESSAGE AND GET SCREEN BACK UNDER CONTROL
+***********************************************************************
+         SPACE 2
+ERREXIT  DS    0H
+         ST    REG15,ERRCURS       STORE OUT CURSOR POSITION
+         LR    REG2,REG1           ADDRESS OF MESSAGE ID
+         L     REG15,X'7C'(REG8)   ADDRESS OF THE PTC
+         L     REG15,X'104'(REG15) ADDRESS OF MHA ROUTINE
+         CALL  (15),((8),SCREEN2,TWO,LIBFNAME,PGMNAME,PROJECT,LIBRARY, X
+               TYPE,MEMBER,DSNAME,VOLSER),VL,MF=(E,CALLLIST)
+         L     REG15,X'7C'(REG8)   ADDRESS OF THE PTC
+         L     REG15,X'100'(REG15) ADDRESS OF ERROR ROUTINE
+         CALL  (15),((8),(2),ERRCURS),VL,MF=(E,CALLLIST)
+         BAL   REG11,CLEARUP1      GO CLEARUP FROM ATTEMPT
+         B     RETRASK2            AND THEN GO START AGAIN
+         EJECT
+***********************************************************************
+*        GENERAL CLEARUP. CLOSE AND FREE MASTER IF NECCESSARY
+***********************************************************************
+         SPACE 2
+CLEARUP1 DS    0H
+         TM    WRKFLAG1,MASTOPEN   IS MASTER FILE OPEN ?
+         BZ    CLEARUP2            NO. NO NEED TO CLOSE IT
+         CALL  MASTCLS             CLOSE THE LIBRARYN FILE
+         NI    WRKFLAG1,255-MASTOPEN TURN OFF THE FLAG
+CLEARUP2 EQU   *
+         TM    WRKFLAG1,MASTALLC   MASTER IS ALLOCATED ?
+         BZ    CLEARUP3            NO. NO NEED TO DE-ALLOCATE
+         LINK  EP=UT501,PARAM=(MASTJCL,DFUNCT,RETCODE,X1,X2),VL=1,     X
+               MF=(E,CALLLIST)     FREE THE FILE
+         NI    WRKFLAG1,255-MASTALLC TURN OFF THE FLAG
+CLEARUP3 EQU   *
+         TM    WRKFLAG2,OSDSOPEN   IS THE OS DATA SET OPEN ?
+         BZ    CLEARUP4            NO. NO NEED TO CLOSE IT
+         LA    REG2,OSOUTPUT       LOAD ADDRESS OF THE DCB
+         CLOSE ((2))               CLOSE THE OS DATA SET
+         XC    OSOUTPUT+X'3E'(2),OSOUTPUT+X'3E' CLEAR BLOCKSIZE
+         NI    WRKFLAG2,255-OSDSOPEN AND TURN OFF THE FLAG
+CLEARUP4 EQU   *
+         TM    WRKFLAG2,OSDSALLC   SPF LIBRARY IS ALLOCATED
+         BZ    CLEARUP5            NO. NO NEED TO DE-ALLOCATE
+         LINK  EP=UT501,PARAM=(OSDSJCL,DFUNCT,RETCODE,X1,X2),VL=1,     X
+               MF=(E,CALLLIST)     FREE THE FILE
+         NI    WRKFLAG2,255-OSDSALLC TURN OFF THE FLAG
+CLEARUP5 EQU   *
+         TM    WRKFLAG4,CNTLOPEN   CONTROL FILE IS LEFT OPEN ?
+         BZ    CLEARUP6            NO. NO NEED TO CLOSE IT
+         LA    REG2,CNTLFILE       ADDRESS OF THE DCB
+         CLOSE ((2))               CLOSE THE CONTROL FILE
+CLEARUP6 EQU   *
+         MVC   OSOUTPUT(96),COPYDCB REFRESH AGAINST CORRUPTION
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        WORK AREAS AND DSECTS USED BY THIS PROGRAM
+***********************************************************************
+         SPACE 2
+SPACES   DC    CL80' '             COMPARE CONSTANT
+ERRCURS  DS    F                   ERROR CURSOR LOCATION
+SCREEN2  DC    CL8'ZLIB02'         MENU NAME FOR THIS ROUTINE
+SCREEN98 DC    CL8'ZLIB02A'        MENU NAME FOR ERROR ROUTINE
+SCREEN94 DC    CL8'ZLIB02B'        MENU NAME FOR ERROR ROUTINE
+ZERO     DC    F'0'                MHA OPTION CODE
+TWO      DC    F'2'                MHA OPTION CODE- RESET, NON-DISPLAY
+DSNCURS  DS    F                   ERROR CURSOR FOR DSN TYPE MSGS
+         LTORG
+         DATAAREA
+         END
+-EMOD
+-END
+//SPFLIB02 EXEC ASMFCL,L=H,LOPT=RENT
+//SYSLIB DD DSN=JEA.MACLIB,DISP=SHR
+// DD DSN=SYS1.MACLIB,DISP=SHR
+// DD DSN=SYS2.MACLIB,DISP=SHR
+// DD DSN=SYS1.AMODGEN,DISP=SHR
+//SYSIN DD DSN=&&OSJOB,DISP=(OLD,DELETE)
+//LKED.SYSLMOD DD DSN=JEA.LOADLIB,DISP=SHR
+ INCLUDE SYSLMOD(SPFLIB01)
+ ENTRY SPFLIB01
+ NAME SPFLIB01(R)
+/*

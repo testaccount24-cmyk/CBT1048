@@ -1,0 +1,126 @@
+***********************************************************************
+*                         M O P E T A S K
+*
+*            THIS ROUTINE ACTS HAS THE HIGH LEVEL MOPE CONTROLLER
+*        FOR THE MOPE/TCAM INTERFACE.
+*        THE ROUTINE INITIALISES THE TCAM INPUT AND OUTPUT QUEUES
+*        AND SETS UP THE USER TABLE READY FOR THE FIRST LOGON.
+*            WHEN EVERYTHING IS READY, THE TWO Q PROCESSORS - MOPEGET
+*        AND MOPEPUT ARE ATTACHED TO HANDLE INPUT AND OUTPUT RESPECTIVE
+*        LY.
+*            WHEN TCAM INDICATES THAT TP IS TO BE TERMINATED, THE
+*        INPUT PROCESSOR WILL RETURN CONTROL TO THIS ROUTINE WHICH
+*        WILL IN TURN TERMINATE THE OUTPUT PROCESSOR, CLOSE THE TCAM
+*        QUEUES AND RETURN TO THE SYSTEM.
+*
+***********************************************************************
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING
+***********************************************************************
+         SPACE 2
+MOPETASK ZCSECT 12,GETMAIN=1,WKLEN=TCAMWLEN
+         USING TCAMWORK,REG13      ADDRESSABILITY FOR WORK AREA
+         EJECT
+***********************************************************************
+*        OPEN AND INITIALISE THE TCAM QUEUES
+***********************************************************************
+         SPACE 2
+         MVC   MOPEINQ(104),INQDUMMY SET UP A BASIC DCB
+         MVC   MOPEOUTQ(104),OUTQDUMY SET UP A BASIC DCB
+         XC    OPENLIST(8),OPENLIST CLEAR THE OPEN BUILD AREA
+         MVI   OPENLIST+4,X'80'    TURN ON END OF LIST
+         OPEN  (MOPEINQ,,MOPEOUTQ),MF=(E,OPENLIST) OPEN Q'S
+         LA    REG1,MOPEINQ        ADDRESS OF FIRST DCB
+         USING IHADCB,REG1         ADDRESSABILITY FOR IT
+         TM    DCBOFLGS,DCBOFOPN   OPEN SUCCESSFUL ?
+         BZ    OPENFAIL            NO. TERMINATE IMMEDIATELY
+         LA    REG1,MOPEOUTQ       ADDRESS OF THE OTHER DCB
+         TM    DCBOFLGS,DCBOFOPN   THAT ONE OK TOO ?
+         BZ    OPENFAIL            NO. TERMINATE IMMEDIATELY
+         DROP  REG1                RELEASE ADDRESSABILITY
+         EJECT
+***********************************************************************
+*        INITIALISE THE USER STACK.
+***********************************************************************
+         SPACE 2
+         LA    REG3,TERMLEN        GET LENGTH OF A TERMINAL ENTRY
+         SLL   REG3,5              MULTIPLY BY 32
+         GETMAIN R,LV=(3)          GETMAIN CORE FOR THAT
+         STM   REG0,REG1,STAKREGS  AND SAVE PARMS FOR FREEMAIN
+         ST    REG1,STAKADDR       SAVE START ADDRESS OF THE STACK
+         LA    REG3,0(REG1,REG3)   ADDRESS OF END OF AREA
+         BCTR  REG3,0              ADDRESS OF LAST BYTE
+         LA    REG2,TERMLEN        RELOAD LENGTH OF AN ENTRY
+INITLOOP EQU   *                   LOOP TO INITIALISE THE STACK
+         LA    REG15,0(REG2,REG1)  ADDRESS OF THE NEXT ENTRY
+         XC    0(TERMLEN,REG1),0(REG1) CLEAR THE AREA
+         ST    REG15,0(REG1)       STORE CHAIN FIELDS
+         BXLE  REG1,REG2,INITLOOP  AND INITIALISE THE LOT
+         EJECT
+***********************************************************************
+*        ATTACH THE MOPE OUTPUT PROCESSOR
+***********************************************************************
+         SPACE 2
+         LR    REG1,REG13          ADDRESS OF COMMON PARAMETER AREA
+         ATTACH EP=MOPEPUT         ATTACH THE ROUTINE
+         ST    REG1,PUTTCB         SAVE THE TCB ADDRESS
+         EJECT
+***********************************************************************
+*        ATTACH THE MOPE INPUT PROCESSOR
+***********************************************************************
+         SPACE 2
+         LR    REG1,REG13          ADDRESS OF COMMON PARM AREA
+         XC    MAINWAIT,MAINWAIT   ENSURE ECB IS INITIALISED
+         XC    TASKWAIT,TASKWAIT   ENSURE ECB IS INITIALISED
+         ATTACH EP=MOPEGET
+         ST    REG1,GETTCB         SAVE THE TCB ADDRESS
+         EJECT
+***********************************************************************
+*        WAIT FOR THE TP SESSION TO TERMINATE
+***********************************************************************
+         SPACE 2
+         WAIT  1,ECB=TASKWAIT      WAIT FOR SESSION TO TERMINATE
+         DETACH PUTTCB             DETACH SUBTASKS
+         DETACH GETTCB             DETACH SUBTASKS
+         EJECT
+***********************************************************************
+*        CLOSE THE TCAM IN AND OUT QUEUES
+***********************************************************************
+         SPACE 2
+         CLOSE (MOPEINQ,,MOPEOUTQ),MF=(E,OPENLIST) CLOSE Q'S
+         EJECT
+***********************************************************************
+*        RETURN TO THE SYSTEM
+***********************************************************************
+         SPACE 2
+         ZRETURN RC=0
+         EJECT
+***********************************************************************
+*        FAILURE AND ERROR ROUTINES
+***********************************************************************
+         SPACE 2
+OPENFAIL DS    0H
+         WTO   'OPEN FAILED FOR TCAM QUEUES. EXECUTION OF MOPE NOT INITX
+               IALISED SUCCESSFULLY'
+         ABEND 1,DUMP,STEP
+         EJECT
+***********************************************************************
+*        CONSTANTS NOT CHANGED BY THIS PROGRAM
+***********************************************************************
+         SPACE 2
+INQDUMMY DCB   DDNAME=MOPEINQ,DSORG=PS,MACRF=GM,LRECL=2998,RECFM=V,    X
+               BLKSIZE=3000,OPTCD=W
+OUTQDUMY DCB   DDNAME=MOPEOUTQ,DSORG=PS,MACRF=PM,LRECL=2998,RECFM=V,   X
+               BLKSIZE=3000,OPTCD=WU
+         EJECT
+***********************************************************************
+*        WORK AREAS AND DSECTS USED IN THIS ROUTINE
+***********************************************************************
+         SPACE 2
+         TCAMWORK
+         SPACE 2
+         PRINT NOGEN
+         DCBD DSORG=TX
+         PRINT GEN
+         END

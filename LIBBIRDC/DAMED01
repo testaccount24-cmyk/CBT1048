@@ -1,0 +1,528 @@
+EDIT     ZCSECT 12,10
+         EJECT
+***********************************************************************
+*        FIRST ESTABLISH THE NAME OF THE DATA SET                     *
+***********************************************************************
+         SPACE 2
+RETRYDSN TPUT  NAMEQERY,80,ASIS,WAIT
+         TGET  DSNAME,80,EDIT,WAIT
+         OC    DSNAME,=80C' '
+         MVC   JCLDSN,DSNAME       MOVE IT TO JCL
+         LINK  EP=UT501,PARAM=(JCLDATA,FUNCTION,RETCODE,A,B),VL=1
+         CLI   RETCODE,0           TEST FOR GOOD RETURN CODE
+         BE   OPENFILE              YES. ALLOCATION SUCCESSFUL
+         TPUT  DSNERR,L'DSNERR     OUTPUT AN ERROR MESSAGE
+         B     RETRYDSN            GO TRY AGAIN FOR ANOTHER
+         EJECT
+***********************************************************************
+*        OPEN THE DATA SET TO BE EDITED                               *
+***********************************************************************
+         SPACE 2
+OPENFILE OPEN  (SYSUT1,INPUT)
+         EJECT
+***********************************************************************
+*        GETMAIN THE CORE TO HOLD ITS DATA                            *
+***********************************************************************
+         SPACE 2
+         GETMAIN R,LV=800000       ISSUE GETMAIN
+         ST    REG1,AREAADDR       SAVE ADDRESS OF THE AREA
+         ST    REG0,AREALEN        SAVE LENGTH OF THE AREA
+         L     REG14,AREAADDR      LOAD MVCL REGISTER
+         L     REG15,AREALEN       LOAD SECOND MVCL REG
+         XR    REG0,REG0           CLEAR 'FROM' REGISTER
+         XR    REG1,REG1           CLEAR SECOND LENGTH
+         ICM   REG1,8,=C' '        LOAD PADDING CHARACTER
+         MVCL  REG14,REG0          CLEAR THE WHOLE AREA
+         S     REG14,SCREENLN      SUBTRACT THE LENGTH OF A SCREEN
+         ST    REG14,COREND        SAVE ADDRESS IN WORK AREA
+         L     REG1,AREAADDR       LOAD START ADDRESS OF AREA
+         A     REG1,SCREENLN       ADD THE LENGTH OF A SCREEN
+         ST    REG1,TOP            STORE ITS ADDRESS IN WORK AREA
+         MVC   0(L'TOFMARK,REG1),TOFMARK SET TOP OF FILE MARK
+         EJECT
+**********************************************************************
+*        GETMAIN AND PREPARE THE SCREEN AREA
+**********************************************************************
+         EJECT
+***********************************************************************
+*        LOAD THE DATA INTO GOTTEN AREA                               *
+***********************************************************************
+         SPACE 2
+         L     REG2,TOP            LOAD START ADDRESS OF DATA
+READLOOP AH    REG2,SYSUT1+X'52'   ADD THE LENGTH OF A RECORD
+         GET   SYSUT1,(2)          READ FIRST RECORD INTO BLOCK
+         B     READLOOP           READ THE WHOLE FILE
+EODAD    EQU   *                   END OF DATA ROUTINE
+         ST    REG2,DATAEND        SAVE ADDRESS OF END OF DATA
+         MVC   0(L'EOFMARK,REG2),EOFMARK SIGNAL END OF DATA
+         MVC   CURRENT,TOP         SET CURRENT TO TOP
+         CLOSE (SYSUT1)            CLOSE THE INPUT FILE
+         EJECT
+***********************************************************************
+*        WRITE OUT THE FIRST SCREEN OF DATA                           *
+***********************************************************************
+         SPACE 2
+         BAL   REG11,OUTPUTIT      CALL SERVICE ROUTINE
+REREAD   TGET  COMMAND,120,EDIT,WAIT READ IN HIS COMMAND
+         OC    COMMAND,=120C' '
+         EJECT
+***********************************************************************
+*        ANALYSE THE INPUT COMMAND                                    *
+***********************************************************************
+         SPACE 2
+         LA    REG1,CMDTABLE       LOAD ADDRESS OF COMMAND TABLE
+CMDLOOP  CLI   0(REG1),X'FF'       TEST FOR END OF TABLE
+         BE    INVLDCMD            YES. COMMAND NOT KNOWN
+         XR    REG15,REG15         CLEAR LENGTH REGISTER
+         IC    REG15,0(REG1)       LOAD LENGTH OF ID
+         LA    REG1,1(REG1)        ADDRESS OF COMMAND ID
+         BCT   REG15,*+10          SUBTRACT 1 FROM LENGTH
+         CLC   0(0,REG1),COMMAND   TEST FOR THIS COMMAND
+         BE    FOUNDCMD            YES. GO PROCESS IT
+         LA    REG1,3+1(REG15,REG1) UPDATE TO NEXT ENTRY
+         B     CMDLOOP             PROCESS ALL THE ENTRIES
+FOUNDCMD LA    REG14,COMMAND+1(REG15) LOAD ADDRESS OF OPERANDS
+         ST    REG14,OPERANDS      SAVE ADDRESS OF OPERAND FIELD
+         ICM   REG1,7,1(REG15,REG1) LOAD ADDRESS OF THE ROUTINE
+         BALR  REG11,REG1          AND PASS CONTROL TO IT
+         B     REREAD              GO FETCH NEXT COMMAND
+         EJECT
+***********************************************************************
+*        PROCESS THE 'NEXT' COMMAND'                                  *
+***********************************************************************
+         SPACE 2
+NEXT     DS    0H
+         ST    REG11,NEXREG11      SAVE LINK REGISTER
+         BAL   REG11,NUMBERS       GO FETCH THE NUMBR COUNT
+         LH    REG15,SYSUT1+X'52'  LOAD THE LENGTH OF A RECORD
+         MR    REG0,REG15          CLACULATE OFFSET TO THIS ITEM
+         A     REG1,CURRENT        AND ADD THAT TO CURRENT LOCATION
+         C     REG1,DATAEND        OFF END OF DATA ?
+         BNH   INRANGE             NO. ALL IS OK
+         L     REG1,DATAEND        LOAD END ADDRESS AS STOP ADDRESS
+INRANGE  EQU   *
+         ST    REG1,CURRENT        ASVE CURRENT LOCATION POINTER
+         BAL   REG11,OUTPUTIT      GO WRITE CURRENT DATA
+         L     REG11,NEXREG11      RELOAD LINK REGISTER
+         BR    REG11               RETURN TO CALLER
+         SPACE 2
+NEXREG11 DS    F                   SAVE AREA FOR LINK REGISTER
+         EJECT
+***********************************************************************
+*        PROCESS THE UP COMMAND                                       *
+***********************************************************************
+         SPACE 2
+UP       DS    0H
+         ST    REG11,UPREG11       SAVE LINK REGISTER
+         BAL   REG11,NUMBERS       GO FETCH THE DISTANCE
+         LH    REG15,SYSUT1+X'52'  LOAD LENGTH OF A RECORD
+         MR    REG0,REG15          CALCULATE THE LENGTH TO MOVE
+         L     REG15,CURRENT       LOAD CURRENT LOCATION POINTER
+         SR    REG15,REG1          SUBTRACT HOW FAR HE WANTS TO GO
+         C     REG15,TOF           TOO FAR ?
+         BNL   INRANGE3            NO. THATS FINE
+         L     REG15,TOF           YES. LEAVE HIM AT THE TOP
+INRANGE3 ST    REG15,CURRENT       UPDATE CURRENT ADDRESS POINTER
+         BAL   REG11,OUTPUTIT      GO OUTPUT THE SCREEN
+         L     REG11,UPREG11       RELOAD LINK REGISTER
+         BR    REG11               RETURN TO CALLER
+         SPACE 2
+UPREG11  DS    F                   SAVE AREA FOR LINK REGISTER
+         EJECT
+***********************************************************************
+*        PROCESS THE DELETE COMMAND                                  *
+*********************************************************************
+         SPACE     2
+DELETE   DS        0H
+         ST    REG11,DELREG11    SAVE LINK REGISTER
+         CLC       CURRENT,TOF         IS HE AT VERY TOP ?
+         BNE       NOTTOF1             NO. LEAVE HIM ALONE
+         MVC       CURRENT,TOP         SET CURRENT TO FIRST LINE
+NOTTOF1  NC        0(4,REG2),0(REG2)   ANY OPERANDS AT ALL
+         BZ        NOTNULL             NO. USE STANDARD RTN
+         L         REG15,0(REG2)       LOAD ADDRESS OF SCAN BLK
+         L         REG15,4(REG15)      LOAD ADDRES OF OPERAND
+         CLI       0(REG15),C'*'       DELETE ALL THE REST ?
+         BNE       NOTNULL             NO. CARRY ON
+          L     REG2,0(REG2)            UPDATE THE SCAN CHAIN
+          B         ALLOFIT             YES. GO PROCESS IT
+NOTNULL  BAL       REG11,NUMBERS       EXTRACT NUMERIC DATA
+         MH        REG1,SYSUT1+X'52'   CLACULATE HOW FAR TO GO
+         A         REG1,CURRENT        WORK OUT ADDRESS OF IT
+         C         REG1,DATAEND        END OF DATA PASSED ?
+         BL        *+8                 NO. LEAVE WELL ALONE
+ALLOFIT  L         REG1,DATAEND        LOAD ADDRESS OF END
+         L         REG15,DATAEND       LOAD ADDRESS OF END OF BLK
+         A     REG15,SCREENLN      ADD THE LENGTH OF SCREEN
+         L         REG14,CURRENT       ADDRESS OF CURRENT DATA
+         SR        REG15,REG14         LENGTH OF DATA TO MOVE
+         LR        REG0,REG1           LOAD SECOND ADDRES REGISTER
+         L         REG1,DATAEND        LOAD UP SECOND LENGTH REG
+         SR        REG1,REG0           LENGTH OD SOURCE DATA
+         LR    REG3,REG14          LOAD WORK REGISTER
+         AR    REG3,REG1           CALCULATE NEW AND ADDRESS
+         ICM   REG1,8,=C' '        LOAD PADDING CHARACTER
+         MVCL  REG14,REG0  EXECUTE THE MOVE AND DELETE
+         MVC   0(L'EOFMARK,REG3),EOFMARK
+         ST    REG3,DATAEND        SAVE NEW END ADDRESS
+         BAL       REG11,OUTPUTIT      GO SHOW HIM RESULT
+         L     REG11,DELREG11    RELOAD LINK REGISTER
+         BR    REG11             RETURN TO CALLER
+          SPACE 2
+DELREG11 DS F         SAVE AREA FOR LINK REGISTER
+         EJECT
+**********
+*         PROCESS THE INPUT COMMAND
+***************
+         SPACE     2
+INPUT    DS        0H
+         BAL   REG11,OUTPUTIT      REWRITE A COMPLETE SCREEN
+         NC    0(4,REG2),0(REG2)   ANY INPUT OPERANDS CODED
+         BZ    INSLOOP1            NO. PREPARE FOR FORMAL INSERT
+         LA    REG1,COMMAND        START ADDRESS OF INPUT COMMAND
+INPLOOP  CLI   0(REG1),C' '        END OF COMMAND NAME FIELD ?
+         LA    REG1,1(REG1)        ADDRESS OF NEXT BYTE
+         BNE   INPLOOP             LOCATE START OF DATA
+         MVC   INLINE,0(REG1)      SET UP AN INPUT LINE
+         B     NOTGET              BYPASS THE TGET FOR IT
+INSLOOP1 TGET  INLINE,80,EDIT,WAIT
+         OC    INLINE,=80C' '      CONVERT EVERYTHING TO UPPER CASE
+         CLI   INLINE,C'"'         END OF HIS INPUT DATA
+         BE    INSENDS             YES. RETURN TO CALLER
+NOTGET   CLC   CURRENT,DATAEND     ALREADY AT END OF DATA ?
+         BNL   ATEND               YES. LEAVE POINTER ALONE
+         L     REG1,CURRENT        LOAD CURRENT LOCATION POINTER
+         AH    REG1,SYSUT1+X'52'   INCREMENT FOR INSERT POINT
+         ST    REG1,CURRENT        RESET CURRENT LINE POINTER
+ATEND    LH    REG15,SYSUT1+X'52'  LOAD THE LENGTH OF A RECORD
+         L     REG14,DATAEND       LOAD CURRENT END ADDRESS
+         LA    REG0,0(REG14,REG15) LOAD ADDRESS OF NEW END
+         LR    REG1,REG15          LOAD SECOND LENGTH
+         ST    REG0,DATAEND        RESET NEW END OF DATA
+         L     REG3,DATAEND        LOAD NEW END ADDRESS
+         MVC   0(L'EOFMARK,REG3),EOFMARK MARK END OF DATA
+INSLOOP  SR    REG0,REG1           START ADDRESS OF LAST RECORD
+         SR    REG14,REG15         START ADDRESS OF NEW REC
+         C     REG14,CURRENT       END OF MOVE BACK ?
+         BL    INSMOVE             YES. GO INSERT NEW DATA
+         MVCL  REG0,REG14          MOVE THAT RECORD DOWN
+         LH    REG15,SYSUT1+X'52'  RELOAD LENGTH OF A RECORD
+         LR    REG1,REG15          RELOAD SECOND LENGTH REGISTER
+         SR    REG0,REG1           RESET FOR MVCL
+         SR    REG14,REG15         RESET FOR MVCL
+         B     INSLOOP             PROCESS ALL THE RECORDS
+INSMOVE  LH    REG14,SYSUT1+X'52'  RELOAD LENGTH OF A RECORD
+         L     REG1,CURRENT        LOAD ADDRESS OF INSERT PNT
+         BCT   REG14,*+10          SUBTRCAT ONE FOR EXECUTE
+         MVC   0(0,REG1),INLINE    INSERT THE NEW LINE
+         EX    REG14,*-6           EXECUTE THE MOVE
+         BAL   REG11,OUTPUTIT      SHOW HIM NEW LINE
+         NC    0(4,REG2),0(REG2)   WAS THIS SINGLE LINE INPUT
+         BZ    INSLOOP1            NO GO FETCH NEXT LINE
+INSENDS  BAL   REG11,OUTPUTIT      GIVE HIM ONE LAST LOOK
+         B     REREAD              GO FETCH NEXT COMMAND
+         EJECT
+***********************************************************************
+*        PROCESS THE TOP AND BOTTOM COMMANDS                          *
+***********************************************************************
+         SPACE 2
+TOPOFIT  MVC   CURRENT,TOF         SET TOP AS CURRENT
+         B     OUTPUTIT            GO WRITE OUT THE SCREEN
+         SPACE 2
+BOT      MVC   CURRENT,DATAEND     SET END OF DATA AS CURRENT
+         B     OUTPUTIT            GO WRITE OUT THE LINE
+         EJECT
+************************************
+*        TELL OF AVAILABLE COMMANDS
+*******************
+         SPACE 2
+QUERY    DS    0H
+         L     REG3,=(QUERYST)     SET ADDRESS OF EXPLANATION
+         L     REG4,=(QUERYEND-QUERYST) SET LENGTH OF EXPLANATION
+         TPUT  (3),(4),ASIS,WAIT   OUTPUT EXPLANATORY SCREEN
+         TGET  INLINE,80,EDIT,WAIT ACCEPT ANYTHING TO RETURN
+         B     OUTPUTIT            GO RESTORE ORIGINAL SCREEN
+         EJECT
+***********************************************************************
+*        PROCESS THE CHANGE DATA COMMANDS                             *
+***********************************************************************
+         SPACE 2
+CHANGE   DS    0H
+         ST    REG11,CREG11        SAVE LINK REGISTERR
+         L     REG2,0(REG2)        LOAD ADDRESS NEXT BLK
+         LTR   REG2,REG2           ANYTHING TO SCAN ?
+         BZ    ERROR6              NO CHANGE OPERANDS
+         BAL   REG11,SETDELIM      GO SUPPLY ANY MISSING DELIMITERS
+         XR    REG15,REG15         CLEAR WORK REGISTER
+         L     REG14,4(REG2)       LOAD ADDRESS OF CHANGE PARAMETERS
+         IC    REG15,0(REG14)      LOAD HIS DELIMITER CH
+         LA    REG14,1(REG14)      ADDRESS FIRST DATA BYTE
+         ST    REG14,INSTRING      SAVE IST ADDRESS
+         XR    REG1,REG1           CLEAR LENGTH REGISTER
+LOOP1    EX    REG15,CLIINST       TEST FOR DELIMITER
+         BE    FOUNDIT             YES END OF ARGUMENT STRING
+         LA    REG1,1(REG1)        INCREMENT DATA COUNT
+         LA    REG14,1(REG14)      ADDRESS NEXT BYET
+         B     LOOP1               RETURN FOR NEXT BYTE
+FOUNDIT  ST    REG1,INLENGTH       SAVE LENGTH OF INPUT DATA
+         XR    REG1,REG1           CLEAR LENGTH REGISTER
+         LA    REG14,1(REG14)      FIRST BYTE OF REPLACE DATA
+         ST    REG14,OUSTRING      SAVE ITS ADDRESS
+LOOP2    EX    REG15,CLIINST       TESTFOR FINAL DELIMITER
+         BE    FOUNDIT2            YES. THERE IT IS
+         LA    REG1,1(REG1)        NO.INCREMENT DATA COUNT
+         LA    REG14,1(REG14)      ADDRESS NEXT INPUT BYET
+         B     LOOP2               PROCESS REST OF DATA
+FOUNDIT2 ST    REG1,OULENGTH       SAVE LENGTH OF OUTPUT STRING
+         SPACE 2
+         L     REG14,INSTRING      LOAD ADDRESS OF INPUT STRING
+         L     REG4,CURRENT        LOAD START ADDRESS OF RECORD
+         LR    REG3,REG4           LOAD SECOND REGISTER
+         AH    REG3,SYSUT1+X'52'   ADD LENGTH OF A RECORD
+         S     REG3,INLENGTH       TERMINATE SCAN AT END POINT
+LOOP3    L     REG15,INLENGTH      LOAD LENGTH OF INPUT DATA
+         LR    REG1,REG15          LOAD CLCL REGISTER 1
+         LR    REG0,REG4           LOAD CLCL REGISTER 2
+         L     REG14,INSTRING      LOAD ADDRESS OF INPUT STRING
+         CLCL  REG0,REG14          TEST FOR IN STRING
+         BE    GOTSTRNG              YES. GO PROCESS IT
+         LA    REG4,1(REG4)        ADDRESS NEXT BYET
+         CR    REG4,REG3           GONE OFF THE END OF RECORD
+         BL    LOOP3               NO. TRY AGAIN
+         B     ERROR6              DATA IS NOT FOUND
+GOTSTRNG ST    REG4,POINT          SAVE ADDRESS OF FOUND DATA
+         LR    REG14,REG4          LOAD MVCL REGISTER
+         A     REG14,INLENGTH      ADDDRESS OF 'REST' OF CARD
+         LH    REG15,SYSUT1+X'52'  LOAD LENGTH OF RECORD
+         A     REG15,CURRENT       ADDRESS OF END OF RECORD
+         SR    REG15,REG14         LENGTH OF REST OF DATA
+         LA    REG0,WORKAREA       ADDRESS OF DATA SAVE AREA
+         LA    REG1,L'WORKAREA     LENGTH OF SAVE AREA
+         ICM   REG15,8,=C' '       LOAD PADDING CHARACTER
+         MVCL  REG0,REG14          MOVE OUT REST OF CARD
+         L     REG0,POINT          LOAD ADDRESS OF INPUT AREA
+         L     REG1,OULENGTH       LENGTH OF REPLACE DATA
+         L     REG14,OUSTRING      LOAD ADDRESS OF OUTPUT STRING
+         LR    REG15,REG1          LOAD SECOND LENGTH REGISTER
+         MVCL  REG0,REG14          MOVE IN REPLACE DATA
+         L     REG1,CURRENT        RELOAD ADDRESS OF CARD
+         AH    REG1,SYSUT1+X'52'   LOAD ADDRESS OF END OF CARD
+         SR    REG1,REG0           LENGTH REMAIN ON CARD
+         LA    REG14,WORKAREA      ADDRESS OF DATA REMOVED
+         LA    REG15,L'WORKAREA    LENGTH OF WORK AREA
+         ICM   REG15,8,=C' '       LOAD A PADDING CHARACTER
+         MVCL  REG0,REG14          REPLACE REST OF DATA
+CEXIT    EQU   *
+         BAL   REG11,OUTPUTIT      SHOW HIM THE NEW CARD
+         L     REG11,CREG11        RETURN TO CALLER
+         BR    REG11               RETURN TO CALLER
+         SPACE 2
+CREG11   DS    F                   SAVE AREA FOR LINK REGISTER
+         EJECT
+*****************************************
+*        PROCESS THE LOCATE COMMAND
+***********************************
+         SPACE 2
+LOCATE   DS    0H
+         ST    REG11,LOCREG11      SAVE LINK REGISTER
+         L     REG2,0(REG2)        LOAD ADDRESS OF SCAN BLOCK
+         LTR   REG2,REG2           ANY OPERANDS CODED ?
+         BZ    ERROR9              NO. GO TELL HIM ABOUT IT
+         BAL   REG11,SETDELIM      GO INSERT FINAL DELIMITER
+         CLC   CURRENT,DATAEND     IS HE AT END OF DATA
+         BNE   NOTATEND            NO. LEAVE CURRENT ALONE
+         MVC   CURRENT,TOF         RESTART SEARCH AT TOP
+NOTATEND L     REG1,CURRENT        ADDRESS OF CURRENT LINE
+         AH    REG1,SYSUT1+X'52'   ADDRESS OF NEXT LINE
+         ST    REG1,CURRENT        UPDATE LOCATION POINTER
+         L     REG14,4(REG2)       LOAD ADDRESS OF ARGUMENT STRING
+         XR    REG15,REG15         CLEAR LENGTH REGISTER
+         IC    REG15,0(REG14)      LOAD HIS DELIMITER CHARACTER
+         LA    REG14,1(REG14)      FIRST BYTE OF ARGUMENT
+         ST    REG14,LOCDATA       SAVE ADDRESS OF LOCATE DATA
+         XR    REG1,REG1           CLEAR LENGTH REGISTER
+CNTLOOP  EX    REG15,CLIINST       TEST FOR END OF ARGUMENT
+         BE    GOTLSTR             FOUND IT. GO PROCESS
+         LA    REG1,1(REG1)        INCREMENT LENGTH REGISTER
+         LA    REG14,1(REG14)      LOAD ADDRESS NEXT DATA BYTE
+         B     CNTLOOP             GO TRY NEXT BYTE
+GOTLSTR  ST    REG1,LOCLENTH       SAVE LENGTH OF DATA STRING
+LOOP6    L     REG14,LOCDATA       LOAD ADDRESS OF INPUT DATA
+         L     REG4,CURRENT        LOAD ADDRESS OF CURRENT CARD
+         LR    REG3,REG4           LOAD SECOND REGISTER
+         AH    REG3,SYSUT1+X'52'   ADD LENGTH OF A RECORD
+         S     REG3,LOCLENTH       TERMINATE SCAN AT END POINT
+LOOP5    L     REG15,LOCLENTH      LOAD LENGTH OF INPUT DATA
+         LR    REG1,REG15          LOAD CLCL REGISTER 1
+         LR    REG0,REG4           LOAD CLCL REGISTER 2
+         L     REG14,LOCDATA       LOAD ADDRESS OF INPUT DATA
+         CLCL  REG0,REG14          TEST FOR DATA FOUND
+         BE    LOCGOTIT            YES. GO PROCESS
+         LA    REG4,1(REG4)      LOAD ADDRESS FOR NEXT COMPARE
+         CR    REG4,REG3           END OF CARD YET
+         BL    LOOP5               NO. CONTINUE
+         L     REG1,CURRENT        LOAD ADDRESS OF CURRENT CARD
+         AH    REG1,SYSUT1+X'52'   ADDRESS NEXT RECORD
+         ST    REG1,CURRENT        UPDATE CURRENT POINTER
+         CLC   CURRENT,DATAEND     END OF DATA DETECTED
+         BL    LOOP6               NO. GO PROCESS NEXT CARD
+LOCGOTIT L     REG11,LOCREG11      RELOAD LINK REGISTER
+         B     OUTPUTIT            GO SHOW HIM HIS DATA
+         EJECT
+********************************
+*        SUPPLY ANY MISSING DELIMITERS
+*******************************
+         SPACE 2
+SETDELIM DS    0H
+         L     REG14,4(REG2)       ADDRESS OF START OF DATA
+         IC    REG15,0(REG14)      LOAD HIS CHOSEN DELIMITER
+         LA    REG1,COMMAND+L'COMMAND END OF INPUT DATA
+DLMLOOP  BCTR  REG1,0              ADDRESS PREVIOUS BYTE
+         CLI   0(REG1),C' '        STILL BLANK DATA
+         BE    DLMLOOP             YES. KEEP LOOPING
+         STC   REG15,1(REG1)       ADD A DELIMITER JUST IN CASE
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        WRITE A FULL SCREEN OF DATA                                  *
+***********************************************************************
+OUTPUTIT DS    0H
+         L     REG1,CURRENT        LOAD CURRENT RECORD POINTER
+         S     REG1,MIDPOINT       CALCULATE START ADDRESS OF OUTPUT
+         LA    REG1,1(REG1)        SUBTRACT ONE FOR SCREEN CONTROL
+         L     REG4,SCREENLN       LOAD THE LENGTH OF A SCREEN FULL
+         SH    REG4,=H'2'          SUBTRACT 2 FOR SCREEN CONTROL
+         LR    REG3,REG1           LOAD START ADDRESS OF DATA
+         TPUT  (3),(4),ASIS,WAIT   WRITE OUT THE SCREEN FULL
+         BR    REG11               RETURN TO CALLER
+         EJECT
+****
+*    REPLACE THE DATA OB FILE
+****
+         SPACE 2
+FILE     DS    0H
+         OPEN  (SYSUT1,OUTPUT)     OPEN THE OUTPUT FILE
+         L     REG2,TOP            LOAD ADDRESS OF TOP RECORD
+OUTLOOP  C     REG2,DATAEND        END OF DATA YET
+         BNL   ENDITALL            YES. RETURN TO CALLER
+         PUT   SYSUT1,(2)          WRITE THE RECORD
+         AH    REG2,SYSUT1+X'52'   BUMP UP TO NEXT RECORD
+         B     OUTLOOP             PROCESS ALL THE DATA
+QUIT     EQU   *
+ENDITALL L     REG1,AREAADDR       LOAD ADDRESS OF GOTTEN AREA
+         FREEMAIN R,LV=800000,A=(1) FREE UP THE CORE
+         ZRETURN RC=0
+         EJECT
+***********************************************************************
+*        GENERAL NUMERIC CONVERSION AND TEST                          *
+***********************************************************************
+         SPACE 2
+NUMBERS  DS    0H
+         L     REG1,OPERANDS       LOAD ADDRESS OF OPERAND FIELD
+NUMLOOP1 CLI   0(REG1),C' '        NUMBER FIELD STARTED
+         BNE   GOTSTART            YES GO PROCESS
+         LA    REG1,1(REG1)        TRY NEXT BYTE THEN
+%%%%%%%%%%%%%% START CODING AGAIN HERE
+         BR    REG11     RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        WORK AREAS AND CONSTANTS                                     *
+***********************************************************************
+         SPACE 2
+AREAADDR DS    F                   ADDRESS OF GETMAINED AREA
+AREALEN  DS    F                   LENGTH OF GETMAINED AREA
+TOP      DS    F                   ADDRESS OF TOP OF DATA
+TOF      DS    F                   ADDRESS OF 1 RECORD BEFORE FIRST
+COREND   DS    F                   ADDRESS OF END OF CORE BLOCK
+CURRENT  DS    F                   CURRENT RECORD ADDRESSES
+DATAEND  DS    F                   END OF DATA HELD
+ERRLINE  DC    CL80'******LAST INPUT WAS INVALID******'
+INSTRING DS    F                   ADDRESS OF CHANGE INPUT STRING
+OUSTRING DS    F                   ADDRESS OF CHANGE OUT STRING
+LOCLENTH DS    F                   LENGTH OF LOCATE COMMAND DATA
+LOCDATA  DS    F                   ADDRESS OF LOCATE COMMAND DATA
+INLENGTH DS    F                   LENGTH OF INPUT STRING
+OULENGTH DS    F                   LENGTH OF REPLACE STRING
+CLIINST  CLI   0(REG14),0          EXECUTED CLI INSTRUCTION
+POINT    DS    F                   ADDRESS OF REPLACE POINT
+LOCREG11 DS    F                   SAVE AREA FOR LINK REGISTER
+WORKAREA DS    CL80                SAVE AREA FOR MANIPULATING CARDS
+INLINE   DS    CL80                INPUT AREA FOR INPUT CMND
+WORKKEY  DS    D                   WORK AREA FOR KEY MATCHING
+DBLWORD  DS    D                   WORK AREA
+MIDPOINT DC    F'720'              OFFSET TO MIDDLE OF SCREEN
+SCREENLN DC    F'1760'
+NAMEQERY DC    CL80'** ENTER THE NAME OF YOUR DATA SET **'
+DSNERR   DC    C'** DATA SET CANNOT BE ALLOCATED **'
+DSNAME   DC    CL80' '             RETURNED NAME OF THE DATA SET
+JCLDATA  DC    H'80'               LENGTH OF JCL CARD
+         DC    C'//SYSUT1 DD DISP=SHR,DSN='
+JCLDSN   DC    CL54' '             SPACE FOR DATA SET NAME
+         DC    C' '                PADDING JUST IN CASE
+FUNCTION DC    C'A'                FUNCTIUON CODE FOR UT501
+RETCODE  DC    X'00'               RETURN CODE FROM UT501
+A        DS    F                   NOT USED
+B        DS    F                   NOT USED
+EOFMARK  DC    C':END OF DATA'
+TOFMARK  DC    C':TOP OF FILE'
+CHAIN    DS    20F                 WORK AREA FOR SCAN MACRO
+COMMAND  DC    CL121' '               RETURN AREA FOR COMMANDS
+         DS    C                    OVERFLOW AREA
+SAVECMND DC    CL121' '              SAVE AREA FOR INPUT COMMANDS
+NUMTABLE DC    256X'FF'
+         ORG   NUMTABLE+C'0'
+         DC    10X'00'
+         ORG
+CMDTABLE DS     0F
+         DC    AL1(4),CL4'NEXT',AL3(NEXT)
+         DC    AL1(1),CL1'N',AL3(NEXT)
+         DC    AL1(1),CL1'U',AL3(UP)
+         DC    AL1(3),CL3'TOP',AL3(TOP)
+         DC    AL1(1),CL1'T',AL3(TOP)
+         DC    AL1(3),CL3'BOT',AL3(BOT)
+         DC    AL1(2),CL2'BO',AL3(BOT)
+         DC    AL1(1),CL1'B',AL3(BOT)
+         DC    AL1(1),CL1'C',AL3(CHANGE)
+         DC    AL1(3),CL3'DEL',AL3(DELETE)
+         DC    AL1(6),CL6'DELETE',AL3(DELETE)
+         DC    AL1(1),CL1'I',AL3(INPUT)
+         DC    AL1(5),CL5'INPUT',AL3(INPUT)
+         DC    AL1(4),CL4'FILE',AL3(FILE)
+         DC    AL1(4),CL4'QUIT',AL3(QUIT)
+         DC    AL1(1),CL1'L',AL3(LOCATE)
+         DC    AL1(1),CL1'?',AL3(QUERY)
+         DC    AL1(6),CL6'LOCATE',AL3(LOCATE)
+         DC     X'FF'               END OF TABLE INDICATOR
+         EJECT
+***********************************************************************
+*        DATA CONTROL BLOCKS                                          *
+***********************************************************************
+         SPACE 2
+         PRINT NOGEN
+SYSUT1   DCB   DDNAME=SYSUT1,DSORG=PS,MACRF=(GM,PM),LRECL=80,          X
+               EODAD=EODAD
+         PRINT GEN
+         EJECT
+***********************************************************************
+*        TEMPORARY ERROR ROUTINES                                     *
+***********************************************************************
+         SPACE 2
+DSFAIL   DS    0H
+NOTROOM  DS    0H
+INVLDCMD DS    0H
+NOTNUMER DS    0H
+ERROR4   DS    0H
+ERROR5   DS    0H
+ERROR6   DS    0H
+ERROR9   DS    0H
+         TPUT  ERRLINE,80,ASIS,WAIT
+         B     REREAD
+QUERYST  CSECT
+         DC    CL1' ' SCREEN CONTROL
+         DC    CL79'SUPPORTED OPTIONS ARE :-'
+         DC    CL80' '
+         DC    CL80'I          - INPUT'
+         DC    CL80' '
+         DC    CL80'ENTER ANY CHARACTER TO RETURN'
+QUERYEND EQU   *
+         END

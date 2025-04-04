@@ -1,0 +1,328 @@
+UT487    START 0
+         SPACE 3
+***********************************************************************
+*                                                                     *
+*        PROGRAM ID. :             UT487                              *
+*                                                                     *
+*        AUTHOR :                  J. NOLS                            *
+*                                                                     *
+*        DATE WRITTEN :            JANUARY 1975                       *
+*                                                                     *
+*        LOCATION :                EUROPEAN COMPUTER CENTER           *
+*                                                                     *
+***********************************************************************
+         SPACE 3
+***********************************************************************
+*                                                                     *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         EJECT
+         PGMIN EQUATES=YES,USING=(R13)  ESTABLISH ADDRESSABILITY
+         SPACE 1
+         PRINT NOGEN
+         EJECT
+***********************************************************************
+*        MAIN-LOGIC                                                   *
+***********************************************************************
+         SPACE 2
+         L     R5,0(R1)            STORE ADDRESS OF PARM OF EXEC CARD
+         OPEN  (SYSPRINT,(OUTPUT)) OPEN SYSPRINT DATA SET
+         UT458 ,                   REQUIRE IPL DATE
+         MVC   DATE(9),UTREPORT    MOVE DATE TO HEAD LINE FOR SYSPRINT
+         BAL   R4,PRINT            GET FIRST BUFFER ADDRESS
+         BAL   R4,HEADING          GO WRITE HEAD LINE TO SYSPRINT
+         BAL   R4,PRINT            GO WRITE TO SYSPRINT
+         LH    R6,0(R5)            LOAD LENGTH OF PARM
+         LTR   R6,R6               TEST IF PARM SUPPLIED
+         BZ    *+8                 BRANCH IF NO
+         BAL   R4,PARMPROC         GO PROCESS PARM
+         TESTIOT DDNAME=SYSIN+40   TEST IF SYSIN DD IS SUPPLIED
+         B     *+4(R15)
+         B     *+8                 YES
+         B     ENDINPUT            NO
+         OPEN  SYSIN               OPEN SYSIN DATA SET
+READ     GET   SYSIN               READ SYSIN RECORD
+         LR    R8,R1               STORE RECORD ADDRESS
+         MVI   0(R7),SPACE3        SPACE 3 AFTER WRITE
+         AP    LINES,TWO           ADD TWO TO LINES COUNT
+         BAL   R4,PRINT            GO WRITE TO SYSPRINT
+         MVI   0(R7),SPACE3        SPACE 3 AFTER WRITE
+         AP    LINES,TWO           ADD TWO TO LINES COUNT
+         MVI   5(R7),UNDERLIN      MOVE C'-' TO FIRST POSITION
+         MVC   6(79,R7),5(R7)       AND PROPAGATE THROUGH
+         BAL   R4,PRINT            GO WRITE TO SYSPRINT
+         BAL   R4,RECDPROC         GO PROCESS RECORD
+         B     READ                GO READ NEXT RECORD
+ENDSYSIN CLOSE SYSIN               CLOSE SYSIN DATA SET
+ENDINPUT MVC   1(L'MSG99,R7),MSG99 TELL END OF UT487
+         CLOSE SYSPRINT            CLOSE SYSPRINT DATA SET
+SWABEND  NOP   ABEND
+         PGMOUT ,                  END OF PROGRAM
+         SPACE 2
+ABEND    ABEND 487,DUMP            TERMINATE PROGRAM WITH U0487
+         EJECT
+***********************************************************************
+*        PARM FIELD PROCESSING                                        *
+***********************************************************************
+         SPACE 2
+PARMPROC SUBIN SAVE=(R4)
+         BCTR  R6,0                DECREMENT ONE FOR EXECUTE INSTRUCTIO
+         EX    R6,MOVEPARM         MOVE PARM TO SYSPRINT BUFFER
+         MVI   0(R7),SPACE2        MOVE CTRL CHAR. SPACE 2 AFTER WRITE
+         AP    LINES,ONE           ADD ONE TO LINE COUNT
+         BAL   R4,PRINT            GO WRITE TO SYSPRINT
+         CLC   KEYWORD1,2(R5)      TEST IF VALUE PARM IS VALID
+         BNE   INVPARM             BRANCH IF NO
+         SH    R6,=H'4'            SUBTRACT LENGTH OF 'DSN='
+         EX    R6,MOVEPAR2         STORE DATA SET NAME FROM PARM
+         BAL   R4,COMPROC
+         B     ENDPARM
+INVPARM  MVC   75(L'MSG12,R7),MSG12     MOVE MESSAGE ERROR
+         MVI   SWABEND+1,X'F0'     CHANGE SWITCH ABEND
+         BAL   R4,PRINT            GO WRITE TO SYSPRINT
+ENDPARM  SUBOUT RESTORE=(R4)
+         SPACE 2
+MOVEPARM MVC   5(0,R7),2(R5)       EXECUTED MOVE INSTRUCTION
+MOVEPAR2 MVC   DSNAME(0),6(R5)     EXECUTED MOVE INSTRUCTION
+         EJECT
+***********************************************************************
+*        SYSIN RECORDS, SUB-FIELD PROCESSING                          *
+***********************************************************************
+         SPACE 2
+RECDPROC SUBIN SAVE=(R4)
+         MVI   DSNAME,BLANK        MOVE BLANK AT START OF DSNAME WA
+         MVC   DSNAME+1(43),DSNAME    AND PROPAGATE THROUGH
+         MVC   5(80,R7),0(R8)      MOVE SYSIN RECORD TO SYSPRINT BUFFER
+         MVI   0(R7),SPACE2        MOVE CTRL CHAR. SPACE 2 AFTER WRITE
+         AP    LINES,ONE           ADD ONE TO LINE COUNT
+         BAL   R4,PRINT            GO WRITE TO SYSPRINT
+         LA    R9,80               ZERO AND ADD INTO R9,VALUE 80
+LRECD1   CLC   KEYWORD1,0(R8)      TEST IF KEYWORD VALID
+         BE    NRECD1              BRANCH IF YES
+         LA    R8,1(R8)            GET ADDRESS FOR NEXT TEST
+         BCT   R9,LRECD1           REPEAT TEST
+         MVC   75(L'MSG15,R7),MSG15     MOVE ERROR MESSAGE
+         MVI   SWABEND+1,X'F0'     CHANGE SWITCH ABEND
+         BAL   R4,PRINT            GO WRITE TO SYSPRINT
+         B     ENDRECD
+NRECD1   LA    R8,4(R8)            POINT R8 AT START OF DSNAME
+         LR    R9,R8               SAVE ADDRESS OF DSNAME
+         LA    R10,44              ZERO AND ADD 44 INTO R10
+LRECD2   CLI   1(R9),BLANK         TEST IF END OF DSNAME
+         BE    NRECD2              BRANCH IF YES
+         LA    R9,1(R9)            GET ADDRESS FOR NEXT TEST
+         BCT   R10,LRECD2          REPEAT TEST
+         MVC   75(L'MSG08,R7),MSG08     MOVE ERROR MESSAGE
+         MVI   SWABEND+1,X'F0'     CHANGE SWITCH ABEND
+         BAL   R4,PRINT            GO WRITE TO SYSPRINT
+         B     ENDRECD
+NRECD2   SR    R9,R8               GET LENGTH OF DSNAME
+         EX    R9,MOVEDSN          STORE DATA SET NAME FROM SYSIN RECD.
+         BAL   R4,COMPROC
+ENDRECD  SUBOUT RESTORE=(R4)
+         SPACE 1
+MOVEDSN  MVC   DSNAME(0),0(R8)     EXECUTED MOVE INSTRUCTION
+         EJECT
+***********************************************************************
+*        DSN= KEYWORD PROCESSING                                      *
+***********************************************************************
+         SPACE 2
+COMPROC  SUBIN SAVE=(R4)
+         BAL   R4,CATEST           GO TEST IF THIS DSNAME IS CATALOGUED
+         B     PP1                 YES
+         B     NX0                 NO
+         B     END1                ERROR DETECTED
+NX0      MVC   DSNAME(7),PRINTED   CHANGE INDEX 'OFFLINE' TO 'PRINTED'
+         BAL   R4,CATEST           GO TEST IF THIS DSNAME IS CATALOGUED
+         B     NX1                 YES
+         B     NX2                 NO
+         B     END1                ERROR DETECTED
+NX2      MVC   75(L'MSG01,R7),MSG01     NO, TELL OF ERROR
+         B     PP2
+NX1      BAL   R4,UNC              GO UNCATALOG WITH 'PRINTED' INDEX
+         MVC   30(44,R7),DSNAME    MOVE DSNAME TO SYSPRINT
+         MVC   75(L'MSG03,R7),MSG03     MOVE MESSAGE TO SYSPRINT
+         BAL   R4,PRINT            GO WRITE TO SYSPRINT
+         MVC   DSNAME(7),OFFLINE   CHANGE 'PRINTED' TO 'OFFLINE' INDEX
+         BAL   R4,CAT              GO CATALOG WITH 'OFFLINE' INDEX
+         MVC   30(44,R7),DSNAME    MOVE DSNAME TO SYSPRINT
+         MVC   75(L'MSG04,R7),MSG04     MOVE MESSAGE TO SYSPRINT
+         BAL   R4,PRINT            GO WRITE TO SYSPRINT
+         B     END1
+PP1      MVC   75(L'MSG02,R7),MSG02     MOVE MESSAGE
+PP2      MVC   30(44,R7),DSNAME    MOVE DSNAME TO SYSPRINT
+         BAL   R4,PRINT            GO WRITE TO SYSPRINT
+END1     SUBOUT RESTORE=(R4)
+         EJECT
+***********************************************************************
+*        THIS ROUTINE TEST IF A SPECIFIED DATA SET IS CATALOGUED      *
+***********************************************************************
+         SPACE 2
+CATEST   SUBIN SAVE=(R4)
+         LOCATE CATALOG
+         B     *+4(R15)
+         B     0(R4)               YES
+         B     NOTMOUNT            CVOL NOT MOUNTED
+         B     4(R4)               NO
+         B     PERR06              RC 12
+         B     PERR07              RC 16
+         B     SYNTAXER            SYNTAX ERROR
+         B     IOERROR             PERMANENT I/O ERROR
+         B     PERR10              RC 28
+         B     PERR11              RC 32
+NOTMOUNT MVC   75(L'MSG05,R7),MSG05 MOVE ERROR MESSAGE TO SYSPRINT
+         B     END2
+PERR06   MVC   75(L'MSG06,R7),MSG06 MOVE ERROR MESSAGE TO SYSPRINT
+         B     END2
+PERR07   MVC   75(L'MSG07,R7),MSG07 MOVE ERROR MESSAGE TO SYSPRINT
+         B     END2
+SYNTAXER MVC   75(L'MSG08,R7),MSG08 MOVE ERROR MESSAGE TO SYSPRINT
+         B     END2
+IOERROR  MVC   75(L'MSG09,R7),MSG09 MOVE ERROR MESSAGE TO SYSPRINT
+         B     END2
+PERR10   MVC   75(L'MSG10,R7),MSG10 MOVE ERROR MESSAGE TO SYSPRINT
+         B     END2
+PERR11   MVC   75(L'MSG11,R7),MSG11 MOVE ERROR MESSAGE TO SYSPRINT
+END2     BAL   R4,PRINT            GO WRITE TO SYSPRINT
+         MVI   SWABEND+1,X'F0'     CHANGE SWITCH ABEND
+         SUBOUT RESTORE=(R4),RETURN=8(R4)
+         SPACE 2
+CATALOG  CAMLST NAME,DSNAME,,WORKAR
+         EJECT
+***********************************************************************
+*        UNCATALOG WITH 'PRINTED' AND CATALOG WITH 'OFFLINE' INDEX.   *
+***********************************************************************
+         SPACE 2
+UNC      SUBIN SAVE=(R4)
+         CATALOG UNCATLG
+         LTR   R15,R15
+         BZ    *+18                BRANCH IF DSN UNCATALOGUED
+         MVC   75(L'MSG13,R7),MSG13     LOGIC ERROR MESSAGE
+         BAL   R4,PRINT            GO WRITE TO SYSPRINT
+         B     ABEND               GO TO ABEND ROUTINE
+         SUBOUT RESTORE=(R4)
+         SPACE 2
+UNCATLG  CAMLST UCATDX,DSNAME
+         SPACE 2
+         SPACE 2
+CAT      SUBIN SAVE=(R4)
+         CATALOG CATLG
+         LTR   R15,R15
+         BZ    *+18                BRANCH IF DSN CATALOGUED
+         MVC   75(L'MSG14,R7),MSG14     LOGIC ERROR MESSAGE
+         BAL   R4,PRINT            GO WRITE TO SYSPRINT
+         B     ABEND               GO TO ABEND ROUTINE
+         SUBOUT RESTORE=(R4)
+         SPACE 2
+CATLG    CAMLST CATBX,DSNAME,,WORKAR
+         EJECT
+***********************************************************************
+*        WRITE TO SYSPRINT DATA SET                                   *
+***********************************************************************
+         SPACE 2
+PRINT    SUBIN SAVE=(R4)
+         CP    LINES,LINESMAX      TEST IF LINES COUNT > LINES MAX.PAGE
+         BNH   WRITE               BRANCH IF NO
+         MVI   0(R7),SKIPAFT       MOVE CONTROL CHAR. FOR SKIP AFTER W.
+         SP    LINES,LINES         ZEROISE LINE COUNT
+         PUT   SYSPRINT            WRITE TO SYSPRINT DATA SET
+         LR    R7,R1               STORE BUFFER ADDRESS
+         BAL   R4,HEADING          GO WRITE HEAD LINE TO SYSPRINT
+WRITE    PUT   SYSPRINT            WRITE TO SYSPRINT DATA SET
+         LR    R7,R1               STORE BUFFER ADDRESS
+         MVI   0(R7),BLANK         MOVE BLANK TO FIRST POSITION
+         MVC   1(132,R7),0(R7)      AND PROPAGATE THROUGH
+         MVI   0(R7),SPACE1        MOVE CTRL CHAR. SPACE 3 AFTER WRITE
+         AP    LINES,ONE           ADD ONE TO LINES COUNT
+         SUBOUT RESTORE=(R4)
+         SPACE 3
+HEADING  AP    PAGENO,ONE          ADD ONE TO PAGE COUNT
+         AP    LINES,THREE         ADD THREE TO LINES COUNT
+         MVC   PAGE(4),EDITPAGE    EDIT PAGE NO
+         ED    PAGE(4),PAGENO       TO HEAD LINE
+         MVC   0(133,R7),HEADLINE  MOVE HEAD LINE TO SYSPRINT BUFFER
+         BR    R4                  RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        DATA CONTROL BLOCKS                                          *
+***********************************************************************
+         SPACE 2
+SYSPRINT DCB   DDNAME=SYSPRINT,                                        *
+               DSORG=PS,                                               *
+               MACRF=PL,                                               *
+               RECFM=FM,                                               *
+               LRECL=133,                                              *
+               BLKSIZE=133
+         SPACE 3
+SYSIN    DCB   DDNAME=SYSIN,                                           *
+               DSORG=PS,                                               *
+               MACRF=GL,                                               *
+               EODAD=ENDSYSIN,                                         *
+               RECFM=F,                                                *
+               LRECL=80,                                               *
+               EXLST=BLKZE
+         SPACE 3
+BLKZE    CLC   SYSIN+62(2),=H'0'   HAS BLKSIZE BEEN SUPPLIED
+         BNE   0(R14)              YES, SO RETURN COMPLETE OPEN
+         MVC   SYSIN+62(2),SYSIN+82 NO, SO MOVE LRECL TO BLKSIZE
+         BR    R14                 RETURN COMPLETE OPEN
+         EJECT
+***********************************************************************
+*        WORK AREAS                                                   *
+***********************************************************************
+         SPACE 2
+HEADLINE DC    X'19'               SPACE 3 AFTER WRITE
+         DC    CL50'UT487 - SYSPRINT DATA SET'
+DATE     DC    CL50'                                             PAGE '
+PAGE     DC    CL32' '
+         SPACE 1
+PAGENO   DC    PL2'0'              PAGE COUNT
+LINES    DC    PL2'0'              LINES COUNT
+LINESMAX DC    P'55'               NUMBER OF LINES MAXIMUN BY PAGE
+EDITPAGE DC    X'40202120'
+         SPACE 1
+DETLINE  DC    CL133' '
+         SPACE 1
+DSNAME   DC    CL44' '
+WORKAR   DS    0D
+         DS    265C
+         EJECT
+***********************************************************************
+*        CONSTANTS, LITERALS AND EQUATES                              *
+***********************************************************************
+         SPACE 2
+ONE      DC    P'1'
+TWO      DC    P'2'
+THREE    DC    P'3'
+         SPACE 1
+KEYWORD1 DC    C'DSN=OFFLINE.'
+OFFLINE  DC    C'OFFLINE'
+PRINTED  DC    C'PRINTED'
+         SPACE 1
+MSG01    DC    C'***** NOT CATALOGUED'
+MSG02    DC    C'CATALOGUED'
+MSG03    DC    C'UNCATALOGUED'
+MSG04    DC    C'CATALOGUED'
+MSG05    DC    C'***** SEE LOCATE MACRO COND.CODE = 04'
+MSG06    DC    C'***** SEE LOCATE MACRO COND.CODE = 12'
+MSG07    DC    C'***** SEE LOCATE MACRO COND.CODE = 16'
+MSG08    DC    C'***** SYNTAX ERROR IN THE DSNAME'
+MSG09    DC    C'***** ''SYSCTLG'' PERMANENT I/O ERROR'
+MSG10    DC    C'***** SEE LOCATE MACRO COND.CODE = 28'
+MSG11    DC    C'***** SEE LOCATE MACRO COND.CODE = 32'
+MSG12    DC    C'***** INVALID KEYWORD IN PARM OF EXEC CARD'
+MSG13    DC    C'U0487 BECAUSE A LOGIC ERROR - SEE PROGRAM UNC ROUTINE'
+MSG14    DC    C'U0487 BECAUSE A LOGIC ERROR - SEE PROGRAM CAT ROUTINE'
+MSG15    DC    C'***** INVALID KEYWORD'
+MSG99    DC    C'END OF UT487'
+         SPACE 1
+BLANK    EQU   X'40'
+SKIPAFT  EQU   X'89'
+SPACE1   EQU   X'09'
+SPACE2   EQU   X'11'
+SPACE3   EQU   X'19'
+UNDERLIN EQU   C'-'
+         LTORG
+         END

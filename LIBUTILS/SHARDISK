@@ -1,0 +1,390 @@
+         TITLE 'SHAREDISK UTILIZING SHARED FILE SUPPORT'
+***********************************************************************
+*              SHARDISK ENQS ON A DATASET SPECIFIED BY A DDNAME       *
+*        THAT IS THE FIRST POSITIONAL PARAMETER IN THE PARM.          *
+*              THE SECOND PARMATER IN THE PARM SPECIFIES A PROGRAM    *
+*        TO BE CALLED. THIS IS NORMALLY A PDS UPDATE UTILITY.         *
+*              AN INFORMATION LINE IS WRITTEN TO THE SYSPRINT D/S.    *
+*              IF THE SYSLOG DDNAME IS PRESENT, IT IS ENQUED,         *
+*        DISP GHANGED TO MOD AND A LOG RECORD WRITTEN.                *
+***********************************************************************
+         SPACE 1
+SHARDISK START 0
+         PRINT NOGEN
+R0       EQU   0
+R1       EQU   1
+R2       EQU   2                   JFCB ADDRESS
+R3       EQU   3                   DCB ADDRESS
+R4       EQU   4                   HOLDAREA ADDRESS
+R5       EQU   5                   LINK ADDR / PROGNAME POINTER / RC
+R6       EQU   6                   DDNAME ADDR / UCB ARRDRESS
+R7       EQU   7                   WORK / QNAME POINTER
+R8       EQU   8                   PARM LENGTH / RNAME POINTER
+R9       EQU   9                   PARAMETER LIST ADDRESS
+R10      EQU   10                  WORK
+R11      EQU   11                  WORK
+R12      EQU   12                  BASE
+R13      EQU   13
+R14      EQU   14
+R15      EQU   15
+         SPACE 5
+***********************************************************************
+*        INITIALISATION                                               *
+***********************************************************************
+         SPACE 1
+         SAVE  (14,12),,*
+         BALR  R12,0
+         USING *,R12
+         LR    R11,R13
+         LR    R10,R1         R10=ADD OF PARAM LIST
+         GETMAIN R,LV=448
+         LR    R2,R1          R2=ADD OF JFCB
+         USING JFCB,R2
+         LA    R3,184(R2)     R3=ADD OF DCB
+         USING IHADCB,R3
+         LA    R4,96(R3)
+         USING HOLDAREA,R4    R4=ADD OF HOLDAREA
+         LA    R13,SAVEAREA
+         ST    R13,8(R11)
+         ST    R11,4(R13)
+         EJECT
+***********************************************************************
+*  PICK UP PARM                                                       *
+***********************************************************************
+         SPACE 1
+         MVI   DDNAME,C' '
+         MVC   DDNAME+1(15),DDNAME
+         ST    R10,PARMADDR       SAVE PARM REGISTER
+         L     R10,0(R10)     R10=ADD OF COUNT FIELD
+         LH    R11,0(R10)     R11=COUNT OF PARM
+         LTR   R11,R11
+         BZ    ABEND          ABEND IF NO PARM
+         LA    R10,2(R10)     R10=ADD OF PARM
+         LA    R5,LINKPARM
+         LA    R6,DDNAME
+         LA    R15,ABEND
+         LA    R8,1
+LR8      LR    R7,R10              R7=BEG OF PARM FIELD
+         LA    R9,8(R7)            R9=LIM OF PARM FIELD
+FINDLTH  CLI   0(R7),C','          FIND DELIMETER
+         BE    COMPLTH             FOUND-BRANCH
+         BXLE  R7,R8,FINDLTH
+         BR    R15                 PARM GT 8 BYTES
+COMPLTH  SR    R7,R10              R7=LENGTH OF PARM FIELD
+         BZ    ABEND               ABEND IF NO FIELD
+         BCTR  R11,0               TAKE INTO ACCOUNT DELIMETER
+         SR    R11,R7              R11=COUNT OF REMAINING BYTES IN PARM
+         BCR   12,R15
+DECR     SR    R7,R8               DECR FOR DELIMETER
+         EX    R7,MOVEPARM
+         LA    R10,2(R7,R10)       POINT R10 TO NEXT FIELD
+         CLC   DDNAME(3),=C'PPP'   SPECIAL UPDATE?
+         BNE   *+12                NOT THIS ONE. SKIP TWO
+         MVI   BEXFLAG,X'03'       SET FLAG
+         B     SPECIAL             BRANCH
+         SPACE 1
+         CLC   DDNAME(3),=C'MOP'   SPECIAL UPDATE REQD
+         BCR   7,R5                NO. BRANCH NOT EQUAL
+SPECIAL  EQU   *
+         MVC   DDNAME(3),=C'SYS'   CORRECT DDNAME
+         OI    MOPPSW,X'80'        INDICATE SPECIAL REQUEST
+         BR    R5
+MOVEPARM MVC   0(0,R6),0(R10)
+MOVESK   MVC   PARMLST(0),0(R1)
+LINKPARM LA    R5,FIXPARM
+         LA    R6,PROG
+         BAL   R15,LR8
+         CH    R11,C8
+         BH    ABEND
+         LA    R7,0(R10,R11)       SHORT FIELD PLUS NO MORE PARM
+         LA    R11,1(R11)          INCR SINCE DECR DONE ABOVE
+         LA    R15,DECR
+         B     COMPLTH
+FIXPARM  LTR   R11,R11
+         BNZ   STCOUNT
+         SR    R10,R8
+STCOUNT  L     R9,PARMADDR        R9=ADD OF PARAM LIST
+         L     R6,0(R9)           R6=ADD OF COUNT FIELD
+         STH   R11,0(R6)          STORE COUNT IN COUNT FIELD
+         LTR   R11,R11            TEST FOR A ZERO COUNT
+         BZ    MOVEDCB            YES-DON'T MOVE PARM
+         LA    R6,2(R6)           R6=ADD OF ORIG PARM
+         BCTR  R11,0              DECR FOR MOVE
+         EX    R11,MOVEPARM
+         SPACE 5
+***********************************************************************
+*  BUILD BLOCKS AND SCAN TIOT                                         *
+***********************************************************************
+         SPACE 1
+MOVEDCB  MVC   0(88,R3),SKDCB      MOVE SKELETON DCB INTO CALLER'S CORE
+         MVC   STDDNAME(8),DDNAME  SAVE DDNAME FOR UTLXDSCB CALL
+         LA    R11,JFEXLST
+         ST    R11,DCBEXLST        LOAD ADD OF EXIT LIST INTO DCB
+         LA    R11,JFCBDSNM
+         ST    R11,JFEXLST         LOAD ADD OF JFCB INTO EXIT LST ENTRY
+         MVI   JFEXLST,X'87'
+         SR    R11,R11
+         LA    R10,SKEXTND-SKEXT-1(0,0)
+         LA    R1,SKEXT
+         EX    R10,MOVESK
+         LA    R1,PARMLST
+          LA   R10,ADDTIOT
+         EXTRACT (R10),MF=(E,(R1))
+         L     R10,0(R10)          R10=ADD OF TIOT
+         MVC   LOGJOB,0(R10)       MOVE JOBNAME TO LOG REC FROM TIOT
+         LA    R10,24(R10)         R10=ADD OF 1ST & SUCC ENTRIES
+NEXTDD   LA    R5,STDDNAME         R5=DDNAME COMPARING FOR
+         CLC   0(8,R5),4(R10)
+         BE    FINDUCB
+         LA    R5,DDNAME
+         CLC   0(8,R5),4(R10)
+         BE    FINDUCB
+         IC    R11,0(R10)          LENGTH OF DD ENTRY
+         LA    R10,0(R11,R10)      ADD OF NEXT DD ENTRY
+         CLC   0(4,R10),=F'0'      CHK FOR END OF TIOT
+         BNE   NEXTDD
+ABEND    ABEND 24,DUMP             ERROR ABORT TASK
+         EJECT
+***********************************************************************
+*              ENQUEUE ON DSNAME                                      *
+***********************************************************************
+         SPACE 1
+FINDUCB  LA    R6,16(R10)          R6=ADD OF WORD IN TIOT CONT UCB ADD
+         MVC   DCBDDNAM(8),0(R5)  MOVE IN DDNAME TO BE RESERVED
+         LA    R10,SKRDJND-SKRDJ-1(0,0)
+         LA    R1,SKRDJ
+         EX    R10,MOVESK
+         LA    R1,PARMLST
+         RDJFCB ((R3)),MF=(E,(R1))     READ IN DSNAME FROM JFCB
+         MVI   QNAME,C'M'         PREFIX QNAME WITH MM
+         MVI   QNAME+1,C'M'
+         MVC   QNAME+2(6),JFCBVOLS     REMAINING PORTION EQUALS VOLID
+         MVI   RNAME,X'2C'         MOVE IN LENGTH OF DSNAME
+         MVC   RNAME+1(44),JFCBDSNM MOVE DSNAME INTO RNAME+1
+         LA    R7,QNAME
+         LA    R8,RNAME
+         LA    R10,SKRESND-SKRES-1(0,0)
+         LA    R1,SKRES
+         EX    R10,MOVESK
+         LA    R1,PARMLST
+*        RESERVE ((R7),(R8)),UCB=(R6),MF=(E,(R1))  RES UNIT-E ENQ 4 DS
+         ENQ   ((R7),(R8)),MF=(E,(R1))
+         EJECT
+***********************************************************************
+*              IF SPECIAL UPDATE CALL UTLXDSCB                        *
+***********************************************************************
+         SPACE 1
+         TM    MOPPSW,X'80'        SPECIAL UPDATE
+         BNO   SKPEXDT1            NO. SKIP NEXT A CALL
+         LINK  EP=UTLXDSCB,PARAM=(BEXLKED,DDNAMEL,SAVDATE),VL=1
+         SPACE 5
+***********************************************************************
+*              CALL SPECIFIED PROGRAM                                 *
+***********************************************************************
+         SPACE 1
+SKPEXDT1 EQU   *
+         LA    R10,SKLNKND-SKLNK-1(0,0)
+         LA    R1,SKLNK
+         EX    R10,MOVESK
+         LR    R1,R9              LOAD R1 WITH ADD OF PARAM LIST
+         LA    R5,PROG
+         LA    R15,PARMLST
+         LINK  EPLOC=(R5),SF=(E,(R15))
+         LR    R5,R15              SAVE COND CODE
+         SPACE 5
+***********************************************************************
+*              IF SPECIAL UPDATE CALL UTLXDSCB                        *
+***********************************************************************
+         SPACE 1
+         TM    MOPPSW,X'80'        SPECIAL UPDATE?
+         BNO   SKPEXDT2            NO. SKIP LINK
+         MVC   BEXDATE(6),SAVDATE  GET PREVIOUS DATASET STATUS
+         LINK  EP=UTLXDSCB,PARAM=(BEXLKED,DDNAMEL,SAVDATE),VL=1
+         SPACE 5
+***********************************************************************
+*              DEQ FROM PREVIOUSLY ENQUED DSNAME                      *
+***********************************************************************
+         SPACE 1
+         LA    R7,QNAME
+         LA    R8,RNAME
+         LA    R10,SKDEQND-SKDEQ-1(0,0)
+         LA    R1,SKDEQ
+         EX    R10,MOVESK
+         LA    R1,PARMLST
+         DEQ   ((R7),(R8)),MF=(E,(R1))
+         EJECT
+***********************************************************************
+*              WRITE INFORMATION  MSG TO SYSPRINT D/S                 *
+*                 NOTE: THIS D/S MUST BE A SYSOUT STREAM.             *
+***********************************************************************
+         SPACE 1
+SKPEXDT2 EQU   *
+         OPEN (SYSPRINT,(OUTPUT))
+         MVC   PRTDDN,DDNAME
+         MVC   PRTDSN,RNAME+1      MOVE DSNAME TO PRINT LINE
+         MVC   PRTVOL,QNAME+2      MOVE VOLUME NUMBER
+         CVD   R5,DWORD
+         ED    PRTCC,DWORD+6       MOVE CALLED PROGRAM COND CODE TO PT
+         MVC   PRTCC,PRTCC+1       LEFT SHUFFLE COND CODE
+         UT458 ,                   CALL UNIVERSAL DATE ROUTINE
+         MVC   DATEF458,UTREPORT
+         MVC   HH,UTHHMMSS
+         MVC   MM,UTHHMMSS+2
+         MVC   SS,UTHHMMSS+4
+         PUT   SYSPRINT,DETLINE
+         MVI   CTLCHAR,X'09'       MOVE SPACE AFTER WRITE
+         PUT   SYSPRINT,DETLINE    WRITE SYSPRINT MESSAGE
+         CLOSE (SYSPRINT)
+         EJECT
+***********************************************************************
+*              CREATE SYSLOG RECORD IF DATASET AVAILABLE              *
+***********************************************************************
+         SPACE 1
+         TESTIOT DDNAME=LOGDDN     IS SYSLOG D/S AVAILABLE
+         LTR   R15,R15             YES. IF RETURN CODE ZERO
+         BNZ   NOLOG               NO. SKIP LOG PROCESSING
+         MVC   LOGDATE,UTYYMMDD    MOVE DATE TO LOG RECORD
+         MVC   LOGTIME,UTHHMMSS    MOVE TIME TO LOG RECORD
+         MVC   LOGPROG,PROG        MOVE PROGRAM
+         MVC   LOGCOND,PRTCC+1     MOVE DISPLAY COND CODE
+         MVC   LOGVOL,QNAME+2      MOVE VOLUME SERIAL
+         MVC   LOGDSN,RNAME+1      MOVE DSNAME
+         MVC   IHADCB(96),SYSLOG   MOVE SYSLOG DCB TO GETMAINED DCB
+         LA    R11,JFEXLST         ADDR EXIT LIST
+         ST    R11,DCBEXLST        STORE IN SYSLOG DCB COPY
+         LA    R1,SKRDJ            ADDRESS LIST FROM RDJFCB
+         RDJFCB ((R3)),MF=(E,(R1))  READ SYSLOG JFCB
+         TM    JFCBIND2,JFCTEMP    TEMPORARY DATASET?
+         BO    NOLOGRES            YES SKIP RESERVATION.
+         TM    JFCBIND2,JFCSHARE   SHARED DATASET?
+         BNO   NOLOGRES            NO. SKIP RESERVATION
+         TM    JFCBIND2,JFCNEW     NEW DATASET?
+         BO    *+12                YES. SKIP CHANGE TO MOD.
+         NI    JFCBIND2,255-JFCDISP CLEAR DISP
+         OI    JFCBIND2,JFCMOD     RESET TO MOD.
+         OI    JFCBTSDM,JFCNWRIT   INHIBIT REWRITE OF JFCB
+         MVC   QNAME+2(6),JFCBVOLS SET UP ENQ NAME PT1 WITH VOLSER
+         MVC   RNAME+1(44),JFCBDSNM SET UP ENQ NAME PT2 WITH DSNAME
+         LA    R7,QNAME            POINT TO QNAME
+         LA    R8,RNAME            POINT TO RNAME
+         ENQ   ((R7),(R8)),MF=(E,SKRES) ENQ ON SYSLOG DATASET
+         OI    MOPPSW,X'40'        INDICATE ENQ DONE
+NOLOGRES EQU   *
+         OPEN  ((R3),OUTPUT),TYPE=J  OPEN SYSLOG DATASET
+         PUT   (R3),LOGCARD        WRITE LOG RECORD
+         CLOSE ((R3))              CLOSE AGAIN
+         TM    MOPPSW,X'40'        WAS AN ENQ DONE?
+         BNO   NOLOG               NO. SKIP DEQ.
+         DEQ   ((R7),(R8)),MF=(E,SKRES) DEQ SYSLOG DATASET
+NOLOG    EQU   *
+         EJECT
+***********************************************************************
+*        CLOSEDOWN AND RETURN TO SYSTEM                               *
+***********************************************************************
+         SPACE 1
+         L     R13,4(R13)          PICK UP ADD OF CALLER'S SA
+         FREEMAIN R,LV=448,A=(R2)  FREE UP GETMAINED MAIN STORAGE
+         LR    R15,R5              RESTORE COND CODE
+         RETURN (14,12),T,RC=(15)
+         EJECT
+***********************************************************************
+*        WORKING STORAGE                                              *
+***********************************************************************
+         SPACE 1
+DWORD    DS    D
+BEXLKED  EQU   *
+BEXLEN   DC    XL2'0006'
+BEXDATE  DC    CL5'11111'
+BEXFLAG  DC    XL1'00'
+SAVDATE  DC    XL6'00'
+MOPPSW   DC    X'00'
+SYSPRINT DCB   DDNAME=SYSPRINT,DSORG=PS,RECFM=FM,LRECL=121,            C
+               BLKSIZE=121,MACRF=PM
+         SPACE 1
+SYSLOG   DCB   DDNAME=SYSLOG,DSORG=PS,RECFM=FB,LRECL=80,MACRF=PM
+LOGDDN   EQU   SYSLOG+40
+         SPACE 1
+DETLINE  DS    0CL121
+CTLCHAR  DC    X'1B'
+         DC    CL7'DDNAME='
+PRTDDN   DS    CL8
+         DC    CL4' '
+         DC    CL5' VOL='
+PRTVOL   DC    CL6' '
+         DC    CL12'     DSNAME='
+PRTDSN   DS    CL44
+         DC    C' '
+DATEF458 DS    CL9
+         DC    CL1' '
+HH       DS    CL2
+         DC    C'.'
+MM       DS    CL2
+         DC    C'.'
+SS       DS    CL2
+         DC    CL1' '
+         DC    CL10' COND CODE'
+PRTCC    DC    XL4'7E212020'
+         DC    CL1' '
+         SPACE 1
+LOGCARD  DS    0CL80
+LOGJOB   DC    CL8' '              JOB USING SHARDISK
+LOGDATE  DC    CL6' '              FORMAT YYMMDD
+LOGTIME  DC    CL6' '              FORMAT YYMMDD
+LOGPROG  DC    CL8' '              PROGRAM CALLED BY SHARDISK
+LOGCOND  DC    CL2' '              COND. CODE RETURNED BY CALLED PROGAM
+LOGVOL   DC    CL6' '              VOLUME ON WHICH UPDATE WAS DONE
+LOGDSN   DC    CL44' '             DATASET NAME UPDATED
+         SPACE 1
+         LTORG
+         EJECT
+***********************************************************************
+*        SKELETONS                                                    *
+***********************************************************************
+         SPACE 1
+C8       DC    H'8'
+SKDCB    DCB   DSORG=PO,DDNAME=DUMMYNAM,MACRF=R
+DDNAMEL  DC    H'8'
+STDDNAME DC    C'SYSLMOD '
+         DS    0F
+SKEXT    EXTRACT 0,'S',FIELDS=TIOT,MF=L
+SKEXTND  EQU   *
+SKRDJ    RDJFCB (0),MF=L
+SKRDJND  EQU   *
+*SKRES   RESERVE (0,0,E,0,SYSTEMS),UCB=0,MF=L
+SKRES    ENQ   (0,0,E,0,SYSTEMS),MF=L
+SKRESND  EQU   *
+SKLNK    LINK  EPLOC=0,DCB=0,SF=L
+SKLNKND  EQU   *
+SKDEQ    DEQ   (0,0,0,SYSTEMS),MF=L
+SKDEQND  EQU   *
+         SPACE 5
+***********************************************************************
+*        DSECTS                                                       *
+***********************************************************************
+         SPACE 1
+JFCB     DSECT
+JFEXLST  DS    F
+JFCBDSNM DS    CL44
+JFCBTSDM EQU   JFCB+56
+JFCNWRIT EQU   X'08'
+JFCBIND2 EQU   JFCB+91
+JFCTEMP  EQU   X'01'
+JFCSHARE EQU   X'08'
+JFCNEW   EQU   X'C0'
+JFCDISP  EQU   X'C0'
+JFCMOD   EQU   X'80'
+         DS    CL74
+JFCBVOLS DS    CL6
+         DS    CL52
+ADDTIOT  DS    F
+         DCBD  DSORG=(PO),DEVD=(DA)
+FILLER   DS    CL8                 ALLOW FOR 96 BYTE QSAM DCB
+HOLDAREA DSECT
+SAVEAREA DS    18F
+DDNAME   DS    CL8
+PROG     DS    CL8
+PARMADDR DS    F
+QNAME    DS    CL8
+RNAME    DS    CL45
+PARMLST  DS    4F
+         END   SHARDISK

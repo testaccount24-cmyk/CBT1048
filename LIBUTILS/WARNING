@@ -1,0 +1,123 @@
+         TITLE 'MODULE TO INFORM OPERATOR OF SERIOUS ERRORS'
+***********************************************************************
+*        WARNING: THIS PROGRAM WILL ISSUE A PREDETERMINED MESSAGE TO  *
+*            THE OPERATOR AND WAIT FOR A SPECIFIC REPLY. THESE BEING  *
+*            ENTERED THROUGH THE JCL PARM FIELD WHEN THE PROGRAM IS   *
+*            INVOKED.                                                 *
+*                                                                     *
+*        PARAMETERS: THE JCL PARM FIELD SHOULD CONTAIN -              *
+*                                                                     *
+*            PARM='MMMM,RRRR'
+*                                                                     *
+*            WHERE RRRR IS  THE REPLY EXPECTED FROM THE OPERATOR      *
+*                  MMMM IS THE MESSAGE TO BE WRITTEN TO CONSOLE       *
+*                                                                     *
+*        THESE FIELDS MAY BE ANY LENGTH AS LONG AS THE TOTAL          *
+*        (INCLUDING THE COMMA) IS LESS THAN 100 CHARACTERS.           *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         EJECT
+WARNING  ZCSECT
+BEGIN    L     REG1,0(REG1)        LOAD ADDRESS PARM INFORMATION
+         LH    REG3,0(REG1)        LOAD LENGTH OF PARM SPECIFIED
+         LTR   REG3,REG3           TEST LENGTH OF DATA
+         BZ    ERROR1              NO GOOD. CANNOT CONTINUE
+         EJECT
+***********************************************************************
+*        SPLIT PARM INTO ITS FIELD AND FIND LENGTH OF EACH (SCAN MACRO)
+***********************************************************************
+         SPACE 1
+         LA    REG4,2(REG1)        LOAD ADDRESS OF DATA
+         SCAN  DATA=(REG4),LENGTH=(REG3),CHAIN=CHAIN
+         EJECT
+***********************************************************************
+*        LOCATE JOBNAME & MOVE TO WTO BUFFER                          *
+***********************************************************************
+         SPACE 2
+         L     REG1,16             ADDRESS OF CVT
+         L     REG1,0(REG1)        LOAD ADDRESS OF TCB WORDS
+         L     REG1,4(REG1)        LOAD ADDRESS CURRENT TCB
+         L     REG1,12(REG1)       LOAD ADDRESS TASK IO TABLE
+         MVC   WTOJNAME(8),0(REG1) MOVE JOBNAME TO WTO MESSAGE
+         MVI   WTOJNAME+8,C':'     SEPARATENAME FROM MESSAGE
+         EJECT
+***********************************************************************
+*        MOVE MESSAGE AND REPLY PROMPTER TO WTO BUFFER                *
+***********************************************************************
+         SPACE 2
+         XR    REG6,REG6           CLEAR REG 6
+         L     REG5,CHAIN          LOAD ADDRESS FIRST DESC BLOCK
+         LTR   REG5,REG5           CHECK FOR PRESCENCE OF OPERAND
+         BZ    ERROR1              SUPPLY DEFAULT IF NONE
+         IC    REG6,4(REG5)        LOAD LENGTH OUTPUT MESSAGE
+         LTR   REG6,REG6           TEST LENGTH OF PARM
+         BZ    ERROR1              OPERAND IS MISSING
+         L     REG7,4(REG5)        LOAD ADDRESS OUTPUT TEXT
+         BCT   REG6,*+10           SUBTRACT 1 FROM LENGTH
+         MVC   WTOTEXT(0),0(REG7)  MOVE TEXT TO WTO PARM FIELD
+         EX    REG6,*-6            EXECUTE THE MOVE
+         LA    REG9,WTOTEXT+2(REG6) STEP OVER MESSAGE TEXT
+         MVC   0(L'REPLYTXT,REG9),REPLYTXT MOVE IN FIRST LITERAL
+         LA    REG9,L'REPLYTXT+1(REG9) STEP OVER THE LITERAL
+         L     REG5,0(REG5)        LOAD ADDRESS REPLY DESC BLOCK
+         LTR   REG5,REG5           TEST FOR SECOND OPERAND
+         BZ    ERROR1              OPERAND MISSING -SUPPLY DEFAULT
+         IC    REG6,4(REG5)        LOAD EXPECTED LENGTH
+         LTR   REG6,REG6           TEST LENGTH OF OPERAND
+         BZ    ERROR1              NO GOOD. USE DEFAULT SET
+         STC   REG6,REPLYLEN       STORE LENGTH IN WTOR PARM AREA
+         L     REG7,4(REG5)        LOAD ADDRESS EXPECTED TEXT
+         BCT   REG6,*+10           SUBTRACT 1 FROM LENGTH FOR EXECUTE
+         MVC   0(0,REG9),0(REG7)   MOVE EXPECTED REPLY TO WTOR
+         EX    REG6,*-6            EXECUTE THE MOVE
+         LA    REG9,2(REG6,REG9)   STEP OVER REPLY PROMPT TEXT
+         MVC   0(L'CONTTEXT,REG9),CONTTEXT FILL UP REST MESSAGE
+         EJECT
+***********************************************************************
+*        ISSUE THE WTOR & WAIT FOR A REPLY                            *
+***********************************************************************
+         SPACE 2
+         CNOP  0,4
+WTO      EQU   *
+WTOJNAME EQU   WTO+16              JOBNAME FIELD IN MESSAGE
+WTOTEXT  EQU   WTO+26              ORIGINAL OUTPUT TEXT FIELD
+REPLYLEN EQU   WTO+4               BYTE TO CONTAIN REPLY LENGTH
+REISSUE  WTOR  '                                                       X
+                                                                       X
+                       ',REPLY,1,ECB
+         WAIT  ECB=ECB
+         MVI   ECB,X'00'           RESET THE COMPLETE BIT IN ECB
+         EX    REG6,CLCINST        EXECUTE THE COMPARE
+         BNE   REISSUE             NO GOOD. RE-ISSUE THE MESSAGE
+         EJECT
+***********************************************************************
+*        NORMAL RESPONSE. RETURN WITH CODE OF ZERO                    *
+***********************************************************************
+         SPACE 2
+         ZRETURN RC=0
+         EJECT
+***********************************************************************
+*              PARM FIELD IS MISSING OR INVALID                       *
+***********************************************************************
+         SPACE 2
+ERROR1   LA    REG1,DEFAULT        POINT REG1 AT DEFAULT SET OPERANDS
+         B     BEGIN               GO PROCESS THESE
+         SPACE 2
+DEFAULT  DC    A(DEFLTLEN)         ADDRESS DEFAULT PARM FIELD
+DEFLTLEN DC    AL2(L'DEFMESS+L'DEFREPLY+1) PSEUDO PARM LENGTH
+DEFMESS  DC    C'WARNING - PLEASE CHECK THAT NO ABENDS HAVE OCCURRED FOR
+               R THIS JOB'
+         DC    C','                COMMA WOULD BE PRESENT IN JCL PARM
+DEFREPLY DC    C'U'
+         EJECT
+***********************************************************************
+*        ODD LITERALS & CONSTANTS                                     *
+***********************************************************************
+REPLY    DC    CL98' '             BUFFER FOR OPERATOR REPLY
+ECB      DC    A(0)                ECB FOR WTOR MACRO
+CHAIN    DC    A(0)                HOOK FOR SCAN MACRO OUTPUT
+CLCINST  CLC   REPLY(0),0(REG7)    COMPARE FOR OPERATOR REPLY
+CONTTEXT DC    C'** TO CONTINUE'
+REPLYTXT DC    C'REPLY **'
+         END

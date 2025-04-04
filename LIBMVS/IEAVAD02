@@ -1,0 +1,704 @@
+//IEAVAD02 JOB (1586,5),'** FOR J. NOLS **',CLASS=N
+//*********************  0CX PARTIAL DUMP  ****************************
+//STEP01       EXEC GENASMOD,AOS=C5
+         MACRO
+         OPSET &INST,&OPCODE,&OPTIONS
+.*
+.*       THIS IS A MACRO UNIQUE TO THIS MODULE. ITS PURPOSE IS TO SET
+.*       UP ENTRIES IN A TABLE FOR THE TRANSLATE INSTRUCTION.
+.*       THE OPCODE OF THE FAILING INSTRUCTION IS 'TRANSLATED'
+.*       USING THIS TABLE. THE RESULT IS A FLAG WHICH INDICATES
+.*       WHAT REGISTER FORMATTING IS NEEDED FOR THIS INSTRUCTION.
+.*
+         ORG   OPTABLE+X'&OPCODE'  SET ORIGIN TO RIGHT ENTRY IN TABLE
+&INST    DC    AL1&OPTIONS         FLAGS FOR THIS OPERATION
+         MEND
+         TITLE 'OCX PARTIAL DUMP SOLVING ROUTINE'
+***********************************************************************
+*                                                                     *
+*        JEAVAD02: THIS MODULE IS EXECUTED AS PART OF 'SNAP'.         *
+*              IT IS INVOKED BY THE ROUTINE XEAVAD02 WHICH            *
+*              IS LINK EDITED INTO IGC0005A IN SUCH A WAY AS TO       *
+*              STEAL THE EXTERNAL REFERENCE OF THE REAL IEAVAD02.     *
+*                                                                     *
+*        ATTRIBUTES: REENTRANT, AUTHORISED, SUPERVISOR MODE.          *
+*                                                                     *
+*        MACROS: ZCSECT,ZRETURN,IHAABDA,IKJRB,IKJTCB                  *
+*                                                                     *
+*        PARAMETERS: ON ENTRY, REG1 POINTS TO THE ABDUMP WORK AREA    *
+*                                                                     *
+*        EXITS: PASSES CONTROL BACK TO THE CALLER                     *
+*                                                                     *
+*        REGISTER USAGE                                               *
+*              REG0  WORK REGISTER                                    *
+*              REG1  PARAMETER REGISTER, WORK REGISTER                *
+*              REG2  WORK REGISTER                                    *
+*              REG3  ADDRESS OF ABDUMP WORK AREA.                     *
+*              REG4  ADDRESS OF GETMAINED INTERNAL WORK AREA          *
+*              REG5  ADDRESS OF ABENDING TASKS TCB                    *
+*              REG6  ADDRESS OF ABENDING TASKS REQUEST BLOCK          *
+*              REG7  ADDRESS OF FAIL INSTRUCTION                      *
+*              REG8  LENGTH OF FAIL INSTRUCTION                       *
+*              REG9  WORK REGISTER                                    *
+*              REG00                                                  *
+*              REG11 LINK REGISTER BETWEEN ROUTINES                   *
+*              REG12 BASE ADDRESS REGISTER                            *
+*              REG13 ADDRESS OF REGISTER SAVE AREA                    *
+*              REG14 WORK REGISTER, RETURN LINK REGISTER              *
+*              REG15 WORK REGISTER, RETURN CODE TO CALLER             *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        DSECTS                                                       *
+***********************************************************************
+         SPACE 2
+         PRINT NOGEN
+         IHAABDA ,                 ABDUMP WORK AREA
+         SPACE 2
+         IKJRB ,                   PROGRAM & SUPERVISOR REQUEST BLOCK
+         SPACE 2
+         IKJTCB ,                  TASK CONTROL BLOCK
+         SPACE 2
+         IHACDE
+         PRINT GEN
+         SPACE 2
+WKAREA   DSECT ,                   INTERNAL WORK AREA
+GETMNADD DS    A                   ADDRESS OF THIS GETMAINED AREA
+GETMNLEN DS    F                   LENGTH OF THIS GETMAINED AREA
+PAGER11  DS    F                   SAVE AREA FOR LINK REGISTER
+FMTREG11 DS    F                   SAVE AREA FOR LINK REGISTER
+SAVER113 DS    F                   SAVE AREA FOR LINK REGISTER
+SAVER11  DS    F                   SAVE AREA FOR LINK REGISTER
+PRTREGSV DS    F                   WORK AREA
+DBLWORD  DS    D                   DOUBLE WORD WORK AREA
+RETCODE  DS    H                   RETURN CODE TO CALLER
+LOADWK1  DS    H                   WORK AREA FOR ADDRESS CONVERSION
+ABNDCODE DS    0XL2                TWO BYTE REFERENCE FOR ABEND CODE
+CCPRFX   DS    X                   FIRST TWO DIGITS OF ABEND CODE
+CCTYPE   DS    X                   LAST PART OF ABEND CODE
+INTCODE  DS    H                   INTERRUPT CODE CAUSING ABEND
+FLAG     DS    X                   FLAG FOR FORMAT ROUTINES
+FMTFLAG  DS    X                   FLAG FOR PRINT REGISTER ROUTINES
+FMTAREA  DS    CL12                USED TO FORMAT INSTRUCTIONS
+         DS    X                   ALLOW OVERFLOW OF FMTAREA
+FMTLEN   DS    0XL3                FORMAT AREA FOR OPERAND LENGTHS
+FMTLEN1  DS    X                   LENGTH OF FIRST OPERAND
+FMTLEN2  DS    X                   LENGTH OF SECOND OPERAND
+         DS    X                   OVERFLOW AREA FOR FMTLEN
+WKAREND  EQU   *                   END OF DSECT
+WKARELEN EQU   WKAREND-WKAREA      LENGTH OF THE DSECT
+         SPACE 2
+XLDSECT  DSECT ,                   DSECT OF EXTENT LIST ENTRY
+XLSIZE   DS    A                   LENGTH OF EXTENT LIST ENTRY
+XLNOSCTS DS    A                   NUMBER OF BLOCKS
+XLLEN    DS    A                   LENGTH OF BLOCK
+XLADDR   DS    A                   ADDRESS OF BLOCK
+         EJECT
+***********************************************************************
+*        EQUATES                                                      *
+***********************************************************************
+         SPACE 2
+*
+*        THE FOLLOWING RELATE TO 'FLAG' AND INDICATE PROCESSING NEEDED.
+*
+FLGREGS  EQU   X'80'               FORMAT & PRINT REGS FOR THIS ABEND
+FLGDATA  EQU   X'40'               FORMAT & PRINT DATA AREAS
+*
+*        THE FOLLOWING RELATE TO 'FMTFLAG' AND INDICATE WHAT PARTS OF
+*        INSTRUCTIONS TO FORMAT
+*
+R1       EQU   X'80'               FORMAT CONTENTS OPERAND REG 1
+R1X      EQU   X'40'               FORMAT CONTENTS OP1+1 (MVCL ETC)
+R2       EQU   X'20'               FORMAT CONTENTS OPERAND REG 2
+R2X      EQU   X'10'               FORMAT CONTENTS OP2+1 (BXLE ETC)
+R2NZ     EQU   X'28'               DON'T FORMAT CONTENTS IF REG 0 USED
+B1       EQU   X'04'               FORMAT CONTENTS BASE REG 1 (RS & SS)
+B2       EQU   X'02'               FORMAT CONTENTS BASE REG 2 (SS)
+*
+*        THE NEXT FIELDS RELATE TO PRINT POSITIONS IN OUTPUT LINES
+*
+TEXT1    EQU   ABDLINE+0           TEXT FOR INSTRUCTION     (FAILINST)
+TEXT2    EQU   ABDLINE+72          TEXT FOR OFFSET          (OFFSETER)
+TEXT3    EQU   ABDLINE+0           TEXT FOR 1ST OPERAND DATA (FMTDATA)
+TEXT4    EQU   ABDLINE+50          TEXT FOR 2ND OPERAND DATA (FMTDATA)
+TEXT5    EQU   ABDLINE+0           TEXT FOR REGISTER CONTENTS (FMTREGS)
+TEXT6    EQU   ABDLINE+36          TEXT FOR PGM STRT ADDRESS (OFFSETER)
+TEXT7    EQU   ABDLINE+0           TEXT FOR PAGE FAULT ADDR   (PAGEFLT)
+PRTFLTAD EQU   ABDLINE+46          PRINT POSITION FOR PGE FLT ADDRESS
+PRTINST  EQU   ABDLINE+20          PRINT POSITION FOR INSTRUCTION
+PRTOFFST EQU   ABDLINE+91          PRINT POSITION FOR PGM OFFSET
+PRTSTADD EQU   ABDLINE+55          PRINT POSITION FOR PGM START ADDRESS
+PRTDATA1 EQU   ABDLINE+14          PRINT POSITION FOR OPERAND 1
+PRTDATA2 EQU   ABDLINE+64          PRINT POSITION FOR OPERAND 2
+PRTREGNO EQU   ABDLINE+10          PRINT POSITION FOR OPERAND REGISTER
+PRTREGHX EQU   ABDLINE+20          PRINT POSITION OP REG CONTENTS
+*
+*
+DECIMAL  EQU   X'F0'               BITS IN OP-CODE WHICH SHOW DECIMAL
+*                                  OPERATION.
+TIOTOFF  EQU   X'28'               OFFSET TO TIOT OFFSET IN DCB
+SDATAOPT EQU   X'01'               NO SDATA TO BE FORMATTED
+PDATAOPT EQU   APFPSW+APFREGS+APFSAVE+APFJPA+APFSPALL USED TO OVERRIDE
+*                         ANY OPTIONS WHICH MAY BE CURRENT AT ABEND
+NULSDATA EQU   X'01'               NO SDATA FOR IGNORED DUMPS
+NULPDATA EQU   APFPSW+APFREGS      ONLY PSW AND REGS FOR IGNORED DUMP
+*
+*        THE FOLLOWING EQUATES ARE USED TO SET RETURN CODES IN REG 15
+*
+NULLDUMP EQU   4                   EXECUTE NO MORE DUMP MODS
+DODUMP   EQU   0                   CONTINUE WITH MONSANTO DUMP MODS
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING                                   *
+***********************************************************************
+         SPACE 2
+JEAVAD02 ZCSECT GETMAIN=1
+         EJECT
+***********************************************************************
+*        INITIALISE WORK AREAS ETC.                                   *
+***********************************************************************
+         SPACE 2
+         USING ABDAREA,REG3
+         USING WKAREA,REG4
+         LR    REG3,REG1           LOAD ADDRESS OF ABDUMP WORK AREA
+         LA    REG0,WKARELEN       LOAD LENGTH FOR GETMAIN
+         GETMAIN R,LV=(0)          GETMAIN CORE FOR WORK AREA
+         LR    REG4,REG1           LOAD ADDRESS OF WORK AREA
+         ST    REG1,GETMNADD       SAVE ADDRESS FOR FREEMAIN
+         ST    REG0,GETMNLEN       SAVE FOR FREEMAIN
+         XC    RETCODE,RETCODE     SET RETURN CODE TO ZERO
+         EJECT
+***********************************************************************
+*        INITIAL TESTS TO SEE IF OUR PROCESSING IS APPROPRIATE        *
+***********************************************************************
+         SPACE 2
+         TM    ABDFLAG,APFABEND    IS THIS A USER SNAP MACRO OR ABEND ?
+         BO    EXITPGM             SNAP. NO PROCESSING.
+         L     REG5,ABDTCB         LOAD ADDRESS OF TCB ABENDING
+         USING TCB,REG5            ADDRESSABILITY FOR DSECT
+         MVC   ABNDCODE,TCBCMP+1   MOVE SYSTEM COMP CODE TO WORK AREA
+         BAL   REG11,TESTDUMP      TEST FOR DUMPS TO IGNORE
+         BAL   REG11,RPGTEST       IS THIS AN RPG ABEND
+         CLI   CCPRFX,X'0C'        ARE WE LOOKING AT AN '0CX' ABEND ?
+         BNE   SETOPTS             NO. NO PROCESSING TO DO
+         EJECT
+***********************************************************************
+*        FORMAT AND PRINT THE FAILING INSTRUCTION                     *
+***********************************************************************
+         SPACE 2
+FAILINST DS    0H
+         L     REG6,ABDCRB         LOAD ADDRESS ABDUMP'S SVRB
+         USING RBBASIC,REG6        ADDRESSABILITY FOR REQUEST BLOCK
+         L     REG6,RBLINK         ADDRESS OF SVC13'S SVRB
+         L     REG6,RBLINK         ADDRESS OF USER'S PRB
+         S     REG6,PRFXLEN        SUBTRACT LENGTH RB PREFIX
+         DROP  REG6                RELEASE ADDRESSABILITY
+         USING RBPRFX,REG6         ADDRESS WHOLE REQUEST BLOCK
+         MVC   INTCODE,RBRTINCD    SAVE INTERRUPT CODE FOR LATER
+         CLC   RBRTINCD,SIXTEEN    TEST LEVEL OF INTERRUPT CODE
+         BL    FAILCONT            NORMAL INTERRUPT CODE
+         BAL   REG11,PAGEFLT       PAGE FAULT. SPECIAL OUTPUT
+FAILCONT TM    RBSTAB1,RBFTP       IS THIS A NORMAL PROGRAM ?
+         BNZ   SETOPTS             ABEND IN SUPERVISOR ROUTINE.
+         MVC   TEXT1(L'INSTRCTN),INSTRCTN MOVE TEXT TO PRINT LINE
+         L     REG7,RBOPSW+4       INSTRUCTION ADDRESS IN FAIL PSW
+         LA    REG7,0(REG7)        CLEAR TOP BYTE TO BE SURE
+         XR    REG8,REG8           CLEAR REGISTER 8
+         IC    REG8,RBRTILC        LENGTH OF FAIL INSTRUCTION
+         CLC   INTCODE,SIXTEEN     IS THIS A PAGE FAULT ?
+         BNL   FAILNOSR            YES. PSW POINTS AT FAIL INSTRUCTION
+         SR    REG7,REG8           ADDRESS OF FAIL INSTRUCTION
+FAILNOSR EX    REG8,UNPK1          FORMAT INSTRUCTION TO FIXED AREA
+         AR    REG8,REG8           DOUBLE THE LENGTH (NOW PCKD DECIMAL)
+         LA    REG9,FMTAREA+L'FMTAREA END OF FORMATTED INST
+         SR    REG9,REG8           START OF FORMATTED INSTRUCTION
+         BCTR  REG8,0              SUBTRACT 1 FOR EXECUTE
+         EX    REG8,MOVE1          MOVE TO PRINT LINE
+         EX    REG8,TR1            MAKE IT PRINT
+         B     OFFSETER            GO PRINT OFFSET OF THE INSTRUCTION
+         SPACE 2
+SIXTEEN  DC    H'16'               USED TO TEST INTERRUPT CODE
+UNPK1    UNPK  FMTAREA(L'FMTAREA+1),0(0,REG7)
+MOVE1    MVC   PRTINST(0),0(REG9)
+TR1      TR    PRTINST(0),TABLE-240
+         EJECT
+***********************************************************************
+*        PAGE FAULT HAS OCCURRED. TELL USER ITS ADDRESS               *
+***********************************************************************
+         SPACE 2
+PAGEFLT  DS    0H
+         ST    REG11,PAGER11       SAVE LINK REGISTER
+         MVC   TEXT7(L'FAULTMSG),FAULTMSG IDENTIFY THIS OUTPUT
+         UNPK  PRTFLTAD(7),RBRTRAN+1(4) UNPACK ADDRESS TO PRINT LINE
+         TR    PRTFLTAD(6),TABLE-240 MAKE ADDRESS PRINTABLE
+         MVI   PRTFLTAD+6,C' '     REMOVE UNWANTED SIGN
+         MVI   ABDCC,C'0'          SET DOUBLE SPACING
+         BAL   REG11,PRINTER       GO PRINT THE LINE
+         L     REG11,PAGER11       RESTORE LINK REGISTER
+         BR    REG11               RETURN TO CALLER
+         SPACE 2
+         EJECT
+***********************************************************************
+*        DETERMINE PGM EXTENTS & FIND OFFSET TO FAIL INSTRUCTION      *
+***********************************************************************
+         SPACE 2
+OFFSETER DS    0H
+         L     REG10,RBCDE         ADDRESS OF USER'S CDE
+         USING CDENTRY,REG10       ADDRESSABILITY FOR CDE
+         L     REG10,CDXLMJP       ADDRESS OF EXTENT LIST
+         USING XLDSECT,REG10
+         L     REG1,XLADDR         LOAD ADDRESS OF MODULE
+         MVC   TEXT6(L'STRTADD),STRTADD IDENTIFY THIS OUTPUT
+         ST    REG1,DBLWORD        STORE START ADDRESS IN WORK AREA
+         UNPK  PRTSTADD(7),DBLWORD+1(4) UNPACK ADDRESS TO PRINT LINE
+         TR    PRTSTADD(6),TABLE-240 MAKE IT PRINT
+         MVI   PRTSTADD+6,C' '     BLANK OUT UNWANTED SIGN
+         L     REG2,XLLEN          LOAD LENGTH OF MODULE
+         LA    REG2,0(REG2,REG1)   LOAD END ADDRESS OF MODULE
+         CR    REG7,REG1           DOES PSW POINT INSIDE ?
+         BL    NOTINIT             NO. TOO LOW
+         CR    REG7,REG2           STILL INSIDE IT ?
+         BH    NOTINIT             NO. TOO HIGH
+         SR    REG7,REG1           CALCULATE OFFSET TO INSTR
+         MVC   TEXT2(L'OFFSET),OFFSET MOVE TEXT TO PRINT LINE
+         ST    REG7,DBLWORD        STORE OUT TO WORK AREA
+         UNPK  PRTOFFST(7),DBLWORD+1(4) UNPACK TO PRINT LINE
+         TR    PRTOFFST(6),TABLE-240 MAKE IT PRINT
+         MVI   PRTOFFST+6,C' '     BLANK OUT SIGN BIT
+         B     OFFST01             JUMP OVER NOTINIT
+NOTINIT  MVC   TEXT2(L'NOTINMSG),NOTINMSG MOVE TEXT TO PRT LINE
+OFFST01  MVI   ABDCC,C'0'          DOUBLE SPACE PRINTER
+         BAL   REG11,PRINTER       GO PRINT THE LINE
+         B     TESTCODE            GO DECIDE NEXT ACTION
+         EJECT
+***********************************************************************
+*        TEST THE ABEND CODE & DECIDE HOW MUCH TO PRINT               *
+***********************************************************************
+TESTCODE DS    0H
+         L     REG7,RBOPSW+4       RELOAD ADDRESS PART OF FAIL PSW
+         XR    REG8,REG8           CLEAR REGISTER 8
+         IC    REG8,RBRTILC        RELOAD LENGTH OF INSTRUCTION
+         CLC   INTCODE,SIXTEEN     IS THIS A PAGE FAULT ?
+         BNL   TESTNOSR            YES. PSW IS CORRECT ALREADY
+         SR    REG7,REG8           POINT TO START OF FAIL INST
+TESTNOSR XR    REG2,REG2           CLEAR REG2
+         IC    REG2,CCTYPE         LOAD X OF '0CX' INTO REG 2
+         SRL   REG2,4              MOVE TO END OF REG
+         IC    REG2,CCTABLE-1(REG2) LOAD PROCESSING FLAG FOR THISABEND
+         STC   REG2,FLAG           STORE OUT IN WORK AREA
+         L     REG6,ABDCRB         RELOAD ADDRESS SNAP'S SVRB
+         S     REG6,PRFXLEN        SUBTRACT LENGTH RB PREFIX
+         L     REG6,RBLINK         ADDRESS OF SVC13'S SVRB.
+         S     REG6,PRFXLEN        SUBTRACT LENGTH OF THE PREFIX
+         TM    FLAG,FLGREGS        REGISTERS NEED PRINTING ?
+         BZ    NOREGS              NO. THEN DON'T DO IT
+         BAL   REG11,FMTREGS       GO FORMAT REGISTER CONTENTS
+NOREGS   TM    FLAG,FLGDATA        DATA AREAS NEED PRINTING ?
+         BZ    NODATA              NO. DON'T DO IT
+         BAL   REG11,FMTDATA       GO FORMAT OPERANDS OF FAILINST
+NODATA   B     SETOPTS             BRANCH TO NEXT ROUTINE
+         SPACE 2
+CCTABLE  DS    0CL15               TABLE OF FLAGS. 1 BYTE PER ABD CODE
+OC1      DC    AL1(0)
+OC2      DC    AL1(0)
+OC3      DC    AL1(FLGREGS)
+OC4      DC    AL1(FLGREGS)
+OC5      DC    AL1(FLGREGS)
+OC6      DC    AL1(FLGREGS)
+OC7      DC    AL1(FLGREGS+FLGDATA)
+OC8      DC    AL1(FLGREGS)
+OC9      DC    AL1(FLGREGS)
+OCA      DC    AL1(FLGREGS+FLGDATA)
+OCB      DC    AL1(FLGREGS+FLGDATA)
+OCC      DC    AL1(0)
+OCD      DC    AL1(0)
+OCE      DC    AL1(0)
+OCF      DC    AL1(0)
+         EJECT
+***********************************************************************
+*        ANALYSE INSTRUCTION TYPE & PRINT REGISTER CONTENTS           *
+***********************************************************************
+         SPACE 2
+FMTREGS  DS    0H
+         ST    REG11,FMTREG11      SAVE LINK REGISTER
+         XR    REG1,REG1           CLEAR READY FOR REGISTER NUMBER
+         MVC   FMTFLAG,0(REG7)     PREPARE TO ANALYSE OP CODE
+         TR    FMTFLAG,OPTABLE     CONVERT TO FLAGS OF REQD. PROCESSING
+FMTR1    TM    FMTFLAG,R1          DOES OP REG 1 NEED PRINTING ?
+         BZ    FMTR2               NO. TEST NEXT FLAG
+         IC    REG1,1(REG7)        LOAD UP BYTE CONTAINING REG NUMBER
+         SRL   REG1,4              MOVE REG NUMBER TO END OF REGISTER
+         BAL   REG11,PRTREG        GO FORMAT IT TO PRINT LINE
+FMTR1X   TM    FMTFLAG,R1X         OPERAND REG1+1 NEED PRINTING ?
+         BZ    FMTR2               NO. TEST NEXT FLAG
+         LA    REG1,1(REG1)        STEP TO NEXT REG IN SEQUENCE
+         BAL   REG11,PRTREG        GO PRINT REGISTER CONTENTS
+FMTR2    TM    FMTFLAG,R2          OPERAND REG 2 NEED PRINTING ?
+         BZ    FMTB1               NO. TEST NEXT FLAG
+         IC    REG1,1(REG7)        LOAD UP OP REG 2 VALUE
+         N     REG1,FMTMASK        TIDY UP LAST BYTE THIS REGISTER
+         TM    FMTFLAG,R2NZ        R2 NON-PRINT IF REG ZERO USED ?
+         BNO   FMTR2NRM            NO. CARRY ON
+         LTR   REG1,REG1           REG ZERO USED IN INSTRUCTION ?
+         BZ    FMTB1               YES. OMIT R2 PROCESSING
+FMTR2NRM BAL   REG11,PRTREG        GO PRINT THE REGISTER CONTENTS
+         TM    FMTFLAG,R2X         OPERAND REG2+1 NEED PRINTING ?
+         BZ    FMTB1               NO. TEST NEXT FLAG
+         LA    REG1,1(REG1)        LOAD VALUE NEXT REG IN SEQUENCE
+         BAL   REG11,PRTREG        GO PRINT REGISTER CONTENTS
+FMTB1    TM    FMTFLAG,B1          BASE REG 1 NEED PRINTING ?
+         BZ    FMTENDS             NO. END TESTING
+         IC    REG1,2(REG7)        LOAD REG NUMBER TO PRINT
+         SRL   REG1,4              MOVE TO END OF REGISTER
+         BAL   REG11,PRTREG        GO PRINT IT
+         LR    REG2,REG1           SAVE VALUE OF THIS BASE REGISTER
+         TM    FMTFLAG,B2          DOES OTHER BASE REG NEED PRINTING ?
+         BZ    FMTENDS             NO. END TESTING
+         IC    REG1,4(REG7)        LOAD UP REGISTER NUMBER
+         SRL   REG1,4              MOVE TO END OF REGISTER
+         CR    REG1,REG2           HAVE WE ALREADY DONE THIS ONE ?
+         BE    FMTENDS             YES. NO NEED TO DO IT AGAIN
+         BAL   REG11,PRTREG        GO PRINT REGISTER CONTENTS
+FMTENDS  L     REG11,FMTREG11      RELOAD LINK REGISTER
+         BR    REG11
+         SPACE 2
+FMTMASK  DC    F'15'               MASK TO CLEAR ALL BUT LAST 4 BITS
+         EJECT
+***********************************************************************
+*        FORMAT & PRINT CONTENTS OF A REGISTER (REG NO IS IN REG1)    *
+***********************************************************************
+         SPACE 2
+PRTREG   DS    0H
+         ST    REG11,SAVER113      SAVE LINK REGISTER
+         ST    REG1,PRTREGSV       SAVE ADDRESS REGISTER FOR CALLER
+         LR    REG15,REG1          LOAD UP WORK REGISTER
+         MVC   TEXT5(L'REGMSG),REGMSG IDENTIFY THIS OUTPUT LINE
+         CVD   REG15,DBLWORD       CONVERT REG NO TO DECIMAL
+         MVC   PRTREGNO(L'FMTEDMSK),FMTEDMSK MOVE EDIT MASK TO PRT LNE
+         ED    PRTREGNO(L'FMTEDMSK),DBLWORD+6 EDIT REG NO TO PRT LINE
+         SLL   REG15,2             MULTIPLY REG NUMBER BY 4
+         LA    REG15,RBGRSAVE(REG15) ADDRESS REG CONTENTS AT ABEND
+         UNPK  PRTREGHX(9),0(5,REG15) FORMAT REG CONTENTS TO PRT LINE
+         TR    PRTREGHX(8),TABLE-240 MAKE IT PRINT
+         MVI   PRTREGHX+8,C' '     DISPOSE OF UNWANTED SIGN
+         MVI   ABDCC,C'0'          SET DOUBLE SPACING OF OUTPUT
+         BAL   REG11,PRINTER       GO PRINT LINE
+         L     REG11,SAVER113      RELOAD LINK REGISTER
+         L     REG1,PRTREGSV       RELOAD ADDRESS REG FOR CALLER
+         BR    REG11               RETURN TO CALLER
+         SPACE 2
+FMTEDMSK DC    X'40202120'         EDIT MASK FOR PRINTING REGISTER NUM
+         EJECT
+***********************************************************************
+*        FORMAT & PRINT THE DATA AREAS ADDRESSED BY FAIL INSTRUCTION  *
+***********************************************************************
+         SPACE 2
+FMTDATA  DS    0H
+         ST    REG11,SAVER11       SAVE LINK REGISTER
+         TM    0(REG7),DECIMAL     IS THIS A PACKED DECIMAL INSTRUCTION
+         BNO   0(REG11)            NO.RETURN TO CALLER.
+         UNPK  FMTLEN,1(2,REG7)    MOVE & SEPARATE THE OPERAND LENGTHS
+         NC    FMTLEN,STRIPMSK     STRIP OFF ZONE FIELDS
+         LA    REG14,2(REG7)       ADDRESS FIRST OPERAND BASE+DISPL'MNT
+         BAL   REG11,LOADADDR      GO CALCULATE THE ACTUAL ADDRESS
+         MVC   TEXT3(L'DATAMSG1),DATAMSG1 IDENTIFY OUTPUT FIELD
+         IC    REG2,FMTLEN1        LOAD LENGTH THIS OPERAND
+         LA    REG1,PRTDATA1       ADDRESS OUTPUT PRINT AREA
+         BAL   REG11,UNPKDATA      MOVE OPERAND TO PRINT LINE
+         LA    REG14,4(REG7)       LOAD ADDRESS SECOND OPERAND B+DISP
+         BAL   REG11,LOADADDR      GO CALCULATE ACTUAL ADDRESS
+         MVC   TEXT4(L'DATAMSG2),DATAMSG2 IDENTIFY OUTPUT FIELD
+         IC    REG2,FMTLEN2        LOAD LENGTH THIS OPERAND
+         LA    REG1,PRTDATA2       LOAD ADDRESS OUTPUT PRINT AREA
+         BAL   REG11,UNPKDATA      MOVE OPERAND TO PRINT LINE
+         MVI   ABDCC,C'0'          SET DOUBLE SPACING
+         BAL   REG11,PRINTER       GO PRINT THE LINE
+         L     REG11,SAVER11       RELOAD LINK REGISTER
+         BR    REG11
+         SPACE 2
+STRIPMSK DC    X'0F0F00'           MASK TO REMOVE F'S FROM OP LENGTHS
+         EJECT
+***********************************************************************
+*        GIVEN A BASE + DISPLACEMENT, CALCULATE REAL ADDRESS.         *
+*        ON ENTRY TO THIS ROUTINE, REG14 POINTS TO A TWO BYTE AREA    *
+*        CONTAINING A BASE AND DISPLACEMENT. ON EXIT REG14 CONTAINS   *
+*        THE CORRESPONDING MACHINE ADDRESS.                           *
+***********************************************************************
+         SPACE 2
+LOADADDR DS    0H
+         MVC   LOADWK1,0(REG14)    MOVE OFFSET TO WORK AREA
+         XR    REG14,REG14         CLEAR REG14
+         IC    REG14,LOADWK1       PICK UP BASE REG NUMBER
+         SRL   REG14,2             MOVE TO LOW 4 BITS & MLTPLY BY 4
+         N     REG14,LOADMSK1      CLEAN UP LOW ORDER TWO BITS
+         L     REG14,RBGRSAVE(REG14) LOAD CONTENTS THAT REG AT ABEND
+         NI    LOADWK1,X'0F'       TURN OFF BASE REGISTER BITS
+         AH    REG14,LOADWK1       ADD IN DISPLACEMENT TO DATA
+         BR    REG11               RETURN TO CALLER
+         SPACE 2
+LOADMSK1 DC    F'-4'               MASK TO TURN OFF LOW ORDER TWO BITS
+         EJECT
+***********************************************************************
+*        FORMAT AN OPERAND INTO THE PRINT LINE                        *
+***********************************************************************
+         SPACE 2
+UNPKDATA DS    0H
+         LA    REG2,1(REG2)        MACHINE CODE LENGTH IS 1 SHORT
+DATALOOP UNPK  0(3,REG1),0(2,REG14) FORMAT 1BYTE + SIGN TO PRINT LINE
+         TR    0(2,REG1),TABLE-240 MAKE DATA PRINTABLE
+         LA    REG1,2(REG1)        NEXT PRINT LINE POSITION
+         LA    REG14,1(REG14)      ADDRESS NEXT SOURCE BYTE
+         BCT   REG2,DATALOOP       FORMAT WHOLE DATA AREA
+         MVI   0(REG1),C' '        BLANK OUT REDUNDANT SIGN BIT
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        TEST THE DUMP CODE AND SEE IF THE DUMP IS WORTH PRINTING     *
+***********************************************************************
+         SPACE 2
+TESTDUMP DS    0H
+         LA    REG1,ABDCODES       LOAD ADDRESS OF UNWANTED ABEND TABLE
+         LA    REG14,TABENLEN      LOAD LENGTH OF EACH ENTRY
+         LA    REG15,ABDENDX-1     LOAD ADDRESS OF END OF TABLE
+TESTLOOP CLC   ABNDCODE,0(REG1)    TEST VALUE OF THIS CODE
+         BE    FOUNDONE            FOUND A CODE TO IGNORE
+         BXLE  REG1,REG14,TESTLOOP LOOP FOR ALL ENTRIES IN TABLE
+         BR    REG11               RETURN TO CALLER. DUMP IS'NT TRIVIAL
+FOUNDONE NI    APFSDATA,NULSDATA   SET IGNORE DUMP OPTIONS
+         NI    APFPDATA,NULPDATA   SET IGNORE DUMP OPTIONS
+         XR    REG15,REG15         CLEAR RETURN CODE REGISTER
+         IC    REG15,TABENLEN-1(REG1) LOAD RETURN CODE THIS ABEND
+         STH   REG15,RETCODE       STORE RETURN CODE
+         B     SETOPTS             GO CARRY WITH NORMAL CODE
+         SPACE 2
+ABDCODES DS    0CL3                TABLE OF ABENDS NOT NEEDING DUMP
+         DC    X'0130',AL1(DODUMP)   DCB OPEN FAILURES
+         DC    X'2130',AL1(NULLDUMP) DATA SET NOT FOUND
+         DC    X'8060',AL1(NULLDUMP) MODULE NOT FOUND
+         DC    X'7060',AL1(NULLDUMP) MODULE NOT EXECUTABLE
+ABDENDX  EQU   *                   END OF CODE TABLE
+TABENLEN EQU   L'ABDCODES          LENGTH OF EACH ENTRY
+         EJECT
+***********************************************************************
+*        TEST FOR AN RPG ABEND WHICH CAN BE PROCESSED                 *
+***********************************************************************
+         SPACE 2
+RPGTEST  DS    0H
+         L     REG6,ABDCRB         LOAD ADDRESS OF ABDUMP'S SVRB
+         DROP  REG6                RELEASE ADDRESSABILITY
+         USING RBBASIC,REG6        ADDRESS BASIC PORTION OF SVRB
+         L     REG6,RBLINK         LOAD ADDRESS OF SVC13'S SVRB
+         L     REG6,RBLINK         LOAD ADDRESS OF USERS RB
+         S     REG6,PRFXLEN        SUBTRACT LENGTH OF RB PREFIX
+         DROP  REG6                RELEASE BASIC ADDRESSABILITY
+         USING RBPRFX,REG6         ADDRESS WHOLE OF RB
+         L     REG10,RBCDE         LOAD ADDRESS OF USERS CDE
+         USING CDENTRY,REG10       ADDRESSABILITY FOR CDE
+         L     REG10,CDXLMJP       LOAD ADDRESS OF EXTENT LIST
+         USING XLDSECT,REG10       ADDRESSABILITY FOR EXTENT LIST
+         L     REG10,XLADDR        LOAD START ADDRESS OF LOAD MODULE
+         CLC   RPGID,0(REG10)      TEST FOR RPG PROGRAM
+         BNE   RPGEXIT             NO. NOT AN RPG PROGRAM.
+         CLC   U132CODE,TCBCMP+2   TEST FOR USER 132 ABEND
+         BE    RPGCONT             YES. SET UP ENVIRONMENT
+         CLC   U144CODE,TCBCMP+2   TEST FOR USER 144 ABEND
+         BE    RPGCONT             YES. SET UP ENVIRONMENT
+         B     RPGEXIT             NO. LEAVE IT AS A USER ABEND
+RPGCONT  L     REG10,TCBPIE        LOAD ADDRESS PROGRAM INT ELEMENT
+         L     REG10,0(REG10)      LOAD ADDRESS OF REAL PIE
+         L     REG15,8(REG10)      LOAD UP ADDRESS PART OF FAILING PSW
+         ST    REG15,RBOPSW+4      RESTORE PSW INTO RB
+         MVI   RBRTILC,6           SET PACKED DECIMAL LENGTH
+         MVI   RBRTINCD+1,7        SHOW INTERRUPT CODE - OC7
+         MVC   ABNDCODE,=X'0C70'   SIGNAL PROCESSOR HOW TO PROCEED
+RPGEXIT  BR    REG11               RETURN TO CALLER
+         SPACE 2
+RPGID    DC    X'05F058FF'         FIRST INSTRUCTION OF RPG PROG
+U132CODE DC    H'132'
+U144CODE DC    H'144'
+         EJECT
+***********************************************************************
+*        SET DUMP OPTIONS ACCORDING TO DUMP TYPE.                     *
+***********************************************************************
+         SPACE 2
+SETOPTS  DS    0H
+         L     REG1,ABDPDCBP       LOAD ADDRESS DUMP DCB
+         LH    REG1,TIOTOFF(REG1)  LOAD TIOT OFFSET FROM DCB
+         L     REG15,TCBTIO        LOAD ADDRESS TIOT FOR FAILING TASK
+         LA    REG10,24(REG15)     STEP OVER JOB NAME ETC
+         XR    REG14,REG14         CLEAR LENGTH REGISTER
+TIOTLOOP IC    REG14,0(REG10)      LOAD LENGTH OF THIS ENTRY
+         LTR   REG14,REG14         END OF TIOT REACHED YET ?
+         BZ    ENDTIOT             YES. CARRY ON AS NORMAL
+         CLC   FULLDUMP,4(REG10)   TEST FOR SPECIAL DD NAME
+         BE    LISTALL             YES. ALL DUMP OPTIONS TO BE SET ON
+         LA    REG10,0(REG14,REG10) STEP TO NEXT TIOT ENTRY
+         B     TIOTLOOP
+ENDTIOT  LA    REG1,4(REG1,REG15)  LOAD ADDRESS DDNAME OF DUMP DATA SET
+         CLC   SYSABEND,0(REG1)    IS THIS A SYSABEND REQUEST ?
+         BE    SETEND              YES. LEAVE DUMP OPTIONS ALONE
+         CLC   SYSUDUMP,0(REG1)    IS THIS A SYSUDUMP REQUEST ?
+         BNE   EXITPGM             NO! VERY CONFUSING. EXIT QUICK
+         NI    APFSDATA,SDATAOPT   OVERRIDE SDATA OPTIONS
+         NI    APFPDATA,PDATAOPT   OVERRIDE PDATA OPTIONS
+SETEND   EQU   *
+         B     EXITPGM             BRANCH TO NEXT ROUTINE
+LISTALL  OI    APFPDATA,APFSAVE+APFREGS+APFLPA+APFJPA+APFPSW+APFSPALL
+         OI    APFSDATA,APFNUC+APFSQA+APFLSQA+APFQCB+APFTRACE+APFSUPDA
+         B     SETEND              RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        COMMON PROGRAM EXIT ROUTINE                                  *
+***********************************************************************
+         SPACE 2
+EXITPGM  DS    0H
+         LH    REG2,RETCODE        LOAD THE RETURN CODE
+         L     REG1,GETMNADD       LOAD ADDRESS GETMAINED AREA
+         L     REG0,GETMNLEN       LOAD LENGTH GETMAINED AREA
+         FREEMAIN R,LV=(0),A=(1)   FREEMAIN THE WORK AREA
+         LR    REG15,REG2          LOAD RETURN CODE INTO REG 15
+         ZRETURN RC=(15)            RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        COMMON PRINT LINKAGE ROUTINE                                 *
+***********************************************************************
+         SPACE 2
+PRINTER  DS    0H
+         LR    REG1,REG3           LOAD ADDRESS OF ABDUMP WORK AREA
+         L     REG15,IEAVAD11      LOAD ADDRESS OF PRINT MODULE
+         BALR  REG14,REG15         BRANCH TO HAVE LINE PRINTED
+         LTR   REG15,REG15         TEST RETURN CODE
+         BZ    0(REG11)            RETURN TO CALLER IF OK
+         MVC   RETCODE,ERRORPRT    SIGNAL ERROR IN PRINT ROUTINE
+         B     EXITPGM             EXIT
+         EJECT
+***********************************************************************
+*        CONSTANTS AND LITERALS                                       *
+***********************************************************************
+         SPACE 2
+IEAVAD11 DC    V(IEAVAD11)         ADDRESS OF COMMON PRINT MODULE
+PRFXLEN  DC    F'64'               LENGTH OF RB PREFIX
+ERRORPRT DC    H'4'                MEANS ERROR IN PRINTING
+SYSABEND DC    CL8'SYSABEND'       USED TO TEST DUMP TYPE
+SYSUDUMP DC    CL8'SYSUDUMP'       USED TO TEST DUMP TYPE
+FULLDUMP DC    CL8'FULLDUMP'       SPECIAL DDNAME. MEANS FULL DUMP REQD
+FAULTMSG DC    C'REFERENCE MADE TO INVALID PAGE AT ADDRESS -- '
+INSTRCTN DC    C'**** INSTRUCTION'
+OFFSET   DC    C'OFFSET IN PROGRAM = '
+NOTINMSG DC    C'INSTRUCTION NOT IN USER PROGRAM'
+DATAMSG1 DC    C'OPERAND 1 ='
+DATAMSG2 DC    C'OPERAND 2 ='
+REGMSG   DC    C'REGISTER         ='
+STRTADD  DC    C'PROGRAM BEGINS AT '
+TABLE    DC    C'0123456789ABCDEF'
+         EJECT
+***********************************************************************
+*        THE NEXT TABLE IS A TRANSLATE TABLE AGAINST WHICH THE        *
+*        INSTRUCTION OP CODE IS CONVERTED TO AN EQUIVALENT FLAG.      *
+*        THE BITS IN THIS FLAG DETERMINE WHAT PARTS OF THE INSTRUCTION*
+*        WILL BE FORMATTED AS OPERAND REGISTERS.
+***********************************************************************
+         PRINT NOGEN
+OPTABLE  DC    256X'00'            TABLE OF FLAGS FOR EACH OPCODE
+         OPSET BALR,05,(R1+R2)
+         OPSET BCTR,06,(R1+R2NZ)
+         OPSET BCR,07,(R2)
+         OPSET MVCL,0E,(R1+R1X+R2+R2X)
+         OPSET CLCL,0F,(R1+R1X+R2+R2X)
+         OPSET LPR,10,(R1+R2)
+         OPSET LNR,11,(R1+R2)
+         OPSET LTR,12,(R1+R2)
+         OPSET LCR,13,(R1+R2)
+         OPSET NR,14,(R1+R2)
+         OPSET CLR,15,(R1+R2)
+         OPSET OR,16,(R1+R2)
+         OPSET XR,17,(R1+R2)
+         OPSET LR,18,(R1+R2)
+         OPSET CR,19,(R1+R2)
+         OPSET AR,1A,(R1+R2)
+         OPSET SR,1B,(R1+R2)
+         OPSET MR,1C,(R1+R1X+R2)
+         OPSET DR,1D,(R1+R1X+R2)
+         OPSET ALR,1E,(R1+R2)
+         OPSET SLR,1F,(R1+R2)
+         OPSET STH,40,(R1+R2NZ+B1)
+         OPSET LA,41,(R1+R2NZ+B1)
+         OPSET STC,42,(R1+R2NZ+B1)
+         OPSET IC,43,(R1+R2NZ+B1)
+         OPSET EX,44,(R1+R2NZ+B1)
+         OPSET BAL,45,(R1+R2NZ+B1)
+         OPSET BCT,46,(R1+R2NZ+B1)
+         OPSET BC,47,(R2NZ+B1)
+         OPSET LH,48,(R1+R2NZ+B1)
+         OPSET CH,49,(R1+R2NZ+B1)
+         OPSET AH,4A,(R1+R2NZ+B1)
+         OPSET SH,4B,(R1+R2NZ+B1)
+         OPSET MH,4C,(R1+R2NZ+B1)
+         OPSET CVD,4E,(R1+R2NZ+B1)
+         OPSET CVB,4F,(R1+R2NZ+B1)
+         OPSET ST,50,(R1+R2NZ+B1)
+         OPSET N,54,(R1+R2NZ+B1)
+         OPSET CL,55,(R1+R2NZ+B1)
+         OPSET O,56,(R1+R2NZ+B1)
+         OPSET X,57,(R1+R2NZ+B1)
+         OPSET L,58,(R1+R2NZ+B1)
+         OPSET C,59,(R1+R2NZ+B1)
+         OPSET A,5A,(R1+R2NZ+B1)
+         OPSET S,5B,(R1+R2NZ+B1)
+         OPSET M,5C,(R1+R2NZ+B1)
+         OPSET D,5D,(R1+R2NZ+B1)
+         OPSET AL,5E,(R1+R2NZ+B1)
+         OPSET SL,5F,(R1+R2NZ+B1)
+         OPSET BXH,86,(R1+R2+R2X+B1)
+         OPSET BXLE,87,(R1+R2+R2X+B1)
+         OPSET SRL,88,(R1+R2NZ)
+         OPSET SLL,89,(R1+R2NZ)
+         OPSET SRA,8A,(R1+R2NZ)
+         OPSET SLA,8B,(R1+R2NZ)
+         OPSET STM,90,(R1+R2+B1)
+         OPSET TM,91,(B1)
+         OPSET MVI,92,(B1)
+         OPSET NI,94,(B1)
+         OPSET CLI,95,(B1)
+         OPSET OI,96,(B1)
+         OPSET XI,97,(B1)
+         OPSET LM,98,(R1+R2+B1)
+         OPSET CLM,BD,(R1+B1)
+         OPSET STCM,BE,(R1+B1)
+         OPSET ICM,BF,(R1+B1)
+         OPSET MVN,D1,(B1+B2)
+         OPSET MVC,D2,(B1+B2)
+         OPSET MVZ,D3,(B1+B2)
+         OPSET NC,D4,(B1+B2)
+         OPSET CLC,D5,(B1+B2)
+         OPSET OC,D6,(B1+B2)
+         OPSET XC,D7,(B1+B2)
+         OPSET TR,DC,(B1+B2)
+         OPSET TRT,DD,(B1+B2)
+         OPSET ED,DE,(B1+B2)
+         OPSET EDMK,DF,(B1+B2)
+         OPSET SRP,F0,(B1+B2)
+         OPSET MVO,F1,(B1+B2)
+         OPSET PACK,F2,(B1+B2)
+         OPSET UNPK,F3,(B1+B2)
+         OPSET ZAP,F8,(B1+B2)
+         OPSET CP,F9,(B1+B2)
+         OPSET AP,FA,(B1+B2)
+         OPSET SP,FB,(B1+B2)
+         OPSET MP,FC,(B1+B2)
+         OPSET DP,FD,(B1+B2)
+         ORG
+         PRINT GEN
+         EJECT
+         LTORG
+         EJECT
+         END
+//LKED.SYSIN   DD   *
+ NAME JEAVAD02(R)
+/*

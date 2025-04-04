@@ -1,0 +1,895 @@
+//IEAVADDM JOB (1586,5),'** FOR J.NOLS **',CLASS=N
+//*********************  DATA MGT CTL BLOCKS  *************************
+//STEP01       EXEC GENASMOD,AOS=C5
+         TITLE 'IEAVADDM  DATA MANAGEMENT CONTROL BLOCKS DUMP ROUTINE  *
+               VS2/REL3.7'
+***********************************************************************
+*                                                                     *
+*                                                                     *
+*  THIS MODULE WAS DEVELOPED AT:                                      *
+*              MONSANTO EUROPE S.A.,                                  *
+*              270-272 AVENUE DE TERVUREN,                            *
+*              1050, BRUSSELS,                                        *
+*              BELGIUM.                                               *
+*              02-762-11-12.                                          *
+*                                                                     *
+*             THIS ROUTINE WAS ORIGINALLY BASED ON A SIMILARILY       *
+*            NAMED MODULE ON THE SHARE TAPES. HOWEVER, THE OUTPUT     *
+*            FROM THAT ROUTINE WAS FOUND UNSATISFACTORY SO EXTENSIVE  *
+*            MODIFICATIONS HAVE BEEN MADE TO PRODUCE THE CURRENT      *
+*            VERSION OF IT.                                           *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+*  PURPOSE:         THIS MODULE SERVES AS A SUPPLEMENT TO THE         *
+*                   STANDARD OS/VS ABDUMP FACILITIES BY DISPLAYING    *
+*                   DATA MANAGEMENT CONTROL BLOCKS.                   *
+*                                                                     *
+*  DATE:            APRIL 1977.                                       *
+*                                                                     *
+*  RELEASE:         VS2/REL 3.7                                       *
+*                                                                     *
+*  INSTALLATION MODULES CALLED:                                       *
+*              IEAVADFT.                                              *
+*                                                                     *
+*  INSTALLATION MACROS USED:                                          *
+*              FMTENT                                                 *
+*                                                                     *
+*  INSTALLATION SVCS USED:                                            *
+*                   NONE.                                             *
+*                                                                     *
+*                                                                     *
+*  METHOD:          IEAVADDM IS INVOKED DYNAMICALLY BY THE MONSANTO   *
+*                   DUMP MODIFICATION CONTROL ROUTINE - XEAVAD02.     *
+*                   CONTROL IS RETURNED TO THAT ROUTINE. STORAGE      *
+*                   ADDRESSES FOR CONTROL BLOCKS IN USERS REGION      *
+*                   ARE VALIDATED BY MEANS OF THE 'PGLOAD' MACRO TO   *
+*                   INSURE THAT THEY ARE IN ALLOCATED STORAGE.        *
+*                   APPROPRIATE ERROR MESSAGES ARE DISPLAYED WHEN     *
+*                   ERROR CONDITIONS ARISE. EACH CONTROL BLOCK IS     *
+*                   DISPLAYED USING THE FORMAT AND PRINT ROUTINES     *
+*                   PROVIDED BY THE MODULE IEAVADFT.                  *
+*                                                                     *
+*                                                                     *
+*  REGISTER USAGE:  R0   WORK REGISTER                                *
+*                   R1   UPON ENTRY, ABDUMP PARAMETER LIST ADDRESS    *
+*                        WORK REGISTER                                *
+*                   R2   DEB ADDRESS                                  *
+*                   R3   DCB, ACB OR AMB ADDRESS                      *
+*                   R4   IOB, ICB OR MICB ADDRESS                     *
+*                   R5   WORK REGISTER                                *
+*                   R6   UCB ADDRESS                                  *
+*                   R7   NUMBER OF UCBS IN TIOT DD ENTRY              *
+*                   R8   INDEX TO UCB ADDRESSES IN TIOT DD ENTRY      *
+*                   R9   TIOT DD ENTRY ADDRESS                        *
+*                   R10  RETURN ADDRESS FOR 'PRINTIT'                 *
+*                   R11  ADDRESS OF ABDUMP PARAMETER LIST             *
+*                   R12  BASE REGISTER                                *
+*                   R13  ADDRESS OF GETMAINED WORK AREA (SAVE AREA)   *
+*                   R14  UPON ENTRY AND EXIT, RETURN ADDRESS TO       *
+*                             IEAVAD01                                *
+*                        RETURN ADDRESS FROM 'CONVADR', 'TESTSTOR',   *
+*                             MODULE 'IEAVAD11'                       *
+*                   R15  UPON ENTRY, ENTRY POINT ADDRESS              *
+*                        UPON EXIT, ADDRESS OF MODULE 'IEAVAD05'      *
+*                                                                     *
+***********************************************************************
+         EJECT
+         USING *,R15               INITIAL ENTRY POINT ADDRESSABILITY
+IEAVADDM CSECT
+         SAVE  (14,12),,*     SAVE REGISTERS
+         LR    R12,R15             LOAD START ADDRESS OF PROGRAM
+         USING IEAVADDM,R12        SET UP PROGRAM ADDRESSABILITY
+         LR    R11,R1         SAVE PARAMETER AREA ADDRESS
+         USING ABDAREA,R11    SET UP ADDRESSABLITY TO PARAMETER AREA
+         GETMAIN R,LV=GETLEN,SP=SUBPOOL     GET A WORK AREA
+         ST    R13,4(,R1)     CHAIN SAVE AREAS
+         ST    R1,8(,R13)
+         LR    R13,R1         SET UP NEW SAVE AREA
+         USING WORKAREA,R13   GET ADDRESSABLITY TO WORK AREA
+         MVI   HEADFLAG,0          INITIALISE HEADING FLAG
+         EJECT
+***********************************************************************
+*        DEB PROCESSING.                                              *
+***********************************************************************
+         SPACE 2
+         L     R2,ABDTCB           LOAD ADDRESS OF TCB
+         L     R2,TCBDEB(,R2)      LOAD ADDRESS OF FIRST DEB
+         B     *+8                 JUMP OVER NEXT LOAD
+GETDEB   EQU   *
+         L     R2,DEBDEB(,R2) LOAD ADDRESS OF NEXT DEB
+         LA    R2,0(,R2)      CLEAR HIGH ORDER BYTE
+         LTR   R2,R2          END OF DEB QUEUE?
+         BZ    DEBEXIT        IF SO, EXIT
+         TM    DEBDCB+3(R2),X'03'  IS DCB ADDRESS ON DOUBLE-WORD BOUND?
+         BZ    DCBADROK       IF SO, ITS OK
+         XC    ABDLINE,ABDLINE     BLANK OUT PRINT LINE
+         MVC   ABDLINEA(L'ERROR1),ERROR1  MOVE ERROR MESSAGE TO LINE
+         LA    R1,ABDLINEA+32 TELL ROUTINE WHERE TO STICK ADDRESS
+         LR    R0,R2               GET DEB ADDRESS
+         BAL   R14,CONVADR    GO TO ADDRESS CONVERSION ROUTINE
+         BAL   R10,PRINTIT    PRINT ERROR MESSAGE
+         B     GETDEB
+DCBADROK EQU   *
+         L     R3,DEBDCB(,R2) GET DCB ADDRESS
+         LA    R1,53(,R3)     SET ENDING ADDRESS 1 PAST MINIMUM LENGTH
+         LR    R0,R3          LOAD BEGINNING ADDRESS IN R0
+         BAL   R14,TESTSTOR   TEST VALIDIDITY OF ADDRESSES
+         LTR   R15,R15        ARE ADDRESSES VALID
+         BZ    CHECKDEB       IF SO, GO DO DEB ADDRESS CHECK
+         XC    ABDLINE,ABDLINE     BLANK OUT PRINT LINE
+         MVC   ABDLINEA+L'ERROR2(L'ERROR2A),ERROR2A
+DCBERROR EQU   *
+         MVC   ABDLINEA(L'ERROR2),ERROR2  MOVE IN ERROR MESSAGE
+         LA    R1,ABDLINEA+17      GET PRINT ADDRESS
+         LR    R0,R3               GET DCB ADDRESS
+         BAL   R14,CONVADR         PUT ADDRESS ON ERROR MESSAGE
+         LA    R1,ABDLINEA+44      GET PRINT ADDRESS
+         LR    R0,R2               GET DEB ADDRESS
+         BAL   R14,CONVADR         PUT ADDRESS ON ERROR MESSAGE
+         BAL   R10,PRINTIT         PRINT ERROR MESSAGE
+         B     GETDEB              GO GET NEXT DEB
+CHECKDEB EQU   *
+         L     R4,DCBDEB(,R3) GET DEB ADDRESS OUT OF DCB
+         LA    R4,0(,R4)      CLEAR HIGH ORDER BYTE
+         CR    R2,R4          COMPARE WITH PREVIOUS DEB ADDRESS
+         BE    DEBADROK       IF EQUAL, CONTINUE
+BADDCB   EQU   *
+         XC    ABDLINE,ABDLINE     BLANK OUT PRINT LINE
+         MVC   ABDLINEA+L'ERROR2(L'ERROR2B),ERROR2B
+         B     DCBERROR            PRINT ERROR MESSAGE
+DEBADROK EQU   *
+         LH    R9,DCBTIOT(,R3)  LOAD DISPLACEMENT INTO TIOT
+         L     R5,ABDTCB      GET TCB ADDRESS
+         L     R5,TCBTIOT(,R5)     GET TIOT ADDRESS
+         AR    R9,R5               GET DD ENTRY ADDRESS
+         LA    R5,24(,R5)          GET PAST JOBNAME-STEPNAME
+TIOTLOOP EQU   *
+         CLI   0(R5),X'00'         TIOT DELIMETER?
+         BNE   TIOTCONT            IF NOT, CONTINUE
+BADOFFST EQU   *
+         XC    ABDLINE,ABDLINE     BLANK OUT PRINT LINE
+         MVC   ABDLINEA+L'ERROR2(L'ERROR2C),ERROR2C  MOVE MESSAGE
+         B     DCBERROR            COMPLETE ERROR MESSAGE
+TIOTCONT EQU   *
+         CR    R5,R9               COMPARE ADDRESSES
+         BE    GOODTIOT            IF EQUAL, TIOT OFFSET IS VALID
+         BH    BADOFFST            IF HIGH, OFFSET IS INVAILD
+         SR    R7,R7               CLEAR REGISTER FOR INSERT
+         IC    R7,0(,R5)           GET DD ENTRY LENGTH
+         AR    R5,R7               ADD TO PREVIOUS ENTRY ADDRESS
+         B     TIOTLOOP            GO CHECK IT
+GOODTIOT EQU   *
+         XC    ABDLINE,ABDLINE     BLANK OUT PRINT LINE
+         CLC   SYSABEND,4(R9)      IS THIS A DUMP DATA SET
+         BE    GETDEB              YES. IGNORE IT
+         CLC   SYSUDUMP,4(R9)      IS THIS A DUMP DATA SET ?
+         BE    GETDEB              YES. IGNORE IT
+         BAL   R7,HEADINGS         GO FORMAT HEADING LINES IF NEEDED
+         MVC   ABDLINEA(7),=C'0DDNAME'  MOVE DDNAME TAB TO PRINT LINE
+         MVC   ABDLINEA+9(8),4(R9)  MOVE OVER DDNAME
+         MVI   ABDLINEA+19,C'*'    MOVE ASTERISKS AS SEPARATOR
+         MVC   ABDLINEA+20(64),ABDLINEA+19
+         BAL   R10,PRINTIT    PRINT DDNAME
+         XC    ABDLINE,ABDLINE     BLANK OUT PRINT LINE
+PRINTDEB EQU   *
+         LA    R15,0(,R2)          LOAD ADDRESS OF DEB
+         LA    R0,$DEBTABL         LOAD ADDRESS FORMAT CONTROL TABLE
+         LA    R1,$DEBNAME         LOAD ADDRESS BLOCK ID NAME
+         BAL   R10,FORMATIT        GO FORMAT THE DEB
+         LA    R15,0(,R2)          RELOAD ADDRESS OF DEB
+         ICM   R15,8,DEBNMEXT(R15) LOAD UP NUMBER OF EXTENTS
+         A     R15,=F'32'          ADD IN LENGTH OF DEB BASIC SECTION
+         LA    R0,$EXTTABL         LOAD ADDRESS EXTENT FORMAT CTL TABLE
+         XR    R1,R1               SHOW NO CONTROL BLOCK NAME NEEDED
+         BAL   R10,FORMATIT        GO FORMAT ALL THE DEB EXTENTS
+         EJECT
+***********************************************************************
+*                                                                     *
+*  DCB PROCESSING:  A CHECK IS MADE TO SEE IF THE CONTROL BLOCK IS    *
+*                   ACTUALLY A VSAM CONTROL BLOCK. IF IT IS, A BRANCH *
+*                   IS MADE TO THAT SECTION OF CODE (SEE VSAM         *
+*                   PROCESSING). THE TYPE   OF THE DCB IS DETERMINED, *
+*                   THEN THE DCB IS PRINTED. VALIDITY CHECKING OF THE *
+*                   DCB WAS PREVIOUSLY PERFORMED IN DEB PROCESSING.   *
+*                                                                     *
+***********************************************************************
+         TM    DCBDSORG+1(R3),X'08'  IS THIS ACTUALLY AN ACB?
+         BO    VSAM                IF SO, GO TO VSAM CODE
+         LA    R0,$ISAMDCB    ASSUME ISAM FORMATTING
+         TM    DCBDSORG(R3),X'80'  IS IT ISAM?
+         BO    PRINTDCB
+         LA    R0,$EXCPDCB    ASSUME EXCP FORMATTING
+         TM    DCBMACF1(R3),X'80'  IS IT EXCP?
+         BO    PRINTDCB
+ERRDCB   EQU   *
+         LA    R0,$SAMDCB     ASSUME SEQUENTIAL DCB
+PRINTDCB EQU   *
+         LA    R15,0(,R3)          LOAD ADDRESS OF DCB
+         LA    R1,$DCBNAME         LOAD ADDRESS OF NAME FIELD
+         BAL   R10,FORMATIT        GO FORMAT THE DCB
+         EJECT
+***********************************************************************
+*                                                                     *
+*  IOB PROCESSING:  THE BASIC SECTIONS ARE PRINTED FOR NON-TERMINAL   *
+*                   QSAM, BSAM AND BPAM DATA SETS. LINK ADDRESSES AND *
+*                   STORAGE LOCATIONS ARE VALIDATED AND THE ADDRESS,  *
+*                   LENGTH AND LABEL ARE PASSED TO 'PRINTIOB' FOR     *
+*                   PRINTING.                                         *
+*                                                                     *
+***********************************************************************
+         TM    DCBDSORG(R3),X'42'  IS ACCESS METHOD QSAM,BSAM OR BPAM?
+         BZ    GETUCB              IF NOT, SKIP IT
+         TM    DCBMACF1(R3),X'80'  IS IT EXCP?
+         BO    GETUCB              IF SO, SKIP IT
+         CLI   DCBDEVT(R3),X'4F'   IS IT A TERMINAL DATA SET?
+         BE    GETUCB              IF SO, SKIP IT
+         TM    DCBIOBA+3(R3),X'03' IOB ADDRESS ON DOUBLE-WORD BOUNDARY?
+         BNZ   BADIOBA             IF NOT, PRINT ERROR MESSAGE
+         L     R4,DCBIOBA(,R3)     GET IOB ADDRESS
+         LA    R4,0(,R4)           CLEAR HIGH-ORDER BYTE
+         LR    R8,R4               SAVE FIRST IOB ADDRESS
+IOBLOOP  EQU   *
+         BAL   R7,PRINTIOB         PRINT IOB
+         TM    3(R4),X'03'         ON DOUBLE-WORD BOUNDARY?
+         BNZ   BADLINKA            IF NOT, PRINT ERROR MESSAGE
+         L     R4,0(,R4)           GET NEXT IOB ADDRESS
+         LA    R4,0(,R4)           CLEAR HIGH-ORDER BYTE
+         CR    R4,R8               DOES NEXT IOB EQUAL FIRST IOB
+         BNE   IOBLOOP             IF NOT, PRINT NEXT IOB
+         B     GETUCB
+         EJECT
+***********************************************************************
+*                                                                     *
+*  UCB PROCESSING:  UCB ADDRESSES ARE OBTAINED FROM THE TIOT DD ENTRY.*
+*                   EACH UCB IS VALIDATED FOR A HEX FF IN THE UCBID   *
+*                   FIELD.                                            *
+*                                                                     *
+***********************************************************************
+GETUCB   EQU   *
+         SR    R7,R7               CLEAR REG FOR NEXT INSTUCTION
+         IC    R7,0(,R9)           GET TIOT ENTRY LENGTH
+         SH    R7,=H'16'           GET LENGTH OF UCB'S ONLY
+         SRL   R7,2                DIVIDE BY 4 TO GET NUMBER OF UCB'S
+         LTR   R7,R7               ARE THERE ANY UCBS
+         BZ    GETDEB              IF NOT, GO GET ANOTHER DEB
+         LA    R8,16(,R9)          GET UCB START ADDRESS
+UCBLOOP  EQU   *
+         L     R6,0(,R8)           GET UCB ADDRESS
+         LTR   R6,R6               IS THERE A UCB ADDRESS?
+         BZ    NEXTUCB             IF NOT, ASSUME DUMMY
+         CLI   2(R6),X'FF'         IS UCB ID PRESENT?
+         BE    UCBOK
+         XC    ABDLINE,ABDLINE     BLANK OUT PRINT LINE
+         MVC   ABDLINEA(L'ERROR6),ERROR6
+         BAL   R10,PRINTIT         PRINT ERROR MESSAGE
+         B     GETDEB
+UCBOK    EQU   *
+         LA    R15,0(,R6)          LOAD ADDRESS OF THE UCB
+         LA    R0,$UCBTABL         LOAD ADDRESS OF FORMAT CONTROL TABLE
+         LA    R1,$UCBNAME         LOAD ADDRESS OF NAME FIELD
+         BAL   R10,FORMATIT        GO FORMAT THE UCB
+NEXTUCB  EQU   *
+         LA    R8,4(,R8)           GET NEXT UCB ADDRESS
+         BCT   R7,UCBLOOP
+         B     GETDEB              FINISHED WITH THIS DEB, GET ANOTHER
+         EJECT
+***********************************************************************
+*        EXIT PROCESSING.                                             *
+***********************************************************************
+DEBEXIT  EQU   *
+         BAL   R7,ENDINGS          GO PRINT LAST LINE IF NEEDED
+         LR    R1,R13              LOAD ADDRESS OF AREA TO BE FREED
+         L     R13,SAVEAREA+4      GET OLD SAVE AREA BACK
+         FREEMAIN R,LV=GETLEN,SP=SUBPOOL,A=(1) FREE UP THE WORK AREA
+         RETURN (14,12),T,RC=0     RETURN TO CALLER
+         EJECT
+***********************************************************************
+*                                                                     *
+*  VSAM PROCESSING: VSAM PROCESSING IS GIVEN CONTROL FROM DCB         *
+*                   PROCESSING IF THE VSAM BIT IN THE DCB IS ON. IF   *
+*                   THE CONTROL BLOCK IS AN ACB, THE ACB AND AMBL ARE *
+*                   PRINTED. IF THE CONTROL BLOCK IS AN AMB, THE AMB  *
+*                   AND RELATED IOB ARE PRINTED. FOR EVERY VSAM FILE  *
+*                   THERE ARE AT LEAST TWO DEBS. ONE DEB WILL POINT   *
+*                   TO THE ACB AND THE SECOND WILL POINT TO THE DATA  *
+*                   AMB. FOR A KEY-SEQUENCED DATA SET, THERE IS A     *
+*                   THIRD DEB WHICH POINTS TO THE INDEX AMB. FOR VSAM *
+*                   FILES PROCESSED THROUGH THE ISAM-INTERFACE, THERE *
+*                   IS AN ADDITIONAL DEB WHICH POINTS TO THE STANDARD *
+*                   ISAM DCB. THUS, FOR A KEY-SEQUENCED VSAM DATA SET *
+*                   PROCESSED THROUGH THE ISAM-INTERFACE, FOUR DEBS,  *
+*                   ONE DCB, ONE ACB, TWO AMBS AND TWO VSAM IOBS WILL *
+*                   BE PRINTED.                                       *
+*                                                                     *
+***********************************************************************
+VSAM     EQU   *
+         CLI   0(R3),X'A0'         IS IT AN ACB?
+         BE    PRINTACB            IF SO, PRINT ACB + AMBL
+         CLI   0(R3),X'40'         IS IT AN AMB?
+         BNE   UNKNDCB             IF NOT, PRINT ERROR MESSAGE
+PRINTAMB EQU   *
+         LA    R1,$DAMBNAM         ASSUME DATA-AMB
+         TM    AMBFLG1(R3),X'40'   IS IT A DATA-AMB?
+         BO    NOTINDEX            IF SO, DON'T MARK IT AS INDEX
+         LA    R1,$IAMBNAM         INDICATE INDEX-AMB
+NOTINDEX EQU   *
+         LA    R15,0(,R3)          LOAD ADDRESS OF THE AMB
+         LA    R0,$AMBTABL         LOAD ADDRESS OF THE CONTROL TABLE
+         BAL   R10,FORMATIT        FORMAT AND PRINT THE AMB
+VSAMIOB  EQU   *
+         TM    AMBIOBAD+3(R3),X'03'  ADDRESS ON DOUBLE-WORD BOUNDARY?
+         BNZ   BADLINKA            IF NOT, PRINT ERROR MESSAGE
+         L     R4,AMBIOBAD(,R3)    GET IOB ADDRESS
+         LA    R5,76               GET IOB LENGTH
+         BAL   R7,PRINTIOB         PRINT VSAM IOB
+         B     GETUCB
+PRINTACB EQU   *
+         LA    R15,0(,R3)          LOAD ADDRESS OF THE ACB
+         LA    R0,$ACBTABL         LOAD ADDRESS OF THE FORMAT CONTROL
+         LA    R1,$ACBNAME         LOAD ADDRESS OF NAME FIELD
+         BAL   R10,FORMATIT        GO PRINT THE ACB
+         TM    ACBAMETH(R3),X'11'      IS THIS A VSAM ACB?
+         BNO   GETDEB                  IF NOT, SKIP THE REST
+         L     R5,ACBAMBL(,R3)     GET AMBL ADDRESS
+         LA    R1,61(,R3)          GET AMBL END ADDRESS
+         LR    R0,R5               GET AMBL START ADDRESS
+         BAL   R14,TESTSTOR        VALIDATE STORAGE ADDRESSES
+         LTR   R15,R15             ADDRESSES OK
+         BZ    PRNTAMBL            IF SO, PRINT AMBL
+         XC    ABDLINE,ABDLINE     BLANK OUT PRINT LINE
+         MVC   ABDLINEA(L'ERROR5),ERROR5
+         BAL   R10,PRINTIT         PRINT ERROR MESSAGE
+         B     GETUCB
+PRNTAMBL EQU   *
+         LA    R15,0(,R5)          LOAD ADDRESS OF AMBL
+         LA    R0,$AMBLTAB         ADDRESS OF FORMAT CONTROL TABLE
+         LA    R1,$AMBLNAM         LOAD ADDRESS OF NAME FIELD
+         BAL   R10,FORMATIT        GO FORMAT THE AMBL
+         B     GETUCB
+         EJECT
+***********************************************************************
+*        IOB'S ARE PRINTED AT VARIOUS STAGES. THIS IS THE COMMON IOB  *
+*        FORMAT AND PRINT ROUTINE USED IN ALL CASES.                  *
+***********************************************************************
+         SPACE 2
+PRINTIOB EQU   *
+         LA    R1,40(,R4)          GET IOB HIGH ADDRESS
+         LR    R0,R4               GET IOB START ADDRESS
+         BAL   R14,TESTSTOR        TEST VALIDITY OF ADDRESSES
+         LTR   R15,R15             WAS IT VALID?
+         BZ    IOBOK               IF SO, SHKIP ERROR MESSAGE
+         XC    ABDLINE,ABDLINE     BLANK OUT PRINT LINE
+         MVC   ABDLINEA+4(L'ERROR2A),ERROR2A USE OLD ERROR MESSAGE
+         MVC   ABDLINEA(4),IOBTAB   USE SUITABLE LABEL FIELD
+         BAL   R10,PRINTIT         PRINT ERROR MESSAGE
+         B     GETUCB
+IOBOK    EQU   *
+         LA    R15,0(,R4)          LOAD ADDRESS OF THE IOB
+         LA    R0,$IOBTABL         FORMAT CONTROL TABLE ADDRESS
+         LA    R1,$IOBNAME         LOAD ADDRESS OF NAME FIELD
+         BAL   R10,FORMATIT        GO FORMAT THE IOB
+         BR    R7                  RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        ERROR ROUTINE USED WHEN IOB ADDRESS IS INVALID               *
+***********************************************************************
+         SPACE 2
+BADIOBA  EQU   *
+         XC    ABDLINE,ABDLINE     BLANK OUT PRINT LINE
+         MVC   ABDLINEA(L'ERROR7),ERROR7
+         BAL   R10,PRINTIT         PRINT ERROR MESSAGE
+         B     GETUCB
+         EJECT
+***********************************************************************
+*        ERROR ROUTINE USED WHEN LINK ADDRESSES ARE INVALID           *
+***********************************************************************
+         SPACE 2
+BADLINKA EQU   *
+         XC    ABDLINE,ABDLINE     BLANK OUT PRINT LINE
+         MVC   ABDLINEA(L'ERROR8),ERROR8
+         MVC   ABDLINEA(4),IOBTAB  GET APPROPRIATE LABEL
+         BAL   R10,PRINTIT         PRINT ERROR MESSAGE
+         B     GETUCB
+         EJECT
+***********************************************************************
+*        THIS ROUTINE REPORTS AN UNIDENTIFIED DCB                     *
+***********************************************************************
+         SPACE 2
+UNKNDCB  EQU   *
+         MVC   ABDLINEA(L'ERROR4),ERROR4
+         BAL   R10,PRINTIT    PRINT ERROR MESSAGE
+         B     ERRDCB              GO PRINT THE OFFENDING DCB
+         EJECT
+***********************************************************************
+*        HEADING ROUTINE. FIRST AND LAST LINES ARE PREPARED.          *
+***********************************************************************
+         SPACE 2
+HEADINGS DS    0H
+         TM    HEADFLAG,FRSTDONE   FIRST LINE DONE ALREADY ?
+         BO    0(R7)               YES. RETURN TO CALLER
+         XC    ABDLINE,ABDLINE     CLEAR THE PRINT LINE
+         MVC   ABDLINEA(L'TITLE),TITLE PREPARE TITLE LINE
+         MVI   ABDCC,C'0'          DOUBLE SPACE THE TITLE
+         BAL   R10,PRINTIT         GO OUTPUT TITLE LINE
+         OI    HEADFLAG,FRSTDONE   SIGNAL FIRST LINE DONE
+         BR    R7                  RETURN TO CALLER
+ENDINGS  DS    0H
+         TM    HEADFLAG,FRSTDONE   ANY OUTPUT BEEN PREPARED ?
+         BNO   0(R7)               NO. NO LAST LINE NEEDED
+         XC    ABDLINE,ABDLINE     CLEAR THE PRINT LINE
+         MVI   ABDLINEA+19,C'*'    PREPARE TO PROPAGATE
+         MVC   ABDLINEA+20(64),ABDLINEA+19  MOVE SEPARATOR LINE ACROSS
+         MVI   ABDCC,C'0'          DOUBLE SPACE THE LAST LINE
+         BAL   R10,PRINTIT         OUTPUT THE LAST LINE
+         BR    R7                  RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        COMMON OUTPUT ROUTINE. LINKS TO ABDUMP MODULE IEAVAD11.      *
+***********************************************************************
+         SPACE 2
+PRINTIT  EQU   *
+         LR    R1,R11         SET UP ABDAREA FOR PRINT ROUTINE
+         L     R15,IEAVAD11   GET ADDRESS OF ABDUMP PRINT ROUTINE
+         BALR  R14,R15        BRANCH TO PRINT ROUTINE
+         BR    R10            RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        COMMON CONTROL BLOCK FORMATTING. LINKS TO IEAVADFT.          *
+***********************************************************************
+         SPACE 2
+FORMATIT EQU   *
+         LR    R14,R11             LOAD ADDRESS OF ABDAREA
+         STM   R14,R1,FMTPARMS     COMPILE THE FORMAT PARAMETER LIST
+         LA    R1,FMTPARMS         LOAD ADDRESS OF PARAMETER LIST
+         L     R15,IEAVADFT   LOAD PRINT + FORMAT ROUTINE ADDRESS
+         OI    ABDUPRF,UPRFMET  SAFE GUARD AGAINST UNALOCATED STORAGE
+         BALR  R14,R15        BRANCH TO FORMAT ROUTINE
+         BR    R10            RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        THIS ROUTINE PREPARES AN ADDRESS FOR OUTPUT                  *
+***********************************************************************
+         SPACE 2
+CONVADR  EQU   *
+         SLL   R0,4           ALLOW ROOM FOR NON-EXISTANT SIGN
+         ST    R0,WORK1       STORE ADDRESS FOR UNPACK
+         UNPK  0(6,R1),WORK1(4)
+         NC    0(6,R1),=X'0F0F0F0F0F0F'  STRIP OFF SIGNS
+         TR    0(6,R1),=C'0123456789ABCDEF'  CONVERT TO EBCDIC
+         BR    R14
+         EJECT
+***********************************************************************
+*        COMMON ADDRESS VERIFICATION. THE PAGE CONTAING THE ADDRESS   *
+*        IS LOADED INTO CORE.                                         *
+***********************************************************************
+         SPACE 2
+TESTSTOR EQU   *
+         XC    LOADECB(L'LOADECB),LOADECB  CLEAR ECB IN CASE OF WAIT
+         LR    R15,R1              SET ENDING ADDRESS
+         LR    R1,R0               SET STARTING ADDRESS
+         LA    R1,0(R1)            CLEAR HIGH BYTE
+         LTR   R1,R1               MAKE SURE ITS NON-ZERO
+         BZ    TESTERR             NO GOOD, INDICATE ERROR
+         LA    R0,LOADECB          LOAD THE ECB ADDRESS
+         PGLOAD R,A=(1),EA=(15),ECB=(0)
+*                             LOAD PAGE TO TEST ITS VALIDITY
+         CH    R15,=H'8'      MUST WAIT BE ISSUED?
+         BNER  R14            IF NOT, RETURN TO CALLER
+         WAIT  1,ECB=LOADECB  WAIT FOR PAGE-IN
+         SR    R15,R15        CLEAR RETURN CODE
+         BR    R14            RETURN TO CALLER
+TESTERR  LA    R15,20              INDICATE ERROR
+         BR    R14                 RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        CONSTANTS AND LITERALS                                       *
+***********************************************************************
+         SPACE 2
+IEAVAD11 DC    V(IEAVAD11)    ADDRESS OF ABDUMP PRINT ROUTINE
+IEAVADFT DC    V(IEAVADFT)    ADDRESS OF CONTROL BLOCK FORMAT ROUTINE
+SYSABEND DC    CL8'SYSABEND'       NAME OF DUMP DATA SET
+SYSUDUMP DC    CL8'SYSUDUMP'       NAME OF DUMP DATA SET
+TITLE    DC    C'0OPEN FILES AT TIME OF ABEND - CONTROL BLOCK SUMMARY. X
+                                               MONSANTO.IEAVADDM.V2.0'
+ERROR1   DC    CL49'0DCB ADDRESS IN DEB AT LOCATION XXXXXX IS INVAILD'
+ERROR2   DC    CL50'0DCB AT LOCATION XXXXXX FOR DEB AT LOCATION XXXXXX'
+ERROR2A  DC    CL28' IS NOT IN ALLOCATED STORAGE'
+ERROR2B  DC    CL19' HAS BEEN OVERLAYED'
+ERROR2C  DC    CL29' CONTAINS INVALID TIOT OFFSET'
+ERROR4   DC    CL45'0DCB DOES NOT CONTAIN STANDARD DSORG OR MACRF'
+ERROR5   DC    CL30'0AMBL NOT IN ALLOCATED STORAGE'
+ERROR6   DC    CL28'0INVALID UCB ADDRESS IN TIOT'
+ERROR7   DC    CL30'0IOB ADDRESS IN DCB IS INVALID'
+ERROR8   DC    CL23'0ICB ADDRESS IS INVALID'
+         LTORG
+         EJECT
+***********************************************************************
+*        THE FOLLOWING TABLES DEFINE THE FORMATS OF CONTROL BLOCKS    *
+***********************************************************************
+         PRINT NOGEN
+$DEBNAME DC    AL1(L'$DEBTEXT)
+$DEBTEXT DC    C'DEB'
+$DEBTABL DS    0F
+         FMTENT TCB,4
+         FMTENT DEB,4
+         FMTENT OFLG,1
+         FMTENT IRB,3
+         FMTENT OPATB,1
+         FMTENT QSCNT,1
+         FMTENT FLG1,1
+         FMTENT RSV,1
+         FMTENT PIRL,4
+         FMTENT RRQ,4
+         FMTENT DCB,4
+         FMTENT AVT,4
+         DC    AL1(255)
+$EXTTABL DS    0F
+         FMTENT UCB,4
+         FMTENT BIN,2
+         FMTENT STRT-CCHH,4
+         FMTENT END-CCHH,4
+         FMTENT NO-TRKS,2
+         DC    AL1(255)
+$DCBNAME DC    AL1(L'$DCBOTXT)
+$DCBOTXT DC    C'DCB'
+$SAMDCB  DS    0F
+         FMTENT TTRN,4
+         FMTENT KEYC,1
+         FMTENT FDAD,8
+         FMTENT DVTB,3
+         FMTENT KLEN,1
+         FMTENT DEVT,1
+         FMTENT TRBL,2
+         FMTENT BUFN,1
+         FMTENT BUFC,3
+         FMTENT BUFL,2
+         FMTENT DSRG,2
+         FMTENT ODEB,4
+         FMTENT EODA,4
+         FMTENT RCFM,1
+         FMTENT XLST,3
+         FMTENT TIOT,2
+         FMTENT MCRF,2
+         FMTENT IFLG,1
+         FMTENT DEBA,3
+         FMTENT OFLG,1
+         FMTENT XMTH,3
+         FMTENT OPTC,1
+         FMTENT SYNC,3
+         FMTENT SYND,4
+         FMTENT IND1,1
+         FMTENT IND2,1
+         FMTENT BLKS,2
+         FMTENT OFFS,4
+         FMTENT IOBA,4
+         FMTENT 'NCP ',1
+         FMTENT EOBA,3
+         FMTENT RECA,4
+         FMTENT QSWS,2
+         FMTENT LREC,2
+         FMTENT CTRL,4
+         DC    AL1(255)
+$ISAMDCB DS    0F
+         FMTENT UNUSED,16,PRINT=NO
+         FMTENT KEYL,1
+         FMTENT RELTR,3
+         FMTENT BFNO,1
+         FMTENT BFCB,3
+         FMTENT BUFL,2
+         FMTENT DSRG,2
+         FMTENT IOBA,4
+         FMTENT EODA,4
+         FMTENT RCFM,1
+         FMTENT XLST,3
+         FMTENT TIOT,2
+         FMTENT MCRF,2
+         FMTENT IFLG,1
+         FMTENT DEBA,3
+         FMTENT OFLG,1
+         FMTENT XMTH,3
+         FMTENT OPTC,1
+         FMTENT MAC2,1
+         FMTENT NTM,1
+         FMTENT TRK,1
+         FMTENT SYND,4
+         FMTENT RKP,2
+         FMTENT BLKS,2
+         FMTENT MSWA,4
+         FMTENT SMSI,2
+         FMTENT SMSW,2
+         FMTENT MSHI,4
+         FMTENT SETL,4
+         FMTENT EXCD,2
+         FMTENT LREC,2
+         FMTENT SETL,4
+         FMTENT LRAN,4
+         FMTENT LWKN,4
+         FMTENT RELS,4
+         FMTENT PUTX,4
+         FMTENT RELX,4
+         FMTENT FRED,4
+         FMTENT HRTI,1
+         FMTENT TMI2,7
+         FMTENT EMI2,5
+         FMTENT TMI3,7
+         FMTENT EMI3,5
+         FMTENT NLEV,1
+         FMTENT FHHR,3
+         FMTENT HMSK,1
+         FMTENT LDT,2
+         FMTENT IRCM,1
+         FMTENT IRPD,1
+         FMTENT IROV,1
+         FMTENT IRSH,1
+         FMTENT TDC,2
+         FMTENT CRHI,2
+         FMTENT ORG3,4
+         FMTENT NREC,4
+         FMTENT STAT,1
+         FMTENT FTCI,7
+         FMTENT HIOV,1
+         FMTENT TMI1,7
+         FMTENT NTHI,1
+         FMTENT FTHI,7
+         FMTENT LPDA,8
+         FMTENT LETI,5
+         FMTENT OVDV,1
+         FMTENT NBOV,2
+         FMTENT LECI,5
+         FMTENT RSRV,1
+         FMTENT ORG2,2
+         FMTENT LMI1,5
+         FMTENT RSRV,1
+         FMTENT OREC,2
+         FMTENT LIOV,8
+         FMTENT ORG1,2
+         FMTENT RSRV,2
+         FMTENT WKP1,4
+         FMTENT WKP2,4
+         FMTENT WKP3,4
+         FMTENT WKP4,4
+         FMTENT WKP5,4
+         FMTENT WKP6,4
+         DC    AL1(255)
+$EXCPDCB DS    0F
+         FMTENT TTRN,4
+         FMTENT KEYC,1
+         FMTENT FDAD,8
+         FMTENT DVTB,3
+         FMTENT KLEN,1
+         FMTENT DEVT,1
+         FMTENT TRBL,2
+         FMTENT BUFN,1
+         FMTENT BUFC,3
+         FMTENT BUFL,2
+         FMTENT DSRG,2
+         FMTENT ODEB,4
+         FMTENT EODA,4
+         FMTENT RCFM,1
+         FMTENT XLST,3
+         FMTENT TIOT,2
+         FMTENT MCRF,2
+         FMTENT IFLG,1
+         FMTENT DEBA,3
+         FMTENT OFLG,1
+         FMTENT XMTH,3
+         FMTENT OPTC,1
+         FMTENT RSRV,7
+         FMTENT EOEA,2,CONVERT=NO
+         FMTENT PCIA,2,CONVERT=NO
+         FMTENT SIOA,2,CONVERT=NO
+         FMTENT ENDA,2,CONVERT=NO
+         FMTENT XNDA,2,CONVERT=NO
+         FMTENT RSRV,2
+         DC    AL1(255)
+$IOBNAME DC    AL1(L'$IOBTEXT)
+$IOBTEXT DC    C'IOB'
+$IOBTABL DS    0F
+         FMTENT NIOB,4
+         FMTENT ECB,4
+         FMTENT FLG1,1
+         FMTENT FLG2,1
+         FMTENT SNS0,1
+         FMTENT SNS1,1
+         FMTENT ECBA,4
+         FMTENT FLG3,1
+         FMTENT CSW,7
+         FMTENT CHPROG,4
+         FMTENT DCB,4
+*        FMTENT RESTR,4
+*        FMTENT INCR,2
+*        FMTENT ERRCT,2
+         FMTENT SEEK,8
+         DC    AL1(255)
+$UCBNAME DC    AL1(L'$UCBTEXT)
+$UCBTEXT DC    C'UCB'
+$UCBTABL DS    0F
+         FMTENT JBNR,1
+         FMTENT FLG5,1
+         FMTENT IDFF,1
+         FMTENT STAT,1
+         FMTENT BCUU,2
+         FMTENT SFLS,2
+         FMTENT PATH,1
+         FMTENT CNT,1
+         FMTENT LCTI,1
+         FMTENT CPID,1
+         FMTENT WGT,1
+         FMTENT NAME,3,CONVERT=NO
+         FMTENT TYPE,4
+         FMTENT FL-EXT,4
+         FMTENT VTOC,4
+         FMTENT VOLID,6,CONVERT=NO
+         FMTENT STAB,1
+         FMTENT DMCT,1
+         DC    AL1(255)
+$DAMBNAM DC    AL1(L'$DAMBTXT)
+$DAMBTXT DC    C'D-AMB'
+$IAMBNAM DC    AL1(L'$IAMBTXT)
+$IAMBTXT DC    C'I-AMB'
+$AMBTABL DS    0F
+         FMTENT IDLN,4
+         FMTENT LINK,4
+         FMTENT BUFC,4
+         FMTENT PHLD,4
+         FMTENT CACB,4
+         FMTENT ASBA,4
+         FMTENT FLGS,2
+         FMTENT DSRG,2
+         FMTENT IOMB,4
+         FMTENT CDSN,3
+         FMTENT DDSN,3
+         FMTENT RSRV,2
+         FMTENT TIOT,2
+         FMTENT IND1,2
+         FMTENT IFLG,1
+         FMTENT DEBA,3
+         FMTENT OFLG,1
+         FMTENT FLG2,1
+         FMTENT RPT,2
+         FMTENT EDBA,4
+         FMTENT EXTN,4
+         FMTENT WKAD,4
+         FMTENT IWAA,4
+         FMTENT RSRV,4
+         FMTENT PIXA,4
+         FMTENT AMBL,4
+         FMTENT UPLH,4
+         FMTENT AFLG,2
+         FMTENT RCNT,2
+         FMTENT M2SH,4
+         FMTENT CPA,4
+         FMTENT WSHD,4
+         FMTENT EXEX,4
+         FMTENT SZRW,8
+         FMTENT VIOT,4
+         DC    AL1(255)
+$ACBNAME DC    AL1(L'$ACBTEXT)
+$ACBTEXT DC    C'ACB'
+$ACBTABL DS    0F
+         FMTENT IDLN,4
+         FMTENT AMBL,4
+         FMTENT INRT,4
+         FMTENT MCRF,2
+         FMTENT STNO,2
+         FMTENT BUFN,4
+         FMTENT BFPL,4
+         FMTENT RCFM,1
+         FMTENT CCTY,1
+         FMTENT DSRG,2
+         FMTENT MSGA,4
+         FMTENT PASS,4
+         FMTENT XLST,4
+         FMTENT TIOT,2
+         FMTENT INDF,1
+         FMTENT XMTH,1
+         FMTENT DEBA,4
+         FMTENT OFLG,1
+         FMTENT EFLG,1
+         FMTENT INDF,2
+         FMTENT UJFC,4
+         FMTENT UFSP,4
+         FMTENT BLKS,2
+         FMTENT LREC,2
+         FMTENT UWKA,4
+         FMTENT BMWA,4
+         FMTENT APID,4
+         DC    AL1(255)
+$AMBLNAM DC    AL1(L'$AMBLTXT)
+$AMBLTXT DC    C'AMBL'
+$AMBLTAB DS    0F
+         FMTENT PCHN,4
+         FMTENT SCHN,4
+         FMTENT ACBA,4
+         FMTENT LEOV,4
+         FMTENT DDNM,8
+         FMTENT LXPT,4
+         FMTENT VATF,4
+         FMTENT ID,1
+         FMTENT SHAR,1
+         FMTENT LNTH,1
+         FMTENT FLG1,1
+         FMTENT FLG2,1
+         FMTENT NSTS,1
+         FMTENT LNUM,2
+         FMTENT NIDS,2
+         FMTENT MIDS,10,CONVERT=NO
+         FMTENT LDTA,4
+         FMTENT LIXA,4
+         FMTENT BIBA,4
+         FMTENT CMBA,4
+         DC    AL1(255)
+         PRINT GEN
+         EJECT
+***********************************************************************
+*        EQUATES USED IN THE MODULE                                   *
+***********************************************************************
+         SPACE 2
+ACBAMBL  EQU   4
+ACBAMETH EQU   43
+AMBFLG1  EQU   25
+AMBIOBAD EQU   28
+AMBLLEN  EQU   34
+DEBDEB   EQU   4
+DEBOPATB EQU   12
+DEBABEND EQU   X'80'
+DEBDCB   EQU   24
+DEBNMEXT EQU   X'10'
+DCBDEVT  EQU   17
+DCBDSORG EQU   26
+DCBIOBAD EQU   28
+DCBTIOT  EQU   40
+DCBMACF1 EQU   42
+DCBDEB   EQU   44
+DCBILCT  EQU   52
+DCBOPTCD EQU   52
+DCBIND2  EQU   61
+DCBIOBA  EQU   68
+DEVTYP   EQU   16
+TCBDEB   EQU   8
+TCBTIOT  EQU   12
+FRSTDONE EQU   X'80'               RELATES TO HEADFLAG. TITLE PRINTED
+R0       EQU   0
+R1       EQU   1
+R2       EQU   2
+R3       EQU   3
+R4       EQU   4
+R5       EQU   5
+R6       EQU   6
+R7       EQU   7
+R8       EQU   8
+R9       EQU   9
+R10      EQU   10
+R11      EQU   11
+R12      EQU   12
+R13      EQU   13
+R14      EQU   14
+R15      EQU   15
+         EJECT
+***********************************************************************
+*        DSECTS USED IN THE MODULE                                    *
+***********************************************************************
+         SPACE 2
+WORKAREA DSECT
+SAVEAREA DS    18F            SAVE AREA
+PGLDPARM DS    0D             PARAMETER LIST FOR PAGE-LOAD
+BGNADR   DS    F              BEGINNING ADDRESS FOR PAGE-LOAD
+ENDADR   DS    F              ENDING ADDRESS FOR PAGE-LOAD
+LOADECB  DS    F              ECB FOR PAGE-LOAD WAIT
+FMTPARMS DS    4F                  PARAMETER LIST FOR IEAVADFT
+IOBTAB   DS    CL4                 SAVE AREA FOR MESSAGE LABEL
+WORK1    DS    F
+HEADFLAG DS    X                   FLAG FOR TITLE CONTROL
+WORKEND  DS    0D
+GETLEN   EQU   WORKEND-WORKAREA
+SUBPOOL  EQU   253
+         PRINT NOGEN
+         IHAABDA
+         PRINT GEN
+         END
+//LKED.SYSIN   DD   *
+ SETCODE AC(1)
+   NAME IEAVADDM(R)
+/*

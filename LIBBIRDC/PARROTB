@@ -1,0 +1,950 @@
+         TITLE 'PARROTB - CONTROL CARD PROCESSING - PART 1'             B 000100
+         MACRO                                                          B 000200
+         $CB   &PRINT=OFF          MACRO TO GENERATE DSECTS             B 000300
+         PUSH  PRINT               PRESERVE PRINT OPTIONS               B 000400
+         PRINT &PRINT              SET PRINT OPTIONS FOR DSECTS         B 000500
+               EJECT                                                    B 000600
+         CBPREFIX ,                CONTROL BLOCK PREFIX                 B 000700
+               EJECT                                                    B 000800
+         CCB   ,                   CENTRAL CONTROL BLOCK                B 000900
+               EJECT                                                    B 001000
+         CSECTID ,                 CSECT IDENTIFICATION PREFIX          B 001100
+               EJECT                                                    B 001200
+         EQUATES ,                 GENERATE STANDARD EQUATES            B 001300
+               EJECT                                                    B 001400
+         FDB   ,                   FIELD DEFINITION BLOCK               B 001500
+               EJECT                                                    B 001600
+         GR02  ,                   GR02 CONTROL CARD                    B 001700
+               EJECT                                                    B 001800
+         PARROTT DSECT=YES         CONVERSION TABLES                    B 001900
+               EJECT                                                    B 002000
+         RST   ,                   RECORD SELECTION TEST DEF'N          B 002100
+               EJECT                                                    B 002200
+         SCBUCKET ,                SELECTION CRITERION ' BUCKET '       B 002300
+               EJECT                                                    B 002400
+         SCE   ,                   SELECTION CRITERION ELEMENT          B 002500
+               EJECT                                                    B 002600
+         SPD   ,                   STORAGE POOL DEFINITION              B 002700
+         POP   PRINT               RESTORE ORIGINAL PRINT OPTIONS       B 002800
+         MEND                                                           B 002900
+         SPACE 5                                                        B 003000
+         MACRO                                                          B 003100
+&NAME    TSTFLD &LIST                                                   B 003200
+         LCLA  &N,&S                                                    B 003300
+&N       SETA  N'&LIST                                                  B 003400
+&NAME    DC    12AL1(*-&NAME.+1)   BASIC TRT TABLE                      B 003500
+         AIF   (&N EQ 0).EXIT                                           B 003600
+.LOOP    ANOP                                                           B 003700
+&S       SETA  &S+1                                                     B 003800
+         AIF   (&S GT &N).ORG                                           B 003900
+         ORG   &NAME.+&LIST(&S)    ORG TO VALID ENTRY                   B 004000
+         DC    X'00'               SET TO '00' TO PASS TRT              B 004100
+         AGO   .LOOP                                                    B 004200
+.ORG     ORG                                                            B 004300
+.EXIT    ANOP                                                           B 004400
+         MEND                                                           B 004500
+         EJECT                                                          B 004600
+PARROTB  CSECT                                                          B 004700
+         $CB   ,                   GENERATE DSECTS AND EQUATES          B 004800
+         EJECT                                                          B 004900
+     SCSECT B                                                           B 005000
+         USING PARROTB,R12         ESTABLISH PARROTB ADDRESSABILITY     B 005100
+         USING CCBNTRY,R13         ESTABLISH CCB ADDRESSABILITY         B 005200
+         SPACE 1                                                        B 005300
+         ENTRY BLDFTYP             DETERMINE FIELD TYPE                 B 005400
+         ENTRY BLDSCE              CONSTRUCT SELECTION CRITERION ELEMEN B 005500
+         ENTRY BLDTTYP             DETERMINE TEST TYPE                  B 005600
+         ENTRY PARENDB             END IF CSECT                         B 005700
+         TITLE 'PARROTB - CONSTRUCT SCE FROM BUCKET OF DATA'            B 005800
+*********************************************************************** B 005900
+*        BUILD SCE FOR SELECTION CRITERION BUCKET                     * B 006000
+*********************************************************************** B 006100
+         SPACE 1                                                        B 006200
+*        THE FOLLOWING ROUTINES CONSTRUCT AN SCE FROM A 'BUCKET' OF     B 006300
+*         SELECTION CRITERION DATA FROM A GR02/04/07/10/11/12 CARD.     B 006400
+         SPACE 1                                                        B 006500
+*        ON ENTRY, R10 CONTAINS THE ADDRESS OF THE 'BUCKET' OF CONTROL  B 006600
+*         CARD INFORMATION.  IF ALL THE DATA THEREIN IS VALID, AN SCE   B 006700
+*         WILL BE CREATED, AND CHAINED APPROPRIATELY.  IF ANY ERROR IS  B 006800
+*         FOUND, ERROR MESSAGES WILL BE PRINTED, AND THE DCE NOT BUILT. B 006900
+         SPACE 1                                                        B 007000
+*        UPON RETURN, THE CONDITION CODE IS SET SUCH THAT THE CALLER    B 007100
+*         MAY MAKE THE FOLLOWING CONDITIONAL BRANCHES:-                 B 007200
+*              BL - BUCKET BLANK ( OR CONTAINS NULL TEST )              B 007300
+*              BE - SCE BUILT                                           B 007400
+*              BH - BUCKET CONATINS ERRORS: SCE NOT BUILT               B 007500
+         SPACE 1                                                        B 007600
+*        MOST OF THE SUB-ROUTINES CALLED BY THE FOLLOWING 'MAIN-LINE'   B 007700
+*         CODE ALSO USE THE CONDITION CODE TO RETURN ERROR CCONDITIONS  B 007800
+*         TO THE MAIN-LIINE.                                            B 007900
+         EJECT                                                          B 008000
+*********************************************************************** B 008100
+*        BUILD SCE: MAIN-LINE                                         * B 008200
+*********************************************************************** B 008300
+         SPACE 1                                                        B 008400
+         USING TESTBKET,R10        ESTABLISH 'BUCKET' ADDREESSABILITY   B 008500
+         USING SCENTRY,R8          ESTABLISH SCE ADDRESSABILITY         B 008600
+BLDSCE   SUBIN SAVE=(R4,R7,R10)    PRESERVE RETUEN ADDRESS              B 008700
+         XC    BLDSTRT(BLDEND-BLDSTRT),BLDSTRT ZEROISE WORK FIELDS      B 008800
+         CLI   0(R10),C'*'         IS THIS BUCKET A COMMENT             B 008900
+         BE    BLDSCEW             EXIT IF BUCKET USED AS A COMMENT     B 009000
+         CLC   0(19,R10),$SPACES   IS BUCKET UNUSED                     B 009100
+         BE    BLDSCEW             EXIT IF BUCKET UNUSED                B 009200
+         CBAL  R4,BLDSCDEL         PROCESS 'DELETE' SPECIFICATION       B 009300
+         BE    BLDSCEW             EXIT IF 'DELETE' SPECIFICATION       B 009400
+         CBAL  R4,BLDSCEM          CONSTRUCT ERROR MESSAGES JUST IN CAS B 009500
+         CLC   TESTLEN,=C'00'      DOES THE BUCKET CONTAIN NULL LENGTH  B 009600
+         BNE   BLDSCE0             BR IF NOT TO CONTINUE PROCESSING     B 009700
+         LINE  LINE19              ISSUE INTRODUCTORY MESSAGE           B 009800
+         LINE  LINE27,LA=YES       WARN THAT TEST IS NULL: ALL ACCEPTED B 009900
+         B     BLDSCEW             GO TO SHOW NULL TEST                 B 010000
+BLDSCE0  LA    R2,TESTPOS          POINT R2 AT SOURCE PPPLL             B 010100
+         LA    R3,BLDPPPLL         POINT R3 AT RECEIVING (BINARY) PPL   B 010200
+         CBAL  R4,BSCEIND          TEST IF THIS IS AN INDICATOR SPEC'N  B 010300
+         BE    BLDSCE1             BR IF IT IS AN INDICATOR SPECFIICATN B 010400
+         BH    BLDSCEY             EXIT IF BAD INDICATOR SPEC FOUND     B 010500
+         CBAL  R4,BSCEFLD          TEST IF THIS IS A DEFERRED FLD DEF'N B 010600
+         BE    BLDSCE1             BR IF IT IS A DEFERRED FLD SPECIFICN B 010700
+         BH    BLDSCEY             EXIT IF ERROR FOUND                  B 010800
+         CBAL  R4,BSCERECL         PROCESS 'LRECL' SPECIFICATION        B 010900
+         EJECT                                                          B 011000
+*********************************************************************** B 011100
+*        BUILD SCE: MAIN-LINE ( CONT'D )                              * B 011200
+*********************************************************************** B 011300
+         SPACE 1                                                        B 011400
+         CBAL  R4,PPPLL            CONVERT PPPLL TO BINARY              B 011500
+         BH    BLDSCEY             EXIT IF PPPLL NOT NUMERIC            B 011600
+         BE    BLDSCE1             BR IF PPPLL IS VALID                 B 011700
+         LINE  LINE04              TELL OF INVALIDLY BLANK 'PPPLL'      B 011800
+         OI    SWERROR,MERRCCER    FLAG THAT 'E' LEVEL ERROR OCCURRED   B 011900
+         B     BLDSCEY             EXIT, INDICATING ERROR FOUND         B 012000
+BLDSCE1  LA    R1,BLDTYPE          POINT AT TEMP DESTINATION FIELD      B 012100
+         LA    R15,TESTTYP         POINT AT TEST TYPE IN GR02 CARD      B 012200
+         CBAL  R4,BLDFTYP          DETERMINE FIELD TYPE                 B 012300
+         BNE   BLDSCEY             EXIT IF FIELD TYPE UNKNOWN           B 012400
+         LA    R1,BLDTTYPE         POINT AT TEMPORARY DESTINATION FIELD B 012500
+         CBAL  R4,BLDTTYP          DETERMINE TEST TYPE                  B 012600
+         BNE   BLDSCEY             EXIT IF TEST TYPE UNKNOWN            B 012700
+         CBAL  R4,BLDSCFLD         DETERMINE IF FIELD TYPE VALID        B 012800
+         BNE   BLDSCEY             EXIT IF NOT ACCEPTABLE               B 012900
+         CBAL  R4,BLDSCTF          DETERMINE IF FLD TYPE/TST TYPE CONSI B 013000
+         BNE   BLDSCEY             EXIT IF FLD INCONSISTENT WITH TEST   B 013100
+         CBAL  R4,BLDVALU          DETEMINE LITERAL VALUE AND LENGTH    B 013200
+         BNE   BLDSCEY             EXIT IF ANY ERRORS                   B 013300
+         CBAL  R4,BLDSCLEN         DETERMINE IF FLD/LITERAL LGHTS VALID B 013400
+         BNE   BLDSCEY             EXIT IF INVALID LENGTH COMBINATION   B 013500
+         CBAL  R4,SETBINLN         ADJUST LENGTH FOR BINARY FIELDS      B 013600
+         SR    R1,R1               ZEROISE WORK REGISTER                B 013700
+         IC    R1,BLDLLGTH         RETIEVE LENGTH OFLITERAL             B 013800
+         LA    R2,SCELGTH(,R1)     ADD LENGTH OF BASIC C/B              B 013900
+         EJECT                                                          B 014000
+*********************************************************************** B 014100
+*        BUILD SCE: MAIN-LINE ( CONT'D )                              * B 014200
+*********************************************************************** B 014300
+         SPACE 1                                                        B 014400
+         GETCB SCE                 ACQIRE AND CHAIN C/B                 B 014500
+         MVC   SCEFLDP(3),BLDPPPLL MOVE IN BINARY PPPLL                 B 014600
+         CBAL  R4,BLDPDLEN         ADJUST LENGTH FOR PACKED DECIMAL COM B 014700
+         MVC   SCEFLDT,BLDTYPE     MOVE IN FIELD TYPE                   B 014800
+         MVC   SCECTYPE,BLDTTYPE   MOCEIN TEST TYPE                     B 014900
+         MVC   SCESW,BLDSW         SET SWITCH BYTE                      B 015000
+         MVC   SCEDLABL,BLDDLABL   SET LABEL OF DEFERRED FLD ( IF ANY ) B 015100
+         EJECT                                                          B 015200
+*********************************************************************** B 015300
+*        BUILD SCE: MAIN-LINE ( CONT'D )                              * B 015400
+*********************************************************************** B 015500
+         SPACE 1                                                        B 015600
+         SR    R1,R1               ZEROISE WORK REGISTER                B 015700
+         IC    R1,BLDLLGTH         RETRIEVE LITERAL LENGT               B 015800
+         BCTR  R1,0                DECREMENT FOR EXECUTE                B 015900
+         EX    R1,BLDMVCL          MOVE LITERAL TO C/B                  B 016000
+         STC   R1,SCELITL          PRESERVE EXECUTABLE LENGTH OF LITERA B 016100
+         B     BLDSCEX             EXIT, SHOWING SCE BUILT              B 016200
+BLDSCEW  CLI   *,W                 SET COND CODE TO SHOW BUCKET EMPTY   B 016300
+         B     BLDSCEXT            GO TO EXIT                           B 016400
+BLDSCEY  OI    SWERROR,MERRCCER    FLAG THAT 'E' ERROR DETECTED         B 016500
+         LINE  LINE03              TELL THAT BUCKET IGNORED             B 016600
+         CLI   *,Y                 SET COND CODE TO SHOW HOLE IN BUCKET B 016700
+         B     BLDSCEXT            GO TO EXIT                           B 016800
+BLDSCEX  CLI   *,X                 SHOW SCE BUILT                       B 016900
+BLDSCEXT SUBOUT RESTORE=(R4,R7,R10) RESTORE AND RETURN                  B 017000
+         SPACE 1                                                        B 017100
+BLDMVCL  MVC   SCELIT(0),BLDLIT    MOVE LITERAL TO C/B                  B 017200
+         DROP  R8,R10              DROP ADDRESSABILITY OF C/B, C/C      B 017300
+         EJECT                                                          B 017400
+*********************************************************************** B 017500
+*        BUILD SCE: PROCESS 'DELETE' SPECIFICATION                    * B 017600
+*********************************************************************** B 017700
+         SPACE 1                                                        B 017800
+*        A SELECTION BUCKET IN A GR02 CARD MAY CONTAIN 'DELETE' IN      B 017900
+*         PLACE OF THE FIELD PPPLL.  FOR SUCH CONTROL CARDS, IF ALL     B 018000
+*         THE TESTS ARE SATISFIED, THEN THE RECORD WILL BE REJECTED.    B 018100
+         SPACE 1                                                        B 018200
+BLDSCDEL SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              B 018300
+         CLC   0(6,R10),=C'DELETE' IS THIS A DELETE SPECIFICATION       B 018400
+         BNE   BLDSCDLX            EXIT IF NOT 'DELETE'                 B 018500
+         L     R1,SYSIN+IOPSRECA   RETRIEVE CURRENT BUFFER ADDRESS      B 018600
+         CLC   0(4,R1),=C'GR02'    ENSURE THAT THIS IS A GR02 CARD      B 018700
+         BNE   BLDSCDLE            BR IF NOT GR02 TO TELL OF ERROR      B 018800
+         L     R1,$PTRRST          GET ADDRESS OF CURRENT RST           B 018900
+         OI    RSTSW-RSTNTRY(R1),MRSTDEL FLAG RST TO REJECT IF TESTS SA B 019000
+         B     BLDSCDLX            GO TO ROUTINE EXIT                   B 019100
+BLDSCDLE LINE  LINE01              TELL OF INVALID 'DELETE' SPEC'N      B 019200
+BLDSCDLX CLC   0(6,R10),=C'DELETE' SET COND CODE FOR CALLER             B 019300
+        SUBOUT RESTORE=R4          RESTORE AND RETURN TO CALLER         B 019400
+         EJECT                                                          B 019500
+*********************************************************************** B 019600
+*        DETERMINE FIELD TYPE FOR SCE                                 * B 019700
+*********************************************************************** B 019800
+         SPACE 1                                                        B 019900
+*        ON INPUT :-                                                    B 020000
+*         R1  - DESTINATION FLAG BYTE                                   B 020100
+*         R10 - ADDRESS OF 'BUCKET' OF DATA                             B 020200
+*         R15 - ADDRESS OF FIELD TYPE IN CONTROL CARD                   B 020300
+         SPACE 1                                                        B 020400
+         USING TESTBKET,R10        ESTABLISH 'BUCKET' ADDRESSABILITY    B 020500
+BLDFTYP  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              B 020600
+         L     R9,$VPARTT          GET ADDRESS OF CONVERSION TABLES     B 020700
+         CBAL  R4,BLDFBL           DETERMINE DEFAULT IF FIELD BLANK     B 020800
+         CBAL  R4,BLDFRCFP         FORCE FP FIELD TYPE IF NECESSARY     B 020900
+         USING PARROTT,R9          ESTABLISH TABLE ADDRESSABILITY       B 021000
+         LA    R9,TYPETAB          GET ADDRESS OF FIELD CONVERSION TAB  B 021100
+         DROP  R9                  DROP TABLE ADDRESSABILITY            B 021200
+         B     *+8                 BYPASS FORWARD CHAINING              B 021300
+         LA    R9,TYPETABL(,R9)    INCREMENT TO NEXT ELEMENT            B 021400
+         MVC   0(1,R1),1(R9)       ASSUME MATCH AND SET RESULT FIELD    B 021500
+         CLC   0(1,R9),0(R15)      TEST FOR MATCHING TABLE ENTRY        B 021600
+         BE    BLDFTYPX            EXIT IF MATCH FOUND                  B 021700
+         CLC   0(2,R9),=X'FFFF'    TEST FOR END OF TABLE                B 021800
+         BNE   *-26                LOOP BACK IF ELEMENTS LEFT           B 021900
+         SPACE 1                                                        B 022000
+         LA    R1,0(,R15)          POINT R1 AT FIELD TYPE               B 022100
+         SR    R1,R6               DETERMINE DISPLACEMENT OF FLD        B 022200
+         LA    R1,1(,R1)           CONVERT DISPLACEMENT TO POSITION     B 022300
+         CBAL  R4,CONVPOS          CONVERT POSN TO EBCDIC               B 022400
+         MVC   LINE05M,$WRKSNGL+2  ADD POSN TO MESSAGE                  B 022500
+         LINE  LINE05,ELEVEL=YES   TELL OF UNKNOWN FIELD TYPE           B 022600
+         CLI   *,Y                 SET COND CODE TO SHOW ERROR          B 022700
+         B     *+8                 BYPASS RESTTIND COND CODE            B 022800
+         SPACE 1                                                        B 022900
+BLDFTYPX CLI   *,X                 SET TO SHOW VALID FIELD TYPE         B 023000
+        SUBOUT RESTORE=R4          RETURN TO CALLER                     B 023100
+         DROP R10                  DROP TESTBKET ADDRESSABILITY         B 023200
+         EJECT                                                          B 023300
+*********************************************************************** B 023400
+*        ADJUST LENGTH FOR BINARY FIELDS                              * B 023500
+*********************************************************************** B 023600
+         SPACE 1                                                        B 023700
+*        THIS ROUTINE ALTERS THE EXECUTABLE LENGTH OF BINARY FIELDS     B 023800
+*         INTO A MASK SUITABLE FOR USE WITH AN EXECUTED 'ICM', SO THAT  B 023900
+*         BINARY FIELDS OF LENGTHS 1, 2, 3, AND 4 CAN BE PROCESSED.     B 024000
+         SPACE 1                                                        B 024100
+         USING TESTBKET,R10        ESTABLISH BUCKET ADDRESSABILITY      B 024200
+SETBINLN SUBIN ,                   ENTER ROUTINE                        B 024300
+         CLI   TESTTYP,C'1'        IS THIS A BINARY FIELD SPECIFICATION B 024400
+         BNE   *+10                BR IF NOT A BINARY FIELD             B 024500
+         TR    BLDPPPLL+2(1),BINLTABL ALTER EXECUTABLE LENGTH TO MASK   B 024600
+        SUBOUT ,                   RETURN TO CALLER                     B 024700
+         DROP  R10                 DROP BUCKET ADDRESSABILITY           B 024800
+         EJECT                                                          B 024900
+*********************************************************************** B 025000
+*        DETERMINE DEFAULT FOR BLANK FIELD TYPE                       * B 025100
+*********************************************************************** B 025200
+         SPACE 1                                                        B 025300
+         USING TESTBKET,R10        ESTABLISH BUCKET ADDRESSABILITY      B 025400
+         USING PARROTT,R9          ESTABLISH TABLE ADDRESSABILITY       B 025500
+BLDFBL   SUBIN SAVE=(R1,R15)       PRESERVE FIELD POINTER               B 025600
+         CLC   GR02ID-GR02CARD(L'GR02ID,R6),=C'GR02' IS THIS A GR02     B 025700
+         BNE   BLDFBLX             BR IF NOT A GR02 CARD                B 025800
+         CLI   TESTTYP,C' '        IS THE TEST TYPE NOT SUPPLIED        B 025900
+         BNE   BLDFBLX             EXIT IF FIELD TYPE SUPPLIED          B 026000
+         MVI   STRTAB,X'00'        MOVE '00' TO STRAT OF TABLE          B 026100
+         MVC   STRTAB+1(255),STRTAB ... AND PROPAGATE                   B 026200
+         XR    R15,R15             ZEROISE WORK REGISTER                B 026300
+         IC    R15,=C''''          SET QUOTE IN R15                     B 026400
+         STC   R15,STRTAB(R15)     SET POSN CORRESPODNING TO QUOTE      B 026500
+         MVI   TESTTYP,C'N'        ASSUME THE FIELD IS DISPLAY NUMERIC  B 026600
+         TRT   TESTVALU,STRTAB     DOES THE VALUE FIELD CONTAIN QUOTES  B 026700
+         BE    BLDFBLX             EXIT IF NO QUOTES: DISPLAY NUMERIC   B 026800
+         MVI   TESTTYP,C'C'        ALTER FIELD TYPE TO CHARACTER        B 026900
+BLDFBLX SUBOUT RESTORE=(R1,R15)    RESTORE AND RETURN                   B 027000
+         DROP  R9                  DROP TABLE ADDRESSABILITY            B 027100
+         DROP  R10                 DROP GR02 BUCKET ADDRESSABILITY      B 027200
+         EJECT                                                          B 027300
+*********************************************************************** B 027400
+*        FORCE FP FORMAT FOR NUMERIC DEFERRED FIELDS                  * B 027500
+*********************************************************************** B 027600
+         SPACE 1                                                        B 027700
+*        A SELECTION CRITERION BUCKET MAY SPECIFY DEFERRED FIELD        B 027800
+*         DEFINITION ( WITH FLDXX INSTEAD OF PPPLL ).  IN THESE         B 027900
+*         INSTANCES, THE VALUE TESTED IS THE CURRENT ACCUMULATOR VALUE  B 028000
+*         AT THE CURRENT KEY LEVEL.  TO ENSURE THAT THE LITERAL VALUE   B 028100
+*         IS CONVERTED TO THE CORRECT FORMAT, THIS ROUTINE FORCES 'FP'  B 028200
+*         FORMAT FOR ALL DEFERRED NUMERIC FIELD DEFINITIONS.            B 028300
+         SPACE 1                                                        B 028400
+         USING TESTBKET,R10        ESTABLISH 'BUCKET' ADDRESSABILITY    B 028500
+BLDFRCFP SUBIN SAVE=R1             PRESERVE ADDRESS OF DEST'N FLAG BYTE B 028600
+         TM    BLDSW,MSCELIB       IS THIS A DEFERRED FIELD DEFINITION  B 028700
+         BZ    BLDFRCX             EXIT IF NOT                          B 028800
+         LA    R1,L'BLDFRCTB       SET NO. OF TABLE ELEMENTS IN REG 1   B 028900
+         LA    R2,BLDFRCTB         SET TABLE ADDRESS IN REG 2           B 029000
+BLDFRC1  CLC   TESTTYP,0(R2)       IS THE FIELD TYPE NUMERIC            B 029100
+         BE    BLDFRC2             BR IF TABLE ENTRY MATCHES BUCKET     B 029200
+         LA    R2,1(,R2)           INCREMENT TO NEXT TABLE ENTRY        B 029300
+         BCT   R1,BLDFRC1          LOOP BACK IF ANY ELEMENTS LEFT       B 029400
+         B     BLDFRCX             EXIT IF NOT NUMERIC FIELD TYPE       B 029500
+BLDFRC2  MVI   TESTTYP,C'F'        FORCE FLOATING POINT FORMAT          B 029600
+BLDFRCX SUBOUT RESTORE=R1          RESTORE AND RETURN TO CALLER         B 029700
+         DROP  R10                 DROP 'BUCKET' ADDRESSABILITY         B 029800
+         SPACE 3                                                        B 029900
+BLDFRCTB DC    C'NP1F'             NUMERIC FIELD TYPES                  B 030000
+         EJECT                                                          B 030100
+*********************************************************************** B 030200
+*        DETERMINE TEST TYPE                                          * B 030300
+*********************************************************************** B 030400
+         SPACE 1                                                        B 030500
+*        ON INPUT :-                                                    B 030600
+*         R1  - DESTINATION FLAG BYTE                                   B 030700
+*         R10 - ADDRESS OF BUCKET OF DATA                               B 030800
+         SPACE 1                                                        B 030900
+         USING TESTBKET,R10        ESTABLISH TESTBKET ADDRESSABILITY    B 031000
+BLDTTYP  SUBIN SAVE=R4             PRESERRVE RETURN ADDRESS             B 031100
+         L     R9,$VPARTT          GET ADDRESS OF CONVERSION TABLES     B 031200
+         USING PARROTT,R9          ESTABLISH TABLE CSECT ADDRESSABILITY B 031300
+         LA    R9,TESTTAB          GET ADDRESS OF TEST CONVERSION TAB   B 031400
+         DROP  R9                  DROP CONVERSION TAB CSECT ADDR'Y     B 031500
+         B     *+8                 BYPASS FORWARD CHAINING              B 031600
+         LA    R9,TESTTABL(,R9)    INCREMENT TO NEXT ELEMENT            B 031700
+         MVC   0(1,R1),2(R9)       ASSUME MATCH AND SET RESULT FIELD    B 031800
+         CLC   0(2,R9),TESTTEST    TEST IF TABLE ELEMENT MATCHES        B 031900
+         BE    BLDTTYPX            EXIT IF MATCH                        B 032000
+         CLC   0(3,R9),=X'FFFFFF'  TEST FOR END OF TABLE                B 032100
+         BNE   *-26                LOOP BACK IF ELEMENTS LEFT           B 032200
+         SPACE 1                                                        B 032300
+         LA    R1,TESTTEST         POINT AT UNKNOWN FIELD               B 032400
+         SR    R1,R6               DETERMINE DISPLACEMENT IN RECORD     B 032500
+         LA    R1,1(,R1)           CONVERT DISP TO POSN                 B 032600
+         CBAL  R4,CONVPOS          CONVERT POSN TO EBCDIC               B 032700
+         MVC   LINE06M(2),$WRKSNGL+2 ADD START POSN TO RECORD           B 032800
+         LA    R1,1(,R1)           INCREMENT TO END OF FIELD            B 032900
+         CBAL  R4,CONVPOS          CONVERT POSN TO ENCDIC               B 033000
+         MVC   LINE06M+3(2),$WRKSNGL+2 ADD END POSN TO MESSAGE          B 033100
+         LINE  LINE06,ELEVEL=YES   TELL OF UNKNOWN TEST TYPE            B 033200
+         CLI   *,Y                 SET COND CODE FOR ERROR              B 033300
+         B     *+8                 BYPASSRESETTING COND CODE            B 033400
+BLDTTYPX CLI   *,X                 SET COND CODE TO SHO VALID           B 033500
+        SUBOUT RESTORE=R4          RESORE AND RETURN TO CALLER          B 033600
+         DROP  R10                 DROP TESTBKET ADDRESSABILITY         B 033700
+         EJECT                                                          B 033800
+*********************************************************************** B 033900
+*        BUILD SCE - DETERMINE IF FIEDL TYPE VALID FOR GR02 CARD      * B 034000
+*********************************************************************** B 034100
+         SPACE 1                                                        B 034200
+*        ROUTINE BLDFTYP HAS ALREADY DETERMINED THAT THE FIELD TYPE     B 034300
+*         IS A KNOWN TYPE ( OR WE WOULD NOT GET THIS FAR ), BUT         B 034400
+*         'BLDFTYP' IS A GENERAL PURPOSE ROUTINE THAT MERELY REJECTS    B 034500
+*         FIELD TYPES THAT ARE NOT KNOWN TO PARROT: IT DOES NOT TEST    B 034600
+*         IF THE FIELD TYPE IS VALID IN A GR02 CARD.  THAT IS THE       B 034700
+*         THAT IS THE PURPOSE OF THIS ROUTINE.                          B 034800
+         SPACE 1                                                        B 034900
+BLDSCFLD SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              B 035000
+         SR    R1,R1               ZEROISE WORK REGISTER                B 035100
+         IC    R1,BLDTYPE          GET INTERNAL REPRESENTATION OF FLD   B 035200
+         BTYPE PREFIX=BLDSCF,DCHAR=X,DNUM=X,UNUSED=Y TEST VALIDITY      B 035300
+BLDSCFY  LINE  LINE08,ELEVEL=YES   TELL OF UNACCEPTABLE FIELD TYPE      B 035400
+         CLI   *,Y                 SET COND CODE SHOWING ERROR          B 035500
+         B     *+8                 BYPASS RESETTING COND CODE           B 035600
+BLDSCFX  CLI   *,X                 SET COND CODE SHOWING FIELD TYPE VAL B 035700
+        SUBOUT RESTORE=R4          RESTORE AND RETURN TO CALLER         B 035800
+         EJECT                                                          B 035900
+*********************************************************************** B 036000
+*        DETERMINE IF THE TEST TYPE IS CONSISTENT WITH FIELD TYPE     * B 036100
+*********************************************************************** B 036200
+         SPACE 1                                                        B 036300
+*        THIS ROUTINE USES TRANSLATE TABLES TO DETERMINE IF THE TEST    B 036400
+*         TYPE IS CONSISTENT WITH THE FIELD TYPE.  THE COND CODE IS     B 036500
+*         SET SUCH THAT :-                                              B 036600
+*         BE  - FIELD / TEST TYPES CONSISTENT                           B 036700
+*         BNE - FIELD / TEST TYPES INCONSISTENT                         B 036800
+         SPACE 1                                                        B 036900
+BLDSCTF  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              B 037000
+         SR    R15,R15             ZEROISE WORK REGISTER                B 037100
+         IC    R15,BLDTYPE         GET INTERNAL REP OF FIELD TYPE       B 037200
+         BCTR  R15,0               DESCREMENT FOR USE AS INDEX          B 037300
+         MH    R15,=H'12'          MULTIPLY BY TRT TABLE LENGTH         B 037400
+         A     R15,=A(TFTABLES)    INDEX TO DESIRED TRT TABLE           B 037500
+         TRT   BLDTTYPE,0(R15)     DETERMINE IF TEST TYPE VALID         B 037600
+         BZ    BLDSCTFX            GO TO EXIT IF TEST TYPE VALID        B 037700
+         LINE  LINE19              ISSUE PREPARATORY MESSAGE            B 037800
+         LINE  LINE26,ELEVEL=YES,LA=YES TELL OF INCONSISTENCY           B 037900
+         CLI   *,Y                 SET COND CODE TO SHOW ERROR          B 038000
+         B     *+8                 BYPASS RESETTING COND CODE           B 038100
+BLDSCTFX CLI   *,X                 SET COND CODE TO SHOW CONSISTENCY    B 038200
+        SUBOUT RESTORE=R4          RESTORE AND RETURN                   B 038300
+         EJECT                                                          B 038400
+*********************************************************************** B 038500
+*        BUILD SCE - TEST IF FIELD/LITERAL LENGTHS CONSISTENT         * B 038600
+*********************************************************************** B 038700
+         SPACE 1                                                        B 038800
+*        THIS ROUTINE DETERMINES IF THE LENGTHS OF THE FIELD AND THE    B 038900
+*         SUPPLIED LITERAL ARE CONSISTENT.  IF THEY ARE NOT, IT TRIES   B 039000
+*         TO TAKE CORRECTIVE ACTION - ISSUING MESSAGES TO EXPLAIN -     B 039100
+*         AND WILL ONLY RETURN AN ERROR CONDITION IN THE EVENT OF AN    B 039200
+*         UNRECONCILABLE INCONSISTENCY.                                 B 039300
+         SPACE 1                                                        B 039400
+BLDSCLEN SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              B 039500
+         TM    BLDSW,MSCELIB       IS THIS A DEFERRED FLD DEFINITION    B 039600
+         BO    BLDSCLX             EXIT IF YES: NO COMPARE POSSIBLE     B 039700
+         SR    R14,R14             ZEROISE WORK REGISTER                B 039800
+         SR    R15,R15             ZEROISE WORK REGISTER                B 039900
+         IC    R14,BLDPPPLL+2      GET EXECUTABLE FIELD LENGTH          B 040000
+         LA    R14,1(,R14)         GET TRUE FIELD LENGTH                B 040100
+         IC    R15,BLDLLGTH        GET TRUE LENGTH OF LITERAL           B 040200
+         SR    R1,R1               ZEROISE WORK REGISTER                B 040300
+         IC    R1,BLDTYPE          GET INTERNAL REP OF FIELD TYPE       B 040400
+         CR    R14,R15             COMPARE FIELD LENGTH WITH LITERAL LE B 040500
+         BE    BLDSCLX             EXIT IF THEY ARE THE SAME            B 040600
+         BTYPE PREFIX=BLDSCL,DNUM=X,CHAR=01,HEX=03,BIT=05,MASK=01,     *B 040700
+               BIN=06,STR=07,IND=Y,UNUSED=Y                             B 040800
+         EJECT                                                          B 040900
+*********************************************************************** B 041000
+*        BUILD SCE - TEST IF FIELD/LITERAL LGTHS CONSISTENT ( CONT'D )* B 041100
+*********************************************************************** B 041200
+         SPACE 1                                                        B 041300
+BLDSCL01 EQU   *                   CHARACTER AND PARTIAL KEY MASK       B 041400
+         BH    BLDSCL02            BR IF FLD LENGTH > LITERAL LENGTH    B 041500
+         LINE  LINE19              ISSUE PREPARATORY MESSAGE            B 041600
+         LINE  LINE20,LA=YES       TELL THAT LITERAL TRUCATED           B 041700
+         B     BLDSCLX             GO TO EXIT                           B 041800
+BLDSCL02 LINE  LINE19              ISSUE PREPARATORY MESSAGE            B 041900
+         LINE  LINE21,LA=YES       TELL THAT LITERAL PADDED WITH BLANKS B 042000
+         B     BLDSCLX             GO TO EXIT                           B 042100
+         EJECT                                                          B 042200
+*********************************************************************** B 042300
+*        BUILD SCE - TEST IF FIELD/LITERAL LGTHS CONSISTENT ( CONT'D )* B 042400
+*********************************************************************** B 042500
+         SPACE 1                                                        B 042600
+BLDSCL03 EQU   *                   HEXADECIMAL                          B 042700
+         BH    BLDSCL04            BR IF FIELD LENGTH > LITERAL LENGTH  B 042800
+         LINE  LINE19              ISSUE PREPARATORY MESSAGE            B 042900
+         LINE  LINE20,LA=YES       TELL THAT LITERAL TRUNCATED          B 043000
+         B     BLDSCLX             GO TO EXIT                           B 043100
+BLDSCL04 LINE  LINE19              ISSUE PREPARATORY MESSAGE            B 043200
+         LINE  LINE22,LA=YES       TELL THAT LITERAL PADDED WITH ZEROES B 043300
+         B     BLDSCLX             GO TO EXIT                           B 043400
+         EJECT                                                          B 043500
+*********************************************************************** B 043600
+*        BUILD SCE - TEST IF FIELD/LITERAL LGTHS CONSISTENT ( CONT'D )* B 043700
+*********************************************************************** B 043800
+         SPACE 1                                                        B 043900
+BLDSCL05 EQU   *                   BIT STRING                           B 044000
+         LINE  LINE19              ISSUE PREPARATORY MESSAGE            B 044100
+         LINE  LINE23,LA=YES       TELL THAT FLD LENGTH FORCED TO '1'   B 044200
+         B     BLDSCLX             GO TO EXIT                           B 044300
+         SPACE 5                                                        B 044400
+BLDSCL06 EQU   *                   BINARY VALUE                         B 044500
+*                                  IF THE FIELD IS 4 BYTES LONG, THEN   B 044600
+*                                   WE DO NOT REACH HERE.               B 044700
+         CLI   BLDPPPLL+2,X'03'    IS THE FIELD > 4 BYTES LONG          B 044800
+         BNH   BLDSCLX             GO TO EXIT IF NO                     B 044900
+         LINE  LINE19              ISSUE PREPARATORY MESSAGE            B 045000
+         LINE  LINE24,ELEVEL=YES,LA=YES TELL THAT FLD MUST BE < 5 BYTES B 045100
+         B     BLDSCLY             GO TO EXIT SHOWING ERROR             B 045200
+         EJECT                                                          B 045300
+*********************************************************************** B 045400
+*        BUILD SCE - TEST IF FIELD/LITERAL LGTHS CONSISTENT ( CONT'D )* B 045500
+*********************************************************************** B 045600
+         SPACE 1                                                        B 045700
+BLDSCL07 EQU   *                   CHARACTER STRING                     B 045800
+         BH    BLDSCLX             EXIT IF FIELD LONGER: NORMAL SITUATI B 045900
+         LINE  LINE19              ISSUE PREPARATORY MESSAGE            B 046000
+         LINE  LINE25,LA=YES       TELL THAT STRING TRUNCATED           B 046100
+         MVI   BLDTYPE,CHAR        FORCE CHARACTER COMPARE              B 046200
+         MVC   BLDLLGTH,BLDPPPLL+2 FORCE STRING LENGTH TO FLD LENGTH    B 046300
+         B     BLDSCLX             GO TO EXIT                           B 046400
+         SPACE 5                                                        B 046500
+BLDSCLY  CLI   *,Y                 SET COND CODE SHOWING ERROR          B 046600
+         OI    SWERROR,MERRCCER    FLAG THAT 'E' LEVEL ERROR OCCURRED   B 046700
+         B     *+8                 BYPASS RESETTING COND CODE           B 046800
+BLDSCLX  CLI   *,X                 SET COND CODE SHOWING LENGTHS GOOD   B 046900
+        SUBOUT RESTORE=R4          RESTOE AND RETURN TO CALLER          B 047000
+         EJECT                                                          B 047100
+*********************************************************************** B 047200
+*        DETERMINE NATURE AND VALUE OFLITERAL                         * B 047300
+*********************************************************************** B 047400
+         SPACE 1                                                        B 047500
+         USING TESTBKET,R10        ESTABLISH TESTBKET ADDRESSABILITY    B 047600
+BLDVALU  SUBIN SAVE=R4             PRESERE E RETURN ADDRESS             B 047700
+         PACK  BLDLIT(6),TESTVALU  ASSUME NUMERIC LITERAL AND PACK      B 047800
+         MVI   BLDLLGTH,X'06'      SET LENGTH OF NUMERIC LITERAL        B 047900
+         CLI   TESTTYP,C'P'        IS IT PACKED DECIMAL COMPARE         B 048000
+         BE    BLDVALUN            BR IF YES TO ENSURE NUMERIC          B 048100
+         CLI   TESTTYP,C'N'        IS IT NUMERIC (DISPLAY) LITAREL      B 048200
+         BE    BLDVALUN            BR IF YES TO ENSURE NUMERIC          B 048300
+         CLI   TESTTYP,C'1'        IS IT BINARY ( COMP-1 ) LITERAL      B 048400
+         BE    BLDVALUN            BR IF YES TO ENSURE NUMERIC          B 048500
+         CLI   TESTTYP,C'F'        IS IT FLOATING POINT LITERAL         B 048600
+         BE    BLDVALUN            BR IF YES TO ENSURE NUMERIC          B 048700
+         CLI   TESTTYP,C'G'        IS IT FREE FORMAT DISLAY NUMERIC     B 048800
+         BE    BLDVALUN            BR IF YES TO ENSURE NUMERIC          B 048900
+         CBAL  R4,BLDFLIT          GO LOCATE LITERAL IN QUOTES          B 049000
+         BE    BLDVALU2            BR IFLITERAL LOCATED                 B 049100
+         CLI   TESTTYP,C' '        WAS FIELD TYPE UNDEFINED             B 049200
+         BNE   BLDVALU1            BR IFNOT TO TELL OF ERROR            B 049300
+         MVI   BLDTYPE,SCEFNUM     ASSUME DISPLAY NUMERIC, NOT CHAR     B 049400
+         B     BLDVALUN            GO SEE IF LITERAL NUMERIC            B 049500
+BLDVALU1 LINE  LINE07,ELEVEL=YES   TELL OF ERROR IN LITERAL             B 049600
+         B     BLDVALUY            EXIT SHOWING ERROR                   B 049700
+BLDVALU2 CBAL  R4,BLDVBIT          PROCESS BIT STRING LITERAL           B 049800
+         CBAL  R4,BLDVHEX          PROCESS HEXADECIMAL STRING LITERAL   B 049900
+         B     BLDVALUX            EXIT SHOWING LITERAL RETRIEVED       B 050000
+         EJECT                                                          B 050100
+*********************************************************************** B 050200
+*        DETERMINE NATURE AND VALUE OF LITERAL ( CONT'D )             * B 050300
+*********************************************************************** B 050400
+         SPACE 1                                                        B 050500
+BLDVALUN EQU   *                   PROCESS NUMERIC LITERAL              B 050600
+         SPACE 1                                                        B 050700
+*        FOR COMPATABILITY WITH THE PL/1 PARROT, IT IS NECESSARY TO     B 050800
+*         RECOGNISE AS VALID A ZERO VALUE THAT IS NOT RIGHT-JUSTIFIED.  B 050900
+*         NOTE THAT ONLY IN THE CASE OF A FIELD CONTAINING ONLY ZEROES  B 051000
+*         AND BLANKS WILL SUCH NON-JUSTIFICATION BE ACCEPTED.           B 051100
+         SPACE 1                                                        B 051200
+         PACK  $PVALUE,TESTVALU    PACK THE VALUE IN THE PD WORK FIELD  B 051300
+         CLC   $PVALUE(L'$PVALUE-2),$PVALUE+1 ? ALL BYTES BUT LAST '00' B 051400
+         BNE   BLDVALN1            GO VALIDATE NUMERIC IF ANY NON-ZEROS B 051500
+         CLI   $PVALUE+L'$PVALUE-1,X'04' IS LAST BYTE PACKED BLANK      B 051600
+         BNE   BLDVALN1            GO VALIDATE NUMERIC IF NOT           B 051700
+         ZAP   $PVALUE,$ZERO       PRETEND IT WAS A PROPER ZERO ....    B 051800
+         ZAP   BLDLIT(6),$ZERO      .... BY ZEROISING APPROPRIATE FLDS  B 051900
+         B     BLDVALN2             .... AND GO SET FP FIELDS           B 052000
+BLDVALN1 NUMERIC TESTVALU          TEST IF LITERAL ISNUMERIC            B 052100
+         BNE   BLDVALUY            EXIT SHOWING ERROR IF NOT NUMERIC    B 052200
+BLDVALN2 CBAL  R4,BLDFPLIT         PROCESS FLOATING POINT SPECIFICATION B 052300
+         CLI   TESTTYP,C'1'        IS IT A BINARY LITERAL               B 052400
+         BNE   BLDVALUX            EXIT IF NOT SHOWING NUMERIC LITERAL  B 052500
+         MVI   BLDLLGTH,4          SET LITERAL LENGTH TO 4 ( FULLWORD ) B 052600
+         MVC   BLDLIT(4),$BVALUE   SET BINARY VALUE IN LITERAL FIELD    B 052700
+         B     BLDVALUX            EXIT SHOWING LITERAL IS GOOD         B 052800
+BLDVALUY CLI   *,Y                 SET COND CODE TO SHOW ERROR          B 052900
+         B     *+8                 BYPASS RESETTING COND CODE           B 053000
+BLDVALUX CLI   *,X                 SET COND CODE TO SHOW LITERAL FOUND  B 053100
+        SUBOUT RESTORE=R4          RESTORE AND RETURN TO CALLER         B 053200
+         DROP  R10                 DROP TESTBKET ADDRESSABILITY         B 053300
+         EJECT                                                          B 053400
+*********************************************************************** B 053500
+*        LOCATE LITERAL VALUE WITHIN QUOTES'                          * B 053600
+*********************************************************************** B 053700
+         SPACE 1                                                        B 053800
+*        THIS ROUTINE SCANS THE FIELD 'TESTVALU' TO LOCATE A LITERAL    B 053900
+*         STRING WITHIN QUOTES.  UPON RETURN THE COND CODE IS SET SUCH  B 054000
+*         THAT THE CALLER CAN MAKE THE FOLLOWING CONDITIONAL BRANCHES:- B 054100
+*              BE  - LITERAL LOCATED AND EXTRCATED                      B 054200
+*              BNE - LITERAL INVALID                                    B 054300
+*        IF THE LITERAL IS FOUND, THE LEGTH OF THE LITERAL ( LESS THE   B 054400
+*         SURROUNDING QUOTES ) IS PLACED IN 'BLDLLGTH', AND THE LITERAL B 054500
+*         VALUE ITSELF IS LEFT-JUSTIFIED IN 'BLDLIT'.                   B 054600
+         SPACE 1                                                        B 054700
+BLDFLIT  SUBIN SAVE=ALL            PRESERVE ALL REGISTERS               B 054800
+         LA    R9,TESTVALU-TESTBKET(,R10) POINT R9 AT FIELD TO SCAN     B 054900
+         LA    R10,11              SET R10 FOR LOOP                     B 055000
+BLDFLIT1 CLI   0(R9),C''''         IS THIS THE 1ST QUOTE                B 055100
+         BE    BLDFLIT2            BR IF YES                            B 055200
+         LA    R9,1(,R9)           PONT AT NEXT POSITION                B 055300
+         BCT   R10,BLDFLIT1        LOOP BACK IF ANY POSITIONS LEFT      B 055400
+         B     BLDFLITY            EXIT SHOWING ERROR                   B 055500
+BLDFLIT2 LA    R9,1(,R9)           POINT AT 1ST CHAR IN LITERAL         B 055600
+         LR    R1,R9               POINT R1 AT 1ST CHARACTER IN LITERAL B 055700
+         BCTR  R10,0               DECREMENT COUNTER FOR PREVIOUS INCR  B 055800
+         LA    R9,1(,R9)           POINT AT NEXT CHAR (1ST MAY NOT DEL) B 055900
+         BCTR  R10,0               DECREMENT COUNTER AGAIN TO ALLOW FOR B 056000
+BLDFLIT3 CLI   0(R9),C''''         IS THIS THE TRAILING QUOTE           B 056100
+         BE    BLDFLIT4            BR IFYES                             B 056200
+         LA    R9,1(,R9)           POINT AT NEXT POSN                   B 056300
+         BCT   R10,BLDFLIT3        LOOP BACK IF ANY LEFT                B 056400
+         B     BLDFLITY            EXIT SHOWING ERROR                   B 056500
+BLDFLIT4 MVC   BLDLIT,$SPACES      BLANK OUT RECEIVING ARE              B 056600
+         SR    R9,R1               DETERMINE LENGTH OFLITERAL           B 056700
+         STC   R9,BLDLLGTH         PRESERVE LENGTH O LITERAL            B 056800
+         BCTR  R9,0                DECERMENT FOR EXECUTE                B 056900
+         EX    R9,BLDFMVC          MOVE LITERAL TO DESTINATION          B 057000
+         B     BLDFLITX            EXIT SHOWING SUCCESS                 B 057100
+BLDFLITY CLI   *,Y                 SET COND CODE SHOWING ERROR          B 057200
+         B     *+8                 BYPASS RESETTING COND CODE           B 057300
+BLDFLITX CLI   *,X                 SET COND CODE SHOWING SUCCESS        B 057400
+        SUBOUT RESTORE=ALL         RESTORE ALL REGISTERS                B 057500
+         SPACE 1                                                        B 057600
+BLDFMVC  MVC   BLDLIT(0),0(R1)     MOVE LITERAL TO STORE                B 057700
+         EJECT                                                          B 057800
+*********************************************************************** B 057900
+*        PROCESS BIT STRING LITERAL                                   * B 058000
+*********************************************************************** B 058100
+         SPACE 1                                                        B 058200
+         USING TESTBKET,R10        ESTABLISH BUCKET ADDRESSABILITY      B 058300
+BLDVBIT  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              B 058400
+         CLI   TESTTYP,C'B'        IS THIS A BIT STRING                 B 058500
+         BNE   BLDVBITX            EXIT IF NOT A BIT STRING             B 058600
+         CLI   BLDLLGTH,8          ENSURE BIT STRING IS 8 CHARS LONG    B 058700
+         BE    BLDVBIT1            BR IF YES TO PROCESS                 B 058800
+         OI    SWERROR,MERRCCER    FLAG THAT 'E' LEVEL ERROR OCCURRED   B 058900
+         LINE  LINE16              TELL OF ERROR                        B 059000
+         B     BLDVBITY            GO SET COND CODE SHOWING ERROR       B 059100
+BLDVBIT1 MVI   BLDLLGTH,1          FORCE LITERAL LENGTH TO 1 ( FLAG )   B 059200
+         MVC   BLDLIT+8(1),BLDLIT  PRESERVE FIRST BIT FURTHER DOWN      B 059300
+         MVI   BLDLIT,0            NULLIFY THE BIT STRING MASK          B 059400
+         CLI   BLDLIT+8,C'1'       TEST IF 'BIT' SET TO '1'             B 059500
+         BNE   *+8                 BR IF NOT                            B 059600
+         OI    BLDLIT,X'80'        SET ON CORRESPONDING FLAG BIT        B 059700
+         CLI   BLDLIT+1,C'1'       TEST IF 'BIT' SET TO '1'             B 059800
+         BNE   *+8                 BR IF NOT                            B 059900
+         OI    BLDLIT,X'40'        SET ON CORRESPONDING FLAG BIT        B 060000
+         CLI   BLDLIT+2,C'1'       TEST IF 'BIT' SET TO '1'             B 060100
+         BNE   *+8                 BR IF NOT                            B 060200
+         OI    BLDLIT,X'20'        SET ON CORRESPONDING FLAG BIT        B 060300
+         CLI   BLDLIT+3,C'1'       TEST IF 'BIT' SET TO '1'             B 060400
+         BNE   *+8                 BR IF NOT                            B 060500
+         OI    BLDLIT,X'10'        SET ON CORRESPONDING FLAG BIT        B 060600
+         CLI   BLDLIT+4,C'1'       TEST IF 'BIT' SET TO '1'             B 060700
+         BNE   *+8                 BR IF NOT                            B 060800
+         OI    BLDLIT,X'08'        SET ON CORRESPONDING FLAG BIT        B 060900
+         CLI   BLDLIT+5,C'1'       TEST IF 'BIT' SET TO '1'             B 061000
+         BNE   *+8                 BR IF NOT                            B 061100
+         OI    BLDLIT,X'04'        SET ON CORRESPONDING FLAG BIT        B 061200
+         CLI   BLDLIT+6,C'1'       TEST IF 'BIT' SET TO '1'             B 061300
+         BNE   *+8                 BR IF NOT                            B 061400
+         OI    BLDLIT,X'02'        SET ON CORRESPONDING FLAG BIT        B 061500
+         CLI   BLDLIT+7,C'1'       TEST IF 'BIT' SET TO '1'             B 061600
+         BNE   *+8                 BR IF NOT                            B 061700
+         OI    BLDLIT,X'01'        SET ON CORRESPONDING FLAG BIT        B 061800
+         B     BLDVBITX            GO TO EXIT SHOWING STRING VALID      B 061900
+BLDVBITY CLI   *,Y                 SET COND CODE SHOWING LITERAL IN ERR B 062000
+         B     *+8                 BYPASS RESETTING COND CODE           B 062100
+BLDVBITX CLI   *,X                 SET COND CODE SHOWING LITERAL GOOD   B 062200
+        SUBOUT RESTORE=R4          RESTORE AND RETURN                   B 062300
+         DROP  R10                 DROP BUCKET ADDRESSABILITY           B 062400
+         EJECT                                                          B 062500
+*********************************************************************** B 062600
+*        PROCESS HEX STRING LITERAL                                   * B 062700
+*********************************************************************** B 062800
+         SPACE 1                                                        B 062900
+*        THIS ROUTINE VERIFIES THAT THE CHARACTERS IN THE HEX STRING    B 063000
+*         LITERAL ARE VALID, AND CONVERTS IT INTO A TRUE HEX VALUE.     B 063100
+         SPACE 1                                                        B 063200
+         USING PARROTT,R9          ESTABLISH TABLE ADDRESSABILITY       B 063300
+         USING TESTBKET,R10        ESTABLISH BUCKET ADDRESSABILITY      B 063400
+BLDVHEX  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              B 063500
+         CLI   TESTTYP,C'X'        IS THIS A HEX LITERAL                B 063600
+         BNE   BLDVHEXX            EXIT IF NOT                          B 063700
+         TM    BLDLLGTH,X'01'      ENSURE LENGTH IS MULTIPLE OF 2       B 063800
+         BZ    BLDVHEX1            BR IF YES TO PROCESS                 B 063900
+         OI    SWERROR,MERRCCER    FLAG THAT 'E' LEVEL ERROR OCCURRRED  B 064000
+         LINE  LINE17              TELL OF INVALID LENGTH               B 064100
+         B     BLDVHEXY            EXIT SHOWING ERROR                   B 064200
+BLDVHEX1 L     R9,$VPARTT          GET ADDRESS OF CSECT OF TABLES       B 064300
+         SR    R15,R15             ZEROISE WORK REGISTER                B 064400
+         IC    R15,BLDLLGTH        GET TRUE LENGTH OF LITERAL           B 064500
+         BCTR  R15,0               GET EXECUTABLE LENGTH OF LITERAL     B 064600
+         LA    R14,BLDLIT          POINT R14 AT LITERAL                 B 064700
+         EX    R15,HEXVALID        ENSURE ONLY HEX CHARS IN LITERAL     B 064800
+         BZ    BLDVHEX2            BR IF CHARS VALID                    B 064900
+         OI    SWERROR,MERRCCER    FLAG THAT 'E' LEVEL ERROR OCCURRED   B 065000
+         LINE  LINE18              TELL OF ILLEGAL CHARACTERS           B 065100
+         B     BLDVHEXY            GO TO EXIT SHOWING ERROR             B 065200
+BLDVHEX2 EX    R15,HEXCONV         CONVERT 'A' TO X'FA' ETC             B 065300
+         PACK  $TSTAREA(8),BLDLIT(15) PACK TO CONVERT TO TRUE HEX STRI  B 065400
+         MVC   BLDLIT(08),$TSTAREA MOVE TRUE HEX STRING TO LITERAL AREA B 065500
+         MVI   BLDLIT+8,X'00'      SET LOW VALUE PADDING CHARACTER ...  B 065600
+         MVC   BLDLIT+9(L'BLDLIT-9),BLDLIT+8 ... AND PROPAGATE          B 065700
+         LA    R15,1(,R15)         SET TRUE LITERAL LENGTH              B 065800
+         SRL   R15,1               DIVIDE BY 2 FOR NEW LENGTH           B 065900
+         STC   R15,BLDLLGTH        STORE NEW LITERAL LENGTH             B 066000
+         B     BLDVHEXX            GO TO EXIT SHOWING SUCCESS           B 066100
+BLDVHEXY CLI   *,Y                 SET COND CODE SHOWING ERROR          B 066200
+         B     *+8                 BYPASS RESETTING COND CODE           B 066300
+BLDVHEXX CLI   *,X                 SET COND CODE SHOWING SUCCESS        B 066400
+        SUBOUT RESTORE=R4          RESTORE AND RETURN                   B 066500
+         DROP  R9                  DROP TABLE ADDRESSABILITY            B 066600
+         DROP  R10                 DROP BUCKET ADDRESSABILITY           B 066700
+         EJECT                                                          B 066800
+*********************************************************************** B 066900
+*        PROCESS FLOATING POINT SPECIFICATION                         * B 067000
+*********************************************************************** B 067100
+         SPACE 1                                                        B 067200
+*        THIS ROUTINE CONVERTS THE LITERAL VALUE TO A FOATING POINT     B 067300
+*         VALUE FOR FLOATING POINT AND FREE FORMAT FIELD TYPES.         B 067400
+         SPACE 1                                                        B 067500
+         USING TESTBKET,R10        ESTABLISH BUCKET ADDRESSABILITY      B 067600
+BLDFPLIT SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              B 067700
+         CLI   TESTTYP,C'F'        IS THIS A FLOATING POINT LITERAL     B 067800
+         BE    BLDFPL1             BR IF IT IS FLOATING POINT           B 067900
+         CLI   TESTTYP,C'G'        IS THIS A FREE FORMAT FIELD          B 068000
+         BE    BLDFPL1             BR IF IT IS FREE FORMAT              B 068100
+         B     BLDFPLX             EXIT IF FLOATING POINT NOT NEEDED    B 068200
+BLDFPL1  ZAP   $FPDEC,$PVALUE      SET PACKED DECIMAL VALUE IN FP W/A   B 068300
+         CBAL  R4,CNVTOFP          CONVERT VALUE TO FLOATING POINT      B 068400
+         MVC   BLDLIT(8),$FPFP     SET FP VALUE IN LITERAL AREA         B 068500
+         MVI   BLDLLGTH,8          SET LITERAL LENGTH TO 8 (DOUBLEWORD) B 068600
+BLDFPLX SUBOUT RESTORE=R4          RESTORE AND RETURN TO CALLER         B 068700
+         DROP  R10                 DROP BUCKET ADDRESSABILITY           B 068800
+         EJECT                                                          B 068900
+*********************************************************************** B 069000
+*        PROCESS INDICATOR SPECIFICATION                              * B 069100
+*********************************************************************** B 069200
+         SPACE 1                                                        B 069300
+*        THIS ROUTINE PROCESSES INDICATOR SPECIFICATION, SETTING THE    B 069400
+*         DISPLACEMENT OF THE INDICATOR BYTE ( IN $INDS ) IN THE PLACE  B 069500
+*         OF THE FIELD PP, AND SETTING THE MASK IN PLACE OF THE FIELD L B 069600
+         SPACE 1                                                        B 069700
+*        UPON RETURN, THE COND CODE IS SET THUS :-                      B 069800
+*         BL - BOT AN INDICATOR SPECIFICATION                           B 069900
+*         BE - INDICATOR SPECIFICATION CORRECTLY PROCESSED              B 070000
+*         BH - INDICATOR SPECIFICATION CONTAINS ERRORS                  B 070100
+         SPACE 1                                                        B 070200
+         USING TESTBKET,R10        ESTABLSI TEST BUCKET ADDRESSABILITY  B 070300
+BSCEIND  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              B 070400
+         CLC   TESTPOS,=C'IND'     IS THIS AN INDICATOR SPECIFICATION   B 070500
+         BNE   BSCEINDW            GO TO EXIT IF NOT                    B 070600
+         MVI   TESTTYP,C'I'        FORCE FIELD TYPE TO 'I' JUST IN CASE B 070700
+         CBAL  R4,CONVIND          CONVERT IND TO DISPLACEMNT & MASK    B 070800
+         BNE   BSCEINDY            BR IF ERROR DETECTED                 B 070900
+         STH   R15,BLDPPPLL        SET DISPLACEMENT INTO $INDS          B 071000
+         STC   R14,BLDPPPLL+2      PRESERVE BIT MASK                    B 071100
+         B     BSCEINDX            GO TO EXIT                           B 071200
+BSCEINDW CLI   *,W                 SET COND CODE TO SHOW NOY INDICATOR  B 071300
+         B     *+8                 BYPASS RESETTING COND CODE           B 071400
+BSCEINDY CLI   *,Y                 SET COND CODE TO SHWO ERROR          B 071500
+         B     *+8                 BYPASS RESETTING COND CODE           B 071600
+BSCEINDX CLI   *,X                 SET COND CODE TO SHOW VALID IND SPEC B 071700
+        SUBOUT RESTORE=R4          RESTORE AND RETURN TO CALLER         B 071800
+         DROP  R10                 DROP TEST BUCKET ADDRESSABILITY      B 071900
+         EJECT                                                          B 072000
+*********************************************************************** B 072100
+*        PROCESS 'LRECL' SPECIFICATION                                * B 072200
+*********************************************************************** B 072300
+         SPACE 1                                                        B 072400
+         USING TESTBKET,R10        ESTABLISH BUCKET ADDRESSABILITY      B 072500
+BSCERECL SUBIN ,                   ENTER ROUTINE                        B 072600
+         CLC   TESTPOS(5),=C'LRECL' IS THIS AN LRECL SPEC'N             B 072700
+         BNE   BSCERECX            GO TO EXIT IF NOT                    B 072800
+         OI    BLDSW,MSCERECL      FLAG THAT THIS IS LRECL SPEC'N       B 072900
+         MVC   TESTPOS(5),=C'00102' FORCE PPPLL TO '00102'              B 073000
+         MVI   TESTTYP,C'1'        FORCE FIELD TYPE TO BINARY           B 073100
+BSCERECX SUBOUT ,                  RETURN TO CALLER                     B 073200
+         DROP  R10                 DROP BUCKET ADDRESSABILITY           B 073300
+         EJECT                                                          B 073400
+*********************************************************************** B 073500
+*        PROCESS DEFERRED FIELD DEFINITION                            * B 073600
+*********************************************************************** B 073700
+         SPACE 1                                                        B 073800
+*        A SELECTION CRITERION BUCKET MAY DEFER DEFINING THE FIELD TO   B 073900
+*         BE TESTED BY SPECIFYING 'FLDNN' INSTEAD OF THE PPPLL.  THIS   B 074000
+*         ROUTINE PROCESSES SUCH SPECIFICATIONS                         B 074100
+         SPACE 1                                                        B 074200
+*        UPON EXIT, THE COND CODE IS SET THUS:-                         B 074300
+*         BL - NOT A FIELD SPECIFICATION                                B 074400
+*         BE - VALID DEFERRED FIELD SPECIFICATION                       B 074500
+*         BH - ERRORS FOUND                                             B 074600
+         SPACE 1                                                        B 074700
+         USING TESTBKET,R10        ESTABLISH BUCKTE ADDRESSABILITY      B 074800
+BSCEFLD  SUBIN ,                   ENTER ROUTINE                        B 074900
+         CLC   TESTPOS,=C'FLD'     IS THIS A FIELD SPECIFICATION        B 075000
+         BNE   BSCEFLDW            GO TO EXIT IF NOT                    B 075100
+         OI    BLDSW,MSCELIB       SET FLAG FOR DEFERRED FIELD DEFIN'N  B 075200
+         MVC   BLDDLABL,TESTLEN    SET FIELD LABEL IN WORK AREA         B 075300
+         B     BSCEFLDX            GO TO EXIT                           B 075400
+BSCEFLDW CLI   *,W                 SET COND CODE TO SHOW NOT FLD SPEC'N B 075500
+         B     *+8                 BYPASS RESETTING COND CODE           B 075600
+BSCEFLDX CLI   *,X                 SET COND CODE TO SHOW FLD SPECIFICAT B 075700
+        SUBOUT ,                   RETURN TO CALLER                     B 075800
+         DROP  R10                 DROP BUCKET ADDRESSABILITY           B 075900
+         EJECT                                                          B 076000
+*********************************************************************** B 076100
+*        ADJUST LENGTH FOR PACKED DECIMAP OPERATION                   * B 076200
+*********************************************************************** B 076300
+         SPACE 1                                                        B 076400
+*        THUS FAR, THE EXECUTABLE LENGTH OF THE FIELD UNDER TEST IS IN  B 076500
+*         THE RIGHT-MOST 4 BITS OF 'SCEFLDL'.  FOR A PACKED DECIMAL     B 076600
+*         COMPARE, WITH THE FIELD UNDER TEST AS THE 1ST OPERAND, THE    B 076700
+*         LENGTH MUST BE IN THE LEFT-MOST 4 BITES.                      B 076800
+         SPACE 1                                                        B 076900
+         USING SCENTRY,R8          ESTABLISH SCE ADDRESSABILITY         B 077000
+BLDPDLEN SUBIN ,                   ENTER ROUTINE                        B 077100
+         CLI   BLDTYPE,SCEFPD      IS IT PACKED DECIMAL FIELD           B 077200
+         BNE   BLDPDLX             BR IF NOT                            B 077300
+         SR    R1,R1               ZEROISE WORK REGISTER                B 077400
+         IC    R1,SCEFLDL          RETRIEVE EXECUTABLE LENGTH           B 077500
+         SLL   R1,4                SHIFT HALF-BYTE TO THE LEFT          B 077600
+         STC   R1,SCEFLDL          STORE NEW LENGTH                     B 077700
+BLDPDLX SUBOUT ,                   RETRN TO MAIN-LINE                   B 077800
+         DROP  R8                  DROP SCE ADDRESSABILITY              B 077900
+         EJECT                                                          B 078000
+*********************************************************************** B 078100
+*        BUILD ERROR MESSAGES FOR 'BLDSCE' ROUTINES                   * B 078200
+*********************************************************************** B 078300
+         SPACE 1                                                        B 078400
+         USING TESTBKET,R10        ESTABLISH ADDRESSABILITY             B 078500
+BLDSCEM  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              B 078600
+         LR    R1,R10              POINT R1 AT START OF BUCKET          B 078700
+         SR    R1,R6               DETERINE DISPLACEMENT OF BUCKET      B 078800
+         LA    R1,1(,R1)           ADJUST DISPLACEMENT TO POSN          B 078900
+         LR    R2,R1               PRESERVE DISPALEMENT OF BUCKET       B 079000
+         CBAL  R4,CONVPOS          CONVERT POSITION TO EBCDIC           B 079100
+         MVC   LINE03M(2),$WRKSNGL+2 MOVE POSN TO ERROR MESSAGE         B 079200
+         MVC   LINE19M(2),$WRKSNGL+2 MOVE POSN TO ERROR MESSAGE         B 079300
+         MVC   LINE04M(2),$WRKSNGL+2 MOVE POSN TO ERROR MESSAGE         B 079400
+         LA    R1,TESTLGTH(,R1)    POINT R1 AT END OF BUCKET            B 079500
+         BCTR  R1,0                POINT R1 AT LAST POSN OF BUCKET      B 079600
+         CBAL  R4,CONVPOS          CONVERT POSITION TO EBCDIC           B 079700
+         MVC   LINE03M+3(2),$WRKSNGL+2 MOVE POSN TO MESSAGE             B 079800
+         MVC   LINE19M+3(2),$WRKSNGL+2 MOVE POSN TO MESSAGE             B 079900
+         MVC   LINE07M+3(2),$WRKSNGL+2 MOVE POSN TO MESSAGE             B 080000
+         MVC   LINE16M+3(2),$WRKSNGL+2 MOVE POSN TO MESSAGE             B 080100
+         MVC   LINE17M+3(2),$WRKSNGL+2 MOVE POSN TO MESSAGE             B 080200
+         MVC   LINE18M+3(2),$WRKSNGL+2 MOVE POSN TO MESSAGE             B 080300
+         LA    R1,4(,R2)           POINT R1 AT LAST POSN OF PPPLL       B 080400
+         CBAL  R4,CONVPOS          CONVERT POSITION TO EBCDIC           B 080500
+         MVC   LINE04M+3(2),$WRKSNGL+2 MOVE POSN TO MESSAGE             B 080600
+         LA    R1,TESTVALU-TESTBKET(,R2) POINT R1 AT START OF LITERAL F B 080700
+         CBAL  R4,CONVPOS          CONVERT POSITION TO EBCDIC           B 080800
+         MVC   LINE07M(2),$WRKSNGL+2 MOVEPOSN TO ERROR MESSAGE          B 080900
+         MVC   LINE16M(2),$WRKSNGL+2 MOVEPOSN TO ERROR MESSAGE          B 081000
+         MVC   LINE17M(2),$WRKSNGL+2 MOVEPOSN TO ERROR MESSAGE          B 081100
+         MVC   LINE18M(2),$WRKSNGL+2 MOVEPOSN TO ERROR MESSAGE          B 081200
+         LA    R1,GR02TYP-GR02TST1(,R2) GET POSN OF FIELD TYPE          B 081300
+         CBAL  R4,CONVPOS          CONVERT POSN TO EBCDIC               B 081400
+         MVC   LINE08M(2),$WRKSNGL+2 SET POSN IN MESSAGE                B 081500
+        SUBOUT RESTORE=R4          RESTORE AND RETURN                   B 081600
+         DROP  R10                 DROP TESTBKET ADDRESSABILITY         B 081700
+         EJECT                                                          B 081800
+*********************************************************************** B 081900
+*        CONVERT POSITION TO EBCDIC FOR ERROR MESSAGE                 * B 082000
+*********************************************************************** B 082100
+         SPACE 1                                                        B 082200
+*        ON ENTRY, R1 CONTAINS THE POSITION TO BE CONVERTED             B 082300
+         SPACE 1                                                        B 082400
+CONVPOS  SUBIN ,                   ENTER ROUTINE                        B 082500
+         MVC   $WRKSNGL,BLDMASK    MOVE EDIT MASK TO WORK AREA          B 082600
+         CVD   R1,$WRKDUBL         CONVERT VALUETO DECIMAL              B 082700
+         ED    $WRKSNGL,$WRKDUBL+6 RETURN TO CALLER                     B 082800
+        SUBOUT ,                   RETIRN TO CALLER                     B 082900
+         TITLE 'PARROTB - MISCELLANEOUS CONSTANTS AND FIELDS'           B 083000
+         TITLE 'PARROTB - FIELD/TEST CONSISTENCY TABLES'                B 083100
+*        THESE TRANSLATE TABLES ARE USED TO DETERMINE IF THE TEST TYPE  B 083200
+*         SPECIFIED IN A RECORD SELECTION BUCKET IS CONSISTENT WITH THE B 083300
+*         FIELD TYPE.                                                   B 083400
+         SPACE 1                                                        B 083500
+*        NOTE THAT THERE MUST BE ONE TABLE FOR EACH POSSIBLE FIELD TYPE B 083600
+*         AND THEY MUST BE IN THE SEQUENCE OF THE INTERNAL REPRESENTATN B 083700
+*         OF THE FIELD TYPE, BECAUSE THEY ARE INDEXED INTO USING THE    B 083800
+*         INTERNAL REPRESENTATION OF THE FIELD TYPE.                    B 083900
+         SPACE 5                                                        B 084000
+TFTABLES EQU   *                                                        B 084100
+TRTCHAR  TSTFLD (EQ,NE,GT,GE,LT,LE)                                     B 084200
+         SPACE 5                                                        B 084300
+TRTNUM   TSTFLD (EQ,NE,GT,GE,LT,LE)                                     B 084400
+         EJECT                                                          B 084500
+TRTPD    TSTFLD (EQ,NE,GT,GE,LT,LE)                                     B 084600
+         SPACE 5                                                        B 084700
+TRTHEX   TSTFLD (EQ,NE,GT,GE,LT,LE)                                     B 084800
+         SPACE 5                                                        B 084900
+TRTBIT   TSTFLD (ON,OFF)                                                B 085000
+         EJECT                                                          B 085100
+TRTKEY   TSTFLD (EQ,NE,GT,GE,LT,LE)                                     B 085200
+         SPACE 5                                                        B 085300
+TRTBIN   TSTFLD (EQ,NE,GT,GE,LT,LE)                                     B 085400
+         SPACE 5                                                        B 085500
+TRTFLOAT TSTFLD (EQ,NE,LT,LE,GT,GE)                                     B 085600
+         EJECT                                                          B 085700
+TRTSTR   TSTFLD (EQ,NE)                                                 B 085800
+         SPACE 5                                                        B 085900
+TRTIND   TSTFLD (ON,OFF)                                                B 086000
+         SPACE 5                                                        B 086100
+TRTFREE  TSTFLD (EQ,NE,LT,GT,LE,GE) FREE FORMAT DISPLAY NUMERIC         B 086200
+         SPACE 5                                                        B 086300
+TRTUN3   TSTFLD ,                  FIELD TYPE UNDEFINED                 B 086400
+         TITLE 'PARROTB - MISCELLANEOUS CONSTANTS AND FIELDS'           B 086500
+BLDSTRT  EQU   *                   START OF WORK FIELDS                 B 086600
+         DS    0H                  ENSURE ALIGNMENT                     B 086700
+BLDPPPLL DS    CL3                 WORK AREA FOR BINARY PPL             B 086800
+BLDTYPE  DS    CL1                 WORK AREA FOR FIELD YTYPE            B 086900
+BLDTTYPE DS    CL1                 WORK AREA FOR TEST TYPE              B 087000
+BLDLIT   DS    CL100               LITERAL VALUE                        B 087100
+BLDDLABL DS    CL2                 LABEL OF LIB FOR DEFERED FLD DEFIN'N B 087200
+BLDSW    DS    CL1                 WORK AREA FOR SWITCH BYTE            B 087300
+BLDLLGTH DS    CL1                 LITERAL LENGTH                       B 087400
+BLDEND   EQU   *                   END OF WORK FIELDS                   B 087500
+         SPACE 1                                                        B 087600
+BLDMASK  DC    X'40212020'         MASK TO CONVERT POSN TO EBCDIC       B 087700
+         SPACE 1                                                        B 087800
+BINLTABL DC    X'0103070F'         TABLE FOR BINARY LENGTH/MASK CONV'N  B 087900
+         SPACE 5                                                        B 088000
+         LTORG                                                          B 088100
+         TITLE 'PARROTB - ERROR MESSAGES'                               B 088200
+LINE01   DC    C'PRTB-001-W  ''DELETE'' MAY ONLY BE SPECIFIED IN A GR02*B 088300
+                CONTROL CARD: SPECIFICATION IGNORED'                    B 088400
+LINE03   DS    0CL111                                                   B 088500
+         DC    C'PRTB-003-E  THE SELECTION TEST SPECIFIED IN COLUMNS '  B 088600
+LINE03M  DC    C'NN-NN'                                                 B 088700
+         DC    C' HAS BEEN IGNORED BECAUSE OF THE ERROR DESCRIBED ABOVE*B 088800
+               '                                                        B 088900
+LINE04   DS    0CL76                                                    B 089000
+         DC    C'PRTB-004-E  SYNTAX ERROR - PPPLL DEFINED IN COLUMNS '  B 089100
+LINE04M  DC    C'NN-NN'                                                 B 089200
+         DC    C' IS ILLEGALLY BLANK'                                   B 089300
+LINE05   DS    0CL51                                                    B 089400
+         DC    C'PRTB-005-E  COLUMN '                                   B 089500
+LINE05M  DC    C'(('                                                    B 089600
+         DC    C' DEFINES AN UNKNOWN FIELD TYPE'                        B 089700
+LINE06   DS    0CL53                                                    B 089800
+         DC    C'PRTB-006-E  COLUMNS '                                  B 089900
+LINE06M  DC    C'NN-NN'                                                 B 090000
+         DC    C' DEFINE AN UNKNOWN TEST TYPE'                          B 090100
+LINE07   DS    0CL66                                                    B 090200
+         DC    C'PRTB-007-E  SYNTAX ERROR IN LITERAL VALUE DEFINED IN ' B 090300
+         DC    C'COLUMNS '                                              B 090400
+LINE07M  DC    C'NN-NN'                                                 B 090500
+LINE08   DS    0CL85                                                    B 090600
+         DC    C'PRTB-008-E  THE FIELD TYPE DEFINED IN COLUMN '         B 090700
+LINE08M  DC    C'MM'                                                    B 090800
+         DC    C' IS NOT VALID FOR A GR02 SPECIFICATION'                B 090900
+LINE16   DS    0CL76                                                    B 091000
+         DC    C'PRTB-016-E  THE BIT STRING LITERAL IN COLUMNS '        B 091100
+LINE16M  DC    C'MM-MM'                                                 B 091200
+         DC    C' IS NOT 8 CHARACTERS IN LENGTH'                        B 091300
+LINE17   DS    0CL90                                                    B 091400
+         DC    C'PRTB-017-E  THE HEX STRING LITERAL IN COLUMNS '        B 091500
+LINE17M  DC    C'MM-MM'                                                 B 091600
+         DC    C' IS NOT AN EVEN NUMBER OF CHARACTERS'                  B 091700
+LINE18   DS    0CL85                                                    B 091800
+         DC    C'PRTB-018-E  THE HEX STRING LITERAL IN COLUMNS '        B 091900
+LINE18M  DC    C'MM-MM'                                                 B 092000
+         DC    C' CONTAINS AN INVALID HEX CHARACTER'                    B 092100
+LINE19   DS    0CL90                                                    B 092200
+         DC    C'PRTB-019-W  FOR THE SELECTION TEST IN COLUMNS '        B 092300
+LINE19M  DC    C'MM-MM'                                                 B 092400
+         DC    C' THE FOLLOWING ERROR WAS ENCOUNTERED :-'               B 092500
+         EJECT                                                          B 092600
+*        NOTE THAT ALL MESSAGES BEYOND THIS POINT MAY NOT CONTAIN ANY   B 092700
+*         VARIABLE DATA, BECAUSE, FROM HERE ONWARDS, PARROTB HAS LOST   B 092800
+*         ADDRESSABILITY.                                               B 092900
+         SPACE 1                                                        B 093000
+LINE20   DC    C'PRTB-020-W  THE FIELD IS SHORTER THAN THE LITERAL: THE*B 093100
+                LITERAL WILL BE TRUNCATED'                              B 093200
+LINE21   DC    C'PRTB-021-W  THE LITERAL IS SHORTER THAN THE FIELD: THE*B 093300
+                LITERAL WILL BE RIGHT-PADDED WITH BLANKS'               B 093400
+LINE22   DC    C'PRTB-022-W  THE LITERAL IS SHORTER THAN THE FIELD: THE*B 093500
+                LITERAL WILL BE RIGHT-PADDED WITH HEX ZEROES'           B 093600
+LINE23   DC    C'PRTB-023-W  THE FIELD LENGTH FOR A BIT STRING TEST MUSTB 093700
+               T BE ''1'': ''1'' FORCED'                                B 093800
+LINE24   DC    C'PRTB-024-E  A BINARY FIELD MAY NOT BE LONGER THAN 4 BY*B 093900
+               TES'                                                     B 094000
+LINE25   DC    C'PRTB-025-W  THE FIELD IS SHORTER THAN THE SEARCH STRIN*B 094100
+               G: THE STRING WILL BE TRUNCATED AND A CHARACTER COMPARE *B 094200
+                FORCED'                                                 B 094300
+LINE26   DC    C'PRTB-026-E  THE TEST TYPE IS INCONSISTENT WITH THE FIE*B 094400
+               LD TYPE'                                                 B 094500
+LINE27   DC    C'PRTB-027-W  THE TEST IS A NULL TEST AND WILL ACCEPT ALLB 094600
+               L RECORDS'                                               B 094700
+         SPACE 5                                                        B 094800
+        SCSEND B                   TERMINATE CSET PARROTB               B 094900
+         END                                                            B 095000

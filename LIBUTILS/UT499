@@ -1,0 +1,712 @@
+         TITLE 'JPR - TRAINING PROGRAM'
+UT499    CSECT
+         PRINT ON,GEN
+         SPACE 2
+         EJECT
+*******************************************************************
+*        DCB DSECT                                                *
+*******************************************************************
+         SPACE 1
+         PRINT NOGEN
+         DCBD  DSORG=PS,DEVD=DA    GENERATE DCB DSECT
+UT499    CSECT                     END OF DCB DSECT
+         EJECT
+*******************************************************************
+*        FORMAT OF CTL CONTROL CARD                               *
+*******************************************************************
+         SPACE 1
+         PRINT GEN
+CTLCARD  DSECT
+CTLID    DS    CL3                 CARD-ID ('CTL')
+         DS    CL1                 UNUSED
+CTLMODOP DS    0CL2                MODIFY OPTION
+CTLMTEST DS    CL1                 MODIFY OPTION USED - 'Y' OR 'N'
+CTLMCAR  DS    CL1                 MODIFY CHARACTER
+         DS    CL1                 UNUSED
+CTLFLDCD DS    20CL2               CODE OF FIELDS TO BE SORTED
+         DS    CL33                UNUSED
+CTLLGTH  EQU   *-CTLCARD           LENGTH OF DSECT
+UT499    CSECT                     END OF SYSIN CONTROL RECORD DSECT
+         EJECT
+*******************************************************************
+*        FORMAT OF TAB FIELDS DESCRIPTION CARDS                   *
+*******************************************************************
+         SPACE 1
+TABCARD  DSECT
+TABID    DS    CL3                 CARD-ID ('TAB')
+TABCOMEN DS    CL1                 USER COMMENTS = '*'
+TABCODE  DS    CL2                 FIELD IDENTIFICATION
+         DS    CL1                 UNUSED
+TABSPOS  DS    CL4                 START POSITION OF FIELD IN RECORD
+TABLPOS  DS    CL2                 LENGTH OF FIELD
+         DS    CL1                 UNUSED
+TABDESC  DS    CL26                FIELD DESCRIPTION
+         DS    CL40                UNUSED
+TABLGTH  EQU   *-TABCARD           LENGTH OF DSECT
+UT499    CSECT END OF TABLE CARDS DESCRIPTION
+         EJECT
+*******************************************************************
+*        FORMAT OF TABLE FIELDS DESCRIPTION                       *
+*******************************************************************
+         SPACE 1
+FLDTABLE DSECT
+FLDCODE  DS    CL2                 FIELD CODE
+FLDSPOS  DS    CL4                 START POSITION IN RECORD
+FLDLPOS  DS    CL2                 LENGTH OF FIELD
+FLDSPOSB DS    CL2                 BINARY START POSITION-1
+FLDLPOSB DS    CL2                 BINARY LENGTH OF FIELD
+FLDSW    DS    CL1                 TABLE SWITCH
+FLDLGTH  EQU   *-FLDTABLE          LENGTH OF TABLE ELEMENT
+UT499    CSECT                     END OF TABLE FIELD DESCRIPTION DSECT
+         SPACE 1
+*******************************************************************
+*        TABLE FIELDS SWITCH                                      *
+*******************************************************************
+         SPACE 1
+TBSWEND  EQU   X'00'               END OF TABLE
+TBSWSRTN EQU   X'0F'               VALID ELEMENT - NOT SORTED
+TBSWSRTY EQU   X'FF'               VALID ELEMENT - SORTED
+         EJECT
+*******************************************************************
+*        FORMAT OF TABLE-SELECT                                   *
+*******************************************************************
+         SPACE 1
+SELTABLE DSECT
+SELSPOSB DS    CL2                 BINARY START POSITION-1
+SELTEST  DS    CL1                 TEST TYPE REPRESATION
+SELLARGB DS    CL2                 BINARY LENGTH OF COMPARISON-1
+SELARGTP DS    CL1                 FORMAT OF ARGUMENT
+SELARGUM DS    CL16                COMPARISON ARGUMENT
+SELSW    DS    CL1                 SELECT TABLE SWITCH
+SELLGTH  EQU   *-SELTABLE          LENGTH OF SELECT TABLE ELEMENT
+UT499    CSECT                     END OF TABLE SELECT DSECT
+         SPACE 1
+*******************************************************************
+*        TABLE SELECT SWITCH                                      *
+*******************************************************************
+         SPACE 1
+SELSWEND EQU   X'00'               END OF TABLE
+SELSWCON EQU   X'0F'               CONTINUATION EXPECTED - NEXT = AND
+SELSWLST EQU   X'FF'               NO CONTINUATION       - NEXT = OR
+         EJECT
+*******************************************************************
+*        EQUATES USED TO ESTABLISH INDEXED BRANCHES AFTER A TEST  *
+*******************************************************************
+         SPACE 1
+EQ       EQU   1                   INTERNAL REPRESENTATION OF 'EQ'
+NE       EQU   2                   INTERNAL REPRESENTATION OF 'NE'
+GT       EQU   3                   INTERNAL REPRESENTATION OF 'GT'
+GE       EQU   4                   INTERNAL REPRESENTATION OF 'GE'
+LT       EQU   5                   INTERNAL REPRESENTATION OF 'LT'
+LE       EQU   6                   INTERNAL REPRESENTATION OF 'LE'
+         EJECT
+*******************************************************************
+*        REGISTER EQUATES AND USAGES                              *
+*******************************************************************
+         SPACE 1
+         PRINT GEN
+R0       EQU   0   SVC COMMUNICATIONS
+R1       EQU   1   SVC COMMUNICATIONS
+R2       EQU   2   SUB ROUTINES CONTROL INFORMATIONS
+R3       EQU   3   UNUSED
+R4       EQU   4   BAL RETURN ADDRESS
+R5       EQU   5   WORK - LOOPS COUNTER
+R6       EQU   6   WORK
+R7       EQU   7   WORK
+R8       EQU   8   WORK - FIELD TABLE MASK REGISTER
+R9       EQU   9   WORK
+R10      EQU   10  WORK
+R11      EQU   11  WORK - SYSUT1 MASK REGISTER
+R12      EQU   12  WORK - CTLREC MASK REGISTER
+R13      EQU   13  SAVE AREA POINTER / BASE REGISTER 1
+R14      EQU   14  BALR RETURN ADDRESS
+R15      EQU   15  BALR ROUTINE ADDRESS
+         EJECT
+*******************************************************************
+*        HOUSE KEEPING                                            *
+*******************************************************************
+         SPACE 1
+         PGMIN EQUATES=NO,USING=(R13)        ESTABLISH ADDRESSABILITY
+         EJECT
+*******************************************************************
+*        OPEN-READ-LOAD TABLE FIELD DESCRIPTION                   *
+*******************************************************************
+         SPACE 1
+         USING TABCARD,R1          ESTABLISH TABLE CARD ADDRESSABILITY
+         USING FLDTABLE,R8         ESTABLISH TABLE ELEM ADDRESSABILITY
+         OPEN  SYSTABLE            OPEN TABLE FILE DATASET
+         L     R5,FLDTABNR         LOAD MAX NBR OF ELEMENTS
+         LA    R8,FLDTAB           LOAD ADDRESS FIRST TABLE ELEM
+         B     *+8                 BYPASS FORWARD CHAINING
+TABLOOP  EQU   *
+         LA    R8,L'FLDTAB(,R8)    LOAD ADDRESS OF NEXT TABLE ELEMENT
+         GET   SYSTABLE            READ TABLE RECORD
+         CLI   TABCOMEN,C'*'       TEST IF COMMENTS CARD
+         BE    TABLOOP+4           YES - READ NEXT TABLE RECORD
+         MVC   FLDCODE,TABCODE     MOVE FIELD CODE
+         MVC   FLDSPOS,TABSPOS     MOVE FIELD START POSITION
+         MVC   FLDLPOS,TABLPOS     MOVE FIELD LENGTH
+         PACK  DBLEWORD,FLDSPOS    PACK START POSITION
+         CVB   R10,DBLEWORD        CONVERT START POS-1 IN BINARY
+         BCTR  R10,0               DECREMENT DISPLACEMENT BY 1
+         ST    R10,FULLWORD        STORE START POS-1
+         MVC   FLDSPOSB,FULLWORD+2 MOVE BIN START POS IN TABLE
+         PACK  DBLEWORD,FLDLPOS    PACK FIELD LENGTH
+         CVB   R10,DBLEWORD        CONVERT FIELD LENGTH IN BINARY
+         ST    R10,FULLWORD        FIELD LENGTH
+         MVC   FLDLPOSB,FULLWORD+2 MOVE BIN FIELD LENGTH IN TABLE
+         MVI   FLDSW,TBSWSRTN      SET TABLE SWITCH TO ELEM READ-NOSRT
+         BCT   R5,TABLOOP          LOOP IF TABLE NOT FULL
+***      TABLE FULL
+         ABEND 900,DUMP            DUMP ON TABLE FIELD DESCRIPTION FUL
+TABEOF   EQU   *
+         CLOSE SYSTABLE            CLOSE SYSTABLE DATASET
+         DROP  R1,R8               DROP ADDRESSABILITY
+         EJECT
+*******************************************************************
+*        OPEN SYSIN CONTROL RECORD AND SYSSORT SORT CARDS         *
+*******************************************************************
+         SPACE 1
+         OPEN  (SYSIN,,SYSSORT,(OUTPUT))     OPEN FILES
+CTLREAD  EQU   *
+         GET   SYSIN               READ CONTROL RECORD
+         ST    R1,ASYSIN           STORE RECORD ADDRESS
+         CLC   0(4,R1),=C'CTL '    TEST IF CARD CODE = 'CTL'
+         BE    CTLTREAT            YES - PERFORM SYSSORT CREATION
+         CLC   0(4,R1),=C'SEL '    TEST IF CARD CODE = 'SEL'
+         BE    SELTREAT            YES - PERFORM BUILD SELECT TABLE
+***      INVALID CONTROL CARD TYPE
+         ABEND 901,DUMP            DUMP ON INVALID CARD CODE
+         EJECT
+*******************************************************************
+*        SYSSORT OUTPUT RECORDS CREATION                          *
+*******************************************************************
+         SPACE 1
+         USING FLDTABLE,R8         ESTABLISH TABLE ELEM ADDRESSABILITY
+         USING CTLCARD,R12         ESTABLISH CTL CARD ADDRESSABILITY
+CTLTREAT EQU   *
+         L     R12,ASYSIN          POINT R12 AT CONTROL RECORD
+         MVC   RECMODOP,CTLMODOP   SAVE MODIFY OPTION
+         MVI   SRTREC,BLANK        BLANKIZE SORT OUTPUT RECORD
+         MVC   SRTREC+1(79),SRTREC
+         MVC   SRTREC(28),SRTFIRST MOVE SORT CONSTANT IN SORT RECORD
+         MVI   SRTREC+71,C'*'       MOVE CONTINUATION CARACTER IN 72
+         L     R5,CTLKEYNR         LOAD MAX NBR OF SORT KEYS
+         SPACE 1
+*        SORT FIELDS LOOP
+         SPACE 1
+         B     *+10                BYPASS FORWARD CHAINING
+SRTLOOP1 EQU   *
+         MVC   SRTREC+1(14),SRTREC BLANKISE 1-15 OF SORT RECORD
+         CLC   CTLFLDCD,=CL10' '   TEST SORT FIELD BLANK
+         BE    CTLREAD             YES - GO TO READ NEXT CONTROL CARD
+         LA    R8,FLDTAB           LOAD ADDRESS FIRST TABLE ELEMENT
+         L     R7,FLDTABNR         LOAD MAX NBR OF SORT FIELDS
+         B     *+8                 BYPASS FORWARD CHAINING
+SRTLOOP2 EQU   *
+         LA    R8,L'FLDTAB(,R8)    LOAD ADDRESS OF NEXT TABLE ELEMENT
+         CLC   CTLFLDCD,FLDCODE        TEST FIELD CODE =
+         BE    SRTREC1             YES - PREPARE SORT RECORD
+         BCT   R7,SRTLOOP2         TEST FOR NEXT TABLE ELEMENT
+***      SORT FIELD NOT IN TABLE
+         ABEND 902,DUMP            DUMP ON SORT FIELD NOT IN TABLE
+         B     EOFCTL              CLOSE SYSIN DATA SET
+SRTREC1  EQU   *
+         C     R5,=F'1'            TEST LAST SORT KEY
+         BNE   *+12                NO - BYPASS FORWARD CHAINING
+         MVI   SRTREC+27,C')'      MOVE ')' IN 28
+         MVI   SRTREC+71,BLANK     BLANKISE CONTINUATION COLUMN
+         LA    R12,L'CTLFLDCD(,R12)  DISPLACE DSECT REG TO NEXT SRT FLD
+         CLC   CTLFLDCD,=CL10' '   TEST NEXT SORT FIELD BLANK
+         BNE   *+12                NO - BYPASS FORWARD CHAINING
+         MVI   SRTREC+27,C')'      MOVE ')' IN 28
+         MVI   SRTREC+71,BLANK     BLANKISE CONTINUATION COLUMN
+         MVC   SRTREC+15(4),FLDSPOS     MOVE START POS TO SORT RECORD
+         MVC   SRTREC+20(2),FLDLPOS     MOVE LENGTH OF FLD TO SORT REC
+         PUT   SYSSORT,SRTREC      WRITE SORT RECORD
+         MVI   FLDSW,TBSWSRTY      MODIFY TABLE SW TO SORT REQUESTED
+         BCT   R5,SRTLOOP1         TEST FOR NEXT SORT FIELD
+***      TOO MANY SORT FIELDS
+         ABEND 903,DUMP            DUMP ON TOO MANY SORT FIELDS
+         DROP  R8,R12              DROP ADDRESSABILITY
+         EJECT
+*******************************************************************
+*        LOAD SELECT TABLE MAIN-ROUTINE                           *
+*******************************************************************
+         SPACE 1
+SELTREAT EQU   *
+         USING SELTABLE,R12        ESTABLISH TABLE SELECT ADDRESSABITY
+         USING FLDTABLE,R8         ESTABLISH TABLE FIELDS ADDRESSABITY
+SEL1TIME BAL   R4,SELINIT          1ST TIME ONLY, INTITIALISE PONTERS
+         L     R2,ASYSIN           LOAD SEL RECORD ADDRESS
+         LA    R2,3(,R2)           INCREMENT TO FIRST VALID COLUMN -1
+         LA    R2,1(,R2)           INCREMENT COLUMN BY 1
+         CLI   0(R2),C' '          TEST FOR 1ST COLUMN NON BLANK
+         BE    *-8                 LOOP BACK TEST NEXT COLUMN
+SELLOOP  EQU   *
+         C     R10,=F'0'           TEST IF TABLE SEL IS FULL
+         BH    SELLOOP2            NO - LOAD SEL IN TABLE
+***      TABLE SELECTION IS FULL
+         ABEND 910,DUMP            DUMP ON TABLE SELECTION FULL
+         SPACE 1
+SELLOOP2 EQU   *
+         BAL   R4,SELFLD           PERFORM RETRIEVE OF START POSITION
+         LA    R2,L'FLDCODE+1(,R2)   POINT REC TO TEST TYPE
+         BAL   R4,SELTYPE          PERFORM TEST TYPE
+         LA    R2,3(,R2)           POINT REC TO COMPARE ARGUMENT
+         MVI   SELARGTP,C'C'       ASSUME ARGUMENT IS CHARACTER
+         CLI   0(R2),X'7D'         TEST IF 1ST POS = '
+         BE    *+14                YES - BYPASS FORWARD CHAINING
+         MVC   SELARGTP,0(R2)      STORE ARGUMENT FORMAT
+         LA    R2,1(,R2)           POINT REC TO ARGUMENT
+         BAL   R4,SELARG           PERFORM STORE ARGUMENT
+         MVI   SELSW,SELSWLST      ASSUME NO CONTINUATION EXPECTED
+         LA    R2,2(,R2)           ADD ARG DELIM TO RECORD ADDRESS
+         A     R2,ARGLENGT         ADD ARG LENGTH TO RECORD ADDRESS
+         CLI   0(R2),C','          TEST IF CONTINUATION EXPECTED
+         BNE   *+12                NO - BYPASS FORWARD PROCESSING
+         MVI   SELSW,SELSWCON      MOVE CONTINUATION EXPECTED TO TABLE
+         LA    R2,1(,R2)           INCREMENT REC COL BY 1
+         BCTR  R10,0               DECREMENT TABLE SEL COUNT BY 1
+         LA    R12,L'SELTAB(,R12)  POINT SEL TAB TO NEXT ELEMENT
+         CLI   0(R2),C' '          TEST IF RECORD CONT MORE SELECTION
+         BNE   SELLOOP             YES - GO TO LOAD NEXT SEL IN TABLE
+         B     CTLREAD             NO - GO TO READ NEXT RECORD
+         SPACE 1
+         DROP  R8,R12              DROP CSECT ADDRESSABILITY
+         EJECT
+*******************************************************************
+*        LOAD SELECT TABLE INITIALISATION                         *
+*******************************************************************
+         SPACE 1
+SELINIT  SUBIN ,                   SELECT TABLE INITIALISATION
+         LA    R12,SELTAB          POINT R12 AT SELECT TABLE
+         L     R10,SELTABNR        LOAD NUMBER NBR ELEMENTS OF SEL TAB
+         MVI   RECSELOP,C'Y'       MOVE 'Y' TO RECORD SELECTION OPTION
+         MVC   SEL1TIME(2),=X'4700' CONVERT CBAL TO NOP
+         SUBOUT ,                  RETURN TO CALLER
+         EJECT
+*******************************************************************
+*        RETRIEVE SELECT START POSITION FROM FIELD TABLE          *
+*******************************************************************
+         SPACE 1
+SELFLD   SUBIN SAVE=(R5,R8)        RETRIEVE STRART POSITION
+         USING FLDTABLE,R8         ESTABLISH TABLE FIELDS ADDRESSABITY
+         USING SELTABLE,R12        ESTABLISH TABLE SELECT ADDRESSABITY
+         LA    R8,FLDTAB           POINT R8 AT TABLE FIELDS 1ST ELEM
+         L     R5,FLDTABNR         LOAD MAX NBR OF FIELDS
+         B     *+8                 BYPASS FORWARD CHAINING
+SELFLDLP EQU   *
+         LA    R8,L'FLDTAB(,R8)    POINT R8 TO NEXT TAB FLD ELEMENT
+         CLI   FLDSW,TBSWEND       TEST IF END OF TABLE
+***      FIELD NOT IN TABLE
+         BE    SELFLDDP            YES - DUMP WITH NOT FOUND
+         CLC   FLDCODE,0(R2)       TEST IF FLD CODE =
+         BE    SELFOUND            YES - GO TO MOVE FIELD
+         BCT   R5,SELFLDLP         TEST NEXT TABLE ELEMENT
+***      FIELD NOT IN TABLE
+SELFLDDP EQU   *
+         ABEND 911,DUMP            DUMP ON SELECT FIELD NOT IN TABLE
+SELFOUND EQU   *
+         MVC   SELSPOSB,FLDSPOSB   MOVE START POSSITION IN SELECT TAB.
+         SUBOUT RESTORE=(R5,R8)    RETURN TO CALLER
+         SPACE 1
+         DROP  R8,R12              DROP CSECT ADDRESSABILITY
+         EJECT
+*******************************************************************
+*        VALIDATE AND STORE SELECTION TYPE
+*******************************************************************
+         SPACE 1
+SELTYPE  SUBIN ,                   TEST SELECT TYPE
+         USING SELTABLE,R12        ESTABLISH TABLE SELECT ADDRESSABITY
+         MVI   SELTEST,EQ          ASSUME  'EQ'
+         CLC   0(2,R2),=C'EQ'        TEST IF 'EQ'
+         BE    SELTYPEX            YES - RETURN
+         MVI   SELTEST,NE          ASSUME  'NE'
+         CLC   0(2,R2),=C'NE'        TEST IF 'NE'
+         BE    SELTYPEX            YES - RETURN
+         MVI   SELTEST,GT          ASSUME  'GT'
+         CLC   0(2,R2),=C'GT'        TEST IF 'GT'
+         BE    SELTYPEX            YES - RETURN
+         MVI   SELTEST,GE          ASSUME  'GE'
+         CLC   0(2,R2),=C'GE'        TEST IF 'GE'
+         BE    SELTYPEX            YES - RETURN
+         MVI   SELTEST,LT          ASSUME  'LT'
+         CLC   0(2,R2),=C'LT'        TEST IF 'LT'
+         BE    SELTYPEX            YES - RETURN
+         MVI   SELTEST,LE          ASSUME  'LE'
+         CLC   0(2,R2),=C'LE'        TEST IF 'LE'
+         BE    SELTYPEX            YES - RETURN
+***      INVALID TEST TYPE
+         ABEND 912,DUMP            DUMP ON INVALID TEST TYPE
+SELTYPEX SUBOUT ,                  RETURN TO CALLER
+         SPACE 1
+         DROP  R12                 DROP CSECT ADDRESSABILITY
+         EJECT
+*******************************************************************
+*        THIS SUB-ROUTINE WILL STORE THE ARGUMENT IN THE DEFINED  *
+*        FORMAT.                                                  *
+*******************************************************************
+         SPACE 1
+*        R2    ADDRESS OF ARGUMENT DELIMITTER START
+*        R3    USED TO FOUND END DELIMITTER
+*        R5    WHEN FOUND - ARGUMENT LENGTH
+*        R12   POINT TO ACTUAL TABLE ELEMENT
+*        R8-R9 USED TO CALCULATE PACKED LENGTH
+         SPACE 1
+SELARG   EQU   *
+         SUBIN SAVE=(R2,R3,R5,R8,R9) STORE ARGUMENT IN TABLE
+         USING SELTABLE,R12        ESTABLISH TABLE SELECT ADDRESSABITY
+         CLI   0(R2),X'7D'         TEST DELIMITTER PRESENT
+         BE    SELARGDM            YES - CONTINUE PROCESSING
+***      START DELIMITTER ABSENT
+         ABEND 913,DUMP            DUMP ON INVALID DELIMITTER
+SELARGDM EQU   *
+         SPACE 1
+*        CALCULATE ARGUMENT LENGTH
+         SPACE 1
+         SR    R5,R5               SET COLUMN COUNT TO ZERO
+         LR    R3,R2               SET R3 TO ARGUMENT DELIMITTER
+SELARGLP EQU   *                   LENGTH ARGUMENT STARTLOOP
+         LA    R3,1(,R3)           ADD 1 TO ARGUMENT POSSITION
+         CLI   0(R3),X'7D'         TEST IF END DELIMITTER
+         BE    ARGVALID            YES - GO TO ARGUMENT LENGTH VALID.
+         LA    R5,1(,R5)           INCREMENT ARGUMENT LENGTH BY 1
+         C     R5,=F'16'           TEST LENGTH > 16
+         BNH   SELARGLP            NO - CONTINUE LOOP
+***      ARGUMENT MORE THAN 16 POSITIONS
+         ABEND 913,DUMP            DUMP ON ARGUMENT MORE THAN 16 POS
+ARGVALID EQU   *
+         ST    R5,ARGLENGT         STORE ARGUMENT LENGTH
+         C     R5,=F'1'            TEST IF LENGTH = > THAN 1
+         BNL   ARGSTORE            YES - GO TO STORE ARGUMENT IN TABLE
+***      ARGUMENT LESS THAN 1 POSITION
+         ABEND 914,DUMP            DUMP ON ARGUMENT LESS THAN 1 POS
+         SPACE 3
+*        STORE ARGUMENT IN TABLE DEPENDING ON TYPE
+         SPACE 1
+ARGSTORE EQU   *
+         CLI   SELARGTP,C'C'       TEST IF ARG IS CHARACTER FORMAT
+         BE    ARGCHARF            YES - GO TO MOVE ARGUMENT CHARACTER
+         CLI   SELARGTP,C'P'       TEST IF ARG IS PACK FORMAT
+         BE    ARGPACKF            YES - GO TO MOVE ARGUMENT PACK
+***      INVALID FORMAT
+         ABEND 915,DUMP            DUMP ON INVALID FORMAT
+         SPACE 1
+*        COMPARE  IS IN CHARACTER FORMAT
+         SPACE 1
+ARGCHARF EQU   *
+         BCTR  R5,0                DECREMENT ARG LENGTH BY 1
+         EX    R5,ARGCHARM         EXECUTE MOVE ARGUMENT TO TABLE
+         STC   R5,SELLARGB+1       STORE COMPARE CHAR LENGTH IN TABLE
+         B     SELARGEX            RETURN
+         SPACE 1
+*        COMPARE  IS IN DECIMAL FORMAT
+         SPACE 1
+ARGPACKF EQU   *
+         BCTR  R5,0                DECREMENT ARG LENGTH BY 1
+         STC   R5,HALFWORD+1       STORE REC ARG LENGTH IN HALFWORD
+         SR    R8,R8               ZEROISE R8 FOR DIVISION
+         LA    R9,0(,R5)           LOAD NR COLS IN R9
+         D     R8,=F'2'            DIVIDE NR COLS BY 2
+         O     R8,=F'0'            TEST IF REMINDER = 0
+         BZ    *+8                 YES - BYPASS FORWARD CHAINING
+         LA    R9,1(,R9)           INCREMENT BY 1 LENGTH OF PACKEDFLDS
+         STC   R9,HALFWORD         STORE LENGTH-1 OF PACK FLD
+         MVO   HALFWORD,HALFWORD(1)       CREATE PACK EXECUTE LENGTH
+         LH    R8,HALFWORD         STORE EXECUTE PACK LENGTH
+         EX    R8,ARGPACKM         EXECUTE - PACK ARGUMENT IN TABLE
+         STC   R9,HALFWORD         STORE PACK ARG LENGTH
+         STC   R9,HALFWORD+1       STORE PACK ARG LENGTH
+         MVO   HALFWORD,HALFWORD(1) CREATE COMPARE EXECUTE LENGTH
+         MVC   SELLARGB,HALFWORD   STORE COMPARE PACK LENGTH IN TABLE
+         SPACE 1
+SELARGEX SUBOUT RESTORE=(R2,R3,R5,R8,R9) RETURN TO CALLER
+         SPACE 1
+ARGCHARM MVC   SELARGUM(0),1(R2)   EXECUTE - MOVE ARGUM TO TABLE
+ARGPACKM PACK  SELARGUM(0),1(0,R2) EXECUTE - PACK ARGUM TO TABLE
+         SPACE 1
+         DROP  R12                 DROP CSECT ADDRESSABILITY
+         EJECT
+*******************************************************************
+*        CLOSE CONTROL RECORDS DATASETS                           *
+*******************************************************************
+         SPACE 1
+EOFCTL   EQU   *
+         CLOSE (SYSIN,,SYSSORT)    CLOSE FILES
+*        ABEND 999,DUMP            FORCE DUMP
+         EJECT
+*******************************************************************
+*        OPEN SYSUT1 INPUT DATASET                                *
+*******************************************************************
+         SPACE 1
+         OPEN  SYSUT1              OPEN SYSUT1 INPUT FILE
+         B     OPENUT2             BRANCH TO OPEN SYSUT2
+         EJECT
+*******************************************************************
+*        MODIFY SYSUT2 DCB IF NOT SPECIFIED IN JCL                *
+*******************************************************************
+         SPACE 1
+         USING IHADCB,R2           ESTABLISH DCB ADDRESSABILITY
+DCBMOD   EQU   *
+         LR    R2,R1               SET UP ADDRESSABILITY OF DCB
+         LA    R9,SYSUT1           LOAD ADDRESS OF SYSUT1
+         CLI   DCBRECFM,X'00'      RECFM SPACIFIED IN JCL?
+         BNE   *+10                YES - BYPASS FORWARD CHAINING
+         MVC   DCBRECFM,DCBRECFM-IHADCB(R9)  NO - MOVE IN SYSUT1 RECFM
+         CLC   DCBLRECL,=X'0000'    LRECL SPECIFIED IN JCL?
+         BNE   *+10                YES - BYPASS FORWARD CHAINING
+         MVC   DCBLRECL,DCBLRECL-IHADCB(R9)  NO - MOVE IN SYSUT1 LRECL
+         CLC   DCBBLKSI,=X'0000'   BLKSIZE SPECIFIED IN JCL?
+         BNE   *+10                YES - BYPASS FORWARD CHAINING
+         MVC   DCBBLKSI,DCBBLKSI-IHADCB(R9)  NO - MOVE IN SYSUT1 BLKSI
+         CLC   DCBLRECL,DCBLRECL-IHADCB(R9)  TEST SYSUT2 LRECL > SYSUT1
+         BNH   *+16                NO - BYPASS FORWARD CHAINING
+         MVC   DCBLRECL,DCBLRECL-IHADCB(R9)  YES - LRECL = SYSUT1
+         MVC   DCBBLKSI,DCBBLKSI-IHADCB(R9)      - BLKSIZE = SYSUT1
+         BR    R14                 RETURN TO CALLER
+         DROP  R2                  DROP ADDRESSABILITY
+         EJECT
+*******************************************************************
+*        OPEN SYSUT2 OUTPUT DATASET                               *
+*******************************************************************
+         SPACE 1
+OPENUT2  EQU   *
+         OPEN  (SYSUT2,(OUTPUT))   OPEN SYSUT2 OUTPUT FILE
+         EJECT
+*******************************************************************
+*        MAIN PROGRAM LOOP, A RECORD IS READ FROM SYSUT1,         *
+*              IF SELECTION OPTION IS USED, MATCH THE RECORD WITH *
+*              THE SELECTION TABLE AND WRITE ON SYSUT2 ONLY THE   *
+*              RECORDS WITCH PROCESS SUCCESSFULLY THE TEST        *
+*              MODIFIED WITH THE PADDING CHARACTER ACCORDING      *
+*              TO THE 'CTL' CONTROL CARD AND THEN WRITTEN TO      *
+*              SYSUT2.                                            *
+*******************************************************************
+         SPACE 1
+RECREAD  EQU   *
+         GET   SYSUT1              READ A RECORD
+         ST    R1,ASYSUT1          STORE RECORD ADDRESS
+         SPACE 1
+*        TEST IF SELECTION OPTION IS USED,
+*              YES - PERFORM SELECTION, AND CONTINUE TO PROCESS
+*                    ONLY THE SELECTED ONE.
+*              NO  - ALL RECORD HAVE TO BE WRITE ON SYSUT2.
+         SPACE 1
+         MVI   RECSELSW,C'Y'       ASSUME SELECTION SUCCESS
+         CLI   RECSELOP,C'Y'       TEST IF SELECTION OPTION USED
+         BNE   *+8                 NO - BYPASS FORWARD INSTRUCTION
+         BAL   R4,RECSELIN         YES - PERFORM SELECTION ROUTINE
+         CLI   RECSELSW,C'Y'       TEST IF SELECTION SUCCESS
+         BNE   RECREAD             NO - READ NEXT RECORD
+         SPACE 1
+*        TEST IF UNUSED SORT KEYS HAVE TO BE FILLED
+*        WITH THE MODIFYING CHARACTER
+         SPACE 1
+         CLI   RECMTEST,C'Y'       TEST IF MODIFY OPTION REQUESTED
+         BNE   *+8                 NO - BYPASS FORWARD INSTRUCTION
+         BAL   R4,RECMODIN         YES - PERFORM RECORD MODIFICATION
+         SPACE 1
+*        WRITE SYSUT2 OUTPUT RECORD FROM SYSUT1
+         SPACE 1
+         L     R2,ASYSUT1          LOAD RECORD ADDRESS IN R2
+         PUT   SYSUT2,(R2)         WRITE OUTPUT RECORD
+         SPACE 1
+         B     RECREAD             READ NEXT RECORD
+         EJECT
+*******************************************************************
+*        THIS SUB-ROUTINE PERFORM THE USER SELECTION IF REQUESTED *
+*******************************************************************
+         SPACE 1
+RECSELIN SUBIN SAVE=(R1,R4)        RECORD SELECTION SUB-ROUTINE
+         SPACE 1
+         USING SELTABLE,R12        ESTABLISH TABLE SELECT ADDRESSABITY
+         LA    R12,SELTAB          POINT R12 AT SELECT TABLE
+         L     R10,SELTABNR        LOAD NUMBER ELEMENTS OF SELECT TABLE
+         MVI   COMPCONT,SELSWLST   INITIALISE CONTINUATION TO NO CONT
+         MVI   RECSELSW,C'N'       INITIALISE SELECT SW TO UNSUCCES
+         MVI   COMPARET,C'Y'       INITIALISE PRECEDENT TEST TO FAILS
+         B     *+8                 BYPASS FORWARD CHAINING
+RECSELLP EQU   *
+         LA    R12,L'SELTAB(,R12)  POINT SEL TAB TO NEXT ELEM
+         CLI   SELSW,SELSWEND      TEST FOR END OF TABLE
+         BE    RECSELEX            YES - RETURN
+         CLI   COMPCONT,SELSWCON   IS THIS TEST A CONTINUATION
+         BNE   *+12                NO - BYPASS FORWARD CHAINING
+         CLI   COMPARET,C'Y'       TEST IF PRECEDENT TEST FAILS
+         BE    RECSELCT            YES - BYPASS TABLE LOKUP
+         L     R9,ASYSUT1          LOAD RECORD ADDRESS IN R9
+         MVC   HALFWORD,SELSPOSB   MOVE DISPLACEMENT TO HALFWORD
+         AH    R9,HALFWORD         ADD DISPLACEMENT TO RECORD ADDRESS
+         SR    R1,R1               SET R1 TO ZERO
+         IC    R1,SELTEST          LOAD TEST TYPE REPRESENTATION IN R1
+         MVC   HALFWORD,SELLARGB   MOVE COMPARE LENGTH TO HALFWORD
+         LH    R5,HALFWORD         MOVE COMPARE LENGTH FOR EXECUTE COMP
+         CLI   SELARGTP,C'C'       TEST IF CHARACTER COMPARE
+         BNE   *+16                NO - BYPASS FORWARD CHAINING
+         EX    R5,COMPCHAR         EXECUTE COMPARE CHARACTER
+         BAL   R4,COMPARE          DETERMINE RESULT OF TEST
+         B     RECSELTS            GO TEST COMPARE RESULT
+         CLI   SELARGTP,C'P'       TEST IF PACK COMPARE
+         BNE   *+16                NO - BYPASS FORWARD CHAINING
+         EX    R5,COMPPACK         EXECUTE COMPARE PACKED
+         BAL   R4,COMPARE          DETERMINE RESULT OF TEST
+         B     RECSELTS            GO TEST COMPARE RESULT
+***      INVALID COMPARE TYPE
+         ABEND 921,DUMP            DUMP ON INVALID COMPARE TYPE
+         SPACE 1
+RECSELTS EQU   *
+         BNE   RECSELCT            GO TEST NEXT ELEM IF TEST FAILS
+         CLI   SELSW,SELSWCON      TEST IF CONTINUATION EXPECTED
+         BE    RECSELCT            YES - GO TEST NEXT TABLE ELEM
+         MVI   RECSELSW,C'Y'       RECORD SUCCESSFULLY SELECT
+         B     RECSELEX            RETURN
+         SPACE 1
+*        TEST FAILS OR SUCCEED BUT CONTINUATION IS EXPECTED
+         SPACE 1
+RECSELCT EQU   *
+         MVC   COMPCONT,SELSW      SAVE LAST TABLE SELECT RELATION SW
+         BCT   R10,RECSELLP        GO TREAT NEXT SELECT TABLE ELEMENT
+         SPACE 1
+RECSELEX SUBOUT RESTORE=(R1,R4)    RETURN TO CALLER
+         SPACE 1
+COMPCHAR CLC   0(0,R9),SELARGUM    EXECUTE - COMPARE CHARACTER
+COMPPACK CP    0(0,R9),SELARGUM(0) EXECUTE - COMPARE PACKED
+         SPACE 1
+         DROP  R12                 DROP DSECT ADDRESSABILITY
+         EJECT
+***********************************************************************
+*        PERFORM SPECIFIED RELATIONSHIP TEST                          *
+***********************************************************************
+         SPACE 1
+*        THIS SUBROUTINE RECEIVES CONTROL AFTER A TEST ( COMPARE ) HAS
+*         BEEN MADE, AND PERFORMS THE RELATIONSHIP TEST SPECIFIED IN
+*         R1 IN THE FORM OF AN INTERNAL CODE ( SEE MISCELLANAOUS EQU )
+*         AND SETS THE CONDITION CODE SUCH THAT THE CALLER CAN MAKE THE
+*         FOLLOWING CONDITIONAL BRANCHES -
+*              BE  - SPECIFIED RELATIONSHIP SATISFIED
+*              BNE - SPECIFIED RELATIOSHIP NOT SATISFIED
+         SPACE 1
+COMPARE  SUBIN ,                   ENTER SUBROUTINE
+         MVI   COMPARET,C'X'       ASSUME TEST SATISFIED
+         SLL   R1,3                MULTIPLY INTERNAL REPRESENTATION OF
+*                                   THE TEST BY 8 TO CONVERT IT TO AN I
+*                                   INDEX FOR THE FOLLONG BR TO PERFORM
+*                                   THE APPROPRIATE RELATIONSHIP TEST
+         B     *-4(R1)             GO TO APPROPRIATE CONDITIONAL BRANCH
+         BE    COMPAREX       (EQ) GO SET COND CODE IF TEST SATISFIED
+         B     COMPAREY            GO SHOW TEST NOT SATISFIED
+         BNE   COMPAREX       (NE) GO SET COND CODE IF TEST SATISFIED
+         B     COMPAREY            GO SHOW TEST NOT SATISFIED
+         BH    COMPAREX       (GT) GO SET COND CODE IF TEST SATISFIED
+         B     COMPAREY            GO SHOW TEST NOT SATISFIED
+         BNL   COMPAREX       (GE) GO SET COND CODE IF TEST SATISFIED
+         B     COMPAREY            GO SHOW TEST NOT SATISFIED
+         BL    COMPAREX       (LT) GO SET COND CODE IF TEST SATISFIED
+         B     COMPAREY            GO SHOW TEST NOT SATISFIED
+         BNH   COMPAREX       (LE) GO SET COND CODE IF TEST SATISFIED
+         B     COMPAREY            GO SHOW TEST NOT SATISFIED
+COMPAREY MVI   COMPARET,C'Y'       SET TO SHOW TEST NOT SATISFIED
+COMPAREX CLI   COMPARET,C'X'       SET COND CODE FOR CALLER
+        SUBOUT ,                   RETURN TO CALLER
+         EJECT
+*******************************************************************
+*        THIS SUB-ROUTINE MOVE THE PADDING CHARACTER IN UNUSED    *
+*              KEYS IF REQUESTED.                                 *
+*******************************************************************
+         SPACE 1
+RECMODIN SUBIN SAVE=(R5,R8,R9,R10) MODIFICATION SUB-ROUTINE
+         USING FLDTABLE,R8         ESTABLISH TABLE ELEM ADDRESSABILITY
+         LA    R8,FLDTAB           LOAD ADDRESS FIRST TABLE ELEMENT
+         L     R5,FLDTABNR         LOAD MAX NBR OF TABLE ELEMENT
+         B     *+8                 BYPASS FORWARD CHAINING
+RECLOOP  EQU   *
+         LA    R8,L'FLDTAB(,R8)    LOAD ADDRESS OF NEXT TABLE ELEMENT
+         CLI   FLDSW,TBSWEND       TEST IF END OF TABLE
+         BE    RECMODEX            YES - RETURN
+         CLI   FLDSW,TBSWSRTY      TEST IF TABLE ELEMENT SORTED
+         BE    RECLOOP3            YES - FIELD UNCHANGED - NEXT ELEM
+         SPACE 1
+*        DETERMINE FIRST POSITION TO BE MODIFIED
+         SPACE 1
+         L     R9,ASYSUT1          LOAD RECORD ADDRESS IN R9   -
+         MVC   HALFWORD,FLDSPOSB   ALIGN H OF START POS DISPLACEMENT
+         AH    R9,HALFWORD         ADD DISPLACEMENT TO RECORD ADDRESS
+         SPACE 1
+*        MOVE MODIFY CHARACTER IN FIRST POSITION TO BE MODIFIED
+         SPACE 1
+         MVC   HALFWORD,FLDLPOSB   ALIGN H  NBR OF POSITIONS
+         LH    R10,HALFWORD        LOAD NBR OF POS IN R10
+         S     R10,=F'1'           SUBTRACT 1 FROM NBR COLS
+         BM    RECLOOP3            NBR COLS NEGATIVE - LESS THAN 1 COL
+         MVC   0(1,R9),RECMCHAR    MOVE MOD CHAR TO 1ST POS TO BE MOD
+         SPACE 1
+*        PROPAGATE MODIFY CHARACTER TO ALL THE FIELD TO BE MOD
+         SPACE 1
+         S     R10,=F'1'           SUBTRACT 1 FROM NBR COLS
+         BM    RECLOOP3            NBR COLS NEGATIVE - ONLY ONE COLUMN
+         EX    R10,PROPCHAR        PROPAGATE MOD CHAR NBR COLS -2
+         SPACE 1
+*        TEST ALL TABLES ELEMENTS HAVE BEEN PROCESSED
+         SPACE 1
+RECLOOP3 EQU   *
+         BCT   R5,RECLOOP          TEST FOR NEXT TABLE ELEMENT
+         SPACE 1
+RECMODEX SUBOUT RESTORE=(R5,R8,R9,R10) RETURN TO CALLER
+         SPACE 1
+*        EXECUTE INSTRUCTION
+         SPACE 1
+PROPCHAR MVC   1(0,R9),0(R9)       PROPAGATE MODIFY CHARACTER
+         SPACE 1
+         DROP  R8                  DROP DSECT ADDRESSABILITY
+         EJECT
+*******************************************************************
+*        ENDING                                                   *
+*******************************************************************
+         SPACE 1
+EOFJOB   EQU   *
+         CLOSE (SYSUT1,,SYSUT2)    CLOSE FILES
+         PGMOUT
+         EJECT
+*******************************************************************
+*        DATA CONTROL BLOCKS                                      *
+*******************************************************************
+         SPACE 1
+         PRINT NOGEN
+SYSTABLE DCB   DDNAME=SYSTABLE,DSORG=PS,MACRF=GL,LRECL=80,EODAD=TABEOF
+SYSIN    DCB   DDNAME=SYSIN,DSORG=PS,MACRF=GL,                         C
+               RECFM=FB,LRECL=80,BLKSIZE=80,EODAD=EOFCTL
+SYSSORT  DCB   DDNAME=SYSSORT,DSORG=PS,MACRF=PM,                       C
+               RECFM=FB,LRECL=80,BLKSIZE=80
+SYSUT1   DCB   DDNAME=SYSUT1,DSORG=PS,MACRF=GL,EODAD=EOFJOB
+SYSUT2   DCB   DDNAME=SYSUT2,EXLST=EXLIST,DSORG=PS,MACRF=PM
+         EJECT
+*******************************************************************
+*        STORAGE AREA AND COSTANTS                                *
+*******************************************************************
+         SPACE 1
+         PRINT GEN
+         DS    0F
+EXLIST   DC    X'85',AL3(DCBMOD)   SYSUT2 DCB EXIT
+ASYSIN   DS    F                   ADDRESS OF SYSIN RECORD
+ASYSUT1  DS    F                   ADDRESS OF SYSUT1 RECORD
+BLANK    EQU   X'40'               CONSTANT BLANK
+FLDTAB   DC    40XL13'00'          FIELD TABLE - FLDTABLE DSECT
+FLDTABNR DC    F'40'               NBR OF TABLE ELEMENT
+SELTAB   DC    40XL23'00'          SELECT TABLE
+SELTABNR DC    F'40'               NUMBER ELEMENTS IN SELECT TABLE
+ARGLENGT DC    F'0'                SELECTION ARGUMENT LENGTH
+CTLKEYNR DC    F'20'               MAX NBR OF SORT KEY
+RECMODOP DS    0CL2                MODIFY OPTION
+RECMTEST DC    C'N'                MODIFY OPTION USED - 'Y' OR 'N'
+RECMCHAR DC    C' '                MODIFY CHARACTER
+RECSELOP DC    C'N'                SELECTION OPTION TEST
+RECSELSW DC    C'Y'                TEST OF SELECTION SUCCES
+COMPARET DC    C'X'                USED TO SET COND CODE FOR COMARE RT
+COMPCONT DC    X'FF'               SELECT TABLE COMPARE CONTINUATION
+SRTFIRST DC    C'  SORT FIELDS=(PPPP,LL,CH,A,'    SORT CONSTANT
+SRTREC   DS    CL80                SORT CONTROL CARD AREA
+HALFWORD DS    H                   HALF WORD FIELD
+FULLWORD DS    F                   FULL WORD FIELD
+DBLEWORD DS    D                   DOUBLE WORD FIELD
+         END   UT499

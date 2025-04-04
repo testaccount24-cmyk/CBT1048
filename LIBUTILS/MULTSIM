@@ -1,0 +1,1486 @@
+         TITLE 'MULTSIM RELEASE  3.1  NOV 10, 1974'
+***********************************************************************
+*                                                                     *
+*                                                                     *
+*                    WHITLOW COMPUTER SYSTEMS                         *
+*                    222   SOUTH MARGINAL ROAD                        *
+*                    FORT LEE,  NEW JERSEY   07024                    *
+*                    TEL.  (201)  947-8500                            *
+*                                                                     *
+*                                                                     *
+*                    MULTSIM   RELEASE  3.1                           *
+*                                                                     *
+*                          NOV  10, 1974                              *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         EJECT
+         PRINT NOGEN
+***********************************************************************
+*
+*      MULTSIM IS AN ASSEMBLER CODED PROGRAM DESIGNED TO SIMULATE  A
+*      MULTIPROGRAMMING ENVIRONMENT. USING KEYWORD DDNAMES MULTSIM1,
+*      MULTSIM2,MULTSIM3,MULTSIM4, UP TO FOUR DATA SETS CAN BE USED
+*      FOR ISSUING REPEATED WRITE I/O'S IN THE FORM OF EXCP'S. BEFORE
+*      EACH EXCP  A REPEATED LOOP SIMULATING  RECORD PROCESSING IS
+*      DONE USING A MVC  INSTRUCTION  TO MOVE 4 BYTES ONE THOUSAND
+*      TIMES. DATA CONTROL BLOCKS, EVENT CONTROL BLOCKS, INPUT OUTPUT
+*      BLOCKS AND  CHANNEL PROGRAMS ARE LOCALLY CONSTRUCTED.
+*      EACH PHASE AND SUBROUTINE IS LOCALLY DOCUMENTED. PHASE 6  IS
+*      THE BASIC  PHASE IN WHICH THE EXCP MACRO'S ARE ISSUED.
+*
+***********************************************************************
+MULTSIM  CSECT
+BEGIN    EQU   *
+         SAVE  (14,12)
+         BALR  6,0
+         USING *,J6,J2
+FIRST    LA    J2,4095(J6)
+         LA    J2,1(J2)
+         ST    J13,SAVE13
+         LA    J13,SAVEAREA
+         B     MULTSIM2
+         SPACE 5                                                 *MONS*
+*MONS*************************************************************MONS*
+*MONS*   MODIFIED BY MONSANTO EUROPE SA.   JAN 1976.             *MONS*
+*MONS*      1. USE OF RPS ON 3330S MAY BE SUPPRESSED.            *MONS*
+*MONS*      2. MONSANTO DATE ROUTINE USED FOR MORE READABLE      *MONS*
+*MONS*         DATE AND TO RETAIN ADDRESSABILITY.                *MONS*
+*MONS*      3. 'IOB1...' CONSTANTS IN PROGRAM SHORTEND FOR       *MONS*
+*MONS*         THE SAME REASON.                                  *MONS*
+*MONS*      4. ALL SPARE MEMORY IN THE PARTION/REGION IS         *MONS*
+*MONS*         USED FOR THE MOVES BETWEEN EXCPS.                 *MONS*
+*MONS*         4 BYTES ARE STILL MOVED, BUT THE STORAGE          *MONS*
+*MONS*         ADDRESS IS INCREMENTED BY 4 EACH TIME WITH        *MONS*
+*MONS*         WRAPAROUND WHEN THE UPPER LIMIT IS REACHED.       *MONS*
+*MONS*         THIS MAKES THE PROGRAM USEFUL AS A                *MONS*
+*MONS*         'MACHINE EXERCISER.                               *MONS*
+*MONS       5. CONSTANT TO BE MOVED MAY BE ALTERED.              *MONS*
+*MONS*      6. NUMBER OF MOVES BETWEEN EXCPS MAY BE VARIED.      *MONS*
+*MONS*************************************************************MONS*
+         TITLE 'MULTSIM - GET ADDRESS OF PARM LIST  '
+***********************************************************************
+*
+*          REGISTER ONE CONTAINS ADDRESS OF PARAMETER LIST
+*          REGISTER 4   CONTAINS ADDRESS OF PARAMETER LIST LENGTH
+*          IF LENGTH OF PARAMETER IS ZERO, NO   PARAMETER WAS PASSED
+*          AND A DEFAULT VALUE OF 2 MINUTES IS USED.
+*          IF A PARAMETER IS PASSED IT IS VALIDATED FOR NONZERO
+*          NUMERICS.   USING ROUTINE  VALDPARM
+*          IF  PARAMETER IS ZERO OR NON NUMERIC AN INDICATOR IS SET
+*          FOR LATER PRINTING AN INDICATIVE MESSAGE, A DEFAULT TIME
+*          OF 2 MINUTES IS USED HOWEVER.
+*
+***********************************************************************
+         DC    CL32'    MULTSIM     RELEASE  3.0'
+         DC    CL32'       OCT  15, 1974'
+         DC    CL32'    WHITLOW  COMPUTER  SYSTEMS  '
+         DC    CL32'      FT. LEE, NEW JERSEY 07024'
+         DC    CL32'        TEL. 201-947-8500'
+BUF1     DC    X'0000000001001B58'
+BUF2     DC    X'0000000001001B58'
+BUF3     DC    X'0000000001001B58'
+BUF4     DC    X'0000000001001B58'
+MULTSIM2 EQU   *
+         L     J1,0(0,J1)
+         LH    J4,0(0,J1)
+         LTR   J4,J4                   * J4 = LENGTH OF PARM LIST
+         BZ    NOPARM
+         BCTR  J4,0
+         STC   J4,MOVEPARM+1
+         STH   J4,PARMLEN
+         LA    J1,2(0,J1)              * J1 = PARAMETER LIST
+         STC   J4,COMPPARM+1
+MOVEPARM MVC   PARM,0(J1)
+         BAL   J10,VALDPARM            * VALIDATE PARAMETER LIST
+         BAL   J10,TIMECALC            * CALCULATE TIME INTERVAL
+         B     START
+INVPARM  MVI   TINVALID,X'FF'          * TIME PASSED INVALID
+NOPARM   MVI   TDEFAULT,X'FF'          * USE DEFAULT TIME
+         MVI   PARM,C'2'
+         MVI   PARMLEN+1,X'00'
+         BAL   J10,TIMECALC
+         B     START
+         TITLE 'SYSPRINT DATA  CONTROL BLOCK'
+***********************************************************************
+*
+*      CONTROL BLOCKS FOR POSSIBLE FOUR DATA SETS ARE CONSTRUCTED.
+*      ECB = EVENT CONTROL BLOCK
+*      IOB = INPUT OUTPUT BLOCK
+*      DCB = DATA CONTROL BLOCK
+*
+*      ADCHP = ADDRESS OF CHANNEL PROGRAM
+*              INITIALLY THIS POINTS TO THE SEARCH CCW
+*              BUT IF  3330'S ARE USED IT POINTS TO SET SECTOR CCW
+*      SEEK  = DISK ADDRESS UPON WHICH THE EXCP WILL ISSUE A WRITE
+*
+***********************************************************************
+*
+PRINTDCB DCB   DDNAME=SYSPRINT,DSORG=PS,MACRF=(PM),RECFM=FA,           X
+               BLKSIZE=125,LRECL=125
+         DC    CL4'ECB1'                                         *MONS*
+         DS    0D
+ECB1     DC    X'40000000'
+         DC    7F'0'
+         DC    CL8'IOB1'                                         *MONS*
+         DS    0D
+IOB1     DC    X'C2000000'
+         DC    A(ECB1)
+         DC    2F'0'
+ADCHP1   DC    A(SEARCH1)
+         DC    A(DCB1)
+         DC    2F'0'
+SEEK1    DC    2F'0'
+         DC    X'001B60'
+         DC    5F'0'
+         DC    CL8'DCB1'                                         *MONS*
+         DS    0D
+DCB1     DC    5F'0'
+         DC    X'00000001'
+         DC    X'00002000'
+         DC    A(IOB1)
+         DC    X'00000001'
+         DC    F'0'
+         DC    CL8'MULTSIM1'
+         DC    X'0200D004'
+         DC    CL4'ECB2'                                         *MONS*
+         DS    0D
+ECB2     DC    X'40000000'
+         DC    7F'0'
+         DC    CL8'IOB2'                                         *MONS*
+         DS    0D
+IOB2     DC    X'C2000000'
+         DC    A(ECB2)
+         DC    2F'0'
+ADCHP2   DC    A(SEARCH2)
+         DC    A(DCB2)
+         DC    2F'0'
+SEEK2    DC    2F'0'
+         DC    X'001B60'
+         DC    5F'0'
+         DC    CL8'DCB2'                                         *MONS*
+         DS    0D
+DCB2     DC    5F'0'
+         DC    X'00000001'
+         DC    X'00002000'
+         DC    A(IOB2)
+         DC    X'00000001'
+         DC    F'0'
+         DC    CL8'MULTSIM2'
+         DC    X'0200D004'
+         DC    CL4'ECB3'                                         *MONS*
+         DS    0D
+ECB3     DC    X'40000000'
+         DC    7F'0'
+         DC    CL8'IOB3'                                         *MONS*
+         DS    0D
+IOB3     DC    X'C2000000'
+         DC    A(ECB3)
+         DC    2F'0'
+ADCHP3   DC    A(SEARCH3)
+         DC    A(DCB3)
+         DC    2F'0'
+SEEK3    DC    2F'0'
+         DC    X'001B60'
+         DC    5F'0'
+         DC    CL8'DCB3'                                         *MONS*
+         DS    0D
+DCB3     DC    5F'0'
+         DC    X'00000001'
+         DC    X'00002000'
+         DC    A(IOB3)
+         DC    X'00000001'
+         DC    F'0'
+         DC    CL8'MULTSIM3'
+         DC    X'0200D004'
+         DC    CL4'ECB4'                                         *MONS*
+         DS    0D
+ECB4     DC    X'40000000'
+         DC    7F'0'
+         DC    CL8'IOB4'                                         *MONS*
+         DS    0D
+IOB4     DC    X'C2000000'
+         DC    A(ECB4)
+         DC    2F'0'
+ADCHP4   DC    A(SEARCH4)
+         DC    A(DCB4)
+         DC    2F'0'
+SEEK4    DC    2F'0'
+         DC    X'001B60'
+         DC    5F'0'
+         DC    CL8'DCB4'                                         *MONS*
+         DS    0D
+DCB4     DC    5F'0'
+         DC    X'00000001'
+         DC    X'00002000'
+         DC    A(IOB4)
+         DC    X'00000001'
+         DC    F'0'
+         DC    CL8'MULTSIM4'
+         DC    X'0200D004'
+         TITLE 'MULTSIM - INITIAL PHASE'
+***********************************************************************
+*
+*      INITIAL PHASE - SEARCH THROUGH TIOT=TASK INPUT OUTPUT BLOCK
+*      TO FIND ANY KEYWORD DDNAMES; MULTSIM1,2,3,4.
+*      EXTRACT ADDRESS OF  UNIT CONTROL BLOCK
+*      GET AND SAVE UCBNAME AND UCBTYPE FOR LATER PROCESS
+*      WHEN DDNAME ENTRY LENGTH IS ZERO ALL DDNAMES HAVE BEEN
+*      PROCESSED. REG12 HAS NBR OF KEYWORD DDNAMES FOUND
+*
+***********************************************************************
+START    EQU   *
+         OPEN  (PRINTDCB,(OUTPUT))
+         BAL   J10,PRTHEAD
+INITIAL  LA    J1,16                   *
+         L     J11,0(0,J1)             *  J2= CVT
+         L     J3,0(0,J11)             *  J3= TCB NEW
+         L     J4,4(0,J3)              *  J4= TCB CURR
+         L     J5,12(0,J4)             *  J5= TIOT
+         LA    J5,24(0,J5)             *  J5= DDENTRY  START
+         LA    J8,MS1                  *  J8= MULTSIM  LIST
+         LA    J9,DDN1                 *  J9= DDNAME   LIST
+         SR    J12,J12                 *
+         SR    J7,J7
+         LA    J4,JMASK
+JSCANDD  EQU   *                       *
+         IC    J7,0(0,J5)              *  J7 = DDNAME ENTRY LENGTH
+LOOPM    EQU   *                       *
+         CLI   0(J8),X'FF'             *  END  OF  MULTSIM DD LIST
+         BNE   JSA                     *
+         B     JBUMP5                  *
+JSA      LTR   J7,J7                   *  END OF DD LIST
+         BNZ   JSB
+         BNE   JSB                     *
+         MVI   DDEND,X'FF'             *
+         B     JPH2                    *  PHASE ONE COMPLETED
+JSB      EQU   *                       *
+         CLC   0(8,J8),4(J5)           *  COMPARE DDNAME TO MULTSIMX
+         BNE   JBUMP8                  *
+         L     J10,16(0,J5)            *  J10= ADDR UNIT CNTRL BLOCK
+         LA    J10,0(0,J10)
+         LTR   J10,J10
+         BZ    JBUMP8
+         OC    DDBITS,0(J4)
+         MVC   0(8,J9),4(J5)           *  MOVE DDNAME  TO SAVE LIST
+         MVC   8(3,J9),13(J10)         *  MOVE UCBNAME TO SAVE LIST
+         MVC   11(4,J9),16(J10)        **  MOVE UCBTYPE TO SAVE LIST
+         LA    J9,16(0,J9)             *  BUMP DD LIST POINTER
+         LA    J12,1(0,J12)
+*                                      *
+JBUMP8   EQU   *                       *
+         LA    J8,8(0,J8)              *  BUMP MULTX LIST
+         LA    J4,1(0,J4)
+         B     LOOPM                   *
+*                                      *
+JBUMP5   EQU   *                       *
+         AR    J5,J7                   *  BUMP DD ENTRY POINTER
+         LA    J8,MS1                  *  RESET MULTX LIST
+         LA    J4,JMASK
+         B     JSCANDD                 *
+         TITLE 'MULTSIM - PHASE 2'
+***********************************************************************
+*
+*      SECOND PHASE - REG12 INDICATES NBR OF KEYWORD DDNAMES
+*      IF NO MULTSIM DDNAMES SPECIFIED  PRINT ERROR MESSAGE AND END JOB
+*      MESSBITS ARE STATUS BIT TABLE HAVING ONE BYTE FOR EACH DDNAME
+*      VERIFY THAT DEVICE TYPE IS DIRECT ACCESS
+*      VERIFY THAT ALL DEVICE TYPES ARE THE SAME FOR ALL KEY DDNAME SET
+*      FULLTRAK ROUTINE WILL CHANGE BLOCKSIZE OF DATA WRITTEN TO DISK
+*      AFTER RECOGNIZING A DIRECT ACCESS DEVICE  2311,2314,3330
+*
+***********************************************************************
+*
+*
+JPH2     EQU   *                       *
+         BAL   J10,JOPEN
+         LTR   J12,J12
+         BZ    JERREQ0
+         ST    J12,SAV12               *
+         LA    J4,UNTYPE
+         LA    J9,DDN1                 *
+         LA    J9,13(0,J9)             *
+         LA    J8,MESSBITS             *  J8  MESSBITS
+         MVC   PREVDTYP,0(J9)          *
+*                                      *
+JPH2LOOP EQU   *                       *
+         LA    J11,JDEVCODE            *  J11  DEVCODE  LIST
+         LA    J3,DEVTYPE
+         CLI   0(J9),X'20'             *  DEVICE TYPE DIRECT ACCESS
+         BE    JPH2A                   *
+         OI    0(J8),X'80'             *  DEVICE NOT  DIRECT ACCESS
+JPH2A    EQU   *                       *
+         CLC   PREVDTYP(2),0(J9)
+         MVC   PREVDTYP(2),0(J9)          *
+         BE    JPH2B                   *
+         OI    0(J8),X'40'             *  DEVICE ASSGN  NOT CONSIST
+JPH2B    EQU   *
+         CLI   0(J11),X'FF'
+         BNE   JPH2E                   *
+         OI    0(J8),X'20'             *  DEVICE TYPE NOT VALID
+         B     JPH2C                   *
+JPH2E    EQU   *                       *
+         CLC   1(1,J9),0(J11)          *  MATCH DEVICE CODE
+         BE    JPH2D
+         LA    J11,1(0,J11)            *  BUMP DEVICE CODE
+         LA    J3,8(0,J3)
+         B     JPH2B                   *
+JPH2D    MVC   0(8,J4),0(J3)
+         BAL   J10,FULLTRAK
+JPH2C    EQU   *                       *
+         LA    J9,16(0,J9)             *  BUMP DDENTRY      POINTER
+         LA    J8,1(0,J8)              *  BUMP  MESS BITS   POINTER
+         LA    J4,8(0,J4)
+         BCT   J12,JPH2LOOP            *
+*                                      *
+         TITLE 'MULTSIM - PHASE 3'
+***********************************************************************
+*
+*      PHASE THREE - SIMPLY MOVE UNITNAMES TO A SAVE AREA FOR DISPLAY
+*      WITH INDICATIVE MESSAGES.
+*
+***********************************************************************
+JPH3     EQU   *                       *
+         L     J12,SAV12               * J12 = NBR OF KEYWORD DATA SET
+         LA    J11,UNTNME              * J11 = UNIT NAME LIST
+         LA    J9,DDN1                 *
+         LA    J9,8(0,J9)              *  BUMP TO POINT TO UNIT NAME
+JPH3LOOP EQU   *                       *
+         MVC   0(3,J11),0(J9)          * MOVE UNIT NAME TO SAVE LIST
+         LA    J9,16(0,J9)             *
+         LA    J11,3(0,J11)            *
+         BCT   J12,JPH3LOOP            *
+         TITLE 'MULTSIM - PHASE 4'
+***********************************************************************
+*
+*      PHASE FOUR - CHECK TO SEE THAT ALL DEVICES HAVE ONLY ONE KEYWORD
+*      DATA SET ASSIGNED. IN THE CASE WHEN MULTIPLE DATA SETS ARE ON
+*      ONE DIVICE, ONLY ONE DATA SET WILL BE USED FOR EXCP. INDICATIVE
+*      MESSAGES WILL DISPLAY UNUSED DATA SETS. LOOP THROUGH UNITNAME
+*      LIST LOOKING FOR LIKE ASSIGNMENTS, IF MATCH OCCURS TURN ON MESS-
+*      BITS CORRESPONDING TO DATA SET AND STATUS.
+*
+***********************************************************************
+JPH4     EQU   *                       *  SCAN DEV ASSGN FOR DUPLC
+         L     J12,SAV12               *  J2 = NBR OF MLTSM WORK SETS
+         BCTR  J12,0                   *
+         SR    J8,J8
+         CR    J8,J12
+         BNL   JPH5
+         LR    J7,J12
+         LR    J10,J12                 *
+         LA    J4,UNTNME              *  J13 = UNITNAME LIST
+         LA    J5,3(0,J4)
+         LA    J11,MESSBITS            *  J11 = MESSBITS POINTER
+JPH4LOOP EQU   *                       *
+         CLC   0(3,J4),0(J5)
+         BNE   JPH4A                   *
+         CLI   OPT,X'00'              *  OPT= HEAVY
+         BNE   JPH4A                  *  OBRANCH ON YES
+         OI    0(J11),X'01'            *  DEVICE ASSGN  DUPLICATE
+JPH4A    EQU   *                       *
+         LA    J5,3(0,J5)
+         CR    J12,J8
+         BNH   JPH5
+         BCT   J12,JPH4LOOP            *
+         LA    J11,1(0,J11)            *  UPDATE MESS BIT POINTER
+         LA    J4,3(0,J4)              *  BUMP UNIT NAME LIST POINTER
+         LA    J5,3(0,J4)              *
+         BCTR  J7,0
+         LR    J12,J7
+         BCT   J10,JPH4LOOP            *
+         TITLE 'MULTSIM - PHASE 5'
+***********************************************************************
+*
+*      PHASE FIVE - IF DATA SET IS A DUPLICATE ASSIGNMENT, TURN OFF
+*      STATUS DATA SET BIT IN DDBITS.  REG12 REDUCED BY NBR OF
+*      DUPLICATE ASSIGNMENTS AND  SAVIZNON HOLDS NBR OF DEVICES
+*      THAT WILL BE USED IN EXCP LOOP.
+*
+***********************************************************************
+JPH5     EQU   *                       *  RESOLVE DUPLICATE ASSGN
+         LA    J11,MESSBITS            *
+         L     J12,SAV12               *
+         LA    J8,JMASKCMP             * COMPLEMENT OF JMASK BITS
+         LR    J9,J12                  *
+         LA    J10,1                   *
+JPH5B    EQU   *                       *
+         TM    0(J11),X'01'            * IS DEVICE DUPLCT ASSGN
+         BZ    JPH5A
+         NC    DDBITS,0(J8)            * TURN OFF DD DATA SET BIT
+         SR    J12,J10                 *
+JPH5A    EQU   *                       *
+         LA    J11,1(0,J11)            *
+         LA    J8,1(0,J8)
+         BCT   J9,JPH5B                *
+         ST    J12,SAV12NON
+*                                      *  J12 = NBR NON DUP ASSGN WORKS
+     TITLE  'MULTSIM - MONSANTO  '' USE ALL STORAGE '' MODIFICATION.'
+******************************************************************MONS*
+*      REQUISTION ALL SPARE STORAGE IN PARTITION/REGION FOR THE  *MONS*
+*      1000 MOVES BETWEEN EACH EXCP. SEE ALSO WASTECPU ROUTINE.  *MONS*
+*      UPPER LIMIT IS 1/2 MEGABYTE.                              *MONS*
+*        REGISTER USAGE:-                                        *MONS*
+*              J5 = CURRENT MOVE TO ADDRESS.                     *MONS*
+*              J7 = COUNTER FOR BCT TO RESET MOVE TO ADDRESS.    *MONS*
+******************************************************************MONS*
+STORGET  EQU   *                                                 *MONS*
+         PRINT ON,GEN                                            *MONS*
+         GETMAIN R,LV=1024         RESERVE 256-BYTES FOR SYSTEM  *MONS*
+         LR    J5,J1               SAVE ADDRESS                  *MONS*
+         GETMAIN VC,LA=STORREQ,A=STORANS GET ALL SPARE STORAGE.  *MONS*
+         LTR   J15,J15             TEST RETURN CODE FROM GETMAIN *MONS*
+         BZ    STOROK              ZERO. BRANCH ROUND ERROR CODIN*MONS*
+         MVC   PRTMES(L'STORERR),STORERR  MOVE ERROR MESSAGE TO P*MONS*
+         PUT   PRINTDCB,PRTWKDET   PRINT IT                      *MONS*
+         B     ENDMULT             TERMINATE PROGRAM             *MONS*
+         SPACE 1                                                 *MONS*
+STOROK   EQU   *                                                 *MONS*
+         LR    J1,J5               RESTORE ADDRES OF RESERVE     *MONS*
+         FREEMAIN R,LV=1024,A=(1) RELEASE RESERVED STORAGE       *MONS*
+         PRINT ON,NOGEN                                          *MONS*
+         TITLE 'MULTSIM - PHASE 6'
+***********************************************************************
+*
+*      PHASE SIX  -  EXCP LOOP  PHASE
+*      PRTPRE ROUTINE  PRINTS PRELIMINARY INFORMATION CONCERNING
+*      DATA SETS ASSIGNED TYPE,NAME, INDICATIVE MESSAGES, TIME PARAMTR
+*      PASSED, BLOCKSIZE USED, TIME INTERVAL CALCULATED. IF MORE THAN
+*      FOUR OR LESS THAN ONE DEVICE ASSIGNED FOR EXCP JOB WILL END.
+*      STARTIME ROUTINE USES TIME MACRO TO GET THE CURRENT TIME, FORMAT
+*      THE TIME AND CALCULATE NORMALIZATION FACTOR FOR EACH INTERVAL.
+*      DDBITS ARE STATUS BITS FOR FOUR DATA SETS;ON - DATA SET USE.
+*      BEFORE EACH EXCP A WASTECPU ROUTINE SIMPLY MOVES 4 BYTES A 1000
+*      TIMES TO SIMULATE RECORD PROCESSING.
+*      STIMER MACRO PRESETS A TIME INTERVAL AFTER WHICH AN INTERRVPT
+*      OCCURS, PRNTSTAT ROUTINE (PRIN STATISTICAL INFO) IS EXECUTED
+*      AND THE MAIN PROGRAM RESUMES.
+*      DURING  WASTECPU ROUTINE, SETINT ROUTINE TESTS FLAG WHICH INDI-
+*      CATES THAT THE INTERVAL IS OVER AND RESETS AGAIN IF NECESSARY.
+*      THIS INTERVAL IS RESET 100 TIMES OR IF NBRCYCLS HAS BEEN ALTERD
+*      THE VALUE STORED WILL BE USED.
+*      BUF1 IS A BUFFER CONTAINING STRING OF NONESSENTIAL INFORMATION
+*      WHICH GETS WRITTEN TO THE DISK
+*      DEBEND = DISK ADDRESS OF LAST TRACK ON MULTSIM
+*      DEBSTR = DISK ADDRESS OF FIRST TRAK ON MULTSIM
+*      THESE ADDRESSES ARE CHANGED ALTERNATELY AFTER EACH EXCP TO
+*      PROVIDE DISK ARM MOVEMENT.  THE NUMBER OF CYLINDERS ASSIGNED
+*      TO EACH MULTSIM DATA SET WILL INTENSIFY THIS MOVEMENT.
+*      FOLLOWING EACH EXCP A WAIT MACRO IS ISSUED BEFORE A NEW EXCP
+*      IS ISSUED.
+*      AT JPH6D AFTER ALL EXCP'S ARE ISSUED A TEST IS MADE IF ALL OF
+*      THE EXCP'S WERE SUCCESSFUL,IF YES THEN INTBYTE (  THE ACCUMULTED
+*      NBR OF BYTES TRANSFERRED IN INTERVAL) IS INCREASED BY THE BLOCK
+*      WRITTEN ONTO TRACK. IF THE EXCP WAS NOT SUCCESSFUL THEN A
+*      COUNTER OF INPUT OUTPUT ERRORS IS INCREASED AND THE ECB AND
+*      IOB  ARE RESTORED TO WHAT THEY WERE BEFORE THE EXCP WAS ISSUED.
+*      SETINT ROUTINE TEST WHETHER THE TIME INTERVAL WAS OVER AND IF
+*      SO RESET THE INTERVAL.
+*      AFTER THE NUMBER OF CYCLES HAS BEEN EXHAUSTED THE NBROF I/O
+*      ERRORS IS FORMATTED AND PRINTED  AND  MULTSIM IS ENDED.
+*
+***********************************************************************
+JPH6     EQU   *                       *  J12 = NBR OF DEV  TO BE USED
+         BAL   J10,PRTPRE
+         L     J12,SAV12NON
+         LA    J9,0                    *
+         L     J8,NBRCYCLS
+         LA    J11,4                   *
+         CR    J9,J12                  *
+         BE    JERREQ0                 * ZERO DEVICES ASSGN - ABORT
+         CR    J11,J12                 *
+         BL    JERRGT4                 * TOO MANY DEVICES ASSGN - ABRT
+         BAL   J10,STARTIME            * GET TIME OF START
+         MVI   BRNOP+1,X'0F'           * TURN OFF FIRST TIME INDCTR
+         STIMER REAL,PRNTSTAT,BINTVL=TIME   * SET INTERVAL FOR INTRPT
+         L     J5,STORBASE         GET STORAGE START ADDRESS     *MONS*
+         L     J7,STORLEN          AND LENGTH                    *MONS*
+         SRL   J7,2                DIVIDE BY 4 FOR BCT LOOP      *MONS*
+         EJECT
+*                                      * EXCP LOOP
+JPH6EXCP EQU   *                       *
+         TM    DDBITS,X'80'
+         BZ    JPH6A                   *
+         CLI   OPT,X'00'
+         BNE   BRNOPA
+         BAL   J10,WASTECPU            * CPU LOOP 1000 MVC 4 BYTES
+BRNOPA   B     FLIP1
+         MVC   BUF1(4),DEBEND1         * GET LAST TRACK OF MULTSIM1
+         MVC   SEEK1+3(4),BUF1
+         MVI   BRNOPA+1,X'F0'
+         B     EX1
+FLIP1    MVI   BRNOPA+1,X'0F'
+         MVC   BUF1(4),DEBSTR1         *  SET UP I/O FOR FIRST TRACK
+         MVC   SEEK1+3(4),BUF1
+EX1      EXCP  IOB1                    * WRITE I/O ON MULTSIM1
+         CLI   OPT,X'00'
+         BNE   JPH6A
+         WAIT  ECB=ECB1
+JPH6A    EQU   *
+         TM    DDBITS,X'40'
+         BZ    JPH6B                   *
+         CLI   OPT,X'00'
+         BNE   BRNOPB
+         BAL   J10,WASTECPU
+BRNOPB   B     FLIP2
+         MVC   BUF2(4),DEBEND2         * GET LAST TRACK OF MULTSIM2
+         MVC   SEEK2+3(4),BUF2
+         MVI   BRNOPB+1,X'F0'
+         B     EX2
+FLIP2    MVI   BRNOPB+1,X'0F'
+         MVC   BUF2(4),DEBSTR2
+         MVC   SEEK2+3(4),BUF2         *  SET UP I/O FOR LAST TRACK
+EX2      EXCP  IOB2                    * WRITE I/O ON MULTSIM3
+         CLI   OPT,X'00'
+         BNE   JPH6B
+         WAIT  ECB=ECB2
+         EJECT
+JPH6B    EQU   *
+         TM    DDBITS,X'20'
+         BZ    JPH6C                   *
+         CLI   OPT,X'00'
+         BNE   BRNOPC
+         BAL   J10,WASTECPU
+BRNOPC   B     FLIP3
+         MVC   BUF3(4),DEBEND3         * GET LAST TRACK OF MULTSIM3
+         MVC   SEEK3+3(4),BUF3
+         MVI   BRNOPC+1,X'F0'
+         B     EX3
+FLIP3    MVI   BRNOPC+1,X'0F'
+         MVC   BUF3(4),DEBSTR3
+         MVC   SEEK3+3(4),BUF3         *  SET UP I/O FOR LAST TRACK
+EX3      EXCP  IOB3                    * WRITE I/O ON MULTSIM2
+         CLI   OPT,X'00'
+         BNE   JPH6C
+         WAIT  ECB=ECB3
+JPH6C    EQU   *
+         TM    DDBITS,X'10'
+         BZ    JPH6D                   *
+         CLI   OPT,X'00'
+         BNE   BRNOPD
+         BAL   J10,WASTECPU
+BRNOPD   B     FLIP4
+         MVC   BUF4(4),DEBEND4         * GET LAST TRACK OF MULTSIM4
+         MVC   SEEK4+3(4),BUF4
+         MVI   BRNOPD+1,X'F0'
+         B     EX4
+FLIP4    MVI   BRNOPD+1,X'0F'
+         MVC   BUF4(4),DEBSTR4
+         MVC   SEEK4+3(4),BUF4         *  SET UP I/O FOR LAST TRACK
+EX4      EXCP  IOB4                    * WRITE I/O ON MULTSIM4
+         CLI   OPT,X'00'
+         BNE   JPH6D
+         WAIT  ECB=ECB4
+         EJECT
+JPH6D    EQU   *
+         CLI   OPT,X'00'
+         BE    BYP
+         TM    DDBITS,X'10'
+         BZ    WT1
+         BAL   J10,WASTECPU
+         WAIT  ECB=ECB4
+WT1      TM    DDBITS,X'20'
+         BZ    WT2
+         BAL   J10,WASTECPU
+         WAIT  ECB=ECB3
+WT2      TM    DDBITS,X'40'
+         BZ    WT3
+         BAL   J10,WASTECPU
+         WAIT  ECB=ECB2
+WT3      TM    DDBITS,X'80'
+         BZ    WT4
+         BAL   J10,WASTECPU
+         WAIT  ECB=ECB1
+WT4      EQU   *
+BYP      BC    0,BYPASS
+BYP1     BC    15,BYPASS1
+         MVI   WRITE1,X'05'
+         MVI   WRITE2,X'05'
+         MVI   WRITE3,X'05'
+         MVI   WRITE4,X'05'
+         MVC   WRITE1+5(3),BUF1+5
+         MVC   WRITE2+5(3),BUF2+5
+         MVC   WRITE3+5(3),BUF3+5
+         MVC   WRITE4+5(3),BUF4+5
+         MVI   SEEK1+7,X'01'
+         MVI   SEEK2+7,X'01'
+         MVI   SEEK3+7,X'01'
+         MVI   SEEK4+7,X'01'
+         MVC   IOB1SAVE,IOB1
+         MVC   IOB2SAVE,IOB2
+         MVC   IOB3SAVE,IOB3
+         MVC   IOB4SAVE,IOB4
+         OI    BYP+1,X'F0'
+BYPASS1  NI    BYP1+1,X'0F'
+         EJECT
+BYPASS   DS    0H
+         TM    DDBITS,X'80'            *
+         BZ    JPH6AA                  *
+         CLI   ECB1,X'7F'              * WAS I/O SUCCESS
+         BE    JPH6AAA
+         AP    TOTIOERR,PACKONE        * BUMP I/O ERROR COUNTER
+         MVC   ECB1(L'ECB1SAVE),ECB1SAVE RESTORE EVENT CONTRL BLOCK
+         MVC   IOB1(L'IOB1SAVE),IOB1SAVE RESTORE I/O BLOCK
+         B     JPH6AA
+JPH6AAA  EQU   *
+         AP    INTBYTE,TRACK           * BUMP BYTE TRANSFER COUNTER
+         BAL   J10,SETINT              * TEST IF INTERVAL IS OVER
+JPH6AA   EQU   *
+         TM    DDBITS,X'40'            *
+         BZ    JPH6BB                  *
+         CLI   ECB2,X'7F'
+         BE    JPH6BBB
+         AP    TOTIOERR,PACKONE
+         MVC   ECB2(L'ECB2SAVE),ECB2SAVE
+         MVC   IOB2(L'IOB2SAVE),IOB2SAVE
+         B     JPH6BB
+JPH6BBB  EQU   *
+         AP    INTBYTE,TRACK
+         BAL   J10,SETINT
+JPH6BB   EQU   *
+         TM    DDBITS,X'20'            *
+         BZ    JPH6CC                  *
+         CLI   ECB3,X'7F'
+         BE    JPH6CCC
+         AP    TOTIOERR,PACKONE
+         MVC   ECB3(L'ECB3SAVE),ECB3SAVE
+         MVC   IOB3(L'IOB3SAVE),IOB3SAVE
+         B     JPH6CC
+JPH6CCC  EQU   *
+         AP    INTBYTE,TRACK
+         BAL   J10,SETINT
+JPH6CC   EQU   *
+         TM    DDBITS,X'10'            *
+         BZ    JPH6DD                  *
+         CLI   ECB4,X'7F'
+         BE    JPH6DDD
+         AP    TOTIOERR,PACKONE
+         MVC   ECB4(L'ECB4SAVE),ECB4SAVE
+         MVC   IOB4(L'IOB4SAVE),IOB4SAVE
+         B     JPH6DD
+JPH6DDD  EQU   *
+         AP    INTBYTE,TRACK
+         BAL   J10,SETINT
+JPH6DD   EQU   *
+         B     JPH6EXCP
+         TITLE 'MULTSIM - PHASE 6    I/O ERROR PRINT'
+JPH6EE   EQU   *
+         MVI   STFLG,X'FF'
+*                                      *  PRINT NBR OF I/O ERRORS
+         MVC   PRTMES,TITIOERR
+         MVC   PRTMES+24(12),EDMASK9
+         ED    PRTMES+24(12),TOTIOERR
+         PUT   PRINTDCB,BLANKS
+         CLI   PRTIND,X'FF'
+         BNE   ENDMULT
+         PUT   PRINTDCB,PRTWKDET
+         PUT   PRINTDCB,BLANKS
+         MVC   PRTMES,STAR
+         B     ENDMULT                 * END OF MULTSIM
+JERRGT4  EQU   *                       *  NB OF DEVICES GT 4
+         PUT   PRINTDCB,ERRGT4         *
+         B     ENDMULT                 *
+JERREQ0  EQU   *                       *  NBR OF DEVICES EQ ZERO
+         PUT   PRINTDCB,ERREQ0         *
+         B     ENDMULT                 *
+         TITLE 'MULTSIM - PHASE 9'
+ENDMULT  EQU   *
+         L     J13,SAVE13
+         RETURN (14,12),RC=0
+         TITLE 'MULTSIM - VALIDATE PARM LIST'
+VALDPARM EQU   *
+***********************************************************************
+*
+*      VALIDATE PARAMETER PASSED. MUST BE NUMERIC AND NON ZERO
+*      INVPARM IS THE BRANCH POINT FOR AN INVALID PARAMETER
+*
+***********************************************************************
+         LA    J4,1(0,J4)
+         LA    J5,PARM
+PARMLOOP EQU   *                       * TEST IF PARAMETER IS NUMERIC
+         CLI   0(J5),C'9'
+         BH    INVPARM
+         CLI   0(J5),C'0'
+         BL    INVPARM
+         LA    J5,1(0,J5)
+         BCT   J4,PARMLOOP
+COMPPARM CLC   PARM,CHARZERO           * TEST IF PARAMETER IS ZERO
+         BE    INVPARM
+         BR    J10
+         TITLE 'MULTSIM - CALCULATE TIME INTERVAL'
+***********************************************************************
+*
+*      CALCULATE TIME INTERVAL USING GIVEN PARAMETER.
+*      PARMLEN = LENGTH IN BYTES OF PARAMETER
+*      MULTIPLY PARAMETER BY 6O TO GET INTERVAL IN SECONDS
+*      DIVIDE  TOTAL TIME IN SECONDS BY NBR OF CYCLES TO GET INTERVAL
+*      FORMAT TIME PASSED AND INTERVAL CALCULATED FOR PRINTING
+*
+***********************************************************************
+TIMECALC EQU   *                       * CALCULATE TIME INTERVAL
+         LH    J5,PARMLEN
+         EX    J5,PACKTIME
+         OI    TIMEPACK+7,X'0C'
+         MVC   PRTPARM-1(4),EDMASK3
+         ED    PRTPARM-1(4),TIMEPACK+6
+         MP    TIMEPACK(8),YSIXTY      * GET TIME IN SECONDS
+         MVC   DIVD+8(8),TIMEPACK
+         DP    DIVD+8(8),CYCLPK(2)
+         MVC   TIMEPACK+2(6),DIVD+8
+         CVB   J4,TIMEPACK
+         ST    J4,TIME                 * SET FOR STIMER MACRO
+         BR    J10
+PACKTIME PACK  TIMEPACK(8),PARM(1)
+         TITLE 'MULTSIM - OPEN DATA CONTROL BLOCKS'
+***********************************************************************
+*
+*      OPEN DATA CONTROL BLOCKS FOR DATA SETS SPECIFIED IN JCL
+*      GET ADDRESS OF DEB (DATA EXTENT BLOCK) FROM DCB+44
+*      GET START ADDRESS OF DATA SET   = DEBSTR
+*      GET END   ADDRESS OF DATA SET   = DEBEND
+*
+***********************************************************************
+JOPEN    EQU   *
+         TM    DDBITS,X'80'            *
+         BZ    JOPA
+         OPEN  (DCB1,(OUTPUT))
+         L     J4,DCB1+44
+         MVC   BUF1(4),38(J4)
+         MVC   SEEK1+3(4),BUF1
+         MVC   DEBEND1(4),42(J4)       * GET LAST TRACK OF MULTSIM1
+         MVC   DEBSTR1(4),38(J4)       * GET FIRST TRACK OF MULTSIM1
+JOPA     TM    DDBITS,X'40'
+         BZ    JOPB
+         OPEN  (DCB2,(OUTPUT))
+         L     J4,DCB2+44
+         MVC   BUF2(4),38(J4)
+         MVC   SEEK2+3(4),BUF2
+         MVC   DEBEND2(4),42(J4)       * GET LAST TRACK OF MULTSIM2
+         MVC   DEBSTR2(4),38(J4)       * GET FIRST TRACK OF MULTSIM2
+JOPB     TM    DDBITS,X'20'
+         BZ    JOPC
+         OPEN  (DCB3,(OUTPUT))
+         L     J4,DCB3+44
+         MVC   BUF3(4),38(J4)
+         MVC   SEEK3+3(4),BUF3
+         MVC   DEBEND3(4),42(J4)       * GET LAST TRACK OF MULTSIM3
+         MVC   DEBSTR3(4),38(J4)       * GET FIRST TRACK OF MULTSIM3
+JOPC     TM    DDBITS,X'10'
+         BZ    JOPD
+         OPEN  (DCB4,(OUTPUT))
+         L     J4,DCB4+44
+         MVC   BUF4(4),38(J4)
+         MVC   SEEK4+3(4),BUF4
+         MVC   DEBEND4(4),42(J4)       * GET LAST TRACK OF MULTSIM4
+         MVC   DEBSTR4(4),38(J4)       * GET FIRST TRACK OF MULTSIM4
+JOPD     EQU   *
+         BR    J10
+         TITLE 'MULTSIM -PRINT HEADING'
+***********************************************************************
+*
+*      PRINT HEADING FOR OUTPUT
+*      DATE ROUTINE FORMATS CURRENT DATE FOR PRINTING
+*
+***********************************************************************
+PRTHEAD  EQU   *                       *  PRINTS TITLE PAGE
+         CALL  DTERTN,DATEOUT      GET CURRENT DATE IN TITLE     *MONS*
+         PUT   PRINTDCB,TITLE1
+         PUT   PRINTDCB,TITLE2
+         PUT   PRINTDCB,TCOPWRT
+         PUT   PRINTDCB,BLANKS
+         PUT   PRINTDCB,BLANKS
+         PUT   PRINTDCB,DETHEAD
+         PUT   PRINTDCB,BLANKS
+         BR    J10                                               *MONS*
+         TITLE 'MULTSIM PRINT STATISTICS ROUTINE'
+***********************************************************************
+*
+*      PRINT STATISTICAL INFORMATION AFTER EACH INTERVAL IS OVER
+*      ADD BYTES TRANSFERRED FOR LAST INTERVAL TO TOTAL TRANSFERRED
+*      GET CURRENT TIME WITH STARTIME ROUTINE
+*      FORMAT DATA TRANSFER (BYTES)  TOTAL AND INTERVAL
+*      PRINT ABOVE WITH START AND STOP TIME OF INTERVAL
+*
+***********************************************************************
+         CNOP  0,4
+PRNTSTAT EQU   *                       * PRINT STATISTICS PER INTERVAL
+         SAVE  (14,12)
+         L     J6,16(0,J15)            * RESET BASE REGISTER
+         L     J2,20(0,J15)            * RESET BASE REGISTER
+         B     PRTBEGIN
+         DC    A(FIRST)
+         DC    A(FIRST+4096)
+PRTBEGIN EQU   *
+         ST    J13,SAVEAR2+4
+         LA    J14,SAVEAR2
+         ST    J14,8(0,J13)
+         LR    J13,J14
+         CLI   STFLG,X'FF'
+         BE    ENDSTAT
+         AP    TOTBYTE,INTBYTE
+         BAL   J10,STARTIME            * GET CURRENT TIME
+         MVC   PRTTOT-1(12),EDMASK9
+         MVC   PRTCUR-1(12),EDMASK9
+         ED    PRTTOT-1(12),TOTBYTE
+         ED    PRTCUR-1(12),INTBYTE
+         CLI   PRTIND,X'FF'
+         BNE   NOPRINT
+         PUT   PRINTDCB,STATWK
+NOPRINT  EQU   *
+         SP    INTBYTE,INTBYTE         * CLEAR BYTE INTERVAL COUNTER
+ENDSTAT  EQU   *
+         MVI   INTEND,X'FF'
+         L     J13,SAVEAR2+4
+         RETURN (14,12)
+         TITLE 'MULTSIM - SET TIMER INTERVAL'
+***********************************************************************
+*      SETINT ROUTINE. IF TIME INTERVAL IS OVER INDICATED BY INTEND=FF
+*      RESET TIME INTERVAL USING STIMER MACRO.
+*      REGISTER 8  CONTAINS NUMBER OF CYCLES.  TIME INTERVAL IS RESET
+*      UNTIL REG8 = 0  AND 100 CYCLES HAVE BEEN USED.
+*
+***********************************************************************
+SETINT   EQU   *                       * RESET FOR INTERVAL TIME
+         CLI   INTEND,X'FF'
+         BNE   SETEND
+         MVI   INTEND,X'00'
+         STIMER REAL,PRNTSTAT,BINTVL=TIME
+         BCTR  J8,J10
+         B     JPH6EE
+SETEND   EQU   *
+         BR    J10
+         TITLE 'MULTSIM - SETUP FULLTRACK WRITE ON DISKS'
+***********************************************************************
+*
+*      FULLTRAK ROUTINE IS ENTERED WHEN A DIRECT ACCESS DEVICE IS
+*      RECOGNIZED. DEFAULT VALUES FOR BLOCKSIZES OF I/O IS
+*      3,000 BYTES FOR A 2314. IF 3330 IS ASSIGNED THEN  4,000 IS USED
+*      AND IF 2311 THEN 2,000 IS USED. FOR 3330 THE ADCHP (ADDRESS OF
+*      CHANNEL PROGRAM)IS CHANGED TO POINT TO SET SECTOR.
+*      SKL3330 HAS BLKSIZE+8 BYTES TO BE USED WITH WRITE COUNT KEY DATA
+*      SLL3330H  HAS BLKSIZE       TO BE USED WITH WRITE DATA CCW.
+*      FTEND - SAVES THE IOB AND ECB IN SAVEAREA FOR LATER RESTORATION
+*      SHOULD AN INPUT/OUTPUT ERROR OCCUR.
+*
+***********************************************************************
+FULLTRAK EQU   *
+         CLI   1(J9),X'09'
+         BE    FTA1
+         CLI   1(J9),X'0D'
+         BE    FTA1
+         CLI   1(J9),X'0A'
+         BE    FTA1
+         B     FTA
+FTA1     EQU   *
+         CLI   1(J9),X'09'             *  3330  4K BYTES PER  TRACK
+         BNE   FTA
+         MVC   TRACK,TRK3330
+         CLI   RPS,X'FF'           RPS REQUIRED?                 *MONS*
+         BNE   SKIPRPS             NO. BRANCH                    *MONS*
+         MVC   ADCHP1,ADSET1           * SET SECTOR UED IN CAN PROG
+         MVC   ADCHP2,ADSET2           * FOR 3330 TO USE RPS
+         MVC   ADCHP3,ADSET3
+         MVC   ADCHP4,ADSET4
+SKIPRPS  EQU   *                                                 *MONS*
+         MVC   BUF1+6(2),SKL3330H
+         MVC   BUF2+6(2),SKL3330H
+         MVC   BUF3+6(2),SKL3330H
+         MVC   BUF4+6(2),SKL3330H
+         MVC   SEEK1+8(3),SKL3330+1
+         MVC   SEEK2+8(3),SKL3330+1
+         MVC   SEEK3+8(3),SKL3330+1
+         MVC   SEEK4+8(3),SKL3330+1
+         MVC   WRITE1+4(4),SKL3330
+         MVC   WRITE2+4(4),SKL3330
+         MVC   WRITE3+4(4),SKL3330
+         MVC   WRITE4+4(4),SKL3330
+         B     FTEND
+FTA      EQU   *
+         CLI   1(J9),X'01'             *  2311  2K BYTES PER  TRACK
+         BNE   FTB
+         MVC   SEEK1+8(3),SKL2311+1
+         MVC   SEEK2+8(3),SKL2311+1
+         MVC   SEEK3+8(3),SKL2311+1
+         MVC   SEEK4+8(3),SKL2311+1
+         MVC   WRITE1+4(4),SKL2311
+         MVC   WRITE2+4(4),SKL2311
+         MVC   WRITE3+4(4),SKL2311
+         MVC   WRITE4+4(4),SKL2311
+         MVC   TRACK,TRK2311
+         MVC   BUF1+6(2),SKL2311H
+         MVC   BUF2+6(2),SKL2311H
+         MVC   BUF3+6(2),SKL2311H
+         MVC   BUF4+6(2),SKL2311H
+         B     FTEND
+FTB      EQU   *                       *  2314  3K BYTES PER TRACK
+         MVC   TRACK,TRK2314
+         MVC   SEEK1+8(3),SKL2314+1
+         MVC   SEEK2+8(3),SKL2314+1
+         MVC   SEEK3+8(3),SKL2314+1
+         MVC   SEEK4+8(3),SKL2314+1
+         MVC   WRITE1+4(4),SKL2314
+         MVC   WRITE2+4(4),SKL2314
+         MVC   WRITE3+4(4),SKL2314
+         MVC   WRITE4+4(4),SKL2314
+         MVC   BUF1+6(2),SKL2314H
+         MVC   BUF2+6(2),SKL2314H
+         MVC   BUF3+6(2),SKL2314H
+         MVC   BUF4+6(2),SKL2314H
+FTEND    EQU   *                       * SAVE CURRENT IOB'S & ECB'S
+         MVC   IOB1SAVE,IOB1
+         MVC   IOB2SAVE,IOB2
+         MVC   IOB3SAVE,IOB3
+         MVC   IOB4SAVE,IOB4
+         MVC   ECB1SAVE,ECB1
+         MVC   ECB2SAVE,ECB2
+         MVC   ECB3SAVE,ECB3
+         MVC   ECB4SAVE,ECB4
+         BR    J10
+         TITLE 'MULTSIM - ACCESS CURRENT TIME'
+***********************************************************************
+*
+*      STARTIME ROUTINE - TIME MACRO PROVIDES CURRENT TIME IN REG ZERO
+*      FORMAT TIME FOR PRINTING AND PACK FOR CALCULATING NORMALIZATION
+*      FACTORS. SUBSRIPT 1 REFERS TO       START TIME OF INTERVAL.
+*      AND      SUBSRIPT 2 REFERS TO       END   TIME OF INTERVAL.
+*      BRNOP - IS A FIRST TIME BRANCH  THAT IS TRANFORMED TO A NO OPER-
+*      ATION. THE FIRST TIME,ONE ONLY NEEDS TO GET THE START TIME OF
+*      AN INTERVAL  WHERAS LATER THE FORMER TIME BCOMES THE STARTIME
+*      FOR THE NEXT INTERVAL.
+*
+***********************************************************************
+STARTIME EQU   *                       * GET CURRNET TIME
+         MVC   AWTO(11),AWTO+25
+         MVC   HR1(7),HR2
+         TIME  DEC
+         ST    J0,A
+         MVI   A+4,X'0F'
+         UNPK  AA(9),A(5)
+         MVC   AWTO+25(2),AA
+         PACK  HR2(2),AA(2)
+         OI    HR2+1,X'0C'
+         MVC   AWTO+28(2),AA+2
+         PACK  MN2(2),AA+2(2)
+         OI    MN2+1,X'0C'
+         MVC   AWTO+31(2),AA+4
+         PACK  SC2(3),AA+4(4)
+         OI    SC2+2,X'0C'
+         MVC   AWTO+34(2),AA+6
+         MVI   AWTO+27,C'.'
+         MVI   AWTO+30,C'.'
+         MVI   AWTO+33,C'.'
+         MVC   STATWK+60(50),AWTO
+BRNOP    BR    J10                     * FIRST TIME BRANCH
+         CP    SC1,SC2                 * COMPARE SECONDS
+         BNH   COMPMIN
+         AP    SC2,PACK6000
+         SP    MN2,PACK01
+COMPMIN  CP    MN1,MN2                 * COMPARE MINUTES
+         BNH   COMPHR
+         AP    MN2,PACK60
+         SP    HR2,PACK01
+COMPHR   CP    HR1,HR2                 * COMPARE HOURS
+         BNH   COMPEND
+         AP    HR2,PACK24
+COMPEND  ZAP   DIFH,HR2
+         ZAP   DIFM,MN2
+         ZAP   DIFS,SC2
+         SP    DIFH,HR1
+         SP    DIFM,MN1
+         SP    DIFS,SC1
+         MP    DIFH,PACK3600           * CONVERT HOURS TO SECONDS
+         MP    DIFM,PACK60             * CONVERT NINS  TO SECONDS
+         AP    DIFH,DIFM
+         MP    DIFH,PACK100
+         AP    DIFH,DIFS
+         ZAP   DIVD,DIFH
+         MP    DIVD,PACK100
+         DP    DIVD,TIMEPACK+4(4)      * GET NORMALIZATION FOR INTRVL
+         MVC   STATWK+110(7),EDMASK5
+         ED    STATWK+110(7),DIVD+1
+         BR    J10
+         TITLE 'PRINT PRELIMINARY INFORMATION'
+***********************************************************************
+*
+*      PRINTPRE ROUTINE - PRINT DESCRIPTION OF DEVICES ASSIGNED TO
+*      MULTSIM KEYWORD DATA SETS AND ANY DIAGNOSTIC MESSAGES ASSOCIATED
+*      WITH EACH DATA SET. MESSBITS ARE STATUS BITS FOR DIAGNOSTIC MSG
+*      DDN1 IS TABLE OF DDNAMES. UNTYPE IS TABLE OF DEVICE TYPES.
+*      LOOP THROUGH ALL DATA SETS ASSIGNED AND PRINT EACH
+*      AT FOOT OF DESCRIPTION PRINT TIME INTERVAL CALCULATED,TIME PARA-
+*      METER PASSED AND I/O BLKSIZE USED.
+*
+***********************************************************************
+PRTPRE   EQU   *                       * PRINT PRELIMINARY INFORMATI3N
+         LA    J5,UNTYPE
+         LA    J9,DDN1
+         LTR   J12,J12
+         BZ    JERREQ0
+         L     J12,SAV12
+         LA    J7,MESSBITS
+PRTPRED  EQU   *
+         LA    J3,CDE80
+         LA    J4,ERR80
+         LA    J8,JMASK
+         MVC   PRTDDN,0(J9)            * DDNAME TO PRINT FIELD
+         MVC   PRTUNT,8(J9)            * UNIT   TO     PRINT FILELDS
+         MVC   PRTDEV,0(J5)            * DEV TYPE  TO  PRINT FIELD
+         MVI   FATALWK,X'FF'
+PRTREA   EQU   *
+         CLI   0(J8),X'FF'             * IS THE LIST EXHAUSTED
+         BE    PRTPREND
+         CLI   0(J8),X'08'             * IS MASK LIST FINISHED
+         BNE   PRTPREC
+         MVI   FATALWK,X'00'
+PRTPREC  EQU   *
+         MVC   TESTM+1(1),0(J8)
+TESTM    TM    0(J7),X'00'             * TEST ERROR BITS FOR EACH DEV
+         BZ    PRTPREB
+         MVC   PRTMES,0(J4)            * MOVE REMARKS TO PRINT FIELD
+         MVC   PRTERR,0(J3)            * MOVE ERR CODE TO PRNT FLD
+         MVC   FATAL(1),FATALWK        * SET FATAL FLAG
+         B     PRTPREND
+PRTPREB  LA    J8,1(0,J8)              * BUMP MASK POINTER
+         LA    J3,7(0,J3)              * BUMP CODE POINTER
+         LA    J4,40(0,J4)             * BUMP MESSGE POINTER
+         B     PRTREA
+PRTPREND EQU   *
+         PUT   PRINTDCB,PRTWKDET
+         MVC   PRTWKDET,PRTWKDET-1
+         LA    J5,8(0,J5)              * BUMP UNIT TYOE POINTER
+         LA    J7,1(0,J7)              * BUMP  ERROR BITS POINTER
+         LA    J9,16(0,J9)             * BUMP DD NAME LIST POINTER
+         BCT   J12,PRTPRED             * LOOP FOR AAL DEVICES
+         CLI   FATAL,X'FF'
+         BE    ENDMULT
+         CLI   TDEFAULT,X'FF'
+         BNE   PRTPREG
+         CLI   TINVALID,X'FF'
+         BNE   PRTPREH
+         MVC   ERREQ0+4(7),INVCODE     * TIME INVALID MESSAGE
+         MVC   ERREQ0+47(40),INVTIME
+         PUT   PRINTDCB,ERREQ0
+         B     PRTPREG
+         PUT   PRINTDCB,BLANKS
+         PUT   PRINTDCB,BLANKS
+         PUT   PRINTDCB,BLANKS
+PRTPREH  EQU   *
+         MVC   ERREQ0+4(7),NTCODE      * NO TIME PASSED MESSAGE
+         MVC   ERREQ0+47(40),NOTIME
+         PUT   PRINTDCB,ERREQ0
+PRTPREG  EQU   *
+         MVC   PRTINT-1(7),EDMASK5
+         PUT   PRINTDCB,BLANKS
+         PUT   PRINTDCB,BLANKS
+         MVC   PRTBLK-1(6),EDMASK5B
+         ED    PRTBLK-1(6),TRACK
+         ED    PRTINT-1(7),TIMEPACK+5
+         PUT   PRINTDCB,PARMDET        * PRINT TIME PARM AND INTERVA6
+         PUT   PRINTDCB,BLANKS
+         CLI   PRTIND,X'FF'
+         BNE   NOPRE
+         PUT   PRINTDCB,GROUPHD1
+         PUT   PRINTDCB,GROUPHD2
+NOPRE    EQU   *
+         PUT   PRINTDCB,BLANKS
+         BR    J10
+         TITLE 'MULTSIM - CPU CYCLE TIME'
+***********************************************************************
+*
+*      WASTECRU ROUTINE - MOVE  4 BYTES ONE THOUSAND TIMES TO SIMULATE
+*      PROCESSING OF A TYPICAL RECORD BETWEEN ISSUING OF EXCP'S.
+*      SETINT IS EXECUTED TO CHECK IF INTERVAL IS OVER AND TO RESET
+*      IT IF NECCESSARY.
+*
+***********************************************************************
+WASTECPU EQU   *                       * LOOP TO EXECUTE CPU TI ME
+         L     J4,MVCOUNTR                                       *MONS*
+         LR    J9,J10
+WSTLOOP  EQU   *
+*        MVC   WASTE(4),BUF1       ORIGIONAL MULTSIM INSTN.
+*                                  REPLACED BY FOLLOWING MODS    *MONS*
+         MVC   0(4,J5),CONSTANT    MOVE 4-BYTES                  *MONS*
+         LA    J5,4(0,J5)          BUMP STORAGE ADDRESS          *MONS*
+         BCT   J7,WSTCONT          CONTINUE TILL HIGH LIMIT      *MONS*
+         L     J5,STORBASE         RESET STORAGE BASE ADDRESS    *MONS*
+         L     J7,STORLEN          GET LENGTH                    *MONS*
+         SRL   J7,2                DIVIDE BY 4 FOR FOR BCT INSTN *MONS*
+WSTCONT  EQU   *                                                 *MONS*
+         BCT   J4,WSTLOOP
+         BAL   J10,SETINT
+         BR    J9
+         TITLE 'MULTSIM - PRINT DATA FIELDS'
+PRNTDATA EQU   *
+*
+TITLE1   DS    0CL125
+         DC    CL4'1'
+         DC    CL15'DATE PREPARED'
+DATEOUT  DC    CL9'COBOLDATE'                                    *MONS*
+         DC    CL22' '                                           *MONS*
+         DC    CL20'MULTSIM  STATISTICS '
+         DC    CL35' '
+         DC    CL08' '
+TPAGE    DC    CL02'  '
+         DC    CL10' '
+*
+TITLE2   DS    0CL125
+         DC    CL33' '
+         DC    CL32'WHITLOW COMPUTER SYSTEMS,INC.  '
+         DC    CL20'FT. LEE, N. J. 07024'
+         DC    CL70' '
+*
+TCOPWRT  DS    0CL125
+         DC    CL38' '
+         DC    CL45'MULTSIM * COPYRIGHT WHITLOW C.S. INC. 1973   '
+         DC    CL42' '
+*
+DETHEAD  DS    0CL125
+         DC    CL04' '
+         DC    CL10'ERROR CODE'
+         DC    CL04' '
+         DC    CL10'WORK AREAS'
+         DC    CL02' '
+         DC    CL05'UNIT '
+         DC    CL02' '
+         DC    CL10'DEVICE    '
+         DC    CL12' '
+         DC    CL10'REMARKS   '
+         DC    CL58' '
+*
+         DC    C' '
+PRTWKDET DS    0CL125
+         DC    CL04' '
+PRTERR   DC    CL07' '
+         DC    CL07' '
+PRTDDN   DC    CL08' '
+         DC    CL04' '
+PRTUNT   DC    CL03' '
+         DC    CL04' '
+PRTDEV   DC    CL08' '
+         DC    CL013' '
+PRTMES   DC    CL040' '
+         DC    CL50' '
+*                                      *
+ERREQ0   DS    0CL125
+         DC    CL04' '
+         DC    CL12'MUL009A'
+         DC    CL32' '
+         DC    CL40'NO DEVICES SPECIFIED'
+         DC    CL50' '
+ERRGT4   DS    0CL125
+         DC    CL04' '
+         DC    CL12'MUL010A'
+         DC    CL32' '
+         DC    CL40'NBR OF DEVICES GREATER THAN 4'
+         DC    CL50' '
+GROUPHD1 DS    0CL125
+         DC    CL10' '
+         DC    CL26'DATA TRANSFER (1000 BYTES)'
+         DC    CL12' '
+         DC    CL12' '
+         DC    CL10'START TIME'
+         DC    CL15' '
+         DC    CL10'STOP  TIME'
+         DC    CL10' '
+         DC    CL35'NBR OF INTERVALS'
+GROUPHD2 DS    0CL125
+         DC    C' '
+         DC    CL20'ACCUMULATED  TOTAL  '
+         DC    CL5' '
+         DC    CL20'CURRENT  INTERVAL   '
+         DC    CL23' '
+         DC    C' (HRS.MIN.SEC.TH)'
+         DC    CL57' '
+STATWK   DS    0CL125
+PRTTOT   DC    CL9' '
+         DC    CL16' '
+PRTCUR   DC    CL9' '
+         DC    CL81' '
+         DC    CL20' '
+ERR80    DC    CL40' DEVICE TYPE NOT DIRECT ACCESS'
+         DC    CL40' DEVICE ASSGN NOT CONSISTENT'
+         DC    CL40' DEVICE TYPE NOT VALID'
+         DC    CL40' '
+         DC    CL40' '
+INVTIME  DC    CL40' TIME PARAMETER INVALID - DEFAULT 2 MIN'
+NOTIME   DC    CL40' NO TIME PARAMETER GIVEN - DEFAULT 2 MIN'
+         DC    CL40' DEVICE ASSGN DUPLICATE'
+TITIOERR DC    CL40' NUMBER OF I/O ERRORS = '
+STORERR  DC    CL033' GETMAIN ERROR. *MULTSIM ABORTED*'          *MONS*
+BLANKS   DC    CL125' '
+CDE80    DC    C'MUL001A'
+         DC    C'MUL002A'
+         DC    C'MUL003A'
+         DC    C'MUL004A'
+         DC    C'MUL005A'
+INVCODE  DC    C'MUL006I'
+NTCODE   DC    C'MUL007I'
+         DC    C'MUL008I'
+AWTOSHT  DS    0CL125
+         DC    CL60' '
+AWTO     DC    CL35' '
+         DC    CL30' '
+STOP     DC    CL7'STOPPED'
+STRT     DC    CL7'STARTED'
+STFLG    DC    X'00'
+A        DC    2F'0'
+AA       DC    3F'0'
+DEVTYPE  DC    C'IBM 2311'
+         DC    C'IBM 2314'
+         DC    C'IBM 3330'
+         DC    C'IBM 3340'
+         DC    C'TEL 2314'
+         DC    C'3330 M11'
+PARMDET  DS    0CL125
+         DC    CL8' '
+         DC    CL20'I/O BLOCK SIZE =    '
+PRTBLK   DC    CL20'     ,000 BYTES     '
+         DC    CL18'TOTAL RUN TIME = '
+PRTPARM  DC    CL5' '
+         DC    CL10' MIN. '
+         DC    CL18' INTERVAL TIME = '
+PRTINT   DC    CL5' '
+         DC    CL10'  SEC. '
+         DC    CL40' '
+STAR     DC    CL40'STARRED INTERVALS ARE LONGER THAN'
+         TITLE 'MULTSIM - DATA AREAS'
+J0       EQU   0
+J1       EQU   1
+J2       EQU   2
+J3       EQU   3
+J4       EQU   4
+J5       EQU   5
+J6       EQU   6
+J7       EQU   7
+J8       EQU   8
+J9       EQU   9
+J10      EQU   10
+J11      EQU   11
+J12      EQU   12
+J13      EQU   13
+J14      EQU   14
+J15      EQU   15
+         TITLE 'MULTSIM - ZAP AREA  '
+***********************************************************************
+*                                                                     *
+*              ZAP AREA - ALL CONSTANTS TO BE CHANGED                 *
+*                                                                     *
+***********************************************************************
+PRTIND   DC    X'FF'                   *  CHNGE TO '00'  TO SUPPRESS
+*                                      *  PRINTING OF MULTSIM
+RPS      DC    X'FF'               3330RPS    FF=YES  00=NO      *MONS*
+SKL2311  DC    F'2008'                 *  BLOCKSIZE +8  2311
+SKL2314  DC    F'3008'                 *  BLOCKSIZE +8  2314
+SKL3330  DC    F'4008'                 *  BLOCKSIZE +8  3330
+CONSTANT DC    CL4'PAUL'           SOURCE FOR MVC LOOP           *MONS*
+MVCOUNTR DC    F'1000'             MOVE XXXX TIMES BETWEEN EXCPS *MONS*
+SKL2311H DC    H'2000'                 * BLOCK SIZE 2311
+SKL2314H DC    H'3000'                 * BLOCK SIZE 2314
+SKL3330H DC    H'4000'                 * BLOCK SIZE 3330
+TRK2311  DC    PL3'2'                  *  PACKED  BLKSIZE   2311
+TRK2314  DC    PL3'3'                  *  PACKED  BLKSIZE   2314
+TRK3330  DC    PL3'4'                  *  PACKED  BLKSIZE   3330
+OPT      DC    X'FF'                   *  HEAVY FLAG FF=ON, 00=OFF
+NBRCYCLS DC    F'100'                  *  NBR OF CYCLES   * ASSO
+CYCLPK   DC    PL2'1'                  *  PACKED CYCLES   * ASSO
+*                                                                     *
+***********************************************************************
+*                                                                     *
+         TITLE 'MULTSIM - DATA  AREAS '
+PACK100  DC    PL2'100'
+PACK24   DC    PL2'24'
+PACK60   DC    PL2'60'
+PACK01   DC    PL2'1'
+PACK6000 DC    PL4'6000'
+PACK3600 DC    PL4'3600'
+PACK1000 DC    PL3'1000'
+HR2      DC    PL2'0'                  * STOP TIME    HOURS
+MN2      DC    PL2'0'                  * STOP TIME    MINS
+SC2      DC    PL3'0'                  * STOP TIME    SECNDS
+HR1      DC    PL2'0'                  * START TIME   HOURS
+MN1      DC    PL2'0'                  * START TIME   MIN
+SC1      DC    PL3'0'                  * START TIME   SECNDS
+DIFTOT   DC    PL4'0'
+DIFH     DC    PL8'0'
+DIFM     DC    PL8'0'
+DIFS     DC    PL8'0'
+DIVD     DC    PL8'0'
+         DC    PL8'0'
+TRACK    DC    PL3'7'
+TOTBYTE  DC    PL5'0'                  * ACCUM TOTAL BYTES
+INTBYTE  DC    PL5'0'                  * INTERVAL TOTAL BYTES
+PACKONE  DC    P'1'
+TOTIOERR DC    PL5'0'                  * TOTAL I/O ERROR
+CHARZERO DC    CL8'00000000'
+PARM     DC    XL8'00'                 * PARAMETR LIST
+PARMLEN  DC    H'0'                    * PARAMETER LENGTH
+         DC    CL16'START SAVE'
+SAV12NON DC    F'0'                    * NBR NON DUPLICATE DEVICES
+SAV12    DC    F'0'                    *
+SAVEAREA DC    18F'0'
+SAVE13   DC    F'0'
+SAVEAR2  DC    18F'0'
+SAVE132  DC    F'0'
+         DC    8F'0'
+TIMEPACK DC    D'0'
+         DS    0D
+TIME     DC    F'0'
+STORREQ  DS    0F                                                *MONS*
+STORMIN  DC    F'8'                MIN. MAIN STORAGE 8-BYTES.    *MONS*
+STORMAX  DC    F'524288'           MAX. MAIN STORAGE 1/2MEGBYTE  *MONS*
+STORANS  DS    0F                                                *MONS*
+STORBASE DC    F'0'                ADDRES OF STORAGE FROM GETMAIN*MONS*
+STORLEN  DC    F'0'                LENGTH  F STORAGE FROM GETMAIN*MONS*
+MS1      DC    C'MULTSIM1'
+MS2      DC    C'MULTSIM2'
+MS3      DC    C'MULTSIM3'
+MS4      DC    C'MULTSIM4'
+MSEND    DC    X'FF'                   *
+DDN1     DC    D'0'                    * DDNAME LIST
+         DC    D'0'
+DDN2     DC    D'0'
+         DC    D'0'
+DDN3     DC    D'0'
+         DC    D'0'
+DDN4     DC    D'0'
+         DC    D'0'
+AUCB1    DC    F'0'
+ADSS1    DC    A(SETSEC1)              * SET SECTPR ADDRESSSES
+ADSS2    DC    A(SETSEC2)
+ADSS3    DC    A(SETSEC3)
+ADSS4    DC    A(SETSEC4)
+Y12      DC    H'12'                   *
+YSIXTY   DC    PL3'60'
+JMASK    DC    X'8040201008040201'
+         DC    X'FF'
+JMASKCMP DC    X'7FBFDFEFF7FBFDFE'
+         DC    X'FF'
+INTEND   DC    X'00'
+FATALWK  DC    X'FF'
+FATAL    DC    X'00'
+DDBITS   DC    X'00'
+MESSBITS DC    B'00000000'             *  ERROR MESSAGE BITS
+         DC    B'00000000'             *
+         DC    B'00000000'             *
+         DC    B'00000000'             *
+TINVALID DC    X'00'
+TDEFAULT DC    X'00'
+MSEND4   DC    X'00'                   *
+DDEND    DC    X'00'                   *
+PREVDTYP DC    X'0000'
+JDEVCODE EQU   *                       *
+         DC    X'01'                   *  IBM 2311
+         DC    X'08'                   *  IBM 2314
+         DC    X'09'                   *  IBM 3330
+         DC    X'0A'                   * IBM 3340
+         DC    X'0C'                   *  TEL 2314
+         DC    X'0D'                   * IBM MOD11
+         DC    X'FF'                   *  END MARK
+UNTNME   DC    12C'0'                  *
+UNTYPE   DC    4D'0'
+*
+SECTOR1  DC    X'00'
+SECTOR2  DC    X'00'
+SECTOR3  DC    X'00'
+SECTOR4  DC    X'00'
+*                                      * EDIT MASKS FOR PRINTING
+EDMASK5  DC    X'402020214B2020'
+EDMASK5B DC    X'402020202021'
+EDMASK3  DC    X'40202021'
+EDMASK9  DC    X'402020206B2020206B212020'
+ADSET1   DC    A(CHP1)
+ADSET2   DC    A(CHP2)
+ADSET3   DC    A(CHP3)
+ADSET4   DC    A(CHP4)
+DEBEND1  DC    F'0'
+DEBEND2  DC    F'0'
+DEBEND3  DC    F'0'
+DEBEND4  DC    F'0'
+DEBSTR1  DC    F'0'                    *  START TRACK OF MULTSIM1
+DEBSTR2  DC    F'0'                    *  START TRACK OF MULTSIM2
+DEBSTR3  DC    F'0'                    *  START TRACK OF MULTSIM2
+DEBSTR4  DC    F'0'                    *  START TRACK OF MULTSIM4
+         TITLE 'CHANNEL PROGRM 1 AND 2'
+         DC    C'CHAN PROGR - 1  '
+CHP1     DS    0D
+*
+SETSEC1  DC    X'23'
+         DC    AL3(SECTOR1)
+         DC    X'40000001'
+SEARCH1  DC    X'31'
+         DC    AL3(SEEK1+3)
+         DC    X'40000005'
+TIC1     DC    X'08'
+         DC    AL3(SEARCH1)
+         DC    X'00000000'
+*
+WRITE1   DC    X'1D'
+         DC    AL3(BUF1)
+         DC    X'00001B60'
+*
+         DC    C'CHAN PROGR - 2  '
+CHP2     DS    0D
+*
+SETSEC2  DC    X'23'
+         DC    AL3(SECTOR2)
+         DC    X'40000001'
+SEARCH2  DC    X'31'
+         DC    AL3(SEEK2+3)
+         DC    X'40000005'
+TIC2     DC    X'08'
+         DC    AL3(SEARCH2)
+         DC    X'00000000'
+*
+WRITE2   DC    X'1D'
+         DC    AL3(BUF2)
+         DC    X'00001B60'
+*
+         TITLE 'CHANNEL PROGRM 3 AND 4'
+         DC    C'CHAN PROGR - 3  '
+CHP3     DS    0D
+*
+SETSEC3  DC    X'23'
+         DC    AL3(SECTOR3)
+         DC    X'40000001'
+SEARCH3  DC    X'31'
+         DC    AL3(SEEK3+3)
+         DC    X'40000005'
+*
+TIC3     DC    X'08'
+         DC    AL3(SEARCH3)
+         DC    X'00000000'
+*
+*
+WRITE3   DC    X'1D'
+         DC    AL3(BUF3)
+         DC    X'00001B60'
+*
+         DC    C'CHAN PROGR - 4  '
+CHP4     DS    0D
+*
+SETSEC4  DC    X'23'
+         DC    AL3(SECTOR4)
+         DC    X'40000001'
+SEARCH4  DC    X'31'
+         DC    AL3(SEEK4+3)
+         DC    X'40000005'
+*
+TIC4     DC    X'08'
+         DC    AL3(SEARCH4)
+         DC    X'00000000'
+*
+WRITE4   DC    X'1D'
+         DC    AL3(BUF4)
+         DC    X'00001B60'
+         TITLE 'MULTSIM - PRINT WORK AREAS'
+ECB1SAVE DC    XL32'00'
+ECB2SAVE DC    XL32'00'
+ECB3SAVE DC    XL32'00'
+ECB4SAVE DC    XL32'00'
+IOB1SAVE DC    XL64'00'
+IOB2SAVE DC    XL64'00'
+IOB3SAVE DC    XL64'00'
+IOB4SAVE DC    XL64'00'
+         END   BEGIN
+*

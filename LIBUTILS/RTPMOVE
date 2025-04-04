@@ -1,0 +1,555 @@
+AMM.     TITLE 'TSG UTILITY TO EXEC IEHMOVE FOR PRODUCTION - A.M.M.'    MO000010
+*********************************************************************** MO000020
+*                                                                     * MO000030
+*  THIS PROGRAMME SCANS THE TIOT FOR DDNAMES BEGINNING WITH ONE OF    * MO000040
+* THE FOLLOWING PAIRS OF CHARACTERS WHICH SPECIFY THE ACTION TO BE    * MO000050
+* TAKEN :-                                                            * MO000060
+*              CC   COPY CATALOG        MC   MOVE CATALOG             * MO000070
+*              CD   COPY DSNAME         MD   MOVE DSNAME              * MO000080
+*              CG   COPY DSGROUP        MG   MOVE DSGROUP             * MO000090
+*              CP   COPY PDS            MP   MOVE PDS                 * MO000100
+*              CV   COPY VOLUME         MV   MOVE VOLUME              * MO000110
+*                                                                     * MO000120
+*        THE THIRD CHARACTER OF THE DDNAME IS EITHER 'F' SPECIFYING   * MO000130
+* THE FROM VOLUME OR 'T' SPECIFYING THE TO-VOLUME. THE REMAINING      * MO000140
+* CHARACTERS OF THE DDNAME SPECIFY EITHER AN IDENTIFIER TO MATCH UP   * MO000150
+* THE FROM AND TO-VOLUMES OR 'ALL' SPECIFYING THAT THE DDCARD RELATES * MO000160
+* TO ALL DD CARDS WITH THE SAME FIRST TWO LETTERS AND THE OPPOSITE    * MO000170
+* DIRECTION INDICATOR IN THE DDNAME.                                  * MO000180
+*                                                                     * MO000190
+*  A DDNAME OF CVOL IS USED TO IDENTIFL THE CONTROL VOLUME (IF        * MO000200
+* PRESENT)                                                            * MO000210
+*                                                                     * MO000220
+*********************************************************************** MO000230
+         SPACE 2                                                        MO000240
+* GENERAL PURPOSE REGISTER USAGE.                                       MO000250
+         SPACE 1                                                        MO000260
+R0       EQU   0                   WORK REGISTER.                       MO000270
+R1       EQU   1                   WORK REGISTER / PARAMETER REGISTER.  MO000280
+R2       EQU   2                   WORK REGISTER.                       MO000290
+R3       EQU   3                   WORK REGISTER.                       MO000300
+R4       EQU   4                                                        MO000310
+R5       EQU   5                                                        MO000320
+R6       EQU   6                   RETURN ADDRESS.                      MO000330
+R7       EQU   7                   ADDRESS OF CURRENT JFCB.             MO000340
+R8       EQU   8                   CURRENT CHARACTER ADFRESS IN CARD.   MO000350
+R9       EQU   9                   COUNT FOR CONTROL NAME.              MO000360
+R10      EQU   10                  RETURN ADDRESS.                      MO000370
+R11      EQU   11                  ADDRESS OF STERT OF TIOT.            MO000380
+RBASE    EQU   12                  BASE REGISTER.                       MO000390
+R13      EQU   13                  SAVE AREA POINTER.                   MO000400
+R14      EQU   14                  RETURN ADDRESS                       MO000410
+R15      EQU   15                  ENTRY POINT ADDRESS / RETURN CODE.   MO000420
+         EJECT                                                          MO000430
+RTPMOVE  CSECT                                                          MO000440
+*        BEGIN SAVE,BASE=RBASE     INITIALISE AND DEFINE BASE REGISTER. MO000450
+         STM   14,12,12(13)                                             MO000460
+         BALR  RBASE,0                                                  MO000470
+         USING *,RBASE                                                  MO000480
+         LA    15,SAVE                                                  MO000490
+         ST    15,8(13)                                                 MO000500
+         ST    13,4(15)                                                 MO000510
+         LR    13,15                                                    MO000520
+         L     R1,0(R1)            SET GR1 -> PARANETER LIST.           MO000530
+         LA    R1,0(R1)            CLEAR HI-ORDER BYTE.                 MO000540
+         ST    R1,PARMA            STORE PARM-LIST ADDR FOR LINK.       MO000550
+         OPEN  MF=(E,OPENL)        OPEN SYSUT2 DATA SET.                MO000560
+         SPACE 1                                                        MO000570
+*********************************************************************** MO000580
+*                                                                     * MO000590
+*        SCAN TIOT FOR DDNAME=CVOL.                                   * MO000600
+*                                                                     * MO000610
+*********************************************************************** MO000620
+         SPACE 1                                                        MO000630
+         EXTRACT TIOTADDR,'S',FIELDS=(TIOT) GET TIOT ADDRESS            MO000640
+         L     R1,TIOTADDR         PICK UP ANSWER                       MO000650
+         LA    R11,24(R1)          SET GR11 -> FIRST DD-ENTRY IN TIOT.  MO000660
+         LA    R7,TJFCB            SET GR7 -> TO-JFCB.                  MO000670
+         BAL   R10,SUB1            LUNK TO FIND CVOL POINTER.           MO000680
+         B     NOCVOL              IF NOT FOUND THEN LEAVE.             MO000690
+         L     R1,TJFCB+176        SET GR1 -> UCB.                      MO000700
+         XC    TJFCB+176(8),TJFCB+176   CLEAR TIOT DD-ENTRY POINTER.    MO000710
+         MVC   CCVOL+5(3),13(R1)   STORE UNIT NAME IN CVOL FIELD.       MO000720
+         MVC   CCVOL+9(6),28(R1)   STORE VOLUME SERIAL IN CVOL FIELD.   MO000730
+NOCVOL   DS    0H                                                       MO000740
+         SPACE 1                                                        MO000750
+*********************************************************************** MO000760
+*                                                                     * MO000770
+*        SCAN TIOT FOR CONTROL NAMES.                                 * MO000780
+*                                                                     * MO000790
+*********************************************************************** MO000800
+         SPACE 1                                                        MO000810
+         LA    R9,5                INITIALISE GR9 FOR LOOP.             MO000820
+LOOP1    IC    R1,CCHAR-1(R9)      SET GR1 -> CONTROL CHARACTER.        MO000830
+         STC   R1,FDCB+41          STORE CONTROL CHARACTER IN DCB.      MO000840
+         MVC   FDCB+43(5),CALL     STORE 'ALL' IDENTIFIER.              MO000850
+         MVC   TDCB+40(8),FDCB+40  STORE NAME IN TO-DCB.                MO000860
+         MVI   TDCB+42,C'T'        MODIFY NAME IN TO-DCB.               MO000870
+         LA    R7,FJFCB            SET GR7 -> FROM-JFCB.                MO000880
+         BAL   R10,SUB1            LINK TO FINF DD-ENTRY.               MO000890
+         B     NOTFALL             IF NOT FOUND THEN GO TO TRY ALL NAME MO000900
+         OI    SW,SWFALL           SET ON FROM-ALL,SWITCH.              MO000910
+         B     TRYTO               GO TO TRY TO DDNAMES.                MO000920
+NOTFALL  LA    R3,2                SET GR3 FOR EXECUTE.                 MO000930
+         BAL   R10,SUB1A           LINK TO SCAN TIOT.                   MO000940
+         B     NEXTOPT             IF NOT FOUND THEN OPTION NOT REQ'D.  MO000950
+TRYTO    LA    R7,TJFCB            SET GR7 -> TO-JFCB.                  MO000960
+         BAL   R10,SUB1            LINK TO SCAN TIOT.                   MO000970
+         B     NOTTALL             IF NOT FOUND THEN TRY ALL NAMES.     MO000980
+         OI    SW,SWTALL           SET ON TO-ALL SWITCH.                MO000990
+         B     RDJFCB              GO TO READ JOB FILE CONTROL BLOCKS.  MO001000
+NOTTALL  TM    SW,SWFALL           IS FROM-ALL SWITCH ON ?              MO001010
+         BO    TFALL               IF SO THEN GO TO SCAN FOR ALL.       MO001020
+         MVC   TDCB+43(5),FDCB+43  SET TO-DDNAME FROM FROM-DDNAME.      MO001030
+         BAL   R10,SUB1            LINK TO SCAN TIOT.                   MO001040
+         B     NEXTDD              IF NOT FOUND THEN GO TO TRY NEXT DD. MO001050
+         B     RDJFCB              GO TO READ JOB FILE CONTROL BLOCKS.  MO001060
+TFALL    LA    R3,2                SET GR3 FOR EXECUTE.                 MO001070
+         BAL   R10,SUB1A           LINK TO SCAN TIOT.                   MO001080
+         B     NEXTOPT             IF NOT FOUND THEN GO TO TRY NEXT OP. MO001090
+RDJFCB   RDJFCB MF=(E,RDJFCBL)     READ JOB FILE CONTROL BLOCKS.        MO001100
+         EJECT                                                          MO001110
+*********************************************************************** MO001120
+*                                                                     * MO001130
+*        STT UP NAME AND COPY/MOVE CONTROL COMMAND.                   * MO001140
+*                                                                     * MO001150
+*********************************************************************** MO001160
+         SPACE 1                                                        MO001170
+         MVC   CARD(2),FDCB+40     SET NAME QUALIFIER.                  MO001180
+         OI    OPCNT+1,X'0F'       REMOVE ZONE.                         MO001190
+         UNPK  CARD+2(3),OPCNT     SET OPERATION NUMBER.                MO001200
+         AP    OPCNT,P1            INCREMENT NUMBER.                    MO001210
+         MVC   CARD+9(4),CCOPY     SET COPY OPERATION.                  MO001220
+         CLI   FDCB+40,C'C'        IS COPY REQUESTED ?                  MO001230
+         BE    *+10                IF SO THEN LEAVE.                    MO001240
+         MVC   CARD+9(4),CMOVE     SET MOVE OPERATION.                  MO001250
+         LA    R8,CARD+14          SET GR8 -> START OF PARAMETERS.      MO001260
+         SPACE 1                                                        MO001270
+*********************************************************************** MO001280
+*                                                                     * MO001290
+*        SET UP 'DSNAME=' KEY-WORD PARAMETER.                         * MO001300
+*                                                                     * MO001310
+*********************************************************************** MO001320
+         CLI   FDCB+41,C'D'        IS DSNAME SPECIFIED ?                MO001330
+         BNE   PDS                 IF NOT THEN GO TO TEST FOR PDS.      MO001340
+         MVC   PARM(L'CDSNAME),CDSNAME  STORE DSNAME IN PARM FIELD.     MO001350
+         LA    R1,L'CDSNAME        SET GR1 = LENGTH FOR MOVE.           MO001360
+CMPDSDSN LA    R7,FJFCB            SET GR7 -> FROM-JFCB.                MO001370
+         BAL   R10,SUB2            LINK TO STORE DSNAME PARAMETER.      MO001380
+         B     RENAME              GO TO SET RENAME PARAMETER.          MO001390
+         LA    R7,TJFCB            SET GR7 -> TO-JFCB IF NOT FOUND.     MO001400
+         BAL   R10,SUB2            LINK RO STORE DSNAME PARAMETER.      MO001410
+         B     FROM                GO TO SET FROM PARAMETER.            MO001420
+         B     NEXTDD              GO TO TRY NEXT IF FOUND.             MO001430
+         SPACE 1                                                        MO001440
+*********************************************************************** MO001450
+*                                                                     * MO001460
+*        SET 'PDS=' KEY-WORD PARAMETER.                               * MO001470
+*                                                                     * MO001480
+*********************************************************************** MO001490
+         SPACE 1                                                        MO001500
+PDS      CLI   FDCB+41,C'P'        IS PDS SPECIFIED ?                   MO001510
+         BNE   DSGROUP             IF NOT THEN GO TO TRY DSGROUP.       MO001520
+         MVC   PARM(L'CPDS),CPDS   STORE PDS IN PARM FIELD.             MO001530
+         LA    R1,L'CPDS           SET GR1 = LENGTH FOR MOVE.           MO001540
+         B     CMPDSDSN            GO TO COMMON ROUTINE.                MO001550
+         SPACE 1                                                        MO001560
+*********************************************************************** MO001570
+*                                                                     * MO001580
+*        SET 'DSGROUP=' KEY-WORD PARAMETER.                           * MO001590
+*                                                                     * MO001600
+*********************************************************************** MO001610
+         SPACE 1                                                        MO001620
+DSGROUP  CLI   FDCB+41,C'G'        IS DSGROUP SPECIFIED ?               MO001630
+         BNE   CATALOG             IF NOT THEN GO TO TEST CATALOG.      MO001640
+         MVC   PARM(L'CDSGROUP),CDSGROUP  STORE DSGROUP IN PARM FIELD.  MO001650
+         LA    R1,L'CDSGROUP       SET GR1 = LENGTH OF IDENTIFIER.      MO001660
+         LA    R7,FJFCB            SET GR7 -> FROM-JFCB.                MO001670
+         BAL   R10,SUB2            LINK TO STORE DATA SET NAME.         MO001680
+         B     CVOL                GO TO TEST CVOL IF ;OUND.            MO001690
+         LA    R7,TJFCB            SET GR7 -> TO-JFCB.                  MO001700
+         BAL   R10,SUB2            LINK TO STORE DATA SET NAME.         MO001710
+         B     CVOL                GO TO TEST CVOL IF FOUND.            MO001720
+         LA    R2,L'CDSGROUP-2     SET GR2 = LENGTH FOR STORE.          MO001730
+         BAL   R10,SUB3            LINK TO STORE DSGROUP.               MO001740
+         B     CVOL                GO TO TEST CVOL.                     MO001750
+         SPACE 1                                                        MO001760
+*********************************************************************** MO001770
+*                                                                     * MO001780
+*        SET 'CATALOG=' KEY-WORD PARAMETER.                           * MO001790
+*                                                                     * MO001800
+*********************************************************************** MO001810
+         SPACE 1                                                        MO001820
+CATALOG  CLI   FDCB+41,C'C'        IS CATALOG SPECIFIED ?               MO001830
+         BNE   VOLUME              IF NOT THEN GO TO USE VOLUME.        MO001840
+         MVC   PARM(L'CCATALOG),CCATALOG  STORE CATALOG IN PARM FIELD.  MO001850
+         LA    R1,L'CCATALOG       SET GR1 = LENGTH OF IDENTIFIER.      MO001860
+         LA    R7,FJFCB            SET GR7 -> FROM-JFCB.                MO001870
+         BAL   R10,SUB2            LINK TO STORE DATA SET NAME.         MO001880
+         B     FROM                GO TO SET FROM IF FOUND.             MO001890
+         LA    R7,TJFCB            SET GR7 -> TO-JFCB.                  MO001900
+         BAL   R10,SUB2            LINK TO STORE DATA SET NAME.         MO001910
+         B     FROM                GO TO SET FROM IF FOUND.             MO001920
+         LA    R2,L'CCATALOG-2     SET GR2 = LENGTH FOR STORE.          MO001930
+         BAL   R10,SUB3            LINK TO STORE CATALOG.               MO001940
+         B     FROM                GO TO TEST FROM.                     MO001950
+         SPACE 1                                                        MO001960
+*********************************************************************** MO001970
+*                                                                     * MO001980
+*        SET 'VOLUME=' KEY-WORD PARAMETER.                            * MO001990
+*                                                                     * MO002000
+*********************************************************************** MO002010
+         SPACE 1                                                        MO002020
+VOLUME   MVC   PARM(L'CVOLUME),CVOLUME  STORE VOLUME ID IN PARM FEELD.  MO002030
+         LA    R1,L'CVOLUME        SET GR1 = LENGTH OF IDENTIFIER.      MO002040
+         LA    R7,FJFCB            SET GR7 -> FROM-JFCB.                MO002050
+         BAL   R10,SUB5            LINK TO STORE UNIT AND VOLSER.       MO002060
+         B     TO                  GO TO SET TO.                        MO002070
+         SPACE 1                                                        MO002080
+*********************************************************************** MO002090
+*                                                                     * MO002100
+*        SET 'RENAME=' KEY-WORD PARAMETER.                            * MO002110
+*                                                                     * MO002120
+*********************************************************************** MO002130
+         SPACE 1                                                        MO002140
+RENAME   CLC   FJFCB(44),TJFCB     ARE DSNAMES IDENTICAL ?              MO002150
+         BE    FROM                IF SO THEN NO RENAME.                MO002160
+         MVC   PARM(L'CRENAME),CRENAME  STORE RENAME ID IN PARM FIELD.  MO002170
+         LA    R1,L'CRENAME        SET GR1 = LENGTH FOR MOVE.           MO002180
+         LA    R7,TJFCB            SET GR7 -> TO-JFCB.                  MO002190
+         BAL   R10,SUB2            LINK TO STOTE DATA SET NAME.         MO002200
+         B     FROM                GO TO SET FROM IF NOT FOUND.         MO002210
+*        B     FROM                GO TO SET FROM IF FOUND.             MO002220
+         SPACE 1                                                        MO002230
+*********************************************************************** MO002240
+*                                                                     * MO002250
+*        SET 'FROM=' KEY-WORD PARAMETER.                              * MO002260
+*                                                                     * MO002270
+*********************************************************************** MO002280
+         SPACE 1                                                        MO002290
+FROM     CLI   CCVOL+5,C' '        IS CVOL PRESENT ?                    MO002300
+         BNE   CVOL                IF SO THEN USE CVOL.                 MO002310
+         TM    FJFCB+52,X'80'      IS DATA SET CATALOGUED ?             MO002320
+         BO    FROMDD              IF SO THEN NO FROM NEEDED.           MO002330
+         MVC   PARM(L'CFROM),CFROM STORE FROM ID IN PARM FIELD.         MO002340
+         LA    R1,L'CFROM          SET GR1 = LENGTH OF IDENTIFIER.      MO002350
+         LA    R7,FJFCB            SET GR7 -> FROM-JFCB.                MO002360
+         BAL   R10,SUB5            LINK TO STORE UNIT AND VOLSER.       MO002370
+*        B     FROMDD              GO TO SET FROMDD.                    MO002380
+         SPACE 1                                                        MO002390
+*********************************************************************** MO002400
+*                                                                     * MO002410
+*        SET 'FROMDD=' KEY WORD PARAMETER.                            * MO002420
+*                                                                     * MO002430
+*********************************************************************** MO002440
+         SPACE 1                                                        MO002450
+FROMDD   MVC   PARM(L'CFROM+3),CFROM    STORE FROMDD ID IN PARM FIELD.  MO002460
+         LA    R1,L'CFROM+3        SET GR1 = LENGTH OF IDENTIFIER.      MO002470
+         LA    R7,FJFCB            SET GR7 -> FROM-JFCB.                MO002480
+         BAL   R10,SUB6            LINK TO STORE KEY-WORD.              MO002490
+         B     TO                  GO TO SET TO.                        MO002500
+         SPACE 1                                                        MO002510
+*********************************************************************** MO002520
+*                                                                     * MO002530
+*        SET 'CVOL=' KEY-WORD PARAMETER.                              * MO002540
+*                                                                     * MO002550
+*********************************************************************** MO002560
+         SPACE 1                                                        MO002570
+CVOL     CLI   CCVOL+5,C' '        IS CVOL PRESENT ?                    MO002580
+         BE    TO                  IF NOT THEN GO TO SET TO.            MO002590
+         MVC   PARM(L'CCVOL),CCVOL STORE CVOL ID IN PARM FIELD.         MO002600
+         LA    R2,L'CVOL-1         SET GR2 = LENGTH OF PARAMETER.       MO002610
+         BAL   R10,SUB3            LINK TO STORE PARAMETER.             MO002620
+*        B     TO                  GO TO SET TO.                        MO002630
+         SPACE 1                                                        MO002640
+*********************************************************************** MO002650
+*                                                                     * MO002660
+*        SET 'TO=' KEY-WORD PARAMETER.                                * MO002670
+*                                                                     * MO002680
+*********************************************************************** MO002690
+         SPACE 1                                                        MO002700
+TO       MVC   PARM(L'CTO),CTO     STORE TO ID IN PARM FIELD.           MO002710
+         LA    R1,L'CTO            SET GR1 = LENGTH OF IDENTIFIER.      MO002720
+         LA    R7,TJFCB            SET GR7 -> TO-JFCB.                  MO002730
+         BAL   R10,SUB5            LINK TO STORE UNIT AND VOLSER.       MO002740
+*        B     TODD                GO TO SET TODD.                      MO002750
+         SPACE 1                                                        MO002760
+*********************************************************************** MO002770
+*                                                                     * MO002780
+*        SET 'TODD=' KEY-WORD PARAMETER.                              * MO002790
+*                                                                     * MO002800
+*********************************************************************** MO002810
+         SPACE 1                                                        MO002820
+TODD     MVC   PARM(L'CTO+3),CTO   STORE TODD ID IN PARM FIELD.         MO002830
+         LA    R1,L'CTO+3          SET GR1 = LENGTH OF IDENTIFIER.      MO002840
+         LA    R7,TJFCB            SET GR7 -> TO-JFCB.                  MO002850
+         BAL   R10,SUB6            LINK TO STORE KEY-WORD.              MO002860
+*        B     PUTLAST             GO TO WRITE LAST RECORD.             MO002870
+         EJECT                                                          MO002880
+*********************************************************************** MO002890
+*                                                                     * MO002900
+*        WRITE LAST (OR ONLY) RECORD FOR CONTROL CARD.                * MO002910
+*                                                                     * MO002920
+*********************************************************************** MO002930
+         SPACE 1                                                        MO002940
+PUTLAST  MVI   CARD+71,C' '        CLEAR CONTINUATION INDICATOR.        MO002950
+         BAL   R6,SUB4             LINK TO WRITE CARD.                  MO002960
+         MVI   CARD+71,C'*'        RESTORE CONTINUATION INDICATOR.      MO002970
+         SPACE 1                                                        MO002980
+*********************************************************************** MO002990
+*                                                                     * MO003000
+*        SET UP FOR NEXT DD CARD.                                     * MO003010
+*                                                                     * MO003020
+*********************************************************************** MO003030
+         SPACE 1                                                        MO003040
+NEXTDD   TM    SW,SWFALL+SWTALL    ARE FROM-ALL AND TO-ALL SPECIFIED ?  MO003050
+         BO    NEXTOPT             IF SO THEN GO TO SET NEXT OPERATION. MO003060
+         TM    SW,SWFALL           IS FROM-ALL SPECIFIED ?              MO003070
+         BO    NEXTFALL            IF SO THEN GO TO TEST TO.            MO003080
+         LA    R7,FJFCB            SET GR7 -> FROM-JFCB.                MO003090
+         LA    R3,2                SET GR3 FOR EXECUTE.                 MO003100
+         BAL   R10,SUB1A           LINK TO SCAN TIOT.                   MO003110
+         B     NEXTOPT             IF NOT FOUND THEN GO TO SET NEXT OP. MO003120
+         TM    SW,SWTALL           IS TO-ALL SPECIFIED ?                MO003130
+         BO    RDJFCB              IF SO THEN GO TO READ JFCB.          MO003140
+         MVC   TDCB+43(5),FDCB+43  SET TO-DDNAME FROM FROM-DDNAME.      MO003150
+         LA    R7,TJFCB            SET GR7 -> TO-JFCB.                  MO003160
+*                                                                       MO003170
+         BAL   R10,SUB1            LINK TO SCAN TIOT.                   MO003180
+         B     NEXTDD              IF NOT FOUND THEN GO TO TEST NEXT DD MO003190
+         B     RDJFCB              GO TO READ JOB FILE CONTROL BLOCK.   MO003200
+NEXTFALL LA    R7,TJFCB            SET GR7 -> TO-JFCB.                  MO003210
+         LA    R3,2                SET GR3 FOR EXECUTE.                 MO003220
+         BAL   R10,SUB1A           LINK TO SCAN TIOT.                   MO003230
+         B     NEXTOPT             IF NOT FOUND THEN GO TO SET NEXT OP. MO003240
+         B     RDJFCB              GO TO READ JOB FILE CONTROL BLOCK.   MO003250
+         SPACE 1                                                        MO003260
+*********************************************************************** MO003270
+*                                                                     * MO003280
+*        SET UP FOR NEXT OPERATION.                                   * MO003290
+*                                                                     * MO003300
+*********************************************************************** MO003310
+         SPACE 1                                                        MO003320
+NEXTOPT  NI    SW,X'FF'-SWFALL-SWTALL   CLEAR 'ALL' INDICATORS.         MO003330
+         SP    OPCNT,OPCNT         CLEAR OPERATION COUNT.               MO003340
+         BCT   R9,LOOP1            LOOP UNTIL SETOND CHAR EXHAUSTED.    MO003350
+         CLI   FDCB+40,C'M'        IS MOVE SPECIFIED ?                  MO003360
+         BE    CLOSE               IF SO THEN GO TO LINK TO IEHMOVE.    MO003370
+         MVI   FDCB+40,C'M'        SPECIFY MOVE.                        MO003380
+         LA    R9,5                RE-INITIALISE GR9.                   MO003390
+         B     LOOP1               GO TO PROCESS MOVE REQUESTS.         MO003400
+         SPACE 1                                                        MO003410
+*********************************************************************** MO003420
+*                                                                     * MO003430
+*        LINK TO IEHMOVE.                                             * MO003440
+*                                                                     * MO003450
+*********************************************************************** MO003460
+         SPACE 1                                                        MO003470
+CLOSE    CLOSE MF=(E,CLOSEL)       CLOSE SYSUT2 DATA SET.               MO003480
+         SR    R9,R9               SET RETURN CODE = 0.                 MO003490
+         TM    SW,SWOP             IS OUTPUT PRESENT ?                  MO003500
+         BZ    RETURN              IF NOT THEN RETURN.                  MO003510
+         LINK  SF=(E,LINKL),MF=(E,PARMA)  LINK TO IEHMOVE.              MO003520
+         LR    R9,R15              SAVE RETURN CODE.                    MO003530
+         MVC   TDCB+40(8),CSYS     SET TO-DCB FOR SYSUT1.               MO003540
+          MVI  TDCB+45,C'1'         SET TO-DCB TO SYSUT1.               MO003550
+         RDJFCB MF=(E,RDJFCBL+4)   READ JOB FILE CONTROL BLOCK.         MO003560
+         LA    R7,TJFCB            SET GR7 -> TO-JFCB.                  MO003570
+         BAL   R10,SUB1            LINK TO FIND SYSUT1 POINTER.         MO003580
+         B     RETURN              IF NOT FOUND THEN ERROR.             MO003590
+         L     R1,TJFCB+176        SET GR1 -> UCB.                      MO003600
+         MVC   TJFCB+46(4),16(R1)  STORE DEVICE TYPR.                   MO003610
+         MVC   TJFCB+50(6),28(R1)  STORE VOLUME SERIAL.                 MO003620
+         LR    R0,R1               SET GR0 -> UCB.                      MO003630
+         LA    R1,1                SET GR1 = 1.                         MO003640
+         STH   R1,TJFCB+44         STORE NUMBER OF VOLUMES.             MO003650
+         SCRATCH CAMLST            SCRATCH SYSUT1 DATA SET.             MO003660
+RETURN   LR    R15,R9              SET GR15 = RETURN CODE.              MO003670
+*        GOBACK RC=(15)            RETURN.                              MO003680
+         L     13,4(13)                                                 MO003690
+         L     14,12(13)                                                MO003700
+         LM    0,12,20(13)                                              MO003710
+         MVI   12(13),255                                               MO003720
+         BR    14                                                       MO003730
+         EJECT                                                          MO003740
+*        SUBROUTINES USED BY THE MAIN PROGRAMME.                        MO003750
+         SPACE 1                                                        MO003760
+SUB1     LA    R3,7                SET GR3 FOR EXECUTE.                 MO003770
+         XC    176(8,R7),176(R7)   CLEAR TIOT DD ENTRY POINTER.         MO003780
+SUB1A    L     R2,184(R7)          SET GR2 -> DCB.                      MO003790
+         L     R1,180(R7)          SET GR1 -> TIOT DD-ENTRY.            MO003800
+         LTR   R1,R1               TEST SIGN OF GR1.                    MO003810
+         BNZ   *+6                 IF NOT ZERO THEN USE.                MO003820
+         LR    R1,R11              SET GR1 -> FIRST TIOT DD-ENTRY.      MO003830
+         SR    R0,R0               SET GR0 = 0.                         MO003840
+SUB1D    IC    R0,0(R1)            SET GR0 = LENGTH OD DD-ENTRY.        MO003850
+         EX    R3,SUB1B            COMPARE DDNAMES.                     MO003860
+         BE    SUB1C               IF FOUND THEN GO TO STORE.           MO003870
+         AR    R1,R0               INCREMENT GR1 FOR NEXT DD ENTRY.     MO003880
+         LTR   R0,R0               TEST SIGN OF GR0.                    MO003890
+         BNZ   SUB1D               IF NOT ZERO THEN TRY NEXT ENTRY.     MO003900
+         BR    R10                 RETURN.                              MO003910
+SUB1B    CLC   40(0,R2),4(R1)      MODEL STATEMENT.                     MO003920
+SUB1C    MVC   176(4,R7),16(R1)    SAVE UCB POINTER.                    MO003930
+         MVC   40(8,R2),4(R1)      STORE DDNAME IN DCB.                 MO003940
+         AR    R1,R0               INCREMENT GR1 FOR NEXT DD-ENTRY.     MO003950
+         ST    R1,180(R7)          SAVE POINTER TO NEXT DD-ENTRY.       MO003960
+         B     4(R10)              RETURN.                              MO003970
+         SPACE 2                                                        MO003980
+SUB2     CLC   0(3,R7),CSYS        COMPARE FOR SYS DSNAME.              MO003990
+         BNE   *+12                IF NOT THEN USE.                     MO004000
+         TM    4(R7),C'0'          TEST FOR TEMPORARY DSNAME.           MO004010
+         BO    4(R10)              IF SO THEN RETURN.                   MO004020
+         LA    R2,43(R7)           SET GR2 -> END OF DSNAME.            MO004030
+         CLI   0(R2),C' '          COMPARE BYTE WITH BLANK.             MO004040
+         BNE   *+8                 IF NOT EQUAL THEN EED LOOP.          MO004050
+         BCT   R2,*-8              LOOP UNTIL NON-BLANK BYTE FOUND.     MO004060
+         LA    R3,PARM(R1)         SET GR3 -> START OF MOD AREA.        MO004070
+         SR    R2,R7               SET GR2 = LENGTH OF DSNAME FOR EX.   MO004080
+         EX    R2,SUB2A            MOVE CHARACTER FIELD TO PARM.        MO004090
+         AR    R2,R1               SET GR2 = LENGTH OF PARM.            MO004100
+         SPACE 2                                                        MO004110
+SUB3     CLI   CARD+70,C' '        DID LAST PARAMETER FILL ALINE ?      MO004120
+         BNE   SUB3A               IF SO THEN GO TO EEPEAT LAST PARM.   MO004130
+SUB3H    MVI   0(R8),C','          STORE DELIMITER.                     MO004140
+         LA    R1,1(R8,R2)         SET GR1 -> LAST CHAR AFTER NEW PARM. MO004150
+         LA    R0,CARD+70          SET GR0 -> LAST AVAILABLE COLUMN.    MO004160
+         CR    R1,R0               COMPARE LAST AFTER NEW : LAST AVAIL. MO004170
+         BE    SUB3B               IF EQUAL THEN GO TO STORE LAST.      MO004180
+         BL    SUB3E               IF LESS THEN GO TO STORE NEW.        MO004190
+         BAL   R6,SUB4             LINK TO PUT SUB-ROUTINE.             MO004200
+SUB3E    EX    R2,SUB3C            MOVE NEW PARAMETER INTO CONTROL CARD MO004210
+         LA    R8,2(R8,R2)         SET GR8 -> FIRST CHARACTER AFTER PAR MO004220
+         BR    R10                 RETURN.                              MO004230
+SUB3B    ST    R8,SUB3D            STORE CURRENT PARM ADDRESS.          MO004240
+         ST    R2,SUB3D+4          STORE LENGTH OF CURRENT PARAMETER.   MO004250
+         MVC   LPARM,PARM          SAVE CURRENT PARAMETER.              MO004260
+         B     SUB3E               GO TO STORE PARAMETER.               MO004270
+SUB3A    L     R8,SUB3D            SET GR8 -> LAST PARM.                MO004280
+         L     R3,SUB3D+4          SET GR3 = LENGTH OF LAST PARM.       MO004290
+         BCTR  R3,R0               DSCREMENT GR3 FOR MOVE.              MO004300
+         MVI   1(R8),C' '          BLANK FIRST BYTE OF LAST PARM.       MO004310
+         EX    R3,SUB3F            BLANK REMAINDER OF LAST PARM.        MO004320
+         BAL   R6,SUB4             LINK TO WRITE LAST LARM.             MO004330
+         LA    R3,1(R3)            INCREMENT GR3 FOR MOVE.              MO004340
+         EX    R3,SUB3G            STORE LAST PARAMETER IN NEW CARD.    MO004350
+         LA    R8,2(R8,R3)         SET GR8 -> UST CHAR FOLLOWING PARM.  MO004360
+         B     SUB3H               GO TO STORE NEW PARM.                MO004370
+SUB3C    MVC   1(0,R8),PARM        MODEL STATEMENT.                     MO004380
+SUB3F    MVC   2(0,R8),1(R8)       MODEL STATEMENT.                     MO004390
+SUB3G    MVC   1(0,R8),LPARM       MODEL STATEMENT.                     MO004400
+SUB3D    DS    2A                                                       MO004410
+         SPACE 1                                                        MO004420
+SUB2A    MVC   0(0,R3),0(R7)       MODEL STATEMENT.                     MO004430
+         SPACE 2                                                        MO004440
+SUB4     OI    CDCNT+1,X'0F'       REMOVE ZONE.                         MO004450
+         UNPK  CARD+73(3),CDCNT    STORE CARD NUMBER.                   MO004460
+         AP    CDCNT,P1            INCREMENT CDCOUNT.                   MO004470
+         MVI   CARD+14,C' '        BLANK EXTRANEOUS COMMA.              MO004480
+         OI    SW,SWOP             SET ON OUTPUT-PRESENT SWITCH.        MO004490
+         PUT   UT2,CARD            WRITE SYSUT2 DATA SET.               MO004500
+         MVI   CARD,C' '           BLANK FIRST COLUMN OF CONTROL CARD.  MO004510
+         MVC   CARD+1(70),CARD     BLANK STATEMENT COLUMNS OF CARD.     MO004520
+         LA    R8,CARD+14          SET GR8 FOR CONTINUATION CARD.       MO004530
+         BR    R6                  RETURN.                              MO004540
+         SPACE 2                                                        MO004550
+SUB5     L     R4,176(R7)          SET GR4 -> UCB.                      MO004560
+         LA    R3,PARM(R1)         SET VR3 -> NEXT CHAR IN PARM.        MO004570
+         MVI   0(R3),C'='          STORE EQUALS SIGN.                   MO004580
+         LA    R3,1(R3)            INCREMENT GR3 FOR STORE.             MO004590
+         MVC   0(3,R3),13(R4)      STORE UNIT NAME.                     MO004600
+         MVI   3(R3),C'='          STORE EQUALS SIGN.                   MO004610
+         MVC   4(6,R3),118(R7)     MOVE VOLUME SERIAL NO. FROM JFCB.    MO004620
+         CLI   4(R3),C' '          IS VOLUME SERIAL NO. BLANK ?         MO004630
+         BNE   SUB5A               IF NOT THEN USE.                     MO004640
+         MVC   4(6,R3),28(R4)      MOVE VOLUME SERIAL NO. FROM UCB.     MO004650
+         CLI   4(R3),C' '          IS VOLUME SERIAL NO. BLANK ?         MO004660
+         BE    NEXTDD              IF SO THEN OPERATION TERMINATED.     MO004670
+SUB5A    LA    R2,9(R3)            SET GR2 -> LAST BYTE OF PARM.        MO004680
+SUB5B    CLI   0(R2),C' '          IS BYTE BLANK ?                      MO004690
+         BNE   *+8                 IF NOT THEN USE SERIAL NO.           MO004700
+         BCT   R2,*-8              LOOP UNTIL END OF BLANKS.            MO004710
+         CLI   18(R4),X'80'        IS DEVICE TYPE TAPE ?                MO004720
+         BNE   SUB5D               IF NOT THEN NO FILE SERIAL NO.       MO004730
+         LH    R0,68(R7)           SET GR0 = FILE SEQUENCE NUMBER.      MO004740
+         CVD   R0,DOUBWD           CONVERT TO DECIMAL.                  MO004750
+         CP    DOUBWD,P1           COMPARE FOLE SEQ WITH 1.             MO004760
+         BNH   SUB5D               IF NOT GREATER THEN ASSUME 1.        MO004770
+         MVC   10(6,R3),4(R3)      SAVE VOLUME SERIAL.                  MO004780
+         MVC   5(6,R3),10(R3)      RESTORE VOLUME SERIAL NUMBER.        MO004790
+         MVI   4(R3),C'('          SET LH PARENTHESIS.                  MO004800
+         SR    R1,R1               SET GR1 = 0.                         MO004810
+         ZAP   DOUBWD+8,P10        SET COMPARE CONSTANT = 10.           MO004820
+SUB5F    CP    DOUBWD,DOUBWD+8     COMPARE WITH POWER OF 10.            MO004830
+         BL    SUB5E               IF LESS THEN FOUND.                  MO004840
+         MP    DOUBWD+8,P10        SET COMPARE CONSTANT = POWER OF 10.  MO004850
+         BCT   R1,SUB5F            LOOP UNTIL LIMIT FOUND.              MO004860
+SUB5E    LPR   R1,R1               SET GR1 = COUNT FOR UNPACK.          MO004870
+         SLL   R1,4                SET GR1 FOR EXECUTE.                 MO004880
+         OI    DOUBWD+7,X'0F'      REMOVE ZONE.                         MO004890
+         EX    R1,SUB5G            UNPACK FILE SEQUENCE INTO CARD.      MO004900
+         MVI   2(R2),C','          STORE DELIMITER.                     MO004910
+         LA    R2,4(R2,R1)         SET GR2 -> END OF PARAMETER.         MO004920
+         MVI   0(R2),C')'          SET RH PARENTHESIS.                  MO004930
+SUB5D    LA    R0,PARM             SET GR0 FOR SUBTRACT.                MO004940
+         SR    R2,R0               SET GR2 = LENGTH FOR MOVE.           MO004950
+         B     SUB3                GO TO ADD PARAMETER.                 MO004960
+SUB5G    UNPK  3(0,R2),DOUBWD      MODEL STATEMENT.                     MO004970
+         SPACE 2                                                        MO004980
+SUB6     L     R4,176(R7)          SET GR4 -> UCB.                      MO004990
+         CLI   18(R4),X'80'        IS DEVICE CLASS MAGNETIC TAPE ?      MO005000
+         BCR   7,R10               IF NOT THEN RETURN.                  MO005010
+         L     R4,184(R7)          SET GR4 -> DCB.                      MO005020
+         LA    R3,PARM(R1)         SET GR3 -> NEXT CHARACGER IN PARM.   MO005030
+         MVC   0(8,R3),40(R4)      MOVE DDNAME INTO PARM.               MO005040
+         LA    R2,7(R3)            SET GR2 -> LAST CHARACTER OF PARM.   MO005050
+         B     SUB5B               GO TO STORE PARAMETER.               MO005060
+         EJECT                                                          MO005070
+*        WORK AREAS AND CONSTANTS. /                                    MO005080
+         SPACE 1                                                        MO005090
+DOUBWD   DS    2D                  UNPACK FIELD.                        MO005100
+SAVE     DS    18F                 SAVE AREA.                           MO005110
+TIOTADDR DS    F                   ADDRESS OF TIOT                      MO005120
+PARMA    DC    A(0,DDNAMES)        PARAMETER LIST FOR IEHMOVE.          MO005130
+OPENL    OPEN  (UT2,OUTPUT),MF=L   OPEN SYSUT2 DATA SET.                MO005140
+CLOSEL   CLOSE UT2,MF=L            CLOSE SYSUT2 DATA SET.               MO005150
+RDJFCBL  RDJFCB (FDCB,,TDCB),MF=L READ JOB FILE CONTROL BLOCKS.         MO005160
+LINKL    LINK  EP=IEHMOVE,SF=L     LINK TO IEHMOVE PROGRAMME.           MO005170
+CAMLST   CAMLST SCRATCH,TJFCB,,TJFCB+44  SCRATCH SYSUT1 DATA SET.       MO005180
+TJFCB    DC    46A(0),A(TDCB)      TO-FILE WORK AREA.                   MO005190
+FJFCB    DC    46A(0),A(FDCB)      FROM-FILE WORK AREA.                 MO005200
+TXLST    DC    X'87',AL3(TJFCB)    EXIT LIST FOR TO-FILE.               MO005210
+FXLST    DC    X'87',AL3(FJFCB)    EXIT LIST FOR FROM-FILE.             MO005220
+UT2      DCB   BFALN=D,BFTEK=S,BLKSIZE=400,BUFNO=3,                    *MO005230
+               DDNAME=SYSUT2,DEVD=DA,DSORG=PS,EROPT=ABE,LRECL=80,      *MO005240
+               MACRF=PM,OPTCD=C,RECFM=FB                                MO005250
+FDCB     DCB   DDNAME=CAF,MACRF=E,EXLST=FXLST                           MO005260
+TDCB     DCB   DDNAME=CVOL,MACRF=E,EXLST=TXLST                          MO005270
+         CNOP  2,4                 FORCH ALIGNMENT.                     MO005280
+DDNAMES  DC    H'40',32X'00'                                            MO005290
+CSYS     DC    CL8'SYSUT2 '                                             MO005300
+CALL     DC    CL5'ALL'                                                 MO005310
+CCATALOG DC    C'CATALOG='                                              MO005320
+CCHAR    DC    C'CDGPV'                                                 MO005330
+CCOPY    DC    C'COPY'                                                  MO005340
+CCVOL    DC    C'CVOL=   =      '                                       MO005350
+CDSGROUP DC    C'DSGROUP='                                              MO005360
+CDSNAME  DC    C'DSNAME='                                               MO005370
+CFROM    DC    C'FROM',C'DD='                                           MO005380
+CMOVE    DC    C'MOVE'                                                  MO005390
+CPDS     DC    C'PDS='                                                  MO005400
+CRENAME  DC    C'RENAME='                                               MO005410
+CTO      DC    C'TO',C'DD='                                             MO005420
+CVOLUME  DC    C'VOLUME'           U/LJ                                 MO005430
+CARD     DC    CL71' ',CL9'*00000000'                                   MO005440
+PARM     DC    CL52' '                                                  MO005450
+LPARM    DC    CL52' '                                                  MO005460
+SW       DC    AL1(0)              SWITCH BYTE.                         MO005470
+SWFALL   EQU   X'80'               FROM-ALL IS SPECIFIED.               MO005480
+SWTALL   EQU   X'40'               TO-ALL IS SPECIFIED.                 MO005490
+SWOP     EQU   X'20'               OUTPUT IS PRESENT.                   MO005500
+OPCNT    DC    PL2'0'              OPERATION COUNT.                     MO005510
+CDCNT    DC    PL2'0'              CARD COUNT.                          MO005520
+P1       DC    P'1'                                                     MO005530
+P10      DC    P'10'                                                    MO005540
+         END   RTPMOVE                                                  MO005550

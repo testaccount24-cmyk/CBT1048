@@ -1,0 +1,262 @@
+//IEFU29 JOB (5806,5),'** FOR J. NOLS **',CLASS=N
+//LIBRA EXEC LIBRARYN,FILE=MVS
+//SYSIN DD *
+-OPT
+-SEL IEFU29,FUTL,EXEC,LIST,VERS=0829
+-HST JN - ADD 'LONG=YES' TO 'WTOR' WAIT MACRO.
+-REP ALL
+IEFU29   TITLE 'SMF SWITCH EXIT ROUTINE'
+***********************************************************************
+*                                                                     *
+*             MODULE NAME = IEFU29                                    *
+*                                                                     *
+*             COPYRIGHT = NONE                                        *
+*                                                                     *
+*             FUNCTION =                                              *
+*                INFORMS OPERATOR THAT SMF DATA SET IS FULL, AND      *
+*                OPTIONALLY GENERATES THE JOB TO CLEAR IT.            *
+*                                                                     *
+*                 RESTRICTIONS = NONE                                 *
+*                                                                     *
+*                PATCH LABEL = PATCH (UNUSED AND INTIALIZED TO        *
+*                   BINARY ZEROES)                                    *
+*                                                                     *
+*             MODULE TYPE = PROCEDURE                                 *
+*                                                                     *
+*                PROCESSOR = ASM                                      *
+*                                                                     *
+*                MODULE SIZE = 1200 BYTES                             *
+*                                                                     *
+*                ATTRIBUTES = KEY 0, REENTRANT,                       *
+*                   SUPERVISOR STATE, ENABLED, NO LOCKS HELD          *
+*                                                                     *
+*             ENTRY POINTS = IEFU29 (ONLY ENTRY POINT)                *
+*                                                                     *
+*                LINKAGE =                                            *
+*                                                                     *
+*                                                                     *
+*             INPUT = REG1 POINTS TO FULLWORD ADDRESS OF DATASET      *
+*                     NAME (SYS1.MANX/SYS1.MANY) TO BE DUMPED .       *
+*                                                                     *
+*             OUTPUT = NONE                                           *
+*                                                                     *
+*             EXIT - NORMAL = AT PROGRAM END VIA BRANCH REGISTER 14   *
+*                                                                     *
+*                OUTPUT = NONE                                        *
+*                                                                     *
+*                RETURN CODE = ZERO                                   *
+*                                                                     *
+*             EXIT - ERROR = NONE                                     *
+*                                                                     *
+*                OUTPUT = NONE                                        *
+*                                                                     *
+*                RETURN CODE = ZERO                                   *
+*                                                                     *
+*             EXTERNAL REFERENCES =                                   *
+*                                                                     *
+*                ROUTINES = NONE                                      *
+*                                                                     *
+*                DATA AREAS = NONE                                    *
+*                                                                     *
+*                CONTROL BLOCKS = NONE                                *
+*                                                                     *
+*             TABLES = NONE                                           *
+*                                                                     *
+*             MACROS = WTO, WTOR, GETMAIN, FREEMAIN                   *
+*                                                                     *
+*             CHANGE ACTIVITY = NONE                                  *
+*                                                                     *
+*             ABEND CODES = NONE                                      *
+*                                                                     *
+***********************************************************************
+         TITLE 'IEFU29 - INTERNAL MACROS'
+         MACRO
+&NAME    CSID  &NONAME
+         LCLC  &NAME1
+&NAME1   SETC  '&NAME'
+         AIF   ('&NONAME' EQ 'NONAME').A01
+&NAME1   DC    CL8'&SYSECT'        NAME OF CSECT
+&NAME1   SETC  ' '
+.A01           ANOP
+&NAME1   DC    CL8'&SYSDATE'       DATE OF ASSEMBLY
+         DC    CL8'&SYSTIME'       TIME OF ASSEMBLY
+         MEND
+         TITLE 'IEFU29 - DSECT FOR GETMAINED DATA AREA'
+***********************************************************************
+*        DSECT FOR GETMAINED DATA AREA                                *
+***********************************************************************
+         SPACE 1
+DATAAREA DSECT
+SAVE     DS    18F                 REGISTER SAVE AREA
+WTORECB  DS    F                   ECB FOR RESPONSE TO WTOR
+WTOAREA  DS    CL120               WORK AREA FOR WTO/WTOR PROCESSING
+ANSWER   DS    CL4                 RESPONSE AREA FOR WTOR
+CMNDAREA DS    CL120               WORK AREA FOR COMMAND PROCESSING
+DATALGTH EQU   *-DATAAREA          LENGTH OF DATA AREA
+         TITLE 'IEFU29 - MISCELLANEOUS EQUATES'
+***********************************************************************
+*        MISCELLANEOUS EQUATES                                        *
+***********************************************************************
+         SPACE 1
+*
+*  CONSTANT EQUATES
+*
+CMNDSVC  EQU   34                  SVC TO ISSUE COMMAND
+DSNLEN   EQU   9                   LENGTH OF DSNAME FIELD
+SUBPOOL  EQU   0                   SUBPOOL FOR GETMAIN
+         TITLE 'IEFU29 - REGISTER EQUATES AND USAGE'
+***********************************************************************
+*        REGISTER EQUATES AND USAGE                                   *
+***********************************************************************
+         SPACE 1
+R0       EQU   00                  GENERAL PURPOSE WORK REGISTER
+R1       EQU   01                  GENERAL PURPOSE WORK REGISTER
+R2       EQU   02                  GENERAL PURPOSE WORK REGISTER
+R3       EQU   03                  GENERAL PURPOSE WORK REGISTER
+R4       EQU   04                  BAL RETURN ADDRESS
+R5       EQU   05                  UNNASSIGNED
+R6       EQU   06                  UNNASSIGNED
+R7       EQU   07                  UNNASSIGNED
+R8       EQU   08                  UNNASSIGNED
+R9       EQU   09                  UNNASSIGNED
+R10      EQU   10                  UNNASSIGNED
+R11      EQU   11                  UNNASSIGNED
+R12      EQU   12                  BASE REGISTER
+R13      EQU   13                  BASE REGISTER / DATA AREA ADDRESS'Y
+R14      EQU   14                  GENERAL PURPOSE WORK REGISTER
+R15      EQU   15                  GENERAL PURPOSE WORK REGISTER
+         TITLE 'IEFU29 - INITIALISATION PROCESSING'
+***********************************************************************
+*        HOUSEKEEPING                                                 *
+***********************************************************************
+         SPACE 1
+IEFU29   CSECT
+         USING DATAAREA,R13        ESTABLISH DATA AREA ADDRESSABILITY
+         USING IEFU29,R12          ESTABLISH SCECT ADDRESSABILITY
+         B     28(R15)             BRANCH AROUND STATION IDENTIFICATION
+         CSID  ,                   IDENTIFY CSECT FOR ANY DUMPS
+         STM   R14,R12,12(R13)     PRESERVE REGISTERS IN CALLER'S S/A
+         LR    R12,R15             ESTABLISH CSECT BASE REGISTER
+         L     R14,0(R1)           SAVE DSNAME ADDRESS FOR LATER
+         L     R0,GETMAIN          SET GETMAIN REQUIREMENTS IN REG 0
+       GETMAIN R,LV=(R0)           ACQUIRE STORAGE
+         ST    R13,4(R1)           SAVE CALLER'S S/A ADDRESS IN NEW S/A
+         ST    R1,8(R13)           PRESERVE THIS S/A ADDRESS IN CALLER'
+         LR    R13,R1              SET SAVE AREA ADDRESS IN REG 13
+         EJECT
+***********************************************************************
+*        ESTABLISH ESTAE ENVIRONMENT                                  *
+***********************************************************************
+         SPACE 1
+         TFRR  ,                   ESTABLISH INTERACTIVE ESTAE
+         TITLE 'IEFU29 - MAIN-LINE PROCESSING'
+***********************************************************************
+*        MAIN-LINE PROCESSING                                         *
+***********************************************************************
+         SPACE 1
+MAINLNE1 BAL   R4,WTOWTOR          ISSUE WTO AND WTOR
+         CLC   ANSWER,=C'QUIT'     WERE WE TOLD TO DO NOTHING
+         BE    EXIT                GO TO EXIT IF YES
+         CLC   ANSWER,=C'DUMP'     WERE WE ASKED TO GENERATE SMFHOUR
+         BNE   MAINLNE1            LOOP BACK TO REISSUE IF UNKNOWN ANS
+         BAL   R4,DUMP             GENERATE COMMAND TO EMPTY DATA SET
+         TITLE 'IEFU29 - TERMINATION PROCESSING'
+***********************************************************************
+*        TERMINATION PROCESSING                                       *
+***********************************************************************
+         SPACE 1
+EXIT     EQU   *
+         ESTAE 0                   DISENGAGE INTERACTIVE ESTAE
+         L     R0,GETMAIN          SET UP FREEMAIN PARM LIST
+         LR    R1,R13              POINT R1 AT AREA TO FREE
+         L     R13,4(R13)          SET ADDRESS OF CALLER'S S/A IN R13
+       FREEMAIN R,LV=(0),A=(1)     FREE THE ACQUIRED STORAGE
+         LM    R14,R12,12(R13)     RESTORE THE REGISTERS AT ENTRY
+         LA    R15,0               SET RETURN CODE TO ZERO
+         BR    R14                 RETURN TO CALLER
+         TITLE 'IEFU29 - ISSUE WTO AND WTOR'
+***********************************************************************
+*        ISSUE WTO AND WTOR                                           *
+***********************************************************************
+         SPACE 1
+WTOWTOR  EQU   *                   ENTER ROUTINE
+         MVC   WTOAREA(L'WTOMSG1),WTOMSG1 SET UP 1ST WTO IN W/A
+         MVC   WTOAREA+24(DSNLEN),0(R14) ADD DATA SET NAME TO MESSAGE
+         WTO   MF=(E,WTOAREA)      EXECUTE WTO TO TELL OPERATOR
+         SPACE 1
+         MVC   WTOAREA(L'WTOMSG2),WTOMSG2 SET UP 2ND MESSAGE
+         WTO   MF=(E,WTOAREA)      ISSUE 2ND MESSAGE
+         SPACE 1
+         MVC   WTOAREA(L'WTOMSG3),WTOMSG3 SET UP THIRD MESSAGE ....
+         WTO   MF=(E,WTOAREA)       ... AND ISSUE IT
+         SPACE 1
+         XC    WTORECB,WTORECB     CLEAR THE ECB FOR THE RESPONSE
+         MVC   WTOAREA(L'WTORMSG1),WTORMSG1 SET UP WTOR IN WORK AREA
+         LA    R3,L'ANSWER         SET LENGTH OF REPLY IN REG 3
+         LA    R2,ANSWER           SET ADDRESS OF RESPONSE AREA IN REG2
+         WTOR  ,(R2),(R3),WTORECB,MF=(E,WTOAREA) ISSUE WTOR
+         WAIT  ECB=WTORECB,LONG=YES WAIT FOR HIM TO NOTICE AND REPLY  +
+         BR    R4                  RETURN TO CALLER
+         TITLE 'IEFU29 - GENERATE COMMAND TO EMPTY DATA SET'
+***********************************************************************
+*        GENERATE COMMAND TO GENERATE JOB TO EMPTY DATA SET           *
+***********************************************************************
+         SPACE 1
+DUMP     EQU   *                   ENTER ROUTINE
+         MVC   CMNDAREA(SMFHOURL),SMFHOUR SET UP COMMAND IN W/A
+         SLR   R0,R0               CLEAR REG 0 FOR SVC 34
+         LA    R1,CMNDAREA         POINT REG 1 AT COMMAND STRING
+         SVC   CMNDSVC             ISSUE COMMAND SVC
+         BR    R4                  RETURN TO CALLER
+         TITLE 'IEFU29 - LIST-FORM WTO AND WTOR INSTRUCTIONS'
+***********************************************************************
+*        LIST-FORM WTO AND WTOR INSTRUCTIONS                          *
+***********************************************************************
+         SPACE 1
+WTOMSG1  WTO   'IEFU29:- SMF DATA SET SYS1.MANX IS FULL',ROUTCDE=1,    *
+               DESC=2,MF=L
+         SPACE 1
+WTOMSG2  WTO   'IEFU29:- DO YOU WISH ''SMFHOUR'' TO BE AUTOMATICALLY GEN
+               NERATED ?',ROUTCDE=1,DESC=2,MF=L
+         SPACE 1
+WTOMSG3  WTO   'IEFU29:- NOTE THAT IF ''SMFHOUR'' FAILS TO EMPTY THE DA*
+               TA SET, AN IPL WILL TEMPORARILY SOLVE THE PROBLEM',     *
+               DESC=2,ROUTCDE=1,MF=L
+         SPACE 1
+WTORMSG1 WTOR  'IEFU29:- REPLY ''DUMP'' OR ''QUIT''',ROUTCDE=1,MF=L
+         TITLE 'IEFU29 - COMMANDS'
+***********************************************************************
+*        COMMANDS                                                     *
+***********************************************************************
+         SPACE 1
+SMFHOUR  DS    0F
+         DC    AL2(SMFHOURL),AL2(0)
+         DC    C'S R,,,J=SMFHOUR'
+SMFHOURL EQU   *-SMFHOUR           LENGTH OF COMMAND
+         TITLE 'IEFU29 - MISCELLANEOUS CONSTANTS'
+***********************************************************************
+*        MISCELLANEOUS CONSTANTS                                      *
+***********************************************************************
+         SPACE 1
+GETMAIN  DS    0F,AL1(SUBPOOL),AL3(DATALGTH) GETMAIN/FREEMAIN PARMLIST
+         SPACE 5
+         LTORG
+         SPACE 2
+         END   IEFU29
+-END
+/*
+//COMPILE EXEC GENASMOD
+//ASM.SYSIN DD DSN=&&OSJOB,DISP=(OLD,DELETE)
+//LKED.SYSIN DD *
+ NAME IEFU29(R)
+ INCLUDE MLPALIB(IEFU29)
+ INCLUDE LPALIB(IEEMB829)
+         ORDER IEEMB829
+         ORDER IEFU29
+         ORDER IEEMB828
+         ORDER IEEMB825
+         ORDER IEEMB826
+         ORDER IEEMB827
+         ENTRY IEEMB829
+         NAME IEEMB829(R)
+/*

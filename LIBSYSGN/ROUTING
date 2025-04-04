@@ -1,0 +1,227 @@
+EXIT     TITLE '* *  ROUTING,KTVJ  *  LIBRARIAN OUTPUT EXIT  * *'
+         SPACE 4
+***********************************************************************
+**  THIS IS AN OUTPUT EXIT FOR THE ADR LIBRARIAN.  IT PLACES A HASP  **
+**  ROUTE CARD AFTER THE LIBRARIAN GENERATED JOB CARDS.  THIS ALLOWS **
+**  A LIBRARIAN GENERATED JOB TO BE ROUTED TO ANY REMOTE TERMINAL,   **
+**  EVEN THOUGH THE ORIGIN OF THE JOB WAS THE HASP INTERNAL READER.  **
+**                                                                   **
+**  THE USER SPECIFIES THE DESIRED DESTINATION WHEN HE INVOKES THE   **
+**  LIBRARIAN, EG:                                                   **
+**       //UPDATE4 EXEC PROC=AFLPROC,ROUTE=RMT3                      **
+**  IF NO DESTINATION IS GIVEN ON THE EXEC CARD, THEN LOCAL ROUTING  **
+**  IS ASSUMED.  THE LOCAL CSECT IS A NO-OP RETURN.                  **
+**                                                                   **
+**  TO INSTALL THIS EXIT:                                            **
+**   1.  LINKEDIT THIS PROGRAM.  IT MAY BE PLACED IN SYS1.LPALIB     **
+**       SINCE IT IS RE-ENTERABLE, OR IN THE LIBRARIAN STEPLIB.      **
+**       // EXEC LKED,PARM=(LIST,XREF,NCAL,RENT)                     **
+**       //LKED.SYSLMOD DD DISP=SHR,DSN=SYS1.LPALIB                  **
+**       //LKED.SYSIN DD *                                           **
+**       -- OBJECT DECK HERE --                                      **
+**         ALIAS RMT26                                               **
+**         ALIAS RMT16                                               **
+**         ALIAS RMT3                                                **
+**         ALIAS RMT2                                                **
+**         ALIAS RMT1                                                **
+**          NAME LOCAL                                               **
+**       /*                                                          **
+**   2.  UPDATE THE LIBRARIAN JCL TO INCLUDE THE FOLLOWING:          **
+**       //DEFAULT PROC ROUTE=LOCAL                                  **
+**       //AFL EXEC PGM=AFLPROG,PARM='INTRDR,OEX=&ROUTE'             **
+**       //OSJOB DD DCB=BLKSIZE=80,UNIT=INTRDR                       **
+**                                                                   **
+**  THIS METHOD WAS DEVELOPED AND TESTED ON THE IBM S/370-145 UNDER  **
+**  VS2/1.6 AND HASP IV.  THE ASSOCIATION OF AMERICAN RAILROADS      **
+**  MAKES NO WARRANTY, EXPRESSED OR IMPLIED.  NO RIGHTS ARE RESERVED **
+**  AND ANY USER MAY ALTER THIS PROGRAM TO SUIT HIS NEEDS.           **
+**  PROGRAMMING CONTACT: J. R. PASEUR, SYSTEMS PROGRAMMER            **
+**                       ASSOCIATION OF AMERICAN RAILROADS (AJ245)   **
+**                       1920 L STREET, NW                           **
+**   (202) 293-4116      WASHINGTON, D. C. 20036                     **
+***********************************************************************
+         EJECT
+***********************************************************************
+**  THE ENTRY POINT ROUTINES SHOWN HERE SUPPORT REMOTES 1,2,3,16,26. **
+**  EACH ENTRY POINT STORES THE LIBRARIAN'S REGISTERS, LOADS THE     **
+**  PARAMETER ADDRESSES, AND IDENTIFIES ITSELF TO THE MAIN ROUTINES  **
+**  VIA THE OI 0(5) INSTRUCTION.  USE THE GENERAL FORMAT SHOWN HERE  **
+**  TO ADJUST THESE ENTRY POINT NAMES TO YOUR REMOTE NUMBERS.  UP TO **
+**  SIXTEEN ENTRY POINT NAMES MAY EXIST PER MODULE (A RESTRICTION OF **
+**  THE LINKAGE EDITOR, SINCE EACH NAME MUST APPEAR IN AN ALIAS CARD **
+**  AT LINKEDIT TIME), AND UP TO 63 ENTRY POINT NAMES MAY EXIST IN   **
+**  MULTIPLE COPIES OF THE EXIT.  THE HIGHEST REMOTE NUMBER IS 63.   **
+***********************************************************************
+         SPACE 1
+LOCAL    CSECT
+         BCR   15,14 RETURN IMMEDIATELY FOR LOCAL ROUTING
+         SPACE 1
+         ENTRY RMT1
+FLAG1    EQU   1
+         USING RMT1,15
+RMT1     STM   14,12,12(13)
+         LM    3,5,0(1)
+         OI    0(5),FLAG1
+         BC    15,EXAMINE
+         ENTRY RMT2
+FLAG2    EQU   2
+         USING RMT2,15
+RMT2     STM   14,12,12(13)
+         LM    3,5,0(1)
+         OI    0(5),FLAG2
+         BC    15,EXAMINE
+         ENTRY RMT3
+FLAG3    EQU   3
+         USING RMT3,15
+RMT3     STM   14,12,12(13)
+         LM    3,5,0(1)
+         OI    0(5),FLAG3
+         BC    15,EXAMINE
+         ENTRY RMT16
+FLAG16   EQU   16
+         USING RMT16,15
+RMT16    STM   14,12,12(13)
+         LM    3,5,0(1)
+         OI    0(5),FLAG16
+         BC    15,EXAMINE
+         ENTRY RMT26
+FLAG26   EQU   26
+         USING RMT26,15
+RMT26    STM   14,12,12(13)
+         LM    3,5,0(1)
+         OI    0(5),FLAG26
+         BC    15,EXAMINE
+         EJECT
+***********************************************************************
+**  THIS SECTION EXAMINES THE RESERVED WORD AT 0(5) AND THE TEXT OF  **
+**  THE CARD IN THE LIBRARIAN BUFFER AT 0(3).  A FOUR-WAY BRANCH IS  **
+**  MADE ON THE BASIS OF THIS EXAMINATION.                           **
+***********************************************************************
+         SPACE 1
+EXAMINE  BALR  12,0
+         USING *,12
+         USING AFLDSECT,11
+         DROP  15
+         CLC   0(2,3),SLASHES
+         BE    LOOK
+ZEROUT   MVI   0(5),0
+EXIT4    MVI   1(4),4
+EXITX    LM    14,12,12(13)
+         BR    14
+LOOK     TM    0(5),X'C0'
+         BZ    JOBSETUP
+         BO    ROUTER
+         CLC   2(12,3),BLANKS
+         BNE   ZEROUT
+         TM    0(5),X'80'
+         BZ    JOBCD1
+         OI    0(5),X'C0'
+         MVI   1(4),X'08'
+         B     EXITX
+JOBCD1   CLI   71(3),C'C' IS THERE A 'C' IN COL 72? (NOTE 1)
+         BNE   ZEROUT
+         MVI   0(5),X'80'
+         B     EXIT4
+SLASHES  DC    CL2'//'
+JOB      DC    CL4'JOB '
+WTOTEXT  DC    H'27',H'0' TEXT LENGTH AND MCS FLAGS (SEE NOTE 3)
+         DC    C'TO REMOTE   --'
+BLANKS   DC    CL12' '
+RCARD    DC    C'/*ROUTE  PRINT REMOTEX'
+         SPACE 2
+***********************************************************************
+**  THIS SECTION ISSUES GETMAIN, IDENTIFIES LIBRARIAN GENERATED JOB  **
+**  CARDS (NOTE 1), AND FORMATS THE WTO TEXT WITH THE JOB NAME AND   **
+**  REMOTE NUMBER.                                                   **
+***********************************************************************
+         SPACE 1
+JOBSETUP CLI   71(3),C'C'
+         BNE   ZEROUT
+         SLR   6,6
+         LA    10,XC
+         L     8,0(5)
+         LA    7,0(8)
+         CR    6,7
+         BNE   GOTMAIN (SEE NOTE 2)
+         LA    0,360 LENGTH FOR GETMAIN
+         BAL   1,*+4 INDICATE GETMAIN TO SVC 10
+         SVC   10 GETMAIN/FREEMAIN SVC
+         LA    11,0(1)
+         OR    8,11
+         ST    8,0(5) SAVE DYNAMIC AREA ADDRESS
+GOTMAIN  L     11,0(5)
+         LA    11,0(11) CLEAR HI-ORDER BYTE (VS2)
+         ST    13,AFLDSECT+4
+         ST    11,8(13)
+         LR    13,11
+         BR    10
+XC       XC    TRTABLE(256),TRTABLE
+         MVI   TRTABLE+C' ',C' ' SET UP TO SCAN FOR BLANKS
+         TRT   2(9,3),TRTABLE
+         CLC   1(4,1),JOB (SEE NOTE 1)
+         BNE   ZEROUT2
+         LA    10,0(1)
+         LA    9,3(3)
+         SR    10,9
+         MVC   WTODATA(29),WTOTEXT
+         EX    10,MOVENAME
+         IC    6,0(5) GET ROUTE NUMBER FROM ENTRY POINT
+         CVD   6,DBLWORD
+         OI    DBLWORD+7,X'0F' FIX SIGN FOR UNPK
+         UNPK  RNUMBER(2),DBLWORD+6(2)
+         CLI   RNUMBER,C'0'
+         BNE   GOBACK
+         MVC   RNUMBER(2),RNUMBER+1
+GOBACK   MVI   0(5),X'40'
+         L     13,AFLDSECT+4
+         B     EXIT4
+MOVENAME MVC   WTONAME(*-*),2(3) EXECUTE ONLY
+         SPACE 1
+***********************************************************************
+**  THIS SECTION PASSES THE ROUTE CARD TO THE LIBRARIAN AND ISSUES   **
+**  THE ASSOCIATED MESSAGE.  IF YOU WANT TO SUPPRESS THIS CONSOLE    **
+**  OUTPUT, CHANGE THE 'SVC 35' TO 'SVC 36', THE WRITE-TO-LOG SVC.   **
+**  IF YOU USE SVC 36, THE MESSAGE APPEARS IN THE HASP JOB LOG, BUT  **
+**  NOT ON THE CONSOLE.  OR YOU MIGHT DELETE THE SVC ENTIRELY.       **
+***********************************************************************
+         SPACE 1
+ROUTER   BAL   10,GOTMAIN ESTABLISH STANDARD LINKAGE
+         MVI   23(3),C' '
+         MVC   24(50,3),23(3) EXIT MUST CLEAR CARD TO BLANKS
+         MVC   0(22,3),RCARD
+         MVC   21(2,3),RNUMBER
+         LA    1,WTODATA
+         SVC   35 WRITE-TO-OPERATOR/PROGRAMMER SVC
+ZEROUT2  L     13,SAVEAREA+4
+         B     ZEROUT
+         SPACE 1
+         EJECT
+***********************************************************************
+**  AFLDSECT DESCRIBES THE FORMAT OF THE GETMAINED AREA.             **
+***********************************************************************
+         SPACE 1
+AFLDSECT DSECT USING R11
+SAVEAREA DS    9D REGISTER SAVE AREA
+DBLWORD  EQU   *
+TRTABLE  DS    CL256
+WTODATA  DC    H'27',H'0' (SEE NOTE 3)
+WTORMSG  DC    C'TO REMOTEXX -- XXXXXXXX'
+WTONAME  EQU   WTORMSG+15
+RNUMBER  EQU   WTORMSG+9
+         SPACE 2
+***********************************************************************
+**                               NOTES                               **
+**   1.  A LIBRARIAN GENERATED JOB CARD HAS THE FOLLOWING ATTRIBUTES **
+**       (A) IT IS 3 RECORDS LONG.                                   **
+**       (B) THERE IS ONLY 1 BLANK BETWEEN THE JOBNAME AND 'JOB'.    **
+**       (C) RECORDS 1 AND 2 HAVE 'C' IN COLUMN 72.                  **
+**       (D) RECORDS 2 AND 3 HAVE 12 BLANKS IN THE NAME FIELD.       **
+**   2.  THE THIRD PARAMETER, A FULLWORD RESERVED FOR THE USE OF THE **
+**       EXIT, IS ASSUMED TO CONTAIN ZEROS UNLESS ALTERED BY THE     **
+**       EXIT.  THIS PROGRAM USES THE WORD FOR THE ADDRESS OF THE    **
+**       GETMAINED AREA AND FLAGS WHICH ARE PASSED FROM ONE ENTRY OF **
+**       THE EXIT TO THE NEXT.                                       **
+**   3.  IF YOUR SYSTEM DOES NOT SUPPORT MCS, CHANGE THE HAND-CODED  **
+**       WTO TO THE MORAL EQUIVALENT OF THE MACRO EXPANSION.         **
+***********************************************************************
+         END   LOCAL

@@ -1,0 +1,751 @@
+* *************************
+* START PROGRAM UPDAT3750 *
+* *************************
+         PRINT ON,NODATA,NOGEN
+UPD3750  START
+* SAVE
+         SAVE  (14,12),,*
+         BALR  R3,0
+         USING *,R3,R10
+         LA    R10,4095(R3)
+         LA    R10,1(R10)
+         ST    R13,SAVE+4
+         LR    R12,R13
+         LA    R13,SAVE
+         ST    R13,8(R12)
+         USING SAVE,R13
+* REGISTERNAMES
+R0       EQU   0
+R1       EQU   1
+R2       EQU   2
+R3       EQU   3
+R4       EQU   4
+R5       EQU   5
+R6       EQU   6
+R7       EQU   7
+R8       EQU   8
+R9       EQU   9
+R10      EQU   10
+R11      EQU   11
+R12      EQU   12
+R13      EQU   13
+R14      EQU   14
+R15      EQU   15
+* MOVE PARAMETER INTO NAME
+         L     R1,0(R0,R1)
+         MVC   NAME(5),2(R1)
+* READ TABLE OF FIELDLENGTHS
+         OPEN  (DCBF,(INPUT))
+         BLDL  DCBF,LIST
+         LTR   R15,R15
+         BNZ   TESTCC
+         FIND  DCBF,TTR,C
+         READ  DECBF,SF,DCBF,FBUF,84
+         CHECK DECBF
+* READ TABLE OF SUBFIELDLENGTHS
+         OPEN (DCBS,(INPUT))
+         BLDL  DCBS,LIST
+         LTR   R15,R15
+         BNZ   TESTCC
+         FIND  DCBS,TTR,C
+         READ  DECBS,SF,DCBS,SBUF,640
+         CHECK DECBS
+* READ TABLE OF LIMITS
+         OPEN  (DCBT,(INPUT))
+         BLDL  DCBT,LIST
+         LTR   R15,R15
+         BNZ   TESTCC
+         FIND  DCBT,TTR,C
+         READ  DECBT,SF,DCBT,TBUF,4000
+         CHECK DECBT
+*
+* OPEN FILES
+         OPEN  (SNAPDUMP,(OUTPUT))
+         OPEN  (DCBC,(INPUT))
+         OPEN  (DCBD,(OUTPUT))
+         OPEN  (DCBP,(OUTPUT))
+         SNAP  DCB=SNAPDUMP,ID=100,PDATA=(PSW,REGS),STORAGE=(FBUF,     X
+               FBUF+84,SBUF,SBUF+300,TBUF,TBUF+500)
+* ZERO OLDNUMBER
+         MVC   OLDNUMB,NULZONE
+         EJECT
+* READ FIRST CARD INTO FIELD1
+START    GET   DCBC,FIELD1
+* CARD CODE = D ?
+         CLC   CARDCOD1,DCARD
+         BC    7,ERROR1
+* CARD NUMBER = 1 ?
+         CLC   CNUMB1,CN1
+         BC    7,ERROR2
+* PLNUMBER IN SEQUENCE
+         CLC   PLNUMB1,OLDNUMB
+         BC    13,ERROR3
+* MOVE PLNUMB TO OLDNUMB
+         MVC   OLDNUMB,PLNUMB1
+* READ SECOND CARD INTO FIELD2
+GO       GET   DCBC,FIELD2
+* CARD CODE = D ?
+         CLC   CARDCOD2,DCARD
+         BC    7,ERROR4
+* CARD NUMBER = 2 ?
+         CLC   CNUMB2,CN2
+         BC    7,ERROR5
+* PLNUMBER1 = PLNUMBER2
+         CLC   PLNUMB1,PLNUMB2
+         BC    7,ERROR6
+* WHICH OPERATIONCODE
+         CLC   OPER,OCC
+         BC    8,CREATE
+         CLC   OPER,OCM
+         BC    8,MODIFIE
+         CLC   OPER,OCD
+         BE    DELETE
+         BC    7,ERROR7
+* TEST IF DATASETS ARE FOUND
+TESTCC   MVC   ZONE,ZONE-1
+         CLI   TTR+2,X'00'
+         BNE   NEXT
+         MVC   ZONE(7),=C'MEMBER '
+         MVC   ZONE+8(8),NAME
+         MVC   ZONE+17(9),=C'NOT FOUND'
+         B     PUT
+NEXT     MVC   ZONE(23),=C'SOME ERROR IN BUILDLIST'
+PUT      PUT   DCBP,ZONE-1
+         B     STOP
+         EJECT
+* *************
+* DELETE CARD *
+* *************
+DELETE   DS    0H
+* TEST KEY ON EXCEEDING VALUES AND CONVERT TO BINARY
+         CLC   KEY,KEYMAX
+         BC    11,ERROR8
+         CLC   KEY,KEYMIN
+         BC    13,ERROR9
+         PACK  KEYFIELD,KEY
+         SP    KEYFIELD,=P'1'
+         CVB   R11,KEYFIELD
+         ST    R11,REF
+* READ RECORD
+         READ  DECBR1,DI,DCBD,IODISK,140,0,REF+1
+         CHECK DECBR1
+* RECORD MUST BE BUSY
+         CLC   BUSY,FFFFF
+         BC    7,ERROR10
+         PUT   DCBP,BLANKS
+         MVC   KEYNRD,KEY
+         PUT   DCBP,DMESS
+         PUT   DCBP,IODISK
+* READ MASRERRECORD
+*
+         READ  DECBR2,DI,DCBD,MRDISK,140,0,MRR+1
+         CHECK DECBR2
+* CHANGE BUSY INTO POINTER TO MASTERRECORD
+         MVC   BUSY,KMIN
+         WRITE DECBW1,DI,DCBD,IODISK,140,0,REF+1
+         CHECK DECBW1
+         READ  DECBR3,DI,DCBD,IODISK,140,0,LFREE+1
+         CHECK DECBR3
+         MVC   BUSY,REF
+         WRITE DECBW2,DI,DCBD,IODISK,140,0,LFREE+1
+         CHECK DECBW2
+* CHANGE LFREE POINTER
+         MVC   LFREE,REF
+         WRITE DECBW3,DI,DCBD,MRDISK,140,0,MRR+1
+         CHECK DECBW3
+         B     START
+         EJECT
+*
+* **************
+* MODIFIE CARD *
+* **************
+MODIFIE  EQU   *
+* TEST KEY ON EXCEEDING VALUES AND CONVERT TO BINARY
+         CLC   KEY,KEYMAX
+         BC    11,ERROR8
+         CLC   KEY,KEYMIN
+         BC    13,ERROR9
+         PACK  KEYFIELD,KEY
+         SP    KEYFIELD,=P'1'
+         CVB   R11,KEYFIELD
+         ST    R11,REF
+* READ RECORD
+         READ  DECBR4,DI,DCBD,IODISK,140,0,REF+1
+         CHECK DECBR4
+         PUT   DCBP,BLANKS
+         MVC   KEYNRM,KEY
+         PUT   DCBP,MMESS
+         PUT   DCBP,IODISK
+         CLC   BUSY,FFFFF
+         BC    7,ERROR10
+* CHECK EACH FIELD
+* CHECK ON BLANK
+* CHECK ON BARR
+* IF DATA IS VALID, MODIFIE FIELD
+* ADJUST POINTERS
+         LA    R8,FBUF
+         LA    R12,SBUF
+         L     R5,0(R0,R8)
+         LA    R7,FIELD1+15
+         LA    R4,IODISK+4
+         L     R9,0(R0,R12)
+         LA    R2,TBUF
+         ST    R12,POINTER
+         ST    R7,REGSAVE
+RESTART  CLC   FOOO,0(R8)
+         BE    TRPROC
+         L     R11,0(R0,R2)
+         AR    R11,R2
+         LA    R2,4(R0,R2)
+         L     R6,0(R0,R2)
+         AR    R6,R2
+* CHECK IF FIELD IS BLANK
+         EX    R5,CLCBL
+         BE    NEXTFIEL
+* CHECK IF FIELD IS BARRED
+         EX    R5,CLCBA
+         BE    CLEAR
+         LA    R2,4(R0,R2)
+         CLC   0(4,R2),BZEROS
+         BE    MOVE
+* TEST LIMITS
+TEST     EX    R9,CLC
+         BL    NEXTLIM
+         LA    R2,0(R9,R2)
+         A     R2,HONE
+         EX    R9,CLC
+         BH    NEXTLIM
+         LA    R2,0(R9,R2)
+         A     R2,HONE
+         CLC   0(4,R2),BZEROS
+         BE    MOVE
+         LA    R7,1(R9,R7)
+         LA    R12,4(R0,R12)
+         L     R9,0(R0,R12)
+         B     TEST
+NEXTLIM  CR    R6,R11
+         BE    ERROR13
+         L     R12,POINTER
+         L     R9,0(R0,R12)
+         LR    R2,R6
+         L     R6,0(R0,R2)
+         AR    R6,R2
+         LA    R2,4(R0,R2)
+         L     R7,REGSAVE
+         B     TEST
+CLEAR    EX    R5,MVCBL
+         B     NEXTFIEL
+MOVE     DS    0H
+         L     R7,REGSAVE
+         EX    R5,MVC
+NEXTFIEL LA    R7,0(R5,R7)
+         A     R7,HONE
+         ST    R7,REGSAVE
+         LA    R4,0(R5,R4)
+         A     R4,HONE
+         LA    R8,4(R0,R8)
+         L     R5,0(R0,R8)
+* SEARCH ON ZEROS
+SOZ      LA    R12,4(R0,R12)
+         CLC   0(4,R12),BZEROS
+         BNE   SOZ
+         LA    R12,4(R0,R12)
+         L     R9,0(R0,R12)
+         ST    R12,POINTER
+         CLC   0(4,R11),HTWO
+         BNE   THZERO
+TBPM     CLC   FOOO,0(R8)
+         BNE   BPM
+         LA    R8,4(R8)
+         L     R5,0(R8)
+         B     TBPM
+BPM      DS    0H
+         LA    R7,0(R5,R7)
+         ST    R7,REGSAVE
+         LA    R8,4(R0,R8)
+         L     R5,0(R0,R8)
+         LA    R11,4(R0,R11)
+         LR    R2,R11
+         B     RESTART
+THZERO   CLC   0(4,R11),HZERO
+         BE    PUTX
+         LR    R2,R11
+         B     RESTART
+PUTX     WRITE DECBW4,DI,DCBD,IODISK,140,0,REF+1
+         CHECK DECBW4
+         PUT   DCBP,IODISK
+         B     START
+TRPROC   LA    R8,4(R0,R8)
+         L     R5,0(R0,R8)
+         B     RESTART
+         EJECT
+* *************
+* CREATE CARD *
+* *************
+CREATE   READ  DECBR5,DI,DCBD,MRDISK,140,0,MRR+1
+         CHECK DECBR5
+         READ  DECBR6,DI,DCBD,IODISK,140,0,FFREE+1
+         CHECK DECBR6
+         L     R11,FFREE
+         CVD   R11,KEYFIELD
+         AP    KEYFIELD,=P'1'
+* IS THERE STILL A RECORD AVAILABLE ?
+*
+         CLC   FFREE,KMIN
+         BC    8,ERROR11
+         BC    5,ERROR12
+         LA    R8,FBUF
+         LA    R12,SBUF
+         L     R5,0(R0,R8)
+         LA    R7,FIELD1+15
+         LA    R4,IODISK+4
+         L     R9,0(R0,R12)
+         LA    R2,TBUF
+         ST    R7,REGSAVE
+         ST    R12,POINTER
+RESTARTC CLC   FOOO,0(R8)
+         BE    TRPROCC
+         L     R11,0(R0,R2)
+         AR    R11,R2
+         LA    R2,4(R0,R2)
+         L     R6,0(R0,R2)
+         AR    R6,R2
+         LA    R2,4(R0,R2)
+         CLC   0(4,R2),BZEROS
+         BE MOVEC
+* TEST LIMITS
+TESTC    DS    0H
+         EX    R9,CLC
+         BL    NEXTLIMC
+         LA    R2,0(R9,R2)
+         A     R2,HONE
+         EX    R9,CLC
+         BH    NEXTLIMC
+         LA    R2,0(R9,R2)
+         A     R2,HONE
+         CLC   0(4,R2),BZEROS
+         BE    MOVEC
+         LA    R7,1(R9,R7)
+         LA    R12,4(R0,R12)
+         L     R9,0(R0,R12)
+         B     TESTC
+NEXTLIMC CR    R6,R11
+         BE    ERROR13
+         L     R12,POINTER
+         L     R9,0(R0,R12)
+         LR    R2,R6
+         L     R6,0(R0,R2)
+         AR    R6,R2
+         LA    R2,4(R0,R2)
+         L     R7,REGSAVE
+         B     TESTC
+MOVEC    DS    0H
+         L     R7,REGSAVE
+         EX    R5,MVC
+NEXTFIEC LA    R7,0(R5,R7)
+         A     R7,HONE
+         ST    R7,REGSAVE
+         LA    R4,0(R5,R4)
+         A     R4,HONE
+         LA    R8,4(R0,R8)
+         L     R5,0(R0,R8)
+* SEARCH ON ZEROS
+SOZC     LA    R12,4(R0,R12)
+         CLC   0(4,R12),BZEROS
+         BNE   SOZC
+         LA    R12,4(R0,R12)
+         L     R9,0(R0,R12)
+         ST    R12,POINTER
+         CLC   0(4,R11),HTWO
+         BNE   THZEROC
+TBP      CLC   FOOO,0(R8)
+         BNE   BP
+         LA    R8,4(R0,R8)
+         L     R5,0(R8)
+         B     TBP
+BP       DS    0H
+         LA    R7,0(R5,R7)
+         ST    R7,REGSAVE
+         LA    R8,4(R0,R8)
+         L     R5,0(R0,R8)
+         LA    R11,4(R0,R11)
+         LR    R2,R11
+         B     RESTARTC
+THZEROC  CLC   0(4,R11),HZERO
+         BE    WRITEC
+         LR    R2,R11
+         B     RESTARTC
+WRITEC   MVC   REF,FFREE
+         MVC   FFREE,BUSY
+         MVC   BUSY,FFFFF
+         WRITE DECBW5,DI,DCBD,IODISK,140,0,REF+1
+         CHECK DECBW5
+         WRITE DECBW6,DI,DCBD,MRDISK,140,0,MRR+1
+         CHECK DECBW6
+         MVN   KEYFIELD+7(1),=X'FF'
+         UNPK  KEYNRC,KEYFIELD
+         PUT   DCBP,BLANKS
+         PUT   DCBP,CMESS
+         PUT   DCBP,IODISK
+         B     START
+TRPROCC  LA    R8,4(R0,R8)
+         L     R5,0(R0,R8)
+         B     RESTARTC
+         EJECT
+* ***************
+* ERRORROUTINES *
+* ***************
+ERROR1   DS    0H
+         PUT   DCBP,BLANKS
+         PUT   DCBP,MERR1
+         MVC   MESS+40(80),FIELD1
+         PUT   DCBP,MESS
+         B     START
+ERROR2   DS    0H
+         PUT   DCBP,BLANKS
+         PUT   DCBP,MERR2
+         MVC   MESS+40(80),FIELD1
+         PUT   DCBP,MESS
+         B     START
+ERROR3   DS    0H
+         PUT   DCBP,BLANKS
+         PUT   DCBP,MERR3
+         MVC   MESS+40(80),FIELD1
+         PUT   DCBP,MESS
+         B     START
+ERROR4   DS    0H
+         PUT   DCBP,BLANKS
+         PUT   DCBP,MERR4
+         MVC   MESS+40(80),FIELD1
+         PUT   DCBP,MESS
+         MVC   MESS+40(80),FIELD2
+         PUT   DCBP,MESS
+         B     START
+ERROR5   DS    0H
+         PUT   DCBP,BLANKS
+         PUT   DCBP,MERR5
+         MVC   MESS+40(80),FIELD1
+         PUT   DCBP,MESS
+         MVC   MESS+40(80),FIELD2
+         PUT   DCBP,MESS
+         B     START
+ERROR6   DS    0H
+         PUT   DCBP,BLANKS
+         PUT   DCBP,MERR6
+         MVC   MESS+40(80),FIELD1
+         PUT   DCBP,MESS
+         MVC   MESS+40(80),FIELD2
+         PUT   DCBP,MESS
+         B     START
+ERROR7   DS    0H
+         PUT   DCBP,BLANKS
+         PUT   DCBP,MERR7
+         MVC   MESS+40(80),FIELD1
+         PUT   DCBP,MESS
+         MVC   MESS+40(80),FIELD2
+         PUT   DCBP,MESS
+         B     START
+ERROR8   DS    0H
+         PUT   DCBP,BLANKS
+         PUT   DCBP,MERR8
+         MVC   MESS+40(80),FIELD1
+         PUT   DCBP,MESS
+         MVC   MESS+40(80),FIELD2
+         PUT   DCBP,MESS
+         B     START
+ERROR9   DS    0H
+         PUT   DCBP,BLANKS
+         PUT   DCBP,MERR9
+         MVC   MESS+40(80),FIELD1
+         PUT   DCBP,MESS
+         MVC   MESS+40(80),FIELD2
+         PUT   DCBP,MESS
+         B     START
+ERROR10  DS    0H
+         PUT   DCBP,BLANKS
+         PUT   DCBP,MERR10
+         MVC   MESS+40(80),FIELD1
+         PUT   DCBP,MESS
+         MVC   MESS+40(80),FIELD2
+         PUT   DCBP,MESS
+         B     START
+ERROR11  DS    0H
+         PUT   DCBP,BLANKS
+         PUT   DCBP,MERR11
+         MVC   MESS+40(80),FIELD1
+         PUT   DCBP,MESS
+         MVC   MESS+40(80),FIELD2
+         PUT   DCBP,MESS
+         B     START
+ERROR12  DS    0H
+         PUT   DCBP,BLANKS
+         PUT   DCBP,MERR12
+         MVC   MESS+40(80),FIELD1
+         PUT   DCBP,MESS
+         MVC   MESS+40(80),FIELD2
+         PUT   DCBP,MESS
+         B     STOP
+ERROR13  DS    0H
+         PUT   DCBP,BLANKS
+         PUT   DCBP,MERR13
+         MVC   MESS+40(80),FIELD1
+         PUT   DCBP,MESS
+         L     R7,REGSAVE
+         MVC   ZONE,ZONE-1
+         LA    R11,FIELD2
+         CR    R7,R11
+         BH    SECC
+         LA    R11,FIELD1
+         SR    R7,R11
+         LA    R11,ZONE+40
+         LA    R7,0(R11,R7)
+         EX    R5,MVCST
+         PUT   DCBP,ZONE
+         MVC   MESS+40(80),FIELD2
+         PUT   DCBP,MESS
+         B     START
+SECC     DS    0H
+         SR    R7,R11
+         LA    R11,ZONE+40
+         LA    R7,0(R11,R7)
+         EX    R5,MVCST
+         MVC   MESS+40(80),FIELD2
+         PUT   DCBP,MESS
+         PUT   DCBP,ZONE
+         B     START
+RSYNADC  DS    0H
+         PUT   DCBP,MERRC
+         B     STOP
+RSYNADD  DS    0H
+         PUT   DCBP,BLANKS
+         PUT   DCBP,MERRD
+         MVC   MESS+40(80),FIELD1
+         PUT   DCBP,MESS
+         MVC   MESS+40(80),FIELD2
+         PUT   DCBP,MESS
+         B     START
+         B     STOP
+RSYNADF  DS    0H
+         PUT   DCBP,MERRF
+         B     STOP
+RSYNADS  DS    0H
+         PUT   DCBP,MERRS
+         B     STOP
+RSYNADT  DS    0H
+         PUT   DCBP,MERRT
+         B     STOP
+RSYNADP  DS    0H
+         SNAP  DCB=SNAPDUMP,ID=66,PDATA=(PSW,REGS),                    X
+               STORAGE=(MERRP,MERRP+54)
+         B     STOP
+STOP     EQU   *
+         L     13,4(13)
+         LM    14,12,12(13)
+         BR    14
+         EJECT
+SNAPDUMP DCB   DDNAME=SYSNDUMP,DSORG=PS,RECFM=VBA,MACRF=(W),LRECL=125, X
+               BLKSIZE=882
+DCBC     DCB   DDNAME=DDCARD,DSORG=PS,MACRF=GM,SYNAD=RSYNADC,          X
+               EODAD=STOP,LRECL=80,RECFM=F,BLKSIZE=80
+DCBD     DCB   DDNAME=DDDISK,DSORG=DA,MACRF=(RIC,WIC),SYNAD=RSYNADD,   X
+               OPTCD=R,EODAD=STOP,BUFL=140
+DCBP     DCB   DDNAME=SYSPRINT,DSORG=PS,MACRF=PM,SYNAD=RSYNADP,        X
+               LRECL=144,RECFM=F,BLKSIZE=144
+DCBF     DCB   DDNAME=DISKF,DSORG=PO,MACRF=R,LRECL=84,RECFM=F,         X
+               BLKSIZE=84,SYNAD=RSYNADF
+DCBS     DCB   DDNAME=DISKS,DSORG=PO,MACRF=R,LRECL=640,RECFM=F,        X
+               BLKSIZE=640,SYNAD=RSYNADS
+DCBT     DCB   DDNAME=DISKT,DSORG=PO,MACRF=R,LRECL=4000,RECFM=F,       X
+               BLKSIZE=4000,SYNAD=RSYNADT
+SNAPLIST SNAP  DCB=SNAPDUMP,ID=99,PDATA=(REGS),STORAGE=(FIELD1,        X
+               FIELD1+79,FIELD2,FIELD2+79,IODISK,IODISK+139),MF=L
+MESS     DC    144C' '
+BLANKS   DC    144X'40'
+MERR1    DS    0CL144
+         DC    CL5' ',C'ID=01',CL23' ',C'*****  '
+         DC    C'CARD CODE OF FIRST CARD NOT EQUAL TO D'
+         DC    C'  *****',CL59' '
+MERR2    DS    0CL144
+         DC    CL5' ',C'ID=02',CL23' ',C'*****  '
+         DC    C'CARD NUMBER OF FIRST CARD NOT EQUAL TO 1'
+         DC    C'  *****',CL57' '
+MERR3    DS    0CL144
+         DC    CL5' ',C'ID=03',CL23' ',C'*****  '
+         DC    C'PAGE-LINE-NUMBER OF FIRST CARD NOT IN SEQUENCE'
+         DC    C'  *****',CL51' '
+MERR4    DS    0CL144
+         DC    CL5' ',C'ID=04',CL23' ',C'*****  '
+         DC    C'CARD CODE OF SECOND CARD NOT EQUAL TO D'
+         DC    C'  *****',CL58' '
+MERR5    DS    0CL144
+         DC    CL5' ',C'ID=05',CL23' ',C'*****  '
+         DC    C'CARD NUMBER OF SECOND CARD NOT EQUAL TO 2'
+         DC    C'  *****',CL56' '
+MERR6    DS    0CL144
+         DC    CL5' ',C'ID=06',CL23' ',C'*****  '
+         DC    C'PLNUMBER OF FIRST CARD NOT EQUAL TO PLNUMBER OF SECONDX
+                CARD'
+         DC    C'  *****',CL38' '
+MERR7    DS    0CL144
+         DC    CL65' ',C'ID=07',CL23' ',C'*****  '
+         DC    C'OPERATION CODE UNVALID'
+         DC    C'  *****',CL75' '
+MERR8    DS    0CL144
+         DC    CL5' ',C'ID=08',CL23' ',C'*****  '
+         DC    C'KEY EXCEEDS OR EQUALS KEYMAX'
+         DC    C'  *****',CL69' '
+MERR9    DS    0CL144
+         DC    CL5' ',C'ID=09',CL23' ',C'*****  '
+         DC    C'KEY SMALLER THAN OR EQUAL TO KEYMIN'
+         DC    C'  *****',CL62' '
+MERR10   DS    0CL144
+         DC    CL5' ',C'ID=10',CL23' ',C'*****  '
+         DC    C'RECORD TO BE DELETED WAS ALREADY DELETED'
+         DC    C'  *****',CL57' '
+MERR11   DS    0CL144
+         DC    CL5' ',C'ID=11',CL23' ',C'*****  '
+         DC    C'NO DUMMY RECORDS AVAILABLE FOR CREATION'
+         DC    C'  *****',CL58' '
+MERR12   DS    0CL144
+         DC    CL5' ',C'ID=12',CL23' ',C'*****  '
+         DC    C'POINTER ERROR IN DATASET'
+         DC    C'  *****',CL73' '
+MERR13   DS    0CL144
+         DC    CL5' ',C'ID=13',CL23' ',C'*****  '
+         DC    C'LIMITERROR'
+         DC    C'  *****',CL87' '
+MERRP    DC    C'SOME ERROR OCCURED WHILE PRINTING ON THE SYSOUT DEVICE'
+               '
+MERRC    DS    0CL144
+         DC    CL33' ',C'*****  '
+         DC    C'SOME ERROR OCCURED WHILE READING A CARD'
+         DC    C'  *****',CL58' '
+MERRD    DS    0CL144
+         DC    CL33' ',C'*****  '
+         DC    C'SOME ERROR OCCURED WHILE READING FROM OR WRITING ON DIX
+               SK'
+         DC    C'  *****',CL41' '
+MERRF    DS    0CL144
+         DC    CL33' ',C'*****  '
+         DC    C'SOME ERROR OCCURED WHILE READING THE F-TABLE FROM DISKX
+               '
+         DC    C'  *****',CL43' '
+MERRT    DS    0CL144
+         DC    CL33' ',C'*****  '
+         DC    C'SOME ERROR OCCURED WHILE READING THE T-TABLE FROM DISKX
+               '
+         DC    C'  *****',CL43' '
+MERRS    DS    0CL144
+         DC    CL33' ',C'*****  '
+         DC    C'SOME ERROR OCCURED WHILE READING THE S-TABLE FROM DISKX
+               '
+         DC    C'  *****',CL43' '
+DMESS    DS    0CL144
+         DC    20C' ',C'DELETED RECORD      '
+         DC    C'KEYNUMBER = '
+KEYNRD   DS    CL5
+         DC    91C' '
+MMESS    DS    0CL144
+         DC    20C' ',C'MODIFIED RECORD     '
+         DC    C'KEYNUMBER = '
+KEYNRM   DS    CL5
+         DC    91C' '
+CMESS    DS    0CL144
+         DC    20C' ',C'CREATED RECORD',6C' '
+         DC    C'KEYNUMBER = '
+KEYNRC   DS    CL5
+         DC    91C' '
+         DS    0F
+FIELD1   DS    0CL80
+CARDCOD1 DS    CL1
+PLNUMB1  DS    0CL7
+PNUMB1   DS    CL4
+LNUMB1   DS    CL3
+CNUMB1   DS    CL1
+OPER     DS    CL1
+KEY      DS    CL5
+THTU     DS    CL4
+OUTLET   DS    CL8
+FDF      DS    CL11
+NBLOCK   DS    CL7
+IBLOCK   DS    CL7
+         DS    CL28
+FIELD2   DS    0CL80
+CARDCOD2 DS    CL1
+PLNUMB2  DS    0CL7
+PNUMB2   DS    CL4
+LNUMB2   DS    CL3
+CNUMB2   DS    CL1
+MNBLOCK  DS    CL7
+IEBLOCK  DS    CL7
+NEBLOCK  DS    CL7
+MIBLOCK  DS    CL7
+SRQP     DS    CL4
+SECRET   DS    CL1
+PARA     DS    CL1
+TYPE     DS    CL1
+AMP      DS    CL1
+COMM     DS    CL12
+         DS    CL23
+IODISK   DS    0CL140
+BUSY     DS    CL4
+         DS    CL136
+DCARD    DC    C'D'
+CN1      DC    C'1'
+OLDNUMB  DS    CL7
+CN2      DC    C'2'
+OCC      DC    C'C'
+OCM      DC    C'M'
+OCD      DC    C'D'
+NULZONE  DC    C'0000000'
+KMIN     DC    BL4'0'
+KEYMAX   DC    C'99999'
+KEYMIN   DC    C'00001'
+KMAX     DC    BL4'111111111111'
+FFFFF    DC    C'FFFF'
+         CNOP  0,8
+MRR      DC    BL5'0'
+REF      DS    F
+POINTER  DS    F
+MRDISK   DS    0CL140
+FFREE    DS    CL4
+LFREE    DS    CL4
+         DS    CL132
+BARR     DC    40X'60'
+FOOO     DC    XL4'F0000000'
+SAVE     DC    18F'0'
+REGSAVE  DS    F
+KEYFIELD DS    D
+CST1     DC    C'CUST1'
+CST2     DC    C'CUST2'
+         DS    0D
+CLCBL    CLC   0(0,R7),BLANKS
+CLCBA    CLC   0(0,R7),BARR
+CLC      CLC   0(0,R7),0(R2)
+MVC      MVC   0(0,R4),0(R7)
+MVCBL    MVC   0(0,R4),BLANKS
+MVCST    MVC   0(0,R7),STARS
+LIMPAR   DS    F
+*
+         DS    0F
+FBUF     DS    CL84
+         DS    0F
+SBUF     DS    CL640
+LIST     DS    0H
+ENTRIES  DC    H'1'
+LENGTH   DC    H'12'
+NAME     DC    8C' '
+TTR      DS    CL3
+K        DS    CL1
+         DC    C' '
+ZONE     DS    CL144
+STARS    DC    20C'*'
+LENGPAR  DS    F
+HZERO    DC    XL4'0'
+HONE     DC    XL4'1'
+HTWO     DC    XL4'2'
+BZEROS   DC    BL2'1111111111111111',BL2'0'
+         LTORG
+         DS    0F
+TBUF     DS    CL4000
+         END

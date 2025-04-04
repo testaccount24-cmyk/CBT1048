@@ -1,0 +1,203 @@
+***********************************************************************
+*        $ A D I N V                                                  *
+*                                                                     *
+*        THIS ROUTINE IS INTENDED TO ACT AS A SUBROUTINE TO ADD       *
+*        TOGETHER TWO 8 BYTES PACKED DECIMAL FIELDS CONTAINING        *
+*        DATES IN THE FORMAT:                                         *
+*                                                                     *
+*            YYDDDHHMMSS.SSSSC                                        *
+*                                                                     *
+*        WHERE THE DECIMAL POINT IS IMPLIED AND 'C' IS A VALID        *
+*        POSITIVE SIGN FIELD.                                         *
+*          THE TWO FIELDS ARE PASSED AS TWO PARAMETERS IN THE NORMAL  *
+*        WAY AND DO NOT NEED TO BE DOUBLEWORD ALIGNED.                *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        INITIALISE THE CSECT                                         *
+***********************************************************************
+         SPACE 2
+$ADINV   ZCSECT
+         LM    REG2,REG3,0(REG1)   LOAD ADDRESSES OF PARAMETERS
+         EJECT
+***********************************************************************
+*        PICK UP EACH SET OF INPUT FIELDS AND ADD THEM TOGETHER       *
+***********************************************************************
+         SPACE 2
+*
+*        ADD TOGETHER THE SECONDS
+*
+         ICM   REG4,15,4(REG2)     LOAD LAST FOUR BYTES OF FIELD1
+         ICM   REG5,15,4(REG3)     LOAD LAST FOUR BYTES OF FIELD2
+         L     REG6,SECSMASK       LOAD MASK FOR BITS WANTED
+         LA    REG7,SECONDS        LOAD ADDRESS OF RESULT FIELD
+         BAL   REG11,ADDEMUP       GO ADD THESE TWO FIELDS
+*
+*        ADD TOGETHER THE MINUTES
+*
+         ICM   REG4,3,3(REG2)      LOAD FIRST SET OF MINUTES
+         ICM   REG5,3,3(REG3)      LOAD SECOND LOT OF INPUT MINUTES
+         L     REG6,MINSMASK       LOAD MASK OF WANTED BITS
+         LA    REG7,MINUTES        LOAD ADDRESS OF RESULT FIELD
+         BAL   REG11,ADDEMUP       GO ADD TOGETHER THE FIELDS
+*
+*        ADD TOGETHER THE HOURS
+*
+         ICM   REG4,3,2(REG2)      LOAD INPUT HOURS 1
+         ICM   REG5,3,2(REG3)      LOAD INPUT HOURS 2
+         L     REG6,HOURMASK       LOAD MASK OF BITS WANTED
+         LA    REG7,HOURS          LOAD ADDRESS OF RESULT FIELD
+         BAL   REG11,ADDEMUP       GO ADD THEM TOGETHER
+*
+*        ADD TOGETHER THE DAYS
+*
+         ICM   REG4,3,1(REG2)      FIRST LOAD OF INPUT DAYS
+         ICM   REG5,3,1(REG3)      SECOND LOAD OF INPUT DAYS
+         L     REG6,DAYSMASK       LOAD MASK OF WANTED BITS
+         LA    REG7,DAYS           LOAD ADDRESS OF RESULTS FIELD
+         BAL   REG11,ADDEMUP       GO TOTAL INPUT FIELDS
+*
+*        ADD TOGETHER YEARS FIELDS
+*
+         ICM   REG4,1,0(REG2)      LOAD FIRST YEAR VALUE
+         ICM   REG5,1,0(REG3)      LOAD SECOND YEAR VALUE
+         SLL   REG4,4              MOVE TO MAKE ROOM FOR SIGN
+         SLL   REG5,4              DITTO FOR THE OTHER YEAR
+         L     REG6,YEARMASK       LOAD BIT MAP ETC
+         LA    REG7,YEARS          LOAD RESULTS FIELD
+         BAL   REG11,ADDEMUP       GO TOTAL UP THE YEARS
+         EJECT
+***********************************************************************
+*        CALCULATE THE OVERFLOW FROM EACH RESULT TO THE NEXT          *
+***********************************************************************
+         SPACE 2
+*
+*        CARRY OVER SECONDS TO  MINUTES
+*
+         DP    SECONDS,SECSFCTR    DIVIDE BY THE CORRECT CONSTANT
+         AP    MINUTES,SECONDS(L'SECONDS-L'SECSFCTR) ADD IN THE CARRY
+*
+*        CARRY OVER MINUTES TO HOURS
+*
+         DP    MINUTES,MINSFCTR    DIVIDE BY MINS PER HOUR
+         AP    HOURS,MINUTES(L'MINUTES-L'MINSFCTR) ADD IN THE CARRY
+*
+*        CARRY OVER HOURS TO DAYS
+*
+         DP    HOURS,HOURFCTR      DIVIDE BY HOURS IN A DAY
+         AP    DAYS,HOURS(L'HOURS-L'HOURFCTR) ADD IN THE CARRY
+*
+*        TEST FOR CARRY OVER TO A NEW YEAR
+*
+         CP    DAYS,NORMYEAR       DAYS GONE OVER A YEAR ?
+         BL    *+8                 NO. CARRY ON AS BEFORE
+         BAL   REG11,OVERYEAR      YES. GO TO SPECIAL ROUTINE
+         EJECT
+***********************************************************************
+*        RECONSTITUTE THE OUTPUT RESULT FIELDS                        *
+***********************************************************************
+         SPACE 2
+*
+*        PICK UP AND LOAD THE SECONDS
+*
+         L     REG5,SECONDS+L'SECONDS-4 LOAD FOUR BYTES OF SECONDS
+         SLL   REG5,4              MOVE SECONDS TO LEFT OF REG
+*
+*        PICK UP AND LOAD THE MINUTES
+*
+         L     REG4,MINUTES+L'MINUTES-4 LOAD MINUTES REMAINDER FIELD
+         SRL   REG4,4              STRIP OFF THE SIGN FIELD
+         SRDL  REG4,4              MOVE RIGHTMOST MINS DIGIT INTO R5
+         STCM  REG5,15,4(REG2)     STORE OUT INTO RESULT AREA
+         SRDL  REG4,4              TRANSFER ACROSS THE REMAINING MINS
+*
+*        PICK UP AND LOAD THE HOURS
+*
+         L     REG4,HOURS+L'HOURS-4 LOAD UP THE HOURS REMAINDER
+         SRL   REG4,4              STRIP OFF THE SIGN FIELD
+         SRDL  REG4,8              MOVE THE WHOLE LOT TO R5 AGAIN
+*
+*        PICK UP AND LOAD THE DAYS FIELD
+*
+         L     REG4,DAYS+L'DAYS-4  LOAD THE NUMBER OF DAYS
+         SRL   REG4,4              STRIP OFF THE SIGN FIELD
+         SRDL  REG4,12             MOVE THEM ALL INTO REG5 AGAIN
+*
+*        PICK UP AND LOAD THE YEARS
+*
+         L     REG4,YEARS+L'YEARS-4 LOAD YEARS FIELD
+         SRL   REG4,4              STRIP OFF THE SIGN
+         SRDL  REG4,8              MOVE THEM ALL INTO REG5 AGAIN
+*
+*        REG5 NOW CONTAINS (I HOPE) YYDDDHHM.
+*
+         STCM  REG5,15,0(REG2)     STORE OUT TOP OF RESULT
+         EJECT
+***********************************************************************
+*        PROGRAM TERMINATION AND EXIT                                 *
+***********************************************************************
+         SPACE 2
+RETURN   ZRETURN
+         EJECT
+***********************************************************************
+*        COMMON ROUTINE TO ADD TWO PACKED FIELDS TOGETHER             *
+***********************************************************************
+         SPACE 2
+ADDEMUP  DS    0H
+         NR    REG4,REG6           STRIP OFF UNWANTED BITS
+         NR    REG5,REG6           AND SAME FOR THE OTHER FIELD
+         LA    REG15,X'C'          LOAD A VALID SIGN FIELD
+         OR    REG4,REG15          PUT A VALID SIGN AT END OF REGISTER
+         OR    REG5,REG15          AND ALSO FOR FIELD 2
+         ST    REG4,PACK1          STORE OUT TO WORK AREA
+         ST    REG5,PACK2          STORE OUT TO WORK AREA
+         AP    PACK1,PACK2         ADD THE TWO VALUES
+         ZAP   0(8,REG7),PACK1     MOVE OUT TO RESULT FIELD
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        OUR ADDITION HAS GONE OVER A YEAR. SORT IT OUT (??)          *
+***********************************************************************
+         SPACE 2
+OVERYEAR DS    0H
+         ZAP   DAYSFCTR,NORMYEAR   ASSUME NORMAL YEAR
+         ZAP   DBLWORD,YEARS       MOVE YEARS RESULT TO WORK AREA
+         DP    DBLWORD,LEAPFCTR    DIVIDE FOR LEAP YEAR
+         CP    DBLWORD+L'DBLWORD-L'LEAPFCTR(L'LEAPFCTR),=P'0' LEAP ?
+         BNE   VANILLA             NO. JUST ANOTHER OLD YEAR. SIGHHHHH
+         ZAP   DAYSFCTR,LEAPYEAR   ZAP IN LEAP YEAR TYPE FACTOR
+VANILLA  DP    DAYS,DAYSFCTR       CALCULATE THE 'OVERFLOW'
+         AP    YEARS,DAYS(L'DAYS-L'DAYSFCTR) ADD IN CARRY
+         AP    DAYS+L'DAYS-L'DAYSFCTR(L'DAYSFCTR),=P'1' NO DAY '0'
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        CONSTANTS AND WORK AREAS                                     *
+***********************************************************************
+         SPACE 2
+DBLWORD  DS    D                   WORK AREA FOR LEAP YEAR DIVIDE
+PACK1    DS    F                   WORK AREA 1
+PACK2    DS    F                   WORK AREA 2
+MASKS    DS    0F                  START OF FULLWORD MASK FIELDS
+SECSMASK DC    X'0FFFFFF0'         ALL BITS WANTED FROM SECONDS FIELD
+MINSMASK DC    X'00000FF0'         BITS WANTED FROM MINUTES FIELD
+HOURMASK DC    X'00000FF0'         BITS WANTED FROM HOURS FIELD
+DAYSMASK DC    X'0000FFF0'         BITS WANTED FROM DAYS FIELD
+YEARMASK DC    X'00000FF0'         BITS WANTED FROM YEARS FIELD
+RESULTS  DS    0D                  START OF RESULTS FIELDS
+SECONDS  DS    D                   TOTAL OF SECONDS FIELDS
+MINUTES  DS    D                   TOTAL OF MINUTES FIELD
+HOURS    DS    D                   TOTAL OF HOURS FIELDS
+DAYS     DS    D                   TOTAL OF DAYS FIELDS
+YEARS    DS    D                   TOTAL OF YEARS FIELDS
+SECSFCTR DC    PL4'600000'         NO OF SECONDS * 10**4 IN A MIN
+MINSFCTR DC    PL4'60'             NO OF MINUTES IN AN HOUR
+HOURFCTR DC    PL4'24'             NO OF HOURS IN A DAY
+DAYSFCTR DC    PL4'0'              TO BE INSERTED LATER (366 OR 367)
+YEARFCTR DC    PL4'0'              NOT ACTUALLY USED
+LEAPFCTR DC    PL2'4'              LEAP YEAR FACTOR
+NORMYEAR DC    P'366'              TEST FOR YEAR OVERFLOW
+LEAPYEAR DC    P'367'              FACTOR FOR CARRY IN A LEAP YEAR
+         LTORG
+         END

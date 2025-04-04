@@ -1,0 +1,1155 @@
+         MACRO
+&NAME    LINKAGE &TYPE=CSECT,&BASE=12,&ARG=2,&SAVE=,&GET=
+         LCLA  &N
+         AIF   ('&TYPE(1)' EQ 'ENTRY').ENTRY
+&NAME    CSECT
+         AGO   .BR
+.ENTRY   AIF   ('&NAME' EQ '').NOID1
+         ENTRY &NAME
+.NOID1   ANOP
+&NAME    DS    0D
+.BR      AIF   (N'&BASE GE 1).BASE
+         USING *,15
+         AGO   .NAME
+.BASE    USING *,&BASE
+.NAME    AIF   ('&NAME' EQ '').NOID
+         B     14(,15) BRANCH AROUND ID
+         DC    X'9',CL9'&NAME' ID
+.NOID    STM   14,12,12(13) SAVE REGISTERS
+         AIF   ('&ARG(1)' EQ '').ARG0
+         LR    &ARG(1),1
+.ARG0    AIF   ('&ARG(2)' EQ '').BASE1
+         LR    &ARG(2),0
+.BASE1   AIF   (N'&BASE EQ 0).SAVE1
+         LR    &BASE(1),15 BASE REG
+         AIF   (N'&BASE EQ 1).SAVE1
+         LA    1,1
+&N       SETA  2
+.BASE2   LA    &BASE(&N),X'FFF'(1,&BASE(&N-1))
+&N       SETA  &N+1
+         AIF   (&N LE N'&BASE).BASE2
+.SAVE1   AIF   ('&SAVE' EQ '').GETSAVE
+         AIF   ('&GET' NE '').GETWORK
+         LA    1,&SAVE
+         USING &SAVE,13 BASE REG FOR WORK AREA
+         AGO   .FWDCHN
+.GETWORK GETMAIN R,LV=&GET GET STG FOR REG SAVE AND WORK
+         USING &SAVE,13 BASE REG FOR WORK AREA
+         AGO   .FWDCHN
+.GETSAVE GETMAIN R,LV=72
+.FWDCHN  ST    1,8(0,13) FORWARD CHAIN
+         ST    13,4(0,1) BACK CHAIN
+         LR    13,1 NEW SAVE AREA
+         SPACE
+         MEND
+         EJECT
+         MACRO
+&NAME    EXITLKG &T,&RC=0,&SAVE=,&FREE=
+&NAME    L     13,4(0,13) PTR TO PREV SAVE
+         L     14,12(0,13) RESTORE RETURN
+         LM    2,12,28(13) RESTORE REGS 2-12
+         AIF   ('&SAVE' NE '' AND '&FREE' EQ '').GOBACK
+         L     1,8(,13) PTR TO AREA TO FREE
+         LA    1,0(,1)
+         AIF   ('&FREE' EQ '').FREE72
+         LA    0,&FREE SIZE OF REG SAVE AND WORK
+         AGO   .FREE
+.FREE72  LA    0,72(0,0) SIZE OF REG SAVE AREA
+.FREE    FREEMAIN R,LV=(0),A=(1)
+.GOBACK  RETURN ,&T,RC=&RC
+         SPACE
+         MEND
+LIST     TITLE 'LISTUTIL - PS OR IS DATASET LIST OR COPY '
+*                DEFAULT VALUES OF PARM='PS-PS--0,NP,52-0-20,,0'
+*                                          .       .  .       .
+*  PS-PS, OR  PS, OR  ,  . . . . . . . . . .       .  .  NR OF RECORDS
+*    PHYSICAL SEQUENTIAL TO PHYSICAL SEQUENTIAL    .  .  SKIPPED,  OR
+*                                                  .  .
+*  IS-PS, OR  IS,                                  .  .  K- FOLLOWED BY
+*    INDEXED SEQUENTIAL TO PHYSICAL SEQUENTIAL     .  .  KEY TO START
+*                                                  .  .  AT (IS ONLY)
+*  PS-IS,                                          .  .
+*    PHYSICAL SEQUENTIAL TO INDEXED SEQUENTIAL     .  .  KC-FOLLOWED BY
+*                                                  .  .  KEY CLASS TO
+*  IS-IS,                                          .  .  START AT (IS)
+*    INDEXED SEQUENTIAL TO INDEXED SEQUENTIAL      .  .
+*                                                  .  .
+*  NOTE- ANY OF THE ABOVE MAY BE FOLLOWED BY -NAME .  ...NR LINES/PAGE
+*    TO LOAD A MODIFICATION ROUTINE.  THE NUMBER   .     ON SYSPRINT
+*    OF I/O ERRORS ACCEPTED MAY BE SPECIFIED       .     (10 TO 99)
+*    BY CODING -NAME-NR  OR --NR (UP TO 7 DIGITS)  .
+*                                                  .     -NNNNNNN NR OF
+*  . . . . . . . . . . . . . . . . . . . . . . . . .     REC PRINTED
+*  NP    PRINT RECORDS, 100 CHARACTERS PER LINE
+*                                                        -NNNNNNN NR OF
+*  HX  PRINT BOTH HEX AND PRINTABLE GRAPHICS             ERR MSG/RECORD
+*                                                       (BE OR BA ONLY)
+*  HN  PRINT RECORDS HEX ONLY.
+*
+*  L1  LIST WITH SINGLE SPACING BETWEEN RECORDS.  REC NR NOT PRINTED.
+*
+*  L2  LIST WITH DOUBLE SPACING BETWEEN RECORDS.  REC NR NOT PRINTED.
+*
+*  TR  TRANSLATE SYSUT1 DATA.  ALL UNPRINTABLE CHARACTERS ARE SET TO
+*      BLANK (60 CHARACTER SET).  XLATE TABLE MAY BE CHANGED BY PAIRS
+*      OF CARDS IN SYSIN STREAM.  (CHARACTER ON SECOND CARD REPLACES
+*      CORRESPONDING CHARACTER ON FIRST CARD).
+*
+*  BE  SCAN FOR BCD CHAR SYSUT1 TO SYSUT2
+*      PRINT ONLY ERROR RECORDS AND ERROR MESSAGES.
+*
+*  BN  SCAN FOR BCD CHARACTERS OR CHARACTER SET ON SYSIN DATA CARD.
+*      PRINT ALL RECORDS.  NO ERROR MESSAGES. (TR WOULD BE BETTER.)
+*
+*  BA  SCAN FOR BCD CHAR  SYSUT1 TO SYSUT2
+*      PRINT ALL RECORDS AND ERROR MESSAGES.
+*
+*  NOTE - AN ALTERNATE TRANSLATE TABLE OR VALID CHARACTER TABLE
+*      MAY BE LOADED FROM THE STEPLIB OR JOBLIB BY CODING
+*        TR-NAME  BN-NAME  BE-NAME  OR  BA-NAME
+*      WHERE NAME IS THE NAME OF THE 256 BYTE MODULE ON THE LIBRARY.
+*
+*
+*  FOURTH PARAMETER IS MAXIMUM NUMBER OF RECORDS
+*    ACCEPTED. DEFAULT VALUE IS 999999999999999
+         EJECT
+*        REGISTER USAGE
+*                            R0  WORK
+*                            R1  WORK
+*                            R2  WORK FOR PARM
+*                            R3  WORK FOR PARM
+*                            R4  PTR TO INPUT DCB
+*                            R5  PTR TO OUTPUT DCB
+*                            R6  PTR TO INPUT RECORD
+*                            R7  # BYTES LEFT TO BE PRINTED
+*                            R8  PTR TO PRINT RECORD
+*                            R9  # LINES LEFT ON PAGE
+*                            R10 WORK FOR HEX LINE
+*                            R11 WORK FOR HEX LINE
+*                            R12 BASE REG
+*
+LISTUTIL LINKAGE SAVE=SAVEAREA,GET=512
+         ST    13,SAVE13
+         XC    WORK(256),WORK          CLEAR WORK AREA
+         XC    WORK+256(184),WORK+256
+         ZAP   #LINES,=P'52'           SET FOR 52 LINES PER PAGE
+         ZAP   MXTOTREC,=P'0'          ONLY MSG UNLESS PARM VALUE 3 ..4
+         ZAP   MXRECERR,=P'20'
+         ZAP   #IOERRS,=P'0'
+         ZAP   MAXIOERR,=P'0'
+         ZAP   #SKIP,=P'0'
+         ZAP   RECCTR,=P'0'
+         ZAP   RECINSRT,=P'0'
+         ZAP   RECDLETE,=P'0'
+         ZAP   RECOUT,=P'0'
+         ZAP   MAXACCPT,=P'999999999999999'
+         MVC   MODNAME,BLANKS
+         MVC   TRNAME,BLANKS
+         MVC   PTRVALID,=A(VALIDTBL)
+         MVC   PTRXLATE,=A(XTABLE)
+IN       EQU   4
+OUT      EQU   5
+         L     IN,=A(PSDCB)            SET FOR PS INPUT
+         L     OUT,=A(OUTDCB)          SET FOR PS OUTPUT
+         LA    9,1                     FIRST LINE ON NEW PAGE
+         OPEN  (PRINT,OUTPUT)
+         L     3,0(0,2)                PARM
+         LH    10,0(,3)                COUNT
+         BCTR  10,0                    SET LENGTH CODE
+         LA    7,2(,3)                 PTR TO FIRST PARM CHAR
+         BAL   14,SCANPARM
+         B     PARMODSO
+         CLI   0(8),C'I'               CHECK FOR IS INPUT
+         BNE   *+8
+         L     IN,=A(ISDCB)            SET FOR IS INPUT
+PARMODSO EQU   *
+         B     *(2)
+         B     PARMOPT                 DELIMITER WAS COMMA
+         BAL   14,SCANPARM
+         B     PARMMOD                 NO OUTPUT DSORG AFTER -
+         CLI   0(8),C'I'               CHECK FOR IS OUTPUT
+         BNE   *+8                       NO
+         L     OUT,=A(OUTIS)           SET FOR IS OUTPUT
+PARMMOD  EQU   *
+         B     *(2)
+         B     PARMOPT                 DELIMITER WAS COMMA
+         BAL   14,SCANPARM
+         B     PARMAXIO                NO NAME AFTER -
+         CLI   0(8),C'A'               CHECK FIRST NAME CHAR ALPHA
+         BL    PARMAXIO
+         CLI   0(8),C'Z'
+         BH    PARMAXIO
+         CH    1,=H'8'
+         BL    *+8                     LENGTH OK
+         LA    1,7                     TOO LONG - TRY FIRST 8
+         EX    1,MOVEMODN              SAVE MOD RTN NAME
+         LOAD  EPLOC=MODNAME
+         ST    0,PTRMOD                STORE ADDRESS OF MOD RTN LOADED
+PARMAXIO B     *(2)
+         B     PARMOPT                 DELIMITER WAS COMMA
+         BAL   14,SCANPARM
+         B     PARMOPT                 MAX I/O ERRORS ACCEPTED NOT SPEC
+         BAL   14,NUMERIC
+         EX    1,PACKIOER
+PARMOPT  BAL   14,SCANPARM
+         B     PARMOPDN
+         MVC   PRNTPARM,0(8)           MOVE PRINT OPTION
+PARMOPDN EQU   *
+         B     *(2)
+         B     PARMPGLN                DELIMITER WAS COMMA
+         BAL   14,SCANPARM
+         B     PARMPGLN
+         CLI   0(8),C'A'               CHECK FIRST NAME CHAR ALPHA
+         BL    PARMPGLN
+         CLI   0(8),C'Z'
+         BH    PARMPGLN
+         CH    1,=H'8'
+         BL    *+8                     LENGTH OK
+         LA    1,7                     TOO LONG - TRY FIRST 8
+         EX    1,MOVETRNM              SAVE TRANSLATE TABLE NAME
+         LOAD  EPLOC=TRNAME
+         ST    0,PTRVALID
+         ST    0,PTRXLATE
+PARMPGLN BAL   14,SCANPARM
+         B     PARMPGDN
+         BAL   14,NUMERIC
+         EX    1,PACKLINE              SET NR LINES PER PAGE
+PARMPGDN EQU   *
+         B     *(2)
+         B     PARMCC                  DELIMITER WAS COMMA
+         BAL   14,SCANPARM
+         B     PARMTODN                NR REC PRINTED NOT SPECIFIED
+         BAL   14,NUMERIC
+         EX    1,PACKTPRT
+PARMTODN B     *(2)
+         B     PARMCC                  DELIMITER WAS COMMA
+         BAL   14,SCANPARM
+         B     PARMCC                  NR ERR MSG PER REC NOT SPECIFIED
+         BAL   14,NUMERIC
+         EX    1,PACKERMS
+PARMCC   BAL   14,SCANPARM
+         B     PARMKEY                 NOT MAX REC ACCEPTED
+         BAL   14,NUMERIC
+         EX    1,PACKACPT              NR REC ACCEPTED IF NUMERIC
+PARMKEY  BAL   14,SCANPARM
+         B     PARMDONE
+         CLI   0(8),C'K'               CHECK FOR KEY CLASS
+         BNE   PARMSKIP
+         C     IN,=A(ISDCB)            INPUT MUST BE IS
+         BNE   PARMDONE
+         MVC   KEYTYPE,0(8)
+         LTR   10,10
+         BM    PARMDONE                NO KEY SPECIFIED
+         EX    10,MOVEKEY              KEY TO AREA - TRAILING ZEROES
+         LA    1,1(0,10)
+         STC   1,KEYLENTH
+         B     PARMDONE
+PARMSKIP BAL   14,NUMERIC
+         EX    1,PACKSKIP
+         B     PARMDONE
+PACKLINE PACK  #LINES,0(0,8)
+PACKTPRT PACK  MXTOTREC,0(0,8)
+PACKERMS PACK  MXRECERR,0(0,8)
+PACKIOER PACK  MAXIOERR,0(0,8)
+PACKACPT PACK  MAXACCPT,0(0,8)
+PACKSKIP PACK  #SKIP,0(0,8)
+MOVEMODN MVC   MODNAME(0),0(8)
+MOVETRNM MVC   TRNAME(0),0(8)
+MOVEKEY  MVC   KEYAREA(0),0(7)
+TRNSLATE TR    0(0,8),0(3)
+MOVEOUT  MVC   0(0,1),0(8)
+         EJECT
+*  SCANPARM RECEIVES
+*    R7  POINTER TO FIRST CHAR SCANNED
+*    R10 LENGTH CODE TO SCAN (NEGATIVE IF NONE)
+*    R14 RETURN ADDRESS
+*  SCANPARM RETURNES
+*    R8  POINTER TO ELEMENT SCANNED
+*    R7  POINTER TO NEXT ELEMENT
+*    R1  LENGTH CODE OF ELEMENT SCANNED NEGATIVE IF OMITTED)
+*    R10 LENGTH CODE OF REMAINING CHAR (NEGATIVE IF NONE)
+*    R14 RETURN ADDRESS IF ELEMENT OMITTED
+*    R14 RETURN ADDRESS+4 IF ELEMENT FOUND
+*    R2  4 IF DELIMITER WAS COMMA
+*    R2  8 IF DELIMITER WAS MINUS SIGN
+         SPACE
+SCANPARM EQU   *
+         LTR   10,10
+         BM    PARMDONE                NO CHAR TO SCAN
+         LR    8,7                     PTR TO ELEMENT SCANNED
+         LA    2,4                     R2 IS 4 AT END OF PARM
+         LA    1,1(10,8)               LAST+1 IF NO DELIMITER FOUND
+         L     7,=A(SCANTBL)
+         EX    10,SCANTRT              SCAN TO , - = OR END OF TABLE
+         LA    7,1(,1)                 POINTER TO NEXT ELEMENT
+         LR    11,7
+         SR    11,8                    NR OF CHAR SCANNED
+         SR    10,11                   LEN CODE REMAINING (NEG IF NONE)
+         SR    1,8                     NR OF CHAR IN ELEMENT
+         BCTR  1,0                     LENGTH CODE FOR ELEMENT
+         BNH   0(,14)                  ELEMENT OMITTED
+         B     4(,14)                  ELEMENT CODED
+SCANTRT  TRT   0(0,8),0(7)
+         SPACE 3
+*  NUMERIC RECIEVES
+*    R8  POINTER TO ELEMENT
+*    R1  LENGTH CODE FOR ELEMENT
+*  NUMERIC RETURNS TO
+*        RETURN ADDRESS IF ELEMENT IS ALL NUMERIC
+*        RETURN ADDRESS+4 IF ELEMENT IS NOT ALL NUMERIC
+         SPACE
+NUMERIC  MVC   NUMCHECK,=C'0000000'    RESET CHECK AREA
+         EX    1,MOVEZONE
+         CLC   NUMCHECK,=C'0000000'    CHECK IF NUMERIC
+         BNE   4(14)                   RETURN ADDRESS+4 IF NOT NUMERIC
+         BR    14                      RETURN
+MOVEZONE MVZ   NUMCHECK(0),0(8)
+         EJECT
+PARMDONE EQU   *
+         CLI   PRNTPARM,C'T'
+         BE    *+12                    GO SEE IF XLATE CHARACTERS INPUT
+         CLI   PRNTPARM,C'B'
+         BNE   PARMBXIT                NOT VALIDATE
+         OPEN  (CDDCB,INPUT)           OPEN FOR SET OF VALID CHAR
+         OI    FIRSTSW,1
+         L     3,=A(CDDCB)
+         TM    48(3),X'10'
+         BZ    PARMBXIT                USE DEFAULT TABLE
+PARMBGET EQU   *
+         GET   (3)
+         LR    6,1                     POINTER TO INPUT RECORD
+         L     1,=A(PRINT)
+         TM    48(1),X'10'             CHECK IF OPEN
+         BZ    NOMSCD1
+         PUT   (1)
+         MVI   0(1),C'0'               DOUBLE SPACE
+         MVC   1(80,1),0(6)
+         MVC   81(52,1),BLANKS
+NOMSCD1  EQU   *
+         LH    7,82(,3)
+         CLI   PRNTPARM,C'T'
+         BNE   BINPUT                  GO SET VALID CHAR TABLE
+         MVC   CARD1,0(6)
+         GET   (3)
+         LR    6,1                     POINTER TO INPUT RECORD
+         L     1,=A(PRINT)
+         TM    48(1),X'10'             CHECK IF OPEN
+         BZ    NOMSCD2
+         PUT   (1)
+         MVI   0(1),C' '
+         MVC   1(80,1),0(6)
+         MVC   81(52,1),BLANKS
+NOMSCD2  EQU   *
+         SR    2,2
+         SR    0,0
+XTBLOOP  IC    0,0(2,6)
+         SR    1,1
+         IC    1,CARD1(2)                REPLACES CORRESPONDING
+         A     1,PTRXLATE
+         STC   0,0(1)                  CHAR ON CARD1
+         LA    2,1(,2)
+         BCT   7,XTBLOOP
+         B     PARMBGET
+BINPUT   EQU   *
+         L     2,=A(VALIDTBL)
+         TM    FIRSTSW,1
+         BNO   PARMBSET
+         MVI   0(2),C'*'
+         MVC   1(255,2),0(2)           RESET TABLE TO *
+         NI    FIRSTSW,255-1
+PARMBSET SR    1,1
+         IC    1,0(,6)                 VALID CHAR
+         AR    1,2
+         MVI   0(1),0                  SET VALID CHAR IN TABLE
+         LA    6,1(,6)
+         BCT   7,PARMBSET              SET NEXT CHAR
+         B     PARMBGET                GET NEXT CARD
+SYSERR   EQU   *
+         L     1,=A(PRINT)
+         TM    48(1),X'10'             CHECK IF OPEN
+         BZ    PARMBEOF
+         PUT   (1)
+         MVC   0(53,1),=CL53'0I/O ERROR ON SYSIN - REMAINING CARDS IGNOR
+               RED'
+         MVC   53(80,1),BLANKS
+PARMBEOF EQU   *
+         CLOSE CDDCB
+PARMBXIT EQU   *
+         OPEN  ((IN),INPUT,(OUT),OUTPUT)
+         TM    48(IN),X'10'
+         BZ    NOINPUT
+         CLI   KEYTYPE,C'K'            CHECK IF KEY SPECIFIED
+         BNE   ENDSETL                   NO
+         CLI   KEYTYPE+1,C'C'          CHECK IF KEY CLASS SPECIFIED
+         BE    SETLKC                    YES - REQUESTED KEY CLASS
+         CLC   KEYLENTH,16(IN)
+         BL    SETLKC                  KEY SPECIFIED SHORTER THAN KEYLN
+         SETL  (IN),K,KEYAREA          SET START RECORD KEY
+         B     ENDSETL
+SETLKC   SETL  (IN),KC,KEYAREA           YES - SETL FOR KEY CLASS
+ENDSETL  EQU   *
+         MVI   MODCODE,8
+         OC    PTRMOD,PTRMOD
+         BZ    NEXTGET                 NO MODULE LOADED
+         MVI   MODCODE,0
+         ST    IN,MODPARM2
+         MVC   MODPARM3,=A(PRINT)
+         MVI   MODPARM3,X'80'
+NEXTGET  EQU   *
+         ZAP   CHARCTR,=P'0'           RESET CHAR CTR
+         CLI   MODCODE,12
+         BNE   *+12
+         LH    0,SAVLRECL
+         B     MODINSED                RECORD INSERTED - GO BACK
+         SPACE
+         GET   (IN)
+         NI    ERRFLAG,0               RESET ERROR FLAGS
+         AP    RECCTR,=P'1'
+         ZAP   RECNR,RECCTR
+         LH    7,82(0,IN)              LRECL
+         TM    36(IN),X'80'
+         BO    NOTVAR                  NOT VARIABLE LENGTH RECORDS
+         CLC   0(2,1),82(IN)           LENGTH FIELD : MAX LRECL
+         BH    NOTVAR                    TOO HIGH
+         MVC   WORK2,0(1)                OK - USE LENGTH FIELD
+         LH    7,WORK2
+NOTVAR   EQU   *
+         STH   7,SAVLRECL
+         LR    0,7
+         A     0,#CHAREAD              ACCUMULATE TOTAL CHARACTERS READ
+         ST    0,#CHAREAD
+         CLI   MODCODE,8
+         BE    MODACPT1
+         ST    1,MODPARM1
+         LR    0,7
+         SPACE
+MODINSED EQU   *
+         L     15,PTRMOD
+         LA    1,MODPARM1
+         BALR  14,15
+         STC   15,MODCODE
+         B     *+4(15)
+         B     MODACCPT            0   ACCEPT OR REPLACE
+         B     MODELETE            4   DELETE
+         B     MODNOT              8   DO NOT RETURN
+         B     MODINSRT           12   INSERT
+         SPACE
+MODELETE AP    RECDLETE,=P'1'          COUNT DELETES
+         B     NEXTGET
+MODNOT   L     1,MODPARM1
+         LH    7,SAVLRECL
+         LTR   1,1
+         BNZ   MODACPT1
+         B     EXITNOMO                EOF ON SYSUT1 - NO INSERT
+MODINSRT AP    RECINSRT,=P'1'          COUNT RECORDS INSERTED
+MODACCPT EQU   *
+         LA    2,MODPARM1
+         CR    1,2
+         BE    MODNOT                  REG 1 HAS NOT BEEN CHANGED
+         LR    7,0                     LENGTH ACCEPTED
+MODACPT1 EQU   *
+         CP    RECCTR,#SKIP
+         BL    NEXTGET       SKIP FIRST N RECORDS
+         CP    RECOUT,MAXACCPT
+         BNL   EXITNOMO                MAX NR RECORDS ACCEPTED
+         AP    RECOUT,=P'1'            COUNT RECORDS OUT
+         LR    0,7
+         CVD   0,WORK8
+         ZAP   LRECLIN,WORK8
+         A     0,#CHAROUT              ACCUMULATE TOTAL CHAR OUT
+         ST    0,#CHAROUT
+         LR    6,1                     PTR TO DATA
+         LR    8,6                     PTR TO RECORD
+         LR    10,7                    LENGTH OF RECORD
+         TM    36(IN),X'80'
+         BO    *+12                    NOT VARIABLE LENGTH
+         LA    8,4(0,8)                PTR TO DATA
+         SH    10,=H'4'
+         CLI   PRNTPARM,C'B'
+         BNE   SCANDONE                NOT BCD SCAN
+         ZAP   SCNMXREC,MXRECERR
+         L     3,PTRVALID
+         BCTR  10,0                    LENGTH CODE
+SCANNXT  EX    10,SCANBCD
+         BNZ   SCANERR                 NON BCD CHAR FOUND
+         SRDL  10,8                    LENGTH CODE TO REG 11
+         SLA   10,8                    # CHAR REMAINING TO SCAN
+         BZ    SCANDONE
+         SRL   11,24                   # CHAR SCANNED MINUS 1
+         LA    8,1(11,8)               PTR TO NEXT CHAR
+         BCT   10,SCANNXT
+SCANBCD  TRT   0(0,8),0(3)
+SCANERR  UNPK  WORK(3),0(2,1)
+         STC   2,0(,1)                 REPLACE NON-BCD CHAR
+         LA    11,1(,1)                PTR TO NEXT CHAR
+         LR    1,11
+         SR    1,6                     OFFSET TO NON-BCD CHAR
+         CVD   1,WORK8
+         L     1,=A(PRINT)
+         TM    48(1),X'10'
+         BZ    SCNMSGDN                NO SYSPRINT DD
+         CLI   PRNTPARM+1,C'A'
+         BE    *+12                    PRINT ERROR MSG
+         CLI   PRNTPARM+1,C'E'
+         BNE   SCNMSGDN                NOT PRINT ERROR MSG
+         SP    SCNMXREC,=P'1'
+         BM    SCNMSGDN                MAX ERROR LINES PER RECORD
+         OI    ERRFLAG,4
+         PUT   (1)
+         MVC   0(1,1),NXTLNCTL
+         MVI   NXTLNCTL,C' '
+         BCT   9,*+12                  COUNT LINES
+         CVB   9,#LINES
+         MVI   0(1),C'1'               NEW PAGE
+         MVC   1(132,1),BLANKS
+         MVC   1(33,1),=CL33'***      ! TH CHAR IS HEX **  ***'
+         ED    4(8,1),WORK4
+         TR    WORK(2),HEXTABLE-C'0'
+         MVC   27(2,1),WORK            HEX DIGITS TO MSG
+SCNMSGDN LR    1,11
+         SR    1,8                     # CHAR SCANNED
+         LR    8,11                    PTR TO NEXT CHAR TO BE SCANNED
+         SR    10,1                    # CHAR TO BE SCANNED
+         BNM   SCANNXT                 GO CONTINUE SCAN
+SCANDONE EQU   *
+         CLI   PRNTPARM,C'T'
+         BNE   NOTXLATE
+         L     3,PTRXLATE
+         SRDA  10,8                    NR OF 256 BYTE SEGMENTS
+         LTR   10,10
+         BZ    *+18                      NONE
+         TR    0(256,8),0(3)           TRANSLATE 256 CHARACTERS
+         LA    8,256(0,8)              PTR TO NEXT RECORD SEGMENT
+         BCT   10,*-10
+         SRA   11,24                   RESIDUAL COUNT
+         BZ    NOTXLATE                NONE LEFT
+         BCTR  11,0                    RESIDUAL LENGTH CODE
+         EX    11,TRNSLATE
+NOTXLATE EQU   *
+         TM    48(OUT),X'10'           CHECK IF SYSUT2 OPEN
+         BZ    NOOUTPUT
+         LR    8,6                     POINTER TO OUTPUT DATA
+         LR    10,7                    LENGTH OF OUTPUT DATA
+         TM    36(OUT),X'40'
+         BZ    FIXLRECL                OUTPUT RECFM=F
+         TM    36(OUT),X'80'
+         BO    *+20                    OUTPUT RECFM=U
+         TM    36(IN),X'80'
+         BZ    *+12                    OUTPUT RECFM=V - INPUT RECFM=V
+         OI    FIRSTSW,2               INDICATE CREATE V LENGTH REC
+         LA    10,4(0,7)               INCREASE LRECL BY 4
+         STH   10,82(0,OUT)            STORE LRECL FOR RECFM V OR U
+         LH    1,62(0,OUT)             OUT BLKSIZE
+         TM    36(OUT),X'80'
+         BO    *+8                     OUT RECFM=U
+         SH    1,=H'4'                 OUT RECFM=V BLKSIZE MINUS 4
+         CR    10,1
+         BNH   PUTOUT                  OK
+         LR    10,1                      TOO HIGH -
+         STH   10,82(0,OUT)                USE OUT BLKSIZE
+         B     PUTOUT
+FIXLRECL EQU   *
+         TM    36(IN),X'80'
+         BO    *+12
+         SH    10,=H'4'                OUTPUT RECFM=F - INPUT RECFM=V
+         LA    8,4(,8)                   DROP CONTROL CHARACTERS
+         CH    10,82(0,OUT)            DATA LENGTH : LRECL OUT
+         BNH   PUTOUT                    OK
+         LH    10,82(0,OUT)              TOO HIGH - USE LRECL
+PUTOUT   PUT   (OUT)
+         TM    FIRSTSW,2
+         BZ    *+24                    NOT CREATE V LENGTH REC
+         SH    10,=H'4'
+         MVC   0(2,1),82(OUT)          MOVE LRECL TO OUTPUT V REC
+         XC    2(2,1),2(1)
+         LA    1,4(0,1)
+         BCTR  10,0
+         EX    10,MOVEOUT              MOVE UP TO 256 CHAR
+         SRDL  10,8
+         LTR   10,10                   NR 256 BYTE SEGMENTS REMAINING
+         BZ    *+34                      NONE
+         SRL   11,24
+         LA    1,1(11,1)
+         LA    8,1(11,8)
+         MVC   0(256,1),0(8)           MOVE 256 MORE CHAR
+         LA    1,256(0,1)
+         LA    8,256(0,8)
+         BCT   10,*-14                 GO MOVE NEXT 256 CHAR
+NOOUTPUT EQU   *
+         CLI   PRNTPARM,C'H'
+         BE    SETHEX
+         TM    36(IN),X'80'
+         BO    FRSTOUT                 NOT VARIABLE INPUT
+         SH    7,=H'4'
+         LA    6,4(0,6)                PTR TO DATA
+         B     FRSTOUT
+SETHEX   EQU   *
+         LR    10,6                    SET FOR HEX PRINT
+         AR    7,7                     TWICE AS MANY CHAR
+         SPACE
+FRSTOUT  EQU   *
+         L     1,=A(PRINT)
+         TM    48(1),X'10'             CHECK IF OPEN
+         BO    *+16                    GO PRINT RECORD
+         TM    ERRFLAG,1               PROCESSING ERROR REC
+         BZ    NEXTGET                   NO - GO GET NEXT REC
+         B     SYNADXIT                  YES - NO PRINT
+         TM    ERRFLAG,1     HEX PRINT ERR REC ONLY
+         BO    NEXTOUT                 PRINT ALL ERROR RECORDS
+         CLC   PRNTPARM,=C'BE'
+         BNE   *+12                    NOT ERROR MSG ONLY
+         TM    ERRFLAG,4
+         BNO   NEXTREC                 PRINT ERROR RECORD ONLY
+         ZAP   MXTOTREC,MXTOTREC
+         BH    *+16
+         TM    48(OUT),X'10'
+         BO    NEXTGET                 CONTINUE COPY
+         B     EXITNOMO      MAX RECS PRINTED - NO COPY - ALL DONE
+         SP    MXTOTREC,=P'1'
+         SPACE
+NEXTOUT  EQU   *
+         L     1,=A(PRINT)
+         PUT   (1)
+         LR    8,1                     PTR TO PRINT BUFFER
+         TM    ERRFLAG,1
+         BO    *+22                    REC NR PRINTED FOR I-O ERROR
+         CLI   PRNTPARM,C'L'
+         BNE   *+14                    NOT LIST - PRINT REC NR
+         MVC   1(22,8),BLANKS          LIST - REC NR NOT PRINTED
+         B     *+16
+         MVC   0(23,8),RECEDMSK
+         ED    0(23,8),RECNR
+         ZAP   RECNR,=P'0'
+         ZAP   LRECLIN,=P'0'
+         MVC   0(1,8),NXTLNCTL
+         MVI   NXTLNCTL,C' '
+         BCT   9,SAMEPAGE              LINE COUNT
+         CVB   9,#LINES
+         MVI   0(8),C'1'               PRINT CTL - SKIP TO CHAN 1
+SAMEPAGE EQU   *
+         MVC   123(10,8),BLANKS
+         TM    ERRFLAG,1               PROCESSING ERROR RECORD
+         BO    SYNADCOM
+         CLI   PRNTPARM,C'H'
+         BE    HEXLINE                 HEX PRINT
+         L     2,=A(PRNTABLE)
+         SH    7,=H'100'               -(100-#CHAR)
+         BL    LASTLINE
+         MVC   23(100,8),0(6)          FULL LINE
+         TR    23(100,8),0(2)
+         BZ    NEXTREC
+         AP    CHARCTR,=P'100'
+         LA    6,100(0,6)
+         B     NEXTOUT
+MOVEDATA MVC   23(0,8),0(6)
+LASTLINE LA    1,99(0,7)               NR OF DATA BYTES MINUS 1
+         EX    1,MOVEDATA              PARTIAL LINE
+         TR    23(100,8),0(2)
+         LA    8,1(1,8)                END OF DATA
+         LA    6,BLANKS
+         LPR   1,7                     100 - NR OF DATA BYTES
+         BCTR  1,0                       MINUS 1
+         EX    1,MOVEDATA              PAD WITH BLANKS
+         SPACE
+NEXTREC  EQU   *
+         CH    9,=H'4'                 NEW PAGE IF WITHIN 4 LINES
+         BH    NEXTSPC
+         LA    9,1
+         B     NEXTGET
+NEXTSPC  EQU   *
+         CLI   PRNTPARM+1,C'1'
+         BE    NEXTGET                 SINGLE SPACE BETWEEN RECORDS
+         MVI   NXTLNCTL,C'0'
+         BCT   9,NEXTGET               COUNT EXTRA SPACE AND BRANCH
+         SPACE
+EXIT     EQU   *
+         SR    1,1
+         ST    1,MODPARM1              INDICATE EOF
+         LH    0,SAVLRECL
+         CLI   MODCODE,8
+         BNE   MODINSED                GO BACK TO MOD RTN FOR INSERTS
+         SPACE
+EXITNOMO EQU   *
+         L     1,=A(PRINT)
+         TM    48(1),X'10'             CHECK IF OPEN
+         BZ    EXIT1         PRINT NOT OPEN - NO END MSG
+         PUT   (1)
+         MVC   1(132,1),BLANKS
+         MVC   0(L'ENDMSG,1),ENDMSG
+         MVI   42(1),C'U'
+         TM    36(IN),X'C0'
+         BNM   *+32
+         MVI   42(1),C'V'
+         TM    36(IN),X'80'
+         BZ    *+8
+         MVI   42(1),C'F'
+         TM    36(IN),X'10'
+         BZ    *+8
+         MVI   43(1),C'B'
+         TM    36(IN),X'04'
+         BZ    *+8
+         MVI   44(1),C'A'
+         TM    36(IN),X'02'
+         BZ    *+8
+         MVI   44(1),C'M'
+         LH    0,82(0,IN)              LRECL
+         CVD   0,WORK8
+         ED    51(6,1),WORK3
+         MVI   51(1),C'='
+         LH    0,62(0,IN)              BLKSIZE
+         CVD   0,WORK8
+         ED    65(6,1),WORK3
+         MVI   65(1),C'='
+         ED    73(22,1),#IOERRS
+         L     1,=A(PRINT)
+         PUT   (1)
+         MVC   1(132,1),BLANKS
+         MVC   0(L'ENDMSG1,1),ENDMSG1
+         L     1,=A(PRINT)
+         PUT   (1)
+         MVC   1(132,1),BLANKS
+         MVC   0(L'ENDMSG2,1),ENDMSG2
+         ED     1(10,1),RECCTR         RECORDS IN
+         L     0,#CHAREAD
+         CVD   0,WORK8
+         ED    11(20,1),WORK8          CHARACTERS IN
+         ED    33(10,1),RECINSRT       RECORDS INSERTED
+         ED    44(10,1),RECDLETE       RECORDS DELETED
+         ED    59(10,1),RECOUT         RECORDS OUT
+         L     0,#CHAROUT
+         CVD   0,WORK8
+         ED    69(20,1),WORK8          CHARACTERS OUT
+         CLOSE PRINT
+EXIT1    EQU   *
+         CLC   MODNAME,BLANKS
+         BE    NOMODNM
+         DELETE EPLOC=MODNAME
+NOMODNM  EQU   *
+         CLC   TRNAME,BLANKS
+         BE    NOTRNM
+         DELETE  EPLOC=TRNAME
+NOTRNM   EQU   *
+         CLOSE ((IN),,(OUT))
+         LA    15,0
+         TM    ERRFLAG,1
+         BZ    *+8
+GOBACK16 LA    15,16                   MAX I/O ERRORS OR NO SYSUT1
+GOBACK   EQU   *
+         L     13,SAVE13
+         EXITLKG SAVE=SAVEAREA,FREE=512,RC=(15)
+UT2EXIT  EQU   *
+         OC    62(2,OUT),62(OUT)
+         BNZ   *+10          OUTPUT BLKSIZE SPECIFIED
+         MVC   62(2,OUT),62(IN)          NO - USE INPUT BLKSIZE
+         OC    82(2,OUT),82(OUT)
+         BNZ   *+10          OUTPUT LRECL SPECIFIED
+         MVC   82(2,OUT),82(IN)          NO - USE INPUT LRECL
+         OC    36(1,OUT),36(OUT)
+         BNZ   *+10                    OUTPUT RECFM SPECIFIED
+         MVC   36(1,OUT),36(IN)          NO - USE INPUT RECFM
+         BR    14            RETURN
+         SPACE
+PRTEXIT  EQU   *
+         OC    62(2,1),62(1)
+         BCR   7,14          RETURN IF BLKSIZE SPECIFIED
+         MVC   62(2,1),82(1) USE LRECL IF NOT
+         BR    14            RETURN
+NOINPUT  EQU   *
+         L     1,=A(PRINT)
+         TM    48(1),X'10'             CHECK IF OPEN
+         BO    NOINPTMS
+         WTO   'LISTUTIL - NO SYSUT1 DD'
+         B     GOBACK16
+NOINPTMS EQU   *
+         PUT   (1)
+         MVC   1(132,1),BLANKS
+         MVC   0(23,1),=CL23' OPEN ERROR ON SYSUT1 '
+         B     GOBACK16
+ISERR    SYNADAF ACSMETH=QISAM
+         OI    ERRFLAG,1               TURN ON ERR RTN FLAG
+         STM   14,1,SAVE14
+         B     FRSTOUT
+         SPACE
+PSERR    SYNADAF ACSMETH=QSAM
+         OI    ERRFLAG,1               TURN ON ERR RTN FLAG
+         STM   14,1,SAVE14
+         B     FRSTOUT
+         SPACE
+SYNADCOM EQU   *
+         TM    ERRFLAG,2
+         BO    HEXLINE                 GO OUTPUT NEXT HEX LINE
+         L     11,SAVE0
+         L     1,SAVE1
+         MVC   55(79,8),49(1)
+         L     10,8(0,1)
+         MVC   1(54,8),NODATA
+         B     *+4(11)
+         B     SYNADXIT                BYTES 8-13 CONTAIN BLANKS
+         B     UNPACK
+         B     SYNADXIT                SYNADAF NOT SUCCESSFUL
+         SPACE
+UNPACK   EQU   *
+         ZAP   RECNR,RECCTR
+         LH    11,12(0,1)
+         CVD   11,0(0,8)
+         MVI   0(8),C'0'               DOUBLE SPACE
+         UNPK  1(4,8),5(3,8)           UNPACK NR OF CHAR READ
+         MVZ   4(1,8),3(8)
+         LA    7,0(11,11)
+         OI    ERRFLAG,2               HEX LINES TO FOLLOW
+         MVC   5(20,8),=CL20'/'
+         LTR   11,11
+         BZ    NEXTOUT
+         CH    11,=H'48'
+         BL    *+8                     ENTIRE RECORD TO MESSAGE
+         LA    11,48                      ELSE FIRST 48 CHAR TO MSG
+         BCTR  11,0
+         EX    11,*+8
+         B     NEXTOUT
+         MVC   6(0,8),0(10)
+         SPACE
+HEXLINE  EQU   *
+         CH    9,=H'1'
+         BH    *+8
+         LA    9,2                     FORCE CHAR LINE ON SAME PAGE
+         AP    CHARCTR,=P'50'
+         LA    1,23(,8)
+         LA    2,HEXCHAR+23
+         LA    11,5                    5 GROUPS PER LINE
+NXHXLINE EQU   *
+         UNPK   0(11,1),0(6,10)
+         UNPK  10(11,1),5(6,10)
+         MVC   20(2,1),=X'EFEF'
+         MVO    1(9,2),0(9,1)          SET ZONES FOR CHAR
+         MVO   11(9,2),10(9,1)
+         MVN   0(20,2),0(1)
+         NC    0(20,2),=10X'00FF'
+         LA    1,22(,1)
+         LA    2,22(,2)
+         LA    10,10(,10)
+         BCT   11,NXHXLINE
+         TR    23(110,8),HEXTABLE-C'0'
+         SPACE
+         MVC   HEXSV15,=A(NEXTOUT)     SET FOR MORE
+         SH    7,=H'100'               -(100-#CHAR)
+         BH    HEXMORE                 GO PUT CHAR LINE
+         BE    HEXEND
+         LA    1,100(,7)               #CHAR
+         LR    0,1                     #CHAR
+         LPR   7,7                     100-#CHAR
+         LA    7,11(,7)                111-#CHAR
+         SH    0,=H'20'                TWO BLANK ADDED PER 20 CHAR
+         BM    *+16
+         SH    7,=H'2'                 111-(#CHAR+#BLANKS)
+         LA    1,2(,1)                 #CHAR+BLANKS
+         B     *-16
+         AR    8,1                     PTR TO LAST CHAR +1
+         LA    6,BLANKS
+         EX    7,MOVEDATA
+         LA    8,HEXCHAR(1)            PTR TO LAST CHAR + 1
+         EX    7,MOVEDATA
+         ZAP   CHARCTR,=P'0'           RESET CHAR CTR
+HEXEND   EQU   *
+         MVC   HEXSV15,=A(SYNADXIT)    SET FOR END OF RECORD
+HEXMORE  EQU   *
+         CLI   PRNTPARM+1,C'N'
+         BE    HEXNOCHR
+         L     1,=A(PRINT)
+         PUT   (1)
+         MVC   0(133,1),HEXCHAR
+         L     2,=A(PRNTABLE)
+         TR    23(110,1),0(2)
+         BCTR  9,0
+HEXNOCHR EQU   *
+         L     15,HEXSV15
+         BR    15                      CONTINUE
+         SPACE
+SYNADXIT EQU   *
+         TM    ERRFLAG,1
+         BZ    NEXTREC                 NOT PRINTING ERROR
+         SYNADRLS
+         AP    #IOERRS,=P'1'
+         CP    #IOERRS,MAXIOERR
+         BH    EXITNOMO                NR I/O ERRORS EXCEEDED MAX SPEC
+         L     14,SAVE14
+         BR    14
+         LTORG
+ENDMSG   DC      C'1END LISTUTIL                 INPUT RECFM=   ,LRECL -
+                  ! ,BLKSIZE    ! .   ,   ,    I/O ERRORS.'
+ENDMSG1  DC      C' RECORDS IN       CHARACTERS IN    INSERTED    DELET-
+               ED    RECORDS OUT      CHARACTERS OUT'
+ENDMSG2  DC      C'   ,   , !     ,   ,   ,   , !     ,   , !    ,   , -
+               !        ,   , !     ,   ,   ,   , ! '
+NODATA   DC    CL54'*** NO DATA READ ***'
+ERRFLAG  DC    X'0'
+NXTLNCTL DC    C' '
+PRNTPARM DC    CL2'NP'
+RECCTR   DC    P'0000000'
+RECNR    DC    P'0000000'    RECNR AND CHARCTR MUST BE ADJACENT
+LRECLIN  DS    P'00000'
+CHARCTR  DC    P'00000'
+RECEDMSK DC    X'4020202020202020402020202020402020202120404040'
+#LINES   DS    D
+HEXSV15  DC    F'0'
+SAVE13   DC    F'0'
+SAVE14   DC    F'0'
+SAVE15   DC    F'0'
+SAVE0    DC    F'0'
+SAVE1    DC    F'0'
+BLANKS   DC    CL132' '                BLANKS MUST PRECEDE HEXTABLE
+HEXTABLE DC    C'0123456789ABCDEF'
+HEXCHAR  DC    CL133' '
+         ORG   LISTUTIL+(*+31-LISTUTIL)/32*32
+*                       -           ,           =
+SCANTBL  DC    96X'0',X'8',10X'0',X'4',18X'0',X'8',129X'0'
+CDDCB    DCB   DDNAME=SYSIN,DSORG=PS,EODAD=PARMBEOF,SYNAD=SYSERR,      C
+               MACRF=GL
+PRINT    DCB   DDNAME=SYSPRINT,DSORG=PS,MACRF=PL,EROPT=ACC,            X
+               LRECL=133,RECFM=FBA,EXLST=PRTEXLST
+PRTEXLST DC    0F'0',X'85',AL3(PRTEXIT)
+PSDCB    DCB   DDNAME=SYSUT1,DSORG=PS,EODAD=EXIT,EROPT=ACC,MACRF=GL,   X
+               SYNAD=PSERR
+ISDCB    DCB   DDNAME=SYSUT1,DSORG=IS,EODAD=EXIT,SYNAD=ISERR,          C
+               MACRF=(GL,SK)
+OUTDCB   DCB   DDNAME=SYSUT2,DSORG=PS,MACRF=PL,EXLST=UT2EXLST,         C
+               SYNAD=PSERR
+OUTIS    DCB   DDNAME=SYSUT2,DSORG=IS,MACRF=PL,EXLST=UT2EXLST,         C
+               SYNAD=ISERR
+UT2EXLST DC    0F'0',X'85',AL3(UT2EXIT)
+SAVEAREA DSECT
+         DS    18F
+WORK     DS    D
+WORK8    DS    0D
+         DS    CL4
+WORK4    DS    0CL4
+         DS    CL1
+WORK3    DS    0CL3
+         DS    CL1
+WORK2    DS    0CL2
+         DS    C
+WORK1    DS    C
+PTRMOD   DS    F
+PTRVALID DS    F
+PTRXLATE DS    F
+MODPARM1 DC    F'0'
+MODPARM2 DC    F'0'
+MODPARM3 DC    F'0'
+SAVLRECL DS    H
+MODCODE  DS    C
+KEYLENTH DS    C
+KEYTYPE  DC    CL2'  '
+FIRSTSW  DC    X'0'
+MXRECERR DC    P'0000000'
+MXTOTREC DC    P'0000000'
+SCNMXREC DC    P'0000000'
+MAXIOERR DS    P'0000000'
+#IOERRS  DS    P'0000000'
+#SKIP    DC    P'0000000'
+RECINSRT DS    P'0000000'
+RECDLETE DS    P'0000000'
+RECOUT   DS    P'0000000'
+MAXACCPT DS    P'999999999999999'
+NUMCHECK DC    C'0000000'
+#CHAREAD DS    F
+#CHAROUT DS    F
+MODNAME  DS    D
+TRNAME   DS    D
+CARD1    DS    CL80
+KEYAREA  DC    XL256'0'
+         EJECT
+         SPACE
+*  THIS PRINTABLE CHAR TABLE IS SET FOR A 60 CHARACTER SET
+XTABLE   CSECT
+         DC    64X'0'
+         DC    C' '
+         DC    10X'00'
+         DC    C'.<(+|&&'
+         DC    10X'00'
+         DC    C'$*);^-/'
+         DC    9X'00'
+         DC    C',%_>?'
+         DC    10X'00'
+         DC    C':#@''="'
+         DC    65X'00'
+         DC    C'ABCDEFGHI'
+         DC    7X'00'
+         DC    C'JKLMNOPQR'
+         DC    8X'00'
+         DC    C'STUVWXYZ'
+         DC    6X'00'
+         DC    C'0123456789'
+         DC    6X'00'
+*  THIS PRINTABLE CHAR TABLE IS SET FOR A 60 CHARACTER SET
+PRNTABLE CSECT
+         DC    64X'0'
+         DC    C' '
+         DC    10X'00'
+         DC    C'.<(+|&&'
+         DC    10X'00'
+         DC    C'$*);^-/'
+         DC    9X'00'
+         DC    C',%_>?'
+         DC    10X'00'
+         DC    C':#@''="'
+         DC    65X'00'
+         DC    C'ABCDEFGHI'
+         DC    7X'00'
+         DC    C'JKLMNOPQR'
+         DC    8X'00'
+         DC    C'STUVWXYZ'
+         DC    6X'00'
+         DC    C'0123456789'
+         DC    6X'00'
+*  THIS TABLE OF VALID CHARACTERS IS SET FOR 64 BCD CHARACTERS
+VALIDTBL CSECT
+VALIDBCD DC    64C'*',X'0',10C'*',6X'0',10C'*',7X'0',9C'*',5X'0'
+         DC    10C'*',6X'0',64C'*',10X'0',6C'*',10X'0',6C'*',X'0',C'*'
+         DC    8X'0',6C'*',10X'0',6C'*'
+LISTUTIL CSECT
+         END
+E15      TITLE ' INTERFACE MODULE BETWEEN E15 EXIT AND COBOL SUBPROGRM'
+*  THIS MODULE WILL INTERFACE A COBOL SUBPROGRAM TO THE EXIT FROM
+*  SYSTEM UTILITY PROGRAMS, LISTUTIL, OR THE E15 EXIT OF SORT.
+*  THE COBOL ENTRY LINKAGE IS
+*
+*
+*      IDENTIFICATION SECTION.
+*      PROGRAM-ID. 'MODIFY'.
+*      DATA DIVISION.
+*      LINKAGE SECTION.
+*          01  RECORD-IN.
+*              02 ENTRIES DESCRIBING RECORD-IN
+*          01  RECORD-OUT.
+*              02 ENTRIES DESCRIBING RECORD-OUT
+*          01  CODE   PICTURE  S99, USAGE COMPUTATIONAL.
+*          01  LENGTH PICTURE  S99, USAGE COMPUTATIONAL.
+*      PROCEDURE DIVISION.
+*          ENTER LINKAGE.
+*          ENTRY 'MODIF' USING RECORD-IN, RECORD-OUT, CODE, LENGTH.
+*          ENTER COBOL.
+*
+*
+*  CODE WILL CONTAIN 0 IF A RECORD IS AVAILABLE. CODE  8 IF END OF FILE
+*  THE LENGTH PARAMETER IS OPTIONAL AND IS ONLY PROVIDED AND USED
+*  BY THE EXIT FROM LISTUTIL.  THE RETURN CODES PROVIDED BY THE
+*  PROGRAM MUST BE ONE OF THE FOLLOWING
+*           0  ACCEPT RECORD MOVED INTO RECORD-OUT
+*           4  DELETE RECORD PASSED IN RECORD-IN
+*           8  DO NOT RETURN TO MODIF ROUTINE
+*          12  INSERT RECORD MOVED INTO RECORD-OUT BEFORE RECORD-IN
+*
+*  THE EXIT FROM IBM UTILITY PROGRAMS ACCEPT ONLY MODIFICATIONS, CODE=0
+*
+*
+* THE EXIT FROM THE MODIFY ROUTINE MUST BE
+*              ENTER LINKAGE. RETURN. ENTER COBOL.
+         EJECT
+E15      LINKAGE SAVE=INTA,ARG=(2,3)
+         LM    4,5,0(2)      PTR TO REC AND DCB
+         TM    SW,FIRST
+         BO    NOTFIRST
+         OI    SW,FIRST      INDICATE GETMAIN
+         TM    7(2),3
+         BNZ   INTNODCB      SECOND WORD PASSED IS NOT A DCB ADDRESS
+         L     1,16          CVT PTR
+         L     2,0(,1)       TCB WORD PTR
+         L     1,4(,2)       TCB PTR
+         L     2,24(,1)      BOUNDARY BOX PTR
+         LA    5,0(,5)
+         C     5,4(,2)
+         BL    INTNODCB      REG 5 LESS THAN LOW BOUNDARY
+         L     0,8(,2)       HIGH BOUNDARY
+         LA    6,42(,5)
+         CR    6,0
+         BNL   INTNODCB
+         TM    40(5),X'80'
+         BNZ   INTNODCB      TIOT OFFSET GREATER THAN 32767
+         L     2,12(,1)      TIOT PTR
+         AH    2,40(,5)      DD ENTRY PTR
+         LA    6,12(,2)
+         CR    6,0
+         BNL   INTNODCB
+         CLC   4(8,2),=CL8'SYSUT1   '  CHECK IF R5 WAS DCB PTR
+         BE   *+12           OK
+INTNODCB LA    0,1024        NO - ALLOW 1024 BYTES FOR SORT E15
+         B     SAVEGET
+         TM    36(5),X'C0'
+         BM    *+12
+         LH    0,62(0,5)     RECFM=U  -  USE BLKSIZE
+         B     *+8
+         LH    0,82(0,5)     RECFM=F OR V  -  USE LRECL
+         AR    0,0           TIMES 2
+SAVEGET  STH   0,SAVMAIN
+         GETMAIN R,LV=(0)
+         ST    1,INTP2       PTR TO RECORD AREA
+NOTFIRST EQU   *
+         ST    4,INTP1       PTR TO RECORD IN
+         MVI   CODE+1,0
+         LTR   4,4
+         BNZ   *+8
+         MVI   CODE+1,8                INDICATE EOF
+         STH   3,LENGTH      LENGTH OF RECORD INTO MODIF ROUTINE
+         LA    1,INTP1
+         L     15,=V(MODIF)
+         BALR  14,15
+         L     1,INTP2
+         LH    0,LENGTH      LENGTH OF RECORD OUT OF MODIF ROUTINE
+         LH    15,CODE       RETURN CODE FROM MODIF ROUTINE
+         CH    15,=H'8'
+         BNE   NOTDONE
+         LH    0,SAVMAIN
+         FREEMAIN  R,LV=(0),A=(1)
+         L     1,INTP1
+         NI    SW,255-FIRST  RESET FIRST SWITCH
+NOTDONE  EQU   *
+         SPACE
+         EXITLKG T,SAVE=INTA,RC=(15)
+         LTORG
+SW       DC    X'00'
+FIRST    EQU   1
+SAVMAIN  DC    H'0'
+CODE     DC    H'0'
+LENGTH   DC    H'0'
+INTP1    DC    F'0'
+INTP2    DC    F'0'
+INTP3    DC    A(CODE)
+INTP4    DC    A(LENGTH)
+INTA     DC    18F'0'
+         END
+ASCI     TITLE 'EXIT ROUTINE TO CHANGE 1410 CTL CHAR TO ASCII'
+CTLC1410 LINKAGE SAVE=AREA,ARG=(2,3)
+         L     6,0(0,2)           PTR TO RECORD
+         LTR   6,6
+         BNZ   MORE
+         EXITLKG SAVE=AREA,RC=8   DONE
+MORE     TRT   CCMEM,ASCIIMEM
+         BNZ   INSERT
+         MVC   CCMEM,0(6)
+         TR    0(1,6),ASCIICTL    CHANGE 1410 CHG CTL CHAR TO ASCII
+         LR    1,6
+         LR    0,3
+         EXITLKG SAVE=AREA,RC=0   ACCEPT
+INSERT   STC   2,CCMEM
+         LA    1,CCMEM
+         LR    0,3
+         EXITLKG SAVE=AREA,RC=12  SPACE AFTER PRINT
+CCMEM    DC    C' '
+         DC    CL132' '
+AREA     DC    18F'0'
+ASCIICTL DC    CL75' '
+         DC    C'BC'          .< SKIP TO CHAN 11 AND 12
+         DC    CL(97-77)' '
+         DC    C'+'          / 1 SPACE AFTER PRINT
+         DC    CL(123-98)' '
+         DC    C'BC'          # @ SKIP TO CHAN 11 AND 12
+         DC    CL(192-125)' '
+*               PZABCDEFGHI        KL
+         DC    C'A123456789        0-' SKIP TO CHAN 10,1...9 - SPC 2,3
+         DC    CL(226-212)' '
+         DC    C'++'          S-T   SPACE 2 OR 3 SPACES AFTER PRINT
+         DC    CL(240-228)' '
+*                0123456789
+         DC    C'A123456789'    SKIP TO CHAN 10,1...9
+         DC    CL(256-250)' '
+ASCIIMEM DC   97X'0',C' ',128X'0',C'0-',28X'0'   /,S,T SPACE AFTER PRT
+         END

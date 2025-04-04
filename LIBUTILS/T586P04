@@ -1,0 +1,143 @@
+         TITLE  'T586P04'
+T586P04  CSECT
+***********************************************************************
+*         THIS PROGRAM WILL READ A LIBRARIAN JOBSTREAM, AND ON        *
+*         RECOGNISING A MODULE CONTROL  CARD, WILL FIND THE           *
+*         PASSWORD AND ADD IT TO THE CARD.                            *
+*         THE CONTROL CARD MUST HAVE SPACE PROVIDEDFOR THE            *
+*         PASSWORD AND THIS MUST CONTAIN THE CORRECT CODE             *
+***********************************************************************
+         SPACE 3
+         PRINT ON,GEN,NODATA
+HSEKPING PGMIN
+         PRINT ON,NOGEN,NODATA
+         EJECT
+***********************************************************************
+*         OPEN DATASETS                                               *
+***********************************************************************
+         SPACE
+         OPEN  (SYSUT1,,SYSUT2,OUTPUT,SYSPRINT,OUTPUT)
+         CALL  MASTOPN,(0,FAIRRC),VL
+         CLI   FAIRRC,C'0'
+         BNE   ABEND
+         SPACE 3
+***********************************************************************
+*         READ INPUT SEARCHING FOR -SEL OR -DLM CARDS.                *
+*         WRITE ALL OTHERS TO OUTPUT.                                 *
+***********************************************************************
+         SPACE
+READINPT EQU   *
+         GET   SYSUT1              ADDRESS RETURNED IN REG1
+         CLC   0(4,R1),=C'-DLM'
+         BE    GETPSWD
+         CLC   0(4,R1),=C'-SEL'
+         BE    GETPSWD
+WRITEOPT EQU   *
+         LR    R0,R1
+         PUT   SYSUT2,(R0)
+         B     READINPT
+         SPACE 3
+***********************************************************************
+*         FIND MODULE NAME. CHECK SECURITY CODE. FIND PASSWORD.       *
+***********************************************************************
+         SPACE
+GETPSWD  EQU   *
+         LR    R2,R1
+         LA    R2,5(0,R2)
+         LA    R5,70(0,R2)
+SEEKNAME EQU   *
+         CR    R2,R5
+         BH    WRITEOPT
+         CLI   0(R2),X'40'
+         BNE   NAMEFND
+         LA    R2,1(0,R2)
+         B     SEEKNAME
+         SPACE
+NAMEFND  EQU   *
+         SR    R3,R3
+         LR    R4,R2
+         LA    R2,1(0,R2)
+         LA    R5,7
+NAMELOOP EQU   *
+         CR    R3,R5
+         BH    WRITEOPT
+         CLI   0(R2),C','
+         BE    MOVENAME
+         LA    R3,1(0,R3)
+         LA    R2,1(0,R2)
+         B     NAMELOOP
+         SPACE
+MOVENAME EQU   *
+         MVI   FAIRNAME,C' '
+         MVC   FAIRNAME+1(7),FAIRNAME
+         EX    R3,NAMEMOVE
+         B     CHECKCDE
+         SPACE
+NAMEMOVE MVC   FAIRNAME(0),0(R4)
+         SPACE
+CHECKCDE EQU   *
+         LA    R2,1(0,R2)
+         CLC   CODE,0(R2)
+         BNE   WRITEOPT
+CALLFAIR EQU   *
+         LR    R5,R1
+         CALL  MASTMOD,(FAIRNAME,FAIRRC,FAIRDATA),VL
+         LR    R1,R5
+         CLI   FAIRRC,C'0'
+         BE    MVPSWD              MODULE FOUND. BRANCH
+         MVC   ERRNAME(8),FAIRNAME MOVE MODULE NAME TO ERR MSG.
+         PUT   SYSPRINT,ERRMSG     PRINT ERROR MESSAGE
+         MVC   RETCD(2),=H'16'     SET BAD RETURN CODE
+         LR    R1,R5
+         B     WRITEOPT            PROCESS NEXT CARD
+         SPACE
+MVPSWD   EQU   *
+         MVC   0(4,R2),FAIRPSWD
+         B     WRITEOPT
+         SPACE 3
+***********************************************************************
+*         END OF INPUT DATASET. EOJ PROCESSING                        *
+***********************************************************************
+         SPACE
+ENDINPUT EQU   *
+         CLOSE (SYSUT1,,SYSUT2,,SYSPRINT)
+         CALL  MASTCLS
+         PGMOUT RC=RETCD
+         SPACE 3
+***********************************************************************
+*         CRITICAL ERROR ABEND PROGRAM WITH LIBRARIAN ABEND CODE      *
+***********************************************************************
+         SPACE
+ABEND    EQU *
+         ABEND 2048,,STEP
+         EJECT
+***********************************************************************
+*         DATA CONTROL BLOCKS AND DATA AREAS                          *
+**********************************************************************
+         SPACE 3
+SYSUT1   DCB   DDNAME=SYSUT1,MACRF=GL,EODAD=ENDINPUT,                  C
+               DSORG=PS,RECFM=FB,LRECL=80
+         SPACE
+SYSPRINT DCB   DDNAME=SYSPRINT,DSORG=PS,MACRF=PM,                      C
+               RECFM=FBA,LRECL=121,BLKSIZE=121
+         SPACE
+SYSUT2   DCB   DDNAME=SYSUT2,MACRF=PM,                                 C
+               DSORG=PS,RECFM=FB,LRECL=80
+         SPACE
+*MASTER  DCB   DEFINED IN FAIR SUBROUTINES
+         SPACE 3
+FAIRRC   DC    C' '
+FAIRNAME DC    CL8' '
+FAIRDATA DS    0CL100
+FAIRPSWD DC    CL4' '
+         DC    CL96' '
+ERRMSG   DC    CL121'0        . MODULE NOT FOUND ON MASTER. JOB FLUSH FC
+               LAG SET.'
+ERRNAME  EQU   ERRMSG+1
+RETCD    DC    H'0'
+         DC    V(FAIR)
+         PRINT OFF
+CODE     DC     CL4'TEST'
+         PRINT ON
+         LTORG
+         END   T586P04

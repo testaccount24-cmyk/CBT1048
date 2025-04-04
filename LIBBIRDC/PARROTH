@@ -1,0 +1,963 @@
+         TITLE 'PARROTH - TWENTY80 PROCESSING'                          H 000100
+         MACRO                                                          H 000200
+         $CB   &PRINT=OFF          MACRO TO GENERATE DSECTS             H 000300
+         PUSH  PRINT               PRESERVE PRINT OPTIONS               H 000400
+         PRINT &PRINT              SET PRINT OPTIONS FOR DSECTS         H 000500
+               EJECT                                                    H 000600
+         CBPREFIX ,                CONTROL BLOCK PREFIX                 H 000700
+               EJECT                                                    H 000800
+         CCB   ,                   CENTRAL CONTROL BLOCK                H 000900
+               EJECT                                                    H 001000
+         CSECTID ,                 CSECT IDENTIFICATION PREFIX          H 001100
+               EJECT                                                    H 001200
+         EQUATES ,                 GENERATE STANDARD EQUATES            H 001300
+               EJECT                                                    H 001400
+         FSA   ,                   FIELD STORAGE AREA                   H 001500
+               EJECT                                                    H 001600
+         HDG   ,                   HEADING LINE STORAGE AREA            H 001700
+               EJECT                                                    H 001800
+         KBD   ,                   KEY BREAK DESCRIPTOR                 H 001900
+               EJECT                                                    H 002000
+         LCD   ,                   LINE COMPONENT DESCRIPTOR            H 002100
+               EJECT                                                    H 002200
+         LIB   ,                   LABEL IDENTIFICATION BLOCK           H 002300
+               EJECT                                                    H 002400
+         OCB   ,                   OUTPUT CONTROL BLOCK                 H 002500
+               EJECT                                                    H 002600
+         RAE   ,                   RANGE ANALYSIS ELEMENT               H 002700
+               EJECT                                                    H 002800
+         SCE   ,                   SELECTION CRITERION ELEMENT          H 002900
+               EJECT                                                    H 003000
+         TRD   ,                   TWENTY80 REPORT DEFINITION           H 003100
+               EJECT                                                    H 003200
+         TW80LINE ,                TWENTY80 REPORT DETAIL LINE          H 003300
+         POP   PRINT               RESTORE ORIGINAL PRINT OPTIONS       H 003400
+         MEND                                                           H 003500
+         EJECT                                                          H 003600
+         MACRO                                                          H 003700
+&NAME    MVAL  &FLD                                                     H 003800
+.*                                                                      H 003900
+.*       MOVE VALUE FROM FP DISPLAY WORK AREA TO OUTPUT LINE            H 004000
+.*                                                                      H 004100
+         LCLC  &L                                                       H 004200
+&L       SETC  'L'''                                                    H 004300
+&NAME    MVC   &FLD,$FPDISP+L'$FPDISP-&L&FLD MOVE VALUE TO LINE         H 004400
+         MEND                                                           H 004500
+         SPACE 5                                                        H 004600
+PARROTH  CSECT                                                          H 004700
+         $CB   ,                   GENERATE DSECTS AND EQUATES          H 004800
+         EJECT                                                          H 004900
+     SCSECT H                                                           H 005000
+         USING PARROTH,R12         ESTABLISH PARROTH ADDRESSABILITY     H 005100
+         USING CCBNTRY,R13         ESTABLISH CCB ADDRESSABILITY         H 005200
+         SPACE 1                                                        H 005300
+         ENTRY TW80ADD             ACCUMULATE VALUES FOR TWENTY80 ANAL  H 005400
+         ENTRY TW80INT             TW80 CONTROL BLOCK INITIALISATION    H 005500
+         ENTRY TW80KEY             PRODUCE MAJOR KEY SUB-ANALYSIS       H 005600
+         ENTRY TW80TOT             PRODUCE FILE TOTAL  ANALYSIS         H 005700
+         ENTRY PARENDH             END OF CSECT                         H 005800
+         TITLE 'PARROTH - TWENTY80 ACCUMULATION ROUTINES'               H 005900
+*********************************************************************** H 006000
+*        TWENTY80 ACCUMULATION:    MAIN-LINE LOGIC                    * H 006100
+*********************************************************************** H 006200
+         SPACE 1                                                        H 006300
+         USING RAENTRY,R7          ESTABLISH RAE ADDRESSABILITY         H 006400
+         USING TRDNTRY,R8          ESTABLISH TRD ADDRESSABILITY         H 006500
+TW80ADD  SUBIN SAVE=ALL            PRESERVE RETURN ADDRESS              H 006600
+         TM    $STATUS2,STAT2080   VERIFY THAT ANALYSIS IS REQUIRED     H 006700
+         BZ    TW80ADDX            EXIT IF NOT REQUIRED                 H 006800
+         LTA   R8,$TRDTRD          GET ADDRESS OF 1ST TRD               H 006900
+         B     *+8                 BYPASS FORWARD CHIANING              H 007000
+TW80ADD1 LTA   R8,TRDTRD,TW80ADDX  GET ADDRESS OF NEXT TRD              H 007100
+         NULCB TRD,TW80ADD1        LOOP BACK FOR NEXT TRD IF NULLIFIED  H 007200
+         CBAL  R4,ASETVAL          OBTAIN 'STUDY' AND 'ACCUM' VALUES    H 007300
+         BNE   TW80ADD1            LOOP BACK FOR NEXT TRD IF NO VALUE   H 007400
+         CBAL  R4,AFNDRAE          LOCATE APPROPRIATE RAE FOR THIS ENTR H 007500
+         CBAL  R4,ACUMTRD          ADD VALUES INTO TRD                  H 007600
+         CBAL  R4,ACUMRAE          ACCUMULATE VALUES INTO RAE           H 007700
+         B     TW80ADD1            LOOP BACK TO PROCESS NEXT TRD        H 007800
+TW80ADDX SUBOUT RESTORE=ALL        RESTORE AND RETURN TO ACLLER         H 007900
+         DROP  R8                  DROP TRD ADDRESSABILITY              H 008000
+         DROP  R7                  DROP RAE ADDRESSABILITY              H 008100
+         EJECT                                                          H 008200
+*********************************************************************** H 008300
+*        TWENTY80 ACCUMULATION:    LOCATE STUDY AND ACCUM VALUES      * H 008400
+*********************************************************************** H 008500
+         SPACE 1                                                        H 008600
+*        NOTE THAT THE VALUES ARE ALWAYS ACCUMULATED IF THE FIELD UNDER H 008700
+*         STUDY IS A GR07 ACCUMULATOR, BUT IF THE FIELD UNDER STUDY IS  H 008800
+*         A FIELD DEFINED IN A GR04 CARD THEN THE VALUES ARE ONLY       H 008900
+*         ACCUMULATED IF THE SELECTION CRITERIA ( IF ANY ) OF THE GR04  H 009000
+*         CARD WERE SATISFIED.                                          H 009100
+         SPACE 1                                                        H 009200
+         USING TRDNTRY,R8          ESTABLISH TRD ADDRESSABILITY         H 009300
+         USING LIBNTRY,R1          ESTABLISH LIB ADDRESSABILITY         H 009400
+         USING FSANTRY,R2          ESTABLISH FSA ADDRESSABILITY         H 009500
+ASETVAL  SUBIN ,                   ENTER ROUTINE                        H 009600
+         L     R1,TRDLIB           RETRIEVE LIB OF FIELD TO STUDY       H 009700
+         TM    LIBTYPE,LIBTACUM    IS THIS A GR07 ACCUMULATOR           H 009800
+         BO    ASETVAL1            BR IF YES TO PROCESS IT              H 009900
+         TM    LIBSW,MLIBEXT       WERE SELECTION CRITERIA SATISFIED    H 010000
+         BZ    ASETVALY            EXIT IF NOT SHOWING 'ERROR'          H 010100
+ASETVAL1 L     R2,LIBFSA           RETRIEVE FSA OF FIELD TO STUDY       H 010200
+         MVC   $FPFP,FSAVALUR      MOVE 'STUDY' VALUE TO FP W/A         H 010300
+         LD    FPR2,$FPFP          SET 'STUDY' VALUE IN FP REG 2        H 010400
+         L     R1,TRDLIBA          RETRIEVE LIB OF FIELD TO ACCUMULATE  H 010500
+         L     R2,LIBFSA           RETRIEVE FSA OF FIELD TO ACCUMULATE  H 010600
+         MVC   $FPFP,FSAVALUR      MOVE 'ACCUM' VALUE TO FP W/A         H 010700
+         LD    FPR4,$FPFP          SET 'ACCUM' VALUE IN FP REG 4        H 010800
+         CLI   *,X                 SET COND CODE TO SHOW ALL IS WELL    H 010900
+         B     *+8                 BYPASS RESETTING COND CODE           H 011000
+ASETVALY CLI   *,Y                 SET COND CODE TO SHOW SCE NOT HAPPY  H 011100
+        SUBOUT ,                   RETURN TO CALLER                     H 011200
+         DROP  R2                  DROP FSA ADDRESSABILITY              H 011300
+         DROP  R1                  DROP LIB ADDRESSABILITY              H 011400
+         DROP  R8                  DROP TRD ADDRESSABILITY              H 011500
+         EJECT                                                          H 011600
+*********************************************************************** H 011700
+*        TWENTY80 ACCUMULATION:    LOCATE APPROPRIATE RAE             * H 011800
+*********************************************************************** H 011900
+         SPACE 1                                                        H 012000
+         USING RAENTRY,R7          ESTABLISH RAE ADDRESSABILITY         H 012100
+         USING TRDNTRY,R8          ESTABLISH TRD ADDRESSABILITY         H 012200
+AFNDRAE  SUBIN ,                   ENTER ROUTINE                        H 012300
+         LTA   R7,TRDRAE           GET ADDRESS OF 1ST RAE               H 012400
+         B     *+8                 BYPASS FORWARD CHAINING              H 012500
+AFNDRAE1 LTA   R7,RAERAE           GET ADDRESS OF NEXT RAE              H 012600
+         MVC   $FPFP,RAERVAL       SET RAE'S UPPER BOUND IN FP W/A      H 012700
+         CD    FPR2,$FPFP          COMPARE VALUE WITH THIS UPPER BOUND  H 012800
+         BNH   AFNDRAE2            BR IF VALUE <= UPPER BOUND           H 012900
+         TM    RAESW,MRAEHIGH      TEST IF THIS IS THE LAST RAE         H 013000
+         BO    AFNDRAE2            BR IF THIS IS THE LAST RAE           H 013100
+         B     AFNDRAE1            LOOP BACK TO TEST NEXT RAE           H 013200
+AFNDRAE2 EQU   *                   CONTINUE PROCESSING                  H 013300
+        SUBOUT ,                   RETURN TO CALLER                     H 013400
+         DROP  R8                  DROP TRD ADDRESSABILITY              H 013500
+         DROP  R7                  DROP RAE ADDRESSABILITY              H 013600
+         EJECT                                                          H 013700
+*********************************************************************** H 013800
+*        TWENTY80 ACCUMULATION:    ADD VALUES INTO TRD                * H 013900
+*********************************************************************** H 014000
+         SPACE 1                                                        H 014100
+         USING TRDNTRY,R8          ESTABLISH TRD ADDRESSABILITY         H 014200
+ACUMTRD  SUBIN ,                   ENTER ROUTINE                        H 014300
+         AP    TRDTNO,$ONE         INCREMENT COUNT OF ENTRIES IN FILE   H 014400
+         AP    TRDKNO,$ONE         INCREMENT COUNT OF ENTRIES IN KEY    H 014500
+         SPACE 1                                                        H 014600
+         MVC   $FPFP,TRDTVAL       SET CURRENT FILE TOTAL IN FP W/A     H 014700
+         LD    FPR0,$FPFP          SET CURRENT FILE TOTAL IN FP REG 0   H 014800
+         ADR   FPR0,FPR4           ADD CURRENT VALUE TO FILE TOTAL      H 014900
+         STD   FPR0,$FPFP          SET UPDATED FILE TOTAL IN FP W/A     H 015000
+         MVC   TRDTVAL,$FPFP       SET UPDATED FILE TOTAL IN TRD        H 015100
+         SPACE 1                                                        H 015200
+         MVC   $FPFP,TRDKVAL       SET CURRENT KEY TOTAL IN FP W/A      H 015300
+         LD    FPR0,$FPFP          SET CURRENT KEY TOTAL IN FP REG 0    H 015400
+         ADR   FPR0,FPR4           ADD CURRENT VALUE TO KEY TOTAL       H 015500
+         STD   FPR0,$FPFP          SET UPDATED KEY TOTAL IN FP W/A      H 015600
+         MVC   TRDKVAL,$FPFP       SET UPDATED KEY TOTAL IN TRD         H 015700
+        SUBOUT ,                   RETURN TO CALLER                     H 015800
+         DROP  R8                  DROP TRD ADDRESSABILITY              H 015900
+         EJECT                                                          H 016000
+*********************************************************************** H 016100
+*        TWENTY80 ACCUMULATION:    ADD VALUE INTO APPROPRIATE RAE     * H 016200
+*********************************************************************** H 016300
+         SPACE 1                                                        H 016400
+         USING TRDNTRY,R8          ESTABLISH TRD ADDRESSABILITY         H 016500
+         USING RAENTRY,R7          ESTABLISH RAE ADDRESSABILITY         H 016600
+ACUMRAE  SUBIN ,                   ENETR ROUTINE                        H 016700
+         AP    RAETNO,$ONE         INCREMENT COUNT OF ENTRIES IN RANGE  H 016800
+         MVC   $FPFP,RAETVAL       MOVE CURRENT FILE TOTAL TO WORK AREA H 016900
+         LD    FPR0,$FPFP          SET CURRENT FILE TOTAL IN FP REG 0   H 017000
+         ADR   FPR0,FPR4           ADD NEW VALUE TO FILE TOTAL          H 017100
+         STD   FPR0,$FPFP          SET UPDATED VALUE IN FP W/A          H 017200
+         MVC   RAETVAL,$FPFP       SET UPDATED FILE TOTAL IN RAE        H 017300
+         LTA   R1,$KBDKBD,ACUMRAEX RETRIEVE ADDRESS OF MAJOR KEY'S KBD  H 017400
+         TM    KBDSW-KBDNTRY(R1),MKBD2080 IS MAJOR SUBANALYSIS REQ'D    H 017500
+         BZ    ACUMRAEX            EXIT IF NO SUBANALYSIS REQ'D         H 017600
+         AP    RAEKNO,$ONE         INCREMENT NO OF ENTRIES IN THIS RANG H 017700
+         MVC   $FPFP,RAEKVAL       MOVE CURRENT KEY TOTAL TO FP W/A     H 017800
+         AD    FPR4,$FPFP          CALCULATE UPDATED KEY TOTAL          H 017900
+         STD   FPR4,$FPFP          SET UPDATED VALUE IN FP W/A          H 018000
+         MVC   RAEKVAL,$FPFP       SET UPDATED VALUE IN RAE             H 018100
+ACUMRAEX SUBOUT ,                  RETURN TO CALLER                     H 018200
+         DROP  R7                  DROP RAE ADDRESSABILITY              H 018300
+         DROP  R8                  DROP TRD ADDRESSABILITY              H 018400
+         TITLE 'PARROTH - TWENTY80 C/B INITIALISATION'                  H 018500
+*********************************************************************** H 018600
+*        TWENTY80 CONTROL BLOCK INITIALISATION                        * H 018700
+*********************************************************************** H 018800
+         SPACE 1                                                        H 018900
+         USING TRDNTRY,R8          ESTABLISH TRD ADDRESSABILITY         H 019000
+TW80INT  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              H 019100
+         LTA   R8,$TRDTRD          GET ADDRESS OF 1ST TRD               H 019200
+         B     *+8                 BYPASS FORWARD CHAINING              H 019300
+TW80INT1 LTA   R8,TRDTRD,TW80INTX  GET ADDRESS OF NEXT TRD              H 019400
+         CLC   TRDLAB,$SPACES      WAS FIELD LABEL SUPPLIED             H 019500
+         BE    TW80INTE            GO NULLIFY C/B IF NO LABEL           H 019600
+         NC    TRDRAE+1(3),TRDRAE+1 WERE ANY GR09'S SUPPLIED            H 019700
+         BZ    TW80INTE            NULLIFY C/B IF NO RANGE SUPPLIED     H 019800
+         LA    R15,TRDLAB          POINT R15 AT LABEL OF FLD TO STUDY   H 019900
+         CBAL  R4,TFNDLIB          LOCATE THE LIB OF THE FIELD          H 020000
+         BNE   TW80INTE            NULLIFY C/B IF ANY ERRORS            H 020100
+         ST    R1,TRDLIB           PRESERVE ADDRESS OF FIELD'S LIB      H 020200
+         LA    R15,TRDLABA         POINT R15 AT LABEL OF FIELD TO ACCUM H 020300
+         CBAL  R4,TFNDLIB          LOCTAE THE LIB                       H 020400
+         BNE   TW80INTE            NULLIFY C/B IF ANY ERRORS            H 020500
+         ST    R1,TRDLIBA          PRESERVE ADDRESS OF FIELD'S LIB      H 020600
+         CBAL  R4,TW80RAE          CONSTRUCT FINAL RAE (FOR TOP OF RANG H 020700
+         CBAL  R4,TFNDOCB          LOCATE ASSOCIATED OCB                H 020800
+         BNE   TW80INTE            NULLIFY C/B IF ANY ERRORS            H 020900
+         OI    $STATUS2,STAT2080   TRIGGER TWENTY80 PROCESSING          H 021000
+         B     TW80INT1            LOOP BACK TO PROCESS NEXT TRD        H 021100
+TW80INTE MVI   TRDID,NULLCB        NULLIFY C/B TO PREVENT PROCESSING    H 021200
+         B     TW80INT1            LOOP BACK TO PROCESS NEXT TRD        H 021300
+TW80INTX SUBOUT RESTORE=R4         RESTORE AND RETURN TO CALLER         H 021400
+         DROP  R8                  DROP TRD ADDRESSABILITY              H 021500
+         EJECT                                                          H 021600
+*********************************************************************** H 021700
+*        TWENTY80 INITIALISATION:  LOCATE LIB FROM FIELD LABEL        * H 021800
+*********************************************************************** H 021900
+         SPACE 1                                                        H 022000
+*        ON INPUT:-                                                     H 022100
+*         R15 - ADDRESS OF LABEL                                        H 022200
+         SPACE 1                                                        H 022300
+*        ON OUTPUT:-                                                    H 022400
+*         R1  - ADDRESS OF LIB                                          H 022500
+         SPACE 1                                                        H 022600
+*        UPON RETURN, THE COND CODE IS SET THUS :-                      H 022700
+*         BE  - LIB LOCATED AND IT IS VALID                             H 022800
+*         BNE - LIB NOT LOCATED, OR NOT NUMERIC                         H 022900
+         SPACE 1                                                        H 023000
+         USING TRDNTRY,R8          ESTABLISH TRD ADDRESSABILITY         H 023100
+         USING LIBNTRY,R1          ESTABLISH LIB ADDRESSABILITY         H 023200
+TFNDLIB  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              H 023300
+         MVC   LINE07L,0(R15)      ASSUME ERROR AND ....                H 023400
+         MVC   LINE08L,0(R15)       ... SET LABEL IN ERROR MESSAGES     H 023500
+         CBAL  R4,FINDLIB          LOCATE THE ASSOCIATED LIB            H 023600
+         BE    TFNDLIB1            BR IF THE LIB FOUND                  H 023700
+         LINE  LINE07              TELL OF UNKNOWN LABEL                H 023800
+         B     TFNDLIBY            GO INDICATE AN ERROR                 H 023900
+TFNDLIB1 TM    LIBTYPE,LIBTNUM     ENSURE THAT THIS IS A NUMERIC FIELD  H 024000
+         BZ    TFNDLIB2            TELL OF ERROR IF NOT NUMERIC         H 024100
+         MVI   LIBID,REFCB         FLAG THAT FIELD HAS BEEN REFERENCED  H 024200
+         B     TFNDLIBX            GO TO EXIT                           H 024300
+TFNDLIB2 LINE  LINE08              TELL THAT FIELD IS NOT NUMERIC IN TY H 024400
+TFNDLIBY CLI   *,Y                 SET COND CODE TO SHOW ERROR          H 024500
+         B     *+8                 BYPASS RESETTING COND CODE           H 024600
+TFNDLIBX CLI   *,X                 SET COND CODE TO SHOW SUCCESS        H 024700
+        SUBOUT RESTORE=R4          RESTORE AND RETURN TO CALLER         H 024800
+         DROP  R1                  DROP LIB ADDRESSABILITY              H 024900
+         DROP  R8                  DROP TRD ADDRESSABILITY              H 025000
+         EJECT                                                          H 025100
+*********************************************************************** H 025200
+*        TWENTY80 INITIALISATION:  CONSTRUCT FINAL RAE                * H 025300
+*********************************************************************** H 025400
+         SPACE 1                                                        H 025500
+*        THE PURPOSE OF THIS ROUTINE IS TO CONSTRUCT THE FINAL RAE,     H 025600
+*         WHICH IS REQUIRED TO ACCUMULATE VALUES GREATER THAN THE TOP   H 025700
+*         OF THE SPECIFIED RANGE                                        H 025800
+         SPACE 1                                                        H 025900
+         USING TRDNTRY,R7          ESTABLISH TRD ADDRESSABILITY         H 026000
+         USING RAENTRY,R8          ESTABLISH RAE ADDRESSABILITY         H 026100
+TW80RAE  SUBIN SAVE=(R4,R8)        PRESERVE CRITICAL REGISTERS          H 026200
+         LA    R2,RAELGTH          SET LENGTH OF BASIC RAE              H 026300
+         LTA   R1,$KBDKBD,*+16     GET ADDRESS OF 1ST KBD (IF ANY)      H 026400
+         TM    KBDSW-KBDNTRY(R1),MKBD2080 IS KEY SUB-ANALYSIS REQUIRED  H 026500
+         BZ    *+8                 BR IF MAJOR KEY SUB-ANALYSIS NOT REQ H 026600
+         LA    R2,RAESLGTH         SET LENGTH OF RAE FOR KEYBREAK ANAL  H 026700
+         CBAL  R4,GETRAE           ACQUIRE A NEW RAE                    H 026800
+         ZAP   RAETNO,$ZERO        INITIALISE COUNT OF ENTRIES ON FILE  H 026900
+         OI    RAESW,MRAEHIGH      FLAG THAT THIS RAE IS TOP OF RANGE   H 027000
+         LTA   R1,$KBDKBD,*+18     GET ADDRESS OF 1ST KBD (IF ANY)      H 027100
+         TM    KBDSW-KBDNTRY(R1),MKBD2080 IS KEY SUBANALYSIS REQUIRED   H 027200
+         BZ    *+10                BR IF NOT REQUIRED                   H 027300
+         ZAP   RAEKNO,$ZERO        INITIALISE COUNT OF ENTRIES IN KEY   H 027400
+         SUBLR R7,R8               RETRIEVE TRD ADDRESS FROM SUBIN S/A  H 027500
+         LTA   R1,TRDRAE           GET ADDRESS OF 1ST RAE               H 027600
+         OI    RAESW-RAENTRY(R1),MRAELOW FLAG THAT 1ST RAE IS BELOW RNG H 027700
+TW80RAE1 LR    R2,R1               PRESERVE ADDRESS OF CURRENT RAE      H 027800
+         ICM   R1,7,RAERAE-RAENTRY+1(R1) GET ADDRESS OF NEXT RAE        H 027900
+         BNZ   TW80RAE1            LOOP BACK TO GET NEXT RAE            H 028000
+         ST    R8,RAERAE-RAENTRY(R2) POINT LAST RAE IN CHAIN AT NEW ONE H 028100
+        SUBOUT RESTORE=(R4,R8)     RESTORE AND RETURN TO CALLER         H 028200
+         DROP  R8                  DROP RAE ADDRESSABILITY              H 028300
+         DROP  R7                  DROP TRD ADDRESSABILITY              H 028400
+         EJECT                                                          H 028500
+*********************************************************************** H 028600
+*        TWENTY80 INITIALISATION:  ACQUIRE A FINAL RAE                * H 028700
+*********************************************************************** H 028800
+         SPACE 1                                                        H 028900
+         USING RAENTRY,R8          ESTABLISH RAE ADDRESSABILITY         H 029000
+GETRAE   SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              H 029100
+         GETCB RAE,NOCHAIN         ACQUIRE RAE BUT DO NOT CHAIN         H 029200
+        SUBOUT RESTORE=R4          RESTORE AND RETURN TO CALLER         H 029300
+         DROP  R8                  DROP RAE ADDRESSABILITY              H 029400
+         EJECT                                                          H 029500
+*********************************************************************** H 029600
+*        TWENTY80 INITIALISATION:  LOCATE ASSOCIATED OCB              * H 029700
+*********************************************************************** H 029800
+         SPACE 1                                                        H 029900
+         USING OCBNTRY,R7          ESTABLISH OCB ADDRESSABILITY         H 030000
+         USING TRDNTRY,R8          ESTABLISH TRD ADDRESSABILITY         H 030100
+TFNDOCB  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              H 030200
+         LTA   R7,$OCBOCB          GET ADDRESS OF 1ST OCB ('PRINT')     H 030300
+         B     *+8                 BYPASS FORWARD CHAINING              H 030400
+TFNDOCB1 LTA   R7,OCBOCB,TFNDOCBY  GET ADDRESS OF NEXT OCB              H 030500
+         CLC   OCBLABL,TRDRID      IS THIS THE REQUIRED OCB             H 030600
+         BNE   TFNDOCB1            LOOP BACK FOR NEXT IF NOT            H 030700
+         ST    R7,TRDOCB           PRESERVE OCB ADDRESS IN TRD          H 030800
+         L     R2,OCBIOSW          RETRIEVE ADDRESS OF ASSOCIATED DCBSW H 030900
+         TM    IOPSSW(R2),IOSWPRES IS THE ASSOCIATED DD STATEMENT PRESE H 031000
+         BZ    TFNDOCBY            EXIT IF NOT SHOWING 'ERROR'          H 031100
+         NC    OCBHDG+1(3),OCBHDG+1 TEST IF HEADINGS SUPPLIED BY USER   H 031200
+         BNZ   TFNDOCB2            BR IF HEADINGS SUPPLIED              H 031300
+         CHNCB OCB,HDG             SET POINTERS TO FACILITATE CHAINING  H 031400
+         CBAL  R4,HDGTW80          CONSTRUCT DEFAULT HEADINGS           H 031500
+TFNDOCB2 B     TFNDOCBX            GO TO EXIT SHOWING SUCCESS           H 031600
+TFNDOCBY CLI   *,Y                 SET COND CODE SHOWING ERROR          H 031700
+         B     *+8                 BYPASS RESETTING VOND CODE           H 031800
+TFNDOCBX CLI   *,X                 SET COND CODE TO SHOW SUCCESS        H 031900
+        SUBOUT RESTORE=R4          RESTORE AND RETURN TO CALLER         H 032000
+         DROP  R8                  DROP TRD ADDRESSABILITY              H 032100
+         DROP  R7                  DROP OCB ADDRESSABILITY              H 032200
+         EJECT                                                          H 032300
+*********************************************************************** H 032400
+*        TWENTY80 INITIALISATION:  CONSTRUCT DEFAULT HEADING LINES    * H 032500
+*********************************************************************** H 032600
+         SPACE 1                                                        H 032700
+         USING TRDNTRY,R1          ESTABLISH TRD ADDRESSABILITY         H 032800
+         USING OCBNTRY,R7          ESTABLISH OCB ADDRESSABILITY         H 032900
+         USING HDGNTRY,R8          ESTABLISH HDG ADDRESSABILITY         H 033000
+HDGTW80  SUBIN SAVE=(R4,R8)        PRESERVE CRITICAL REGISTERS          H 033100
+         CBAL  R4,GETHDG           ACQUIRE AND CHAIN AN HDG C/B         H 033200
+         OI    HDGSW,MHDGHD1       FLAG THAT THIS IS THE 1ST HEADING    H 033300
+         L     R1,$OCBOCB          GET ADDRESS OF 1ST OCB ( 'PRINT' )   H 033400
+         ICM   R1,7,OCBHDG+1-OCBNTRY(R1) GET ADDRESS OF 1ST HDG IF ANY  H 033500
+         BZ    *+10                BRANCH IF 'PRINT' HAS NO HEADINGS    H 033600
+         MVC   HDGHEAD,HDGHEAD-HDGNTRY(R1) SET UP AS TWENTY80'S 1ST LIN H 033700
+         MVC   HDGHEAD(L'TW80HD1),TW80HD1 ADD 'RANGE ANALYSIS.' TO LINE H 033800
+         CBAL  R4,GETHDG           ACQUIRE AND CHAIN AN HDG C/B         H 033900
+         MVC   HDGHEAD(L'TW80HD2),TW80HD2 SET UP HEADING LINE           H 034000
+         SUBLR R1,R8               PLACE TRD ADDRESS IN REG 1           H 034100
+         MVC   HDGHEAD+TW80HD2A-TW80HD2(30),TRDDESC  ADD DECSRIPTION    H 034200
+         CBAL  R4,GETHDG           ACQUIRE AND CHAIN AN HDG C/B         H 034300
+         MVC   HDGHEAD(L'TW80HD3),TW80HD3 SET UP HEADING LINE           H 034400
+         CBAL  R4,GETHDG           ACQUIRE AND CHAIN AN HDG C/B         H 034500
+         MVC   HDGHEAD(L'TW80HD4),TW80HD4 SET UP HEADING LINE           H 034600
+        SUBOUT RESTORE=(R4,R8)     RESTORE AND RETURN TO CALLER         H 034700
+         DROP  R8                  DROP HDG ADDRESSABILITY              H 034800
+         DROP  R7                  DROP OCB ADDRESSABILITY              H 034900
+         DROP  R1                  DROP TRD ADDRESSABILITY              H 035000
+         EJECT                                                          H 035100
+*********************************************************************** H 035200
+*        TWENTY80 INITIALISATION:  ACQUIRE AND INITIALISE HDG         * H 035300
+*********************************************************************** H 035400
+         SPACE 1                                                        H 035500
+         USING HDGNTRY,R8          ESTABLISH HDG ADDRESSABILITY         H 035600
+GETHDG   SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              H 035700
+         LA    R2,HDGLGTH          SET LENGTH OF HDG IN REG 2           H 035800
+         GETCB HDG                 ACQUIRE AND CHAIN HDG C/B            H 035900
+         MVI   HDGHEAD+1,C' '      INSERT BLANK IN 1ST POSITION ...     H 036000
+         MVC   HDGHEAD+2(L'HDGHEAD-2),HDGHEAD+1 ... AND PROPAGATE       H 036100
+        SUBOUT RESTORE=R4          RESTORE AND RETURN TO CALLER         H 036200
+         DROP  R8                  DROP HDG ADDRESSABILITY              H 036300
+         TITLE 'PARROTH - TWENTY80 KEYBREAK ANALYSIS'                   H 036400
+*********************************************************************** H 036500
+*        TWENTY80 KEYBREAK ANALYSIS: MAIN-LINE LOGIC                  * H 036600
+*********************************************************************** H 036700
+         SPACE 1                                                        H 036800
+         USING RAENTRY,R6          ESTABLISH RAE ADDRESSABILITY         H 036900
+         USING OCBNTRY,R7          ESTABLISH OCB ADDRESSABILITY         H 037000
+         USING TRDNTRY,R8          ESTABLISH TRD ADDRESSABILITY         H 037100
+TW80KEY  SUBIN SAVE=ALL            PRESERVE RETURN ADDRESS              H 037200
+         TM    $STATUS2,STAT2080   ARE TWENTY80 ANALYSES REQUIRED       H 037300
+         BZ    TW80KEYX            EXIT IF NOT                          H 037400
+         LTA   R8,$TRDTRD          GET ADDRESS OF 1ST TRD               H 037500
+         B     *+8                 BYPASS FORWARD CHAINING              H 037600
+TW80KEY1 LTA   R8,TRDTRD,TW80KEYX  GET ADDRESS OF NEXT TRD              H 037700
+         NULCB TRD,TW80KEY1        GET NEXT TRD IF THIS IS NULLIFIED    H 037800
+         L     R7,TRDOCB           RETRIEVE OCB ADDRESS                 H 037900
+         CBAL  R4,KALTHDG          ADD KEY AND NAME TO HEADING LINE     H 038000
+         L     R2,OCBIOSW          RETRIEVE DCBSW ADDRESS               H 038100
+         L     R5,IOPSRECA(R2)     RETRIEVE ADDRESS OF CURRENT BUFFER   H 038200
+         CBAL  R4,WRITEH           PRINT REPORT HEADINGS                H 038300
+         ZAP   TRDCNO,$ZERO        ZEROISE CUMULATIVE ENTRY COUNTER     H 038400
+         XC    TRDCVAL,TRDCVAL     ZEROISE CUMULATIVE VALUE ACCUMULATOR H 038500
+         XC    TRDLBND,TRDLBND     ZEROISE LOWER BOUND WORK AREA        H 038600
+         LTA   R6,TRDRAE           GET ADDRESS OF 1ST RAE               H 038700
+         B     *+8                 BYPASS FORWARD CHAINING              H 038800
+TW80KEY2 LTA   R6,RAERAE,TW80KEY3  GET ADDRESS OF NEXT RAE              H 038900
+         CBAL  R4,KPRTRAE          CREATE PRINT LINE FOR RAE            H 039000
+         ZAP   RAEKNO,$ZERO        ZEROISE COUNT OF ENTRIES WITHIN KEY  H 039100
+         XC    RAEKVAL,RAEKVAL     ZEROISE VALUE OF ENTRIES WITHIN KEY  H 039200
+         B     TW80KEY2            LOOP BACK TO PROCESS NEXT RAE        H 039300
+TW80KEY3 ZAP   TRDKNO,$ZERO        ZEROISE TRD'S COUNT OF ENTRIES IN KY H 039400
+         XC    TRDKVAL,TRDKVAL     ZEROISE TRD'S VALUE OF ENTRIES IN KY H 039500
+         B     TW80KEY1            LOOP BACK TO GET NEXT TRD            H 039600
+TW80KEYX SUBOUT RESTORE=ALL        RESTORE AND RETURN TO CALLER         H 039700
+         DROP  R8                  DROP TRD ADDRESSABILITY              H 039800
+         DROP  R7                  DROP OCB ADDRESSABILITY              H 039900
+         DROP  R6                  DROP RAE ADDRESSABILITY              H 040000
+         EJECT                                                          H 040100
+*********************************************************************** H 040200
+*        TWENTY80 KEYBREAK ANALYSIS: ALTER HEADING LINES              * H 040300
+*********************************************************************** H 040400
+         SPACE 1                                                        H 040500
+*        THIS ROUTINE CHAINS THROUGH THE HEADING LINES ( RATHER THAN    H 040600
+*         GOING DIRECTLY TO THE SECOND HEADING LINE ) TO ALLOW FOR THE  H 040700
+*         CASE WHERE THE USER SUPPLIES HIS OWN HEADING LINES ( VIE      H 040800
+*         GR01 CONTROL CARDS ), BUT SUPPLIES A LINE OF 'TW80HD2'        H 040900
+*         FORMAT FOR THE KEY AND NAME FIELD TO BE INSERTED INTO.        H 041000
+         SPACE 1                                                        H 041100
+         USING FSANTRY,R14         ESTABLISH FSA ADDRESSABILITY         H 041200
+         USING HDGNTRY,R2          ESTABLISH HDG ADDRESSABILITY         H 041300
+         USING OCBNTRY,R7          ESTABLISH OCB ADDRESSABILITY         H 041400
+         USING TRDNTRY,R8          ASTABLISH TRD ADDRESSABILITY         H 041500
+KALTHDG  SUBIN SAVE=ALL            PRESERVE RETURN ADDRESS              H 041600
+         LTA   R2,OCBHDG           GET ADDRESS OF 1ST HEADING LINE      H 041700
+         B     *+8                 BYPASS FORWARD CHAINING              H 041800
+KALTHDG1 LTA   R2,HDGHDG,KALTHDGX  GET ADDRESS OF NEXT HDG              H 041900
+         CLC   HDGHEAD+1(L'TW80HD2B),TW80HD2B IS THIS LINE TO MODIFY    H 042000
+         BNE   KALTHDG1            LOOP BACK FOR NEXT HEADING LINE IF N H 042100
+         CBAL  R4,KSETKEY          INSERT KEY IN HEADING LINE           H 042200
+         CBAL  R4,KSETNME          INSERT NAME IN HEADING LINE IF AVAIL H 042300
+         CLC   HDGHEAD+TW80HD2C-TW80HD2(L'TW80HD2C),TW80HD2C DESC ?     H 042400
+         BNE   *+10                BRANCH IF NOT VARIABLE DESCRIPTION   H 042500
+         MVC   HDGHEAD+TW80HD2A-TW80HD2(L'TRDDESC),TRDDESC REFRESH DESC H 042600
+KALTHDGX SUBOUT RESTORE=ALL        RESTORE AND RETURN TO CALLER         H 042700
+         DROP  R8                  DROP TRD ADDRESSABILITY              H 042800
+         DROP  R7                  DROP OCB ADDRESSABILITY              H 042900
+         DROP  R2                  DROP HDG ADDRESSABILITY              H 043000
+         DROP  R14                 DROP FSA ADDRESSABILITY              H 043100
+         EJECT                                                          H 043200
+*********************************************************************** H 043300
+*        TWENTY80 KEYBREAK ANALYSIS: INSERT KEY IN LINE               * H 043400
+*********************************************************************** H 043500
+         SPACE 1                                                        H 043600
+         USING TRDNTRY,R8          ESTABLISH TRD ADDRESSABILITY         H 043700
+         USING FSANTRY,R14         ESTABLISH FSA ADDRESSABILITY         H 043800
+         USING LIBNTRY,R1          ESTABLISH LIB ADDRESSABILITY         H 043900
+KSETKEY  SUBIN SAVE=R2             PRESERVE HDG ADDRESS FOR LATER       H 044000
+         L     R1,$KBDKBD          GET ADDRESS OF 1ST KBD               H 044100
+         L     R1,KBDKLIB-KBDNTRY(R1) RETRIEVE ADDRESS OF LIB FOR KEY   H 044200
+         L     R14,LIBFSA          RETRIEVE ADDRESS OF FSA FOR KEY      H 044300
+         SR    R15,R15             ZEROISE REG 15                       H 044400
+         IC    R15,LIBFLDL         RETRIEVE EXECUTABLE LENGTH OF FIELD  H 044500
+         TM    LIBTYPE,LIBTNUM     TEST IF THE KEY IS NUMERIC           H 044600
+         BO    KSETKEY             BR IF THE KEY FIELD IS NUMERIC       H 044700
+         EX    R15,MVCKEY          MOVE CHARACTER KEY TO HEADING LINE   H 044800
+         B     KSETKEY2            GO TO EXIT                           H 044900
+KSETKEY1 MVC   $FPFP,FSAVALUR      MOVE NUMERIC VALUE TO FP W/A         H 045000
+         XC    $FPNDEC,$FPNDEC     ZEROISE NUMBER OF DECIMALS           H 045100
+         CBAL  R4,CONVFRFP         CONVERT FROM FLOATING POINT TO PD    H 045200
+         SUBLR R2                  REFRESH HDG ADDRESS FROM SAVE AREA   H 045300
+         L     R1,$KBDKBD          GET ADDRESS OF 1ST KBD               H 045400
+         L     R1,KBDKLIB-KBDNTRY(R1) RETRIEVE ADDRESS OF LIB FOR KEY   H 045500
+         L     R14,LIBFSA          RETRIEVE ADDRESS OF FSA FOR KEY      H 045600
+         SR    R15,R15             ZEROISE REG 15                       H 045700
+         IC    R15,LIBFLDL         RETRIEVE EXECUTABLE LENGTH OF FIELD  H 045800
+         CLI   LIBFLDT,PD          WAS THE INPUT FIELD PACKED DECIMAL   H 045900
+         BNE   *+8                 BR IF NOT PD ( ASSUME DISPLAY ORIGIN H 046000
+         LA    R15,1(R15,R15)      SET LENGTH TO (2N+1)                 H 046100
+         SLL   R15,4               SHUFFLE LENGTH OVER FOR EXECUTE      H 046200
+         EX    R15,UNPKKEY         UNPAK KEY INTO HEADING LINE          H 046300
+         SRL   R15,4               MOVE LENGTH BACK WHENCE IT CAME      H 046400
+KSETKEY2 LA    R14,HDGHEAD-HDGNTRY+L'TW80HD2B+1(,R2) PNT AT KEY START   H 046500
+         LA    R14,1(R15,R14)      POINT PAST END OF KEY                H 046600
+         ST    R14,TRDPOSN         PRESERVE POSN LEST NAME FIELD REQ'D  H 046700
+        SUBOUT RESTORE=R2          RESTORE AND RETURN TO CALLER         H 046800
+         DROP  R1                  DROP LIB ADDRESSABILITY              H 046900
+         DROP  R14                 DROP FSA ADDRESSABILITY              H 047000
+         DROP  R8                  DROP TRD ADDRESSABILITY              H 047100
+         EJECT                                                          H 047200
+*********************************************************************** H 047300
+*        TWENTY80 KEYBREAK ANALYSIS: SET KEY'S NAME IN HEADING LINE   * H 047400
+*********************************************************************** H 047500
+         SPACE 1                                                        H 047600
+         USING TRDNTRY,R8          ESTABLISH TRD ADDRESSABILITY         H 047700
+         USING FSANTRY,R14         ESTABLISH FSA ADDRESSABILITY         H 047800
+         USING LIBNTRY,R1          ESTABLISH LIB ADDRESSABILITY         H 047900
+KSETNME  SUBIN ,                   ENTER ROUTINE                        H 048000
+         L     R1,$KBDKBD          GET ADDRESS OF 1ST KBD               H 048100
+         TM    KBDSW-KBDNTRY(R1),MKBDNAME IS A NAME FIELD AVAILABLE     H 048200
+         BZ    KSETNMEX            EXIT IF NO NAME IS AVAILABLE         H 048300
+         L     R1,KBDNLIB-KBDNTRY(R1) RETRIEVE ADDRESS OF NAME'S LIB    H 048400
+         L     R14,LIBFSA          RETRIEVE ADDRESS OF NAME'S FSA       H 048500
+         IC    R15,LIBFLDL         GET EXECUTABLE LENGTH OF NAME FIELD  H 048600
+         L     R1,TRDPOSN          GET ADDRESS AT WHICH TO INSERT NAME  H 048700
+         MVI   1(R1),C'-'          INSERT INTERVENING DASH              H 048800
+         LA    R1,3(,R1)           INCREMENT PAST INTERVENIGNG DASH     H 048900
+         EX    R15,MVCNAME         MOVE NAME TO HEADING LINE            H 049000
+KSETNMEX SUBOUT ,                  RETURN TO CALLER                     H 049100
+         DROP  R1                  DROP LIB ADDRESSABILITY              H 049200
+         DROP  R14                 DROP FSA ADDRESSABILITY              H 049300
+         DROP  R8                  DROP TRD ADDRESSABILITY              H 049400
+         EJECT                                                          H 049500
+*********************************************************************** H 049600
+*        TWENTY80 KEYBREAK ANALYSIS: SET DETAIL VALUES IN LINE        * H 049700
+*********************************************************************** H 049800
+         SPACE 1                                                        H 049900
+         USING OCBNTRY,R7          ESTABLISH OCB ADDRESSABILITY         H 050000
+         USING TW80LINE,R5         ESTABLISH PRINT LINE ADDRESSABILITY  H 050100
+         USING RAENTRY,R6          ESTABLISH RAE ADDRESSABILITY         H 050200
+         USING TRDNTRY,R8          ESTABLISH TRD ADDRESSABILITY         H 050300
+KPRTRAE  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              H 050400
+         L     R7,TRDOCB           RETRIEVE ADDRESS OF ASSOCIATED OCB   H 050500
+         L     R5,OCBIOSW          RETRIEVE ADDRESS OF ASSOCIATED DCBSW H 050600
+         L     R5,IOPSRECA(R5)     RETRIEVE CURRENT BUFFER ADDRESS      H 050700
+         CBAL  R4,SETBNDS          SET LOWER AND UPPER BOUND IN LINE    H 050800
+         CBAL  R4,KSETNO           SET CURRENT & CUMULATIVE COUNTS      H 050900
+         CBAL  R4,KSETVAL          SET VALUE AND %AGE IN LINE           H 051000
+         CBAL  R4,KSETCVAL         SET CUMULATIVE VALUE AND %AGE IN LIN H 051100
+         CBAL  R4,WRITEP           PRINT THE DETAIL LINE                H 051200
+         MVC   TRDLBND,RAERVAL     UPDATE LOWER BOUND FOR NEXT RAE      H 051300
+         SPACE 1                                                        H 051400
+*        INCREMENT THE LOWER BOUND BY 1 TO MAKE THE RANGE MEANINGFUL    H 051500
+         SPACE 1                                                        H 051600
+         MVC   $FPFP,TRDLBND       MOVE THE LOWER BOUND TO FP WORK AREA H 051700
+         LD    FPR0,$FPFP          SET THE LOWER BOUND IN THE FP REG 0  H 051800
+         AD    FPR0,FPONE          INCREMENT THE VALUE BY ONE           H 051900
+         STD   FPR0,$FPFP          SET THE UPDATED VALUE IN FP WORK ARE H 052000
+         MVC   TRDLBND,$FPFP       RESTORE THE INCREMENTED LOWER BOUND  H 052100
+        SUBOUT RESTORE=R4          RESTORE AND RETURN TO CALLER         H 052200
+         DROP  R8                  DROP TRD ADDRESSABILITY              H 052300
+         DROP  R6                  DROP RAE ADDRESSABILITY              H 052400
+         DROP  R5                  DROP PRINT LINE ADDRESSABILITY       H 052500
+         DROP  R7                  DROP OCB ADDRESSABILITY              H 052600
+         EJECT                                                          H 052700
+*********************************************************************** H 052800
+*        TWENTY80 KEYBREAK ANALYSIS: SET CURRENT AND CUMULATIVE CNTS  * H 052900
+*********************************************************************** H 053000
+         SPACE 1                                                        H 053100
+         USING TW80LINE,R5         ESTABLISH PRINT LINE ADDRESSABILITY  H 053200
+         USING RAENTRY,R6          ESTABLISH RAE ADDRESSABILITY         H 053300
+         USING TRDNTRY,R8          ESTABLISH TRD ADDRESSABILITY         H 053400
+KSETNO   SUBIN ,                   PRESERVE RETURN ADDRESS              H 053500
+         MVC   TW80NO,TW80ED2      SET EDIT MASK IN LINE                H 053600
+         ED    TW80NO,RAEKNO       SET NO. OF ENTRIES IN THIS RANGE     H 053700
+         AP    TRDCNO,RAEKNO       INCREMENT CUMULATIVE COUNT           H 053800
+         MVC   TW80CNO,TW80ED2     SET EDIT MASK IN LINE                H 053900
+         ED    TW80CNO,TRDCNO      SET CUMULATIVE NO OF ENTRIES IN LINE H 054000
+         SPACE 1                                                        H 054100
+         ZAP   $WRKDUBL,RAEKNO     SET CURRENT ENTRY COUNT IN W/A       H 054200
+         MP    $WRKDUBL,=P'10000'  MULTIPLY BY 100.00 FOR NNN.NN %AGE   H 054300
+         CP    TRDKNO,$ZERO        TEST FOR DIVISION BY ZERO            H 054400
+         BNE   KSETNO1             BRANCH IF DIVISOR NOT ZERO           H 054500
+         ZAP   $WRKDUBL(4),$ZERO   FORCE ANSWER TO ZERO                 H 054600
+         B     KSETNO2             BYPASS DIVISION                      H 054700
+KSETNO1  DP    $WRKDUBL,TRDKNO     DIVIDE BY TOTAL NO. OF ENTRIES       H 054800
+KSETNO2  MVC   TW80NOP,TW80ED1     SET EDIT MASK IN LINE                H 054900
+         ED    TW80NOP,$WRKDUBL+1  EDIT %AGE INTO LINE                  H 055000
+         SPACE 1                                                        H 055100
+         ZAP   $WRKDUBL,TRDCNO     SET CUMULATIVE COUNT IN W/A          H 055200
+         MP    $WRKDUBL,=P'10000'  MULTIPLY BY 100.00 FOR NNN.NN %AGE   H 055300
+         CP    TRDKNO,$ZERO        TEST FOR DIVISION BY ZERO            H 055400
+         BNE   KSETNO3             BRANCH IF DIVISOR NOT ZERO           H 055500
+         ZAP   $WRKDUBL(4),$ZERO   FORCE ANSWER TO ZERO                 H 055600
+         B     KSETNO4             BYPASS DIVISION                      H 055700
+KSETNO3  DP    $WRKDUBL,TRDKNO     DIVIDE BY TOTAL NO. OF ENTRIES       H 055800
+KSETNO4  MVC   TW80CNOP,TW80ED1    SET EDIT MASK IN LINE                H 055900
+         ED    TW80CNOP,$WRKDUBL+1 EDIT CUMULATIVE %AGE INTO LINE       H 056000
+        SUBOUT ,                   RETURN TO CALLER                     H 056100
+         DROP  R8                  DROP TRD ADDRESSABILITY              H 056200
+         DROP  R6                  DROP RAE ADDRESSABILITY              H 056300
+         DROP  R5                  DROP PRINT LINE ADDRESSABILITY       H 056400
+         EJECT                                                          H 056500
+*********************************************************************** H 056600
+*        TWENTY80 KEYBREAK ANALYSIS: SET VALUE AND %AGE IN LINE       * H 056700
+*********************************************************************** H 056800
+         SPACE 1                                                        H 056900
+         USING TW80LINE,R5         ESTABLISH PRINT LINE ADDRESSABILITY  H 057000
+         USING RAENTRY,R6          ESTABLISH RAE ADDRESSABILITY         H 057100
+         USING TRDNTRY,R8          ESTABLISH TRD ADDRESSABILITY         H 057200
+KSETVAL  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              H 057300
+         XC    $FPNDEC,$FPNDEC     SET NUMBER OF DECIMALS TO ZERO       H 057400
+         MVC   $FPFP,RAEKVAL       SET CURRENT VALUE IN FP W/A          H 057500
+         CBAL  R4,CONVFRFP         CONVERT FROM FLOATING POINT          H 057600
+         MVAL  TW80VAL             SET THE VALUE IN THE LINE            H 057700
+         SPACE 1                                                        H 057800
+         LD    FPR0,$FPFP          SET CURRENT VALUE IN FP REG 0        H 057900
+         MXD   FPR0,FP100          MULTIPLY BY 100                      H 058000
+         LRDR  FPR0,FPR0           CONVERT RESULT TO LONG FORMAT        H 058100
+         MVC   $FPFP,TRDKVAL       SET TOTAL VALUE IN FP W/A            H 058200
+         CBAL  R4,TESTDIV0         TEST FOR DIVISION BY ZERO            H 058300
+         BE    *+8                 BRANCH IF DIVIDING BY ZERO           H 058400
+         DD    FPR0,$FPFP          DIVIDE BY TOTAL VALUE                H 058500
+         STD   FPR0,$FPFP          SET RESULT IN FP W/A                 H 058600
+         MVI   $FPNDEC,2           SET FOR 2 PLACES OF DECIMALS         H 058700
+         CBAL  R4,CONVFRFP         CONVERT VALUE FROM FLOATING POINT    H 058800
+         MVAL  TW80VALP            SET VALUE %AGE IN LINE               H 058900
+        SUBOUT RESTORE=R4          RESTORE AND RETURN TO CALLER         H 059000
+         DROP  R8                  DROP TRD ADDRESSABILITY              H 059100
+         DROP  R6                  DROP RAE ADDRESSABILITY              H 059200
+         DROP  R5                  DROP PRINT LINE ADDRESSABILITY       H 059300
+         EJECT                                                          H 059400
+*********************************************************************** H 059500
+*        TWENTY80 KEYBREAK ANALYSIS: SET CUMULATIVE VALUE & %AGE      * H 059600
+*********************************************************************** H 059700
+         SPACE 1                                                        H 059800
+         USING TW80LINE,R5         ESTABLISH PRINT LINE ADDRESSABILITY  H 059900
+         USING RAENTRY,R6          ESTABLISH RAE ADDRESSABILITY         H 060000
+         USING TRDNTRY,R8          ESTABLISH TRD ADDRESSABILITY         H 060100
+KSETCVAL SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              H 060200
+         XC    $FPNDEC,$FPNDEC     SET NUMBER OF DECIMALS TO ZERO       H 060300
+         MVC   $FPFP,RAEKVAL       SET CURRENT VALUE IN FP W/A          H 060400
+         LD    FPR0,$FPFP          SET CURRENT VALUE IN FP REG 0        H 060500
+         MVC   $FPFP,TRDCVAL       MOVE CUMULATIVE VALUE TO FP W/A      H 060600
+         AD    FPR0,$FPFP          UPDATE CUMULATIVE VALUE              H 060700
+         STD   FPR0,$FPFP          SET UPDATED VALUE IN FP W/A          H 060800
+         MVC   TRDCVAL,$FPFP       SET UPDATED VALUE BACK IN TRD        H 060900
+         CBAL  R4,CONVFRFP         CONVERT VALUE FROM FLOATING POINT    H 061000
+         MVAL  TW80CVAL            SET CUMULATIVE VALUE IN LINE         H 061100
+         SPACE 1                                                        H 061200
+         LD    FPR0,$FPFP          SET CUMULATIVE VALUE IN FP REG 0     H 061300
+         MXD   FPR0,FP100          MULTIPLY BY 100                      H 061400
+         LRDR  FPR0,FPR0           CONVERT ANSWER TO LONG FORMAT        H 061500
+         MVC   $FPFP,TRDKVAL       SET TOTAL VALUE IN FP W/A            H 061600
+         CBAL  R4,TESTDIV0         TEST FOR DIVISION BY ZERO            H 061700
+         BE    *+8                 BRANCH IF DIVIDING BY ZERO           H 061800
+         DD    FPR0,$FPFP          DIVIDE BY FILE TOTAL VALUE           H 061900
+         STD   FPR0,$FPFP          SET ANSWER IN FP WORK AREA           H 062000
+         MVI   $FPNDEC,2           SET FOR 2 DECIMAL PLACES OF OUTPUT   H 062100
+         CBAL  R4,CONVFRFP         CONVERT VALUE FROM FLOATING POINT    H 062200
+         MVAL  TW80CVP             SET CUMULATIVE VALUE %AGE IN LINE    H 062300
+        SUBOUT RESTORE=R4          RESTORE AND RETURN TO CALLER         H 062400
+         DROP  R8                  DROP TRD ADDRESSABILITY              H 062500
+         DROP  R6                  DROP RAE ADDRESSABILITY              H 062600
+         DROP  R5                  DROP PRINT LINE ADDRESSABILITY       H 062700
+         TITLE 'PARROTH - TWENTY80 OVERALL FILE ANALYSIS'               H 062800
+*********************************************************************** H 062900
+*        TWENTY80 FILE ANALYSIS:   MAIN-LINE LOGIC                    * H 063000
+*********************************************************************** H 063100
+         SPACE 1                                                        H 063200
+         USING RAENTRY,R6          ESTABLISH RAE ADDRESSABILITY         H 063300
+         USING OCBNTRY,R7          ESTABLISH OCB ADDRESSABILITY         H 063400
+         USING TRDNTRY,R8          ESTABLISH TRD ADDRESSABILITY         H 063500
+TW80TOT  SUBIN SAVE=ALL            PRESERVE RETURN ADDRESS              H 063600
+         TM    $STATUS2,STAT2080   ARE TWENTY80 ANALYSES REQUIRED       H 063700
+         BZ    TW80TOTX            EXIT IF NOT                          H 063800
+         LTA   R8,$TRDTRD          GET ADDRESS OF 1ST TRD               H 063900
+         B     *+8                 BYPASS FORWARD CHAINING              H 064000
+TW80TOT1 LTA   R8,TRDTRD,TW80TOTX  GET ADDRESS OF NEXT TRD              H 064100
+         NULCB TRD,TW80TOT1        GET NEXT TRD IF THIS IS NULLIFIED    H 064200
+         L     R7,TRDOCB           RETRIEVE OCB ADDRESS                 H 064300
+         CBAL  R4,TALTHDG          ADD KEY AND NAME TO HEADING LINE     H 064400
+         L     R2,OCBIOSW          RETRIEVE DCBSW ADDRESS               H 064500
+         L     R5,IOPSRECA(R2)     RETRIEVE ADDRESS OF CURRENT BUFFER   H 064600
+         CBAL  R4,WRITEH           PRINT REPORT HEADINGS                H 064700
+         ZAP   TRDCNO,$ZERO        ZEROISE CUMULATIVE ENTRY COUNTER     H 064800
+         XC    TRDCVAL,TRDCVAL     ZEROISE CUMULATIVE VALUE ACCUMULATOR H 064900
+         XC    TRDLBND,TRDLBND     ZEROISE LOWER BOUND WORK AREA        H 065000
+         LTA   R6,TRDRAE           GET ADDRESS OF 1ST RAE               H 065100
+         B     *+8                 BYPASS FORWARD CHAINING              H 065200
+TW80TOT2 LTA   R6,RAERAE,TW80TOT3  GET ADDRESS OF NEXT RAE              H 065300
+         CBAL  R4,TPRTRAE          CREATE PRINT LINE FOR RAE            H 065400
+         B     TW80TOT2            LOOP BACK TO PROCESS NEXT RAE        H 065500
+TW80TOT3 EQU   *                   CONTINUE PROCESSING                  H 065600
+         B     TW80TOT1            LOOP BACK TO GET NEXT TRD            H 065700
+TW80TOTX SUBOUT RESTORE=ALL        RESTORE AND RETURN TO CALLER         H 065800
+         DROP  R8                  DROP TRD ADDRESSABILITY              H 065900
+         DROP  R7                  DROP OCB ADDRESSABILITY              H 066000
+         DROP  R6                  DROP RAE ADDRESSABILITY              H 066100
+         EJECT                                                          H 066200
+*********************************************************************** H 066300
+*        TWENTY80 FILE ANALYSIS:   ALTER HEADING LINES                * H 066400
+*********************************************************************** H 066500
+         SPACE 1                                                        H 066600
+*        THIS ROUTINE CHAINS THROUGH THE HEADING LINES ( RATHER THAN    H 066700
+*         GOING DIRECTLY TO THE SECOND HEADING LINE ) TO ALLOW FOR THE  H 066800
+*         CASE WHERE THE USER SUPPLIES HIS OWN HEADING LINES ( VIE      H 066900
+*         GR01 CONTROL CARDS ), BUT SUPPLIES A LINE OF 'TW80HD2'        H 067000
+*         FORMAT FOR THE KEY AND NAME FIELD TO BE INSERTED INTO.        H 067100
+         SPACE 1                                                        H 067200
+         USING FSANTRY,R14         ESTABLISH FSA ADDRESSABILITY         H 067300
+         USING HDGNTRY,R2          ESTABLISH HDG ADDRESSABILITY         H 067400
+         USING OCBNTRY,R7          ESTABLISH OCB ADDRESSABILITY         H 067500
+         USING TRDNTRY,R8          ASTABLISH TRD ADDRESSABILITY         H 067600
+TALTHDG  SUBIN SAVE=ALL            PRESERVE RETURN ADDRESS              H 067700
+         LTA   R2,OCBHDG           GET ADDRESS OF 1ST HEADING LINE      H 067800
+         B     *+8                 BYPASS FORWARD CHAINING              H 067900
+TALTHDG1 LTA   R2,HDGHDG,TALTHDGX  GET ADDRESS OF NEXT HDG              H 068000
+         CLC   HDGHEAD+1(L'TW80HD2B),TW80HD2B IS 'SUBANAL' HEADING HERE H 068100
+         BNE   TALTHDG2            BR IF NOT TO REFRESH DESC IF NEEDED  H 068200
+         MVC   HDGHEAD+1(L'TW80HD2B),=C'OVERALL FILE ANALYSIS'          H 068300
+         SPACE 1                                                        H 068400
+         MVI   HDGHEAD+TW80HD2D-TW80HD2,C' ' INSERT LEADING BLANK ...   H 068500
+         MVC   HDGHEAD+TW80HD2D-TW80HD2+1(L'TW80HD2D-1),HDGHEAD+TW80HD2*H 068600
+               D-TW80HD2            ..... AND PROPAGATE                 H 068700
+         SPACE 1                                                        H 068800
+TALTHDG2 CLC   HDGHEAD+TW80HD2C-TW80HD2(L'TW80HD2C),TW80HD2C DESC ?     H 068900
+         BNE   *+10                BRANCH IF NOT                        H 069000
+         MVC   HDGHEAD+TW80HD2A-TW80HD2(L'TRDDESC),TRDDESC REFRESH DESC H 069100
+         B     TALTHDG1            LOOP BACK TO TEST NEXT HEADING LINE  H 069200
+TALTHDGX SUBOUT RESTORE=ALL        RESTORE AND RETURN TO CALLER         H 069300
+         DROP  R8                  DROP TRD ADDRESSABILITY              H 069400
+         DROP  R7                  DROP OCB ADDRESSABILITY              H 069500
+         DROP  R2                  DROP HDG ADDRESSABILITY              H 069600
+         DROP  R14                 DROP FSA ADDRESSABILITY              H 069700
+         EJECT                                                          H 069800
+*********************************************************************** H 069900
+*        TWENTY80 FILE ANALYSIS:   SET DETAIL VALUES IN LINE          * H 070000
+*********************************************************************** H 070100
+         SPACE 1                                                        H 070200
+         USING OCBNTRY,R7          ESTABLISH OCB ADDRESSABILITY         H 070300
+         USING TW80LINE,R5         ESTABLISH PRINT LINE ADDRESSABILITY  H 070400
+         USING RAENTRY,R6          ESTABLISH RAE ADDRESSABILITY         H 070500
+         USING TRDNTRY,R8          ESTABLISH TRD ADDRESSABILITY         H 070600
+TPRTRAE  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              H 070700
+         L     R7,TRDOCB           RETRIEVE ADDRESS OF ASSOCIATED OCB   H 070800
+         L     R5,OCBIOSW          RETRIEVE ADDRESS OF ASSOCIATED DCBSW H 070900
+         L     R5,IOPSRECA(R5)     RETRIEVE CURRENT BUFFER ADDRESS      H 071000
+         CBAL  R4,SETBNDS          SET LOWER AND UPPER BOUND IN LINE    H 071100
+         CBAL  R4,TSETNO           SET CURRENT & CUMULATIVE COUNTS      H 071200
+         CBAL  R4,TSETVAL          SET VALUE AND %AGE IN LINE           H 071300
+         CBAL  R4,TSETCVAL         SET CUMULATIVE VALUE AND %AGE IN LIN H 071400
+         CBAL  R4,WRITEP           PRINT THE DETAIL LINE                H 071500
+         MVC   TRDLBND,RAERVAL     UPDATE LOWER BOUND FOR NEXT RAE      H 071600
+         SPACE 1                                                        H 071700
+*        INCREMENT THE LOWER BOUND BY 1 TO MAKE THE RANGE MEANINGFUL    H 071800
+         SPACE 1                                                        H 071900
+         MVC   $FPFP,TRDLBND       MOVE THE LOWER BOUND TO FP WORK AREA H 072000
+         LD    FPR0,$FPFP          SET THE LOWER BOUND IN THE FP REG 0  H 072100
+         AD    FPR0,FPONE          INCREMENT THE VALUE BY ONE           H 072200
+         STD   FPR0,$FPFP          SET THE UPDATED VALUE IN FP WORK ARE H 072300
+         MVC   TRDLBND,$FPFP       RESTORE THE INCREMENTED LOWER BOUND  H 072400
+        SUBOUT RESTORE=R4          RESTORE AND RETURN TO CALLER         H 072500
+         DROP  R8                  DROP TRD ADDRESSABILITY              H 072600
+         DROP  R6                  DROP RAE ADDRESSABILITY              H 072700
+         DROP  R5                  DROP PRINT LINE ADDRESSABILITY       H 072800
+         DROP  R7                  DROP OCB ADDRESSABILITY              H 072900
+         EJECT                                                          H 073000
+*********************************************************************** H 073100
+*        TWENTY80 FILE ANALYSIS:   SET CURRENT AND CUMULATIVE CNTS    * H 073200
+*********************************************************************** H 073300
+         SPACE 1                                                        H 073400
+         USING TW80LINE,R5         ESTABLISH PRINT LINE ADDRESSABILITY  H 073500
+         USING RAENTRY,R6          ESTABLISH RAE ADDRESSABILITY         H 073600
+         USING TRDNTRY,R8          ESTABLISH TRD ADDRESSABILITY         H 073700
+TSETNO   SUBIN ,                   PRESERVE RETURN ADDRESS              H 073800
+         MVC   TW80NO,TW80ED2      SET EDIT MASK IN LINE                H 073900
+         ED    TW80NO,RAETNO       SET NO. OF ENTRIES IN THIS RANGE     H 074000
+         AP    TRDCNO,RAETNO       INCREMENT CUMULATIVE COUNT           H 074100
+         MVC   TW80CNO,TW80ED2     SET EDIT MASK IN LINE                H 074200
+         ED    TW80CNO,TRDCNO      SET CUMULATIVE NO OF ENTRIES IN LINE H 074300
+         SPACE 1                                                        H 074400
+         ZAP   $WRKDUBL,RAETNO     SET CURRENT ENTRY COUNT IN W/A       H 074500
+         MP    $WRKDUBL,=P'10000'  MULTIPLY BY 100.00 FOR NNN.NN %AGE   H 074600
+         CP    TRDTNO,$ZERO        TEST FOR DIVISION BY ZERO            H 074700
+         BNE   TSETNO1             BRANCH IF DIVISOR NOT ZERO           H 074800
+         ZAP   $WRKDUBL(4),$ZERO   FORCE RESULT TO ZERO                 H 074900
+         B     TSETNO2             BYPASS DIVISION                      H 075000
+TSETNO1  DP    $WRKDUBL,TRDTNO     DIVIDE BY TOTAL NO. OF ENTRIES       H 075100
+TSETNO2  MVC   TW80NOP,TW80ED1     SET EDIT MASK IN LINE                H 075200
+         ED    TW80NOP,$WRKDUBL+1  EDIT %AGE INTO LINE                  H 075300
+         SPACE 1                                                        H 075400
+         ZAP   $WRKDUBL,TRDCNO     SET CUMULATIVE COUNT IN W/A          H 075500
+         MP    $WRKDUBL,=P'10000'  MULTIPLY BY 100.00 FOR NNN.NN %AGE   H 075600
+         CP    TRDTNO,$ZERO        TEST FOR DIVISION BY ZERO            H 075700
+         BNE   TSETNO3             BRANCH IF DIVISOR NOT ZERO           H 075800
+         ZAP   $WRKDUBL(4),$ZERO   FORCE ANSWER TO ZERO                 H 075900
+         B     TSETNO4             BYPASS DIVISION                      H 076000
+TSETNO3  DP    $WRKDUBL,TRDTNO     DIVIDE BY TOTAL NO. OF ENTRIES       H 076100
+TSETNO4  MVC   TW80CNOP,TW80ED1    SET EDIT MASK IN LINE                H 076200
+         ED    TW80CNOP,$WRKDUBL+1 EDIT CUMULATIVE %AGE INTO LINE       H 076300
+        SUBOUT ,                   RETURN TO CALLER                     H 076400
+         DROP  R8                  DROP TRD ADDRESSABILITY              H 076500
+         DROP  R6                  DROP RAE ADDRESSABILITY              H 076600
+         DROP  R5                  DROP PRINT LINE ADDRESSABILITY       H 076700
+         EJECT                                                          H 076800
+*********************************************************************** H 076900
+*        TWENTY80 FILE ANALYSIS:   SET VALUE AND %AGE IN LINE         * H 077000
+*********************************************************************** H 077100
+         SPACE 1                                                        H 077200
+         USING TW80LINE,R5         ESTABLISH PRINT LINE ADDRESSABILITY  H 077300
+         USING RAENTRY,R6          ESTABLISH RAE ADDRESSABILITY         H 077400
+         USING TRDNTRY,R8          ESTABLISH TRD ADDRESSABILITY         H 077500
+TSETVAL  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              H 077600
+         XC    $FPNDEC,$FPNDEC     SET NUMBER OF DECIMALS TO ZERO       H 077700
+         MVC   $FPFP,RAETVAL       SET CURRENT VALUE IN FP W/A          H 077800
+         CBAL  R4,CONVFRFP         CONVERT FROM FLOATING POINT          H 077900
+         MVAL  TW80VAL             SET THE VALUE IN THE LINE            H 078000
+         SPACE 1                                                        H 078100
+         LD    FPR0,$FPFP          SET CURRENT VALUE IN FP REG 0        H 078200
+         MXD   FPR0,FP100          MULTIPLY BY 100                      H 078300
+         LRDR  FPR0,FPR0           CONVERT RESULT TO LONG FORMAT        H 078400
+         MVC   $FPFP,TRDTVAL       SET TOTAL VALUE IN FP W/A            H 078500
+         CBAL  R4,TESTDIV0         TEST FOR DIVISION BY ZERO            H 078600
+         BE    *+8                 BRANCH IF DIVIDING BY ZERO           H 078700
+         DD    FPR0,$FPFP          DIVIDE BY TOTAL VALUE                H 078800
+         STD   FPR0,$FPFP          SET RESULT IN FP W/A                 H 078900
+         MVI   $FPNDEC,2           SET FOR 2 PLACES OF DECIMALS         H 079000
+         CBAL  R4,CONVFRFP         CONVERT VALUE FROM FLOATING POINT    H 079100
+         MVAL  TW80VALP            SET VALUE %AGE IN LINE               H 079200
+        SUBOUT RESTORE=R4          RESTORE AND RETURN TO CALLER         H 079300
+         DROP  R8                  DROP TRD ADDRESSABILITY              H 079400
+         DROP  R6                  DROP RAE ADDRESSABILITY              H 079500
+         DROP  R5                  DROP PRINT LINE ADDRESSABILITY       H 079600
+         EJECT                                                          H 079700
+*********************************************************************** H 079800
+*        TWENTY80 FILE ANALYSIS:   SET CUMULATIVE VALUE & %AGE        * H 079900
+*********************************************************************** H 080000
+         SPACE 1                                                        H 080100
+         USING TW80LINE,R5         ESTABLISH PRINT LINE ADDRESSABILITY  H 080200
+         USING RAENTRY,R6          ESTABLISH RAE ADDRESSABILITY         H 080300
+         USING TRDNTRY,R8          ESTABLISH TRD ADDRESSABILITY         H 080400
+TSETCVAL SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              H 080500
+         XC    $FPNDEC,$FPNDEC     SET NUMBER OF DECIMALS TO ZERO       H 080600
+         MVC   $FPFP,RAETVAL       SET CURRENT VALUE IN FP W/A          H 080700
+         LD    FPR0,$FPFP          SET CURRENT VALUE IN FP REG 0        H 080800
+         MVC   $FPFP,TRDCVAL       MOVE CUMULATIVE VALUE TO FP W/A      H 080900
+         AD    FPR0,$FPFP          UPDATE CUMULATIVE VALUE              H 081000
+         STD   FPR0,$FPFP          SET UPDATED VALUE IN FP W/A          H 081100
+         MVC   TRDCVAL,$FPFP       SET UPDATED VALUE BACK IN TRD        H 081200
+         CBAL  R4,CONVFRFP         CONVERT VALUE FROM FLOATING POINT    H 081300
+         MVAL  TW80CVAL            SET CUMULATIVE VALUE IN LINE         H 081400
+         SPACE 1                                                        H 081500
+         LD    FPR0,$FPFP          SET CUMULATIVE VALUE IN FP REG 0     H 081600
+         MXD   FPR0,FP100          MULTIPLY BY 100                      H 081700
+         LRDR  FPR0,FPR0           CONVERT ANSWER TO LONG FORMAT        H 081800
+         MVC   $FPFP,TRDTVAL       SET TOTAL VALUE IN FP W/A            H 081900
+         CBAL  R4,TESTDIV0         TETS FOR DIVISION BY ZERO            H 082000
+         BE    *+8                 BRANCH IF DIVIDING BY ZERO           H 082100
+         DD    FPR0,$FPFP          DIVIDE BY FILE TOTAL VALUE           H 082200
+         STD   FPR0,$FPFP          SET ANSWER IN FP WORK AREA           H 082300
+         MVI   $FPNDEC,2           SET FOR 2 PLACES OF DECIMALS OUTPUT  H 082400
+         CBAL  R4,CONVFRFP         CONVERT VALUE FROM FLOATING POINT    H 082500
+         MVAL  TW80CVP             SET CUMULATIVE VALUE %AGE IN LINE    H 082600
+        SUBOUT RESTORE=R4          RESTORE AND RETURN TO CALLER         H 082700
+         DROP  R8                  DROP TRD ADDRESSABILITY              H 082800
+         DROP  R6                  DROP RAE ADDRESSABILITY              H 082900
+         DROP  R5                  DROP PRINT LINE ADDRESSABILITY       H 083000
+         TITLE 'PARROTH - MISCELLANEOUS ROUTINES'                       H 083100
+*********************************************************************** H 083200
+*        TWENTY80 ANALYSIS:        INSERT UPPER AND LOWER BOUNDS      * H 083300
+*********************************************************************** H 083400
+         SPACE 1                                                        H 083500
+         USING RAENTRY,R6          ESTABLISH RAE ADDRESSABILITY         H 083600
+         USING TRDNTRY,R8          ESTABLISH TRD ADDRESSABILITY         H 083700
+         USING TW80LINE,R5         ESTABLISH PRINT LINE ADDRESSABILITY  H 083800
+SETBNDS  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              H 083900
+         XC    $FPNDEC,$FPNDEC     ZEROISE NUMBER OF DECIMALS           H 084000
+         TM    TRDSW,MTRDNOLO      IS LOWER BOUND NOT TO BE PRINTED     H 084100
+         BO    SETBNDS1            BYPASS SETTING IN LINE IF YES        H 084200
+         MVC   $FPFP,TRDLBND       SET LOWER BOUND IN FP WORK AREA      H 084300
+         CBAL  R4,CONVFRFP         CONVERT FROM FLOATING POINT FORMAT   H 084400
+         MVAL  TW80LORA            SET LOWER BOUND IN LINE              H 084500
+         SPACE 1                                                        H 084600
+         MVC   TW80TO,=CL2'TO'     SET CONSTANT IN LINE                 H 084700
+         SPACE 1                                                        H 084800
+         TM    RAESW,MRAELOW       IS THIS THE LOWEST RAE               H 084900
+         BZ    *+10                BRANCH IF NOT THE LOWEST RAE         H 085000
+         MVC   TW80LORA(15),=CL15'      LESS THAN' SET CONSTANT IN LINE H 085100
+         SPACE 1                                                        H 085200
+SETBNDS1 MVC   $FPFP,RAERVAL       SET UPPER BOUND IN FP W/A            H 085300
+         CBAL  R4,CONVFRFP         CONVERT VALUE FROM FLOATING POINT    H 085400
+         MVAL  TW80HIRA            SET UPPER BOUND IN LINE              H 085500
+         SPACE 1                                                        H 085600
+         TM    RAESW,MRAEHIGH      IS THIS THE HIGHEST RAE              H 085700
+         BZ    *+10                BR IF NOT                            H 085800
+         MVC   TW80TO(14),=CL14'AND OVER' SET CONSTANT IN LINE          H 085900
+        SUBOUT RESTORE=R4          RESTORE AND RETURN TO CALLER         H 086000
+         DROP  R5                  DROP PRINT LINE ADDRESSABILITY       H 086100
+         DROP  R8                  DROP TRD ADDRESSABILITY              H 086200
+         DROP  R6                  DROP RAE ADDRESSABILITY              H 086300
+         EJECT                                                          H 086400
+*********************************************************************** H 086500
+*        TEST FOR DIVISION BY ZERO ( TO AVOID 0CF ABENDS )            * H 086600
+*********************************************************************** H 086700
+         SPACE 1                                                        H 086800
+*        THIS ROUTINE TESTS IF THE DIVISOR OF A POTENTIAL DIVIDE        H 086900
+*         INSTRUCTION IS ZERO, AND IF IT IS ARBITRARILY FORCES THE      H 087000
+*         RESULT FIELD TO ZERO.                                         H 087100
+         SPACE 1                                                        H 087200
+*        UPON ENTRY :-                                                  H 087300
+*         $FPFP - VALUE BY WHICH TO DIVIDE                              H 087400
+*         FPR0  - VALUE TO DIVIDE / POTENTIAL RESULT FIELD              H 087500
+         SPACE 1                                                        H 087600
+*        UPON RETURN THE COND CODE IS SET THUS :-                       H 087700
+*         BE  - DIVISOR WAS ZERO: RESULT FIELD ZEROISED                 H 087800
+*         BNE - DIVISOR WAS NOT ZERO                                    H 087900
+         SPACE 1                                                        H 088000
+TESTDIV0 SUBIN ,                   ENTER ROUTINE                        H 088100
+         CLC   $FPFP,FPZERO        TEST IF DIVISOR IS ZERO              H 088200
+         BNE   *+8                 GO TO EXIT IF NOT                    H 088300
+         LD    FPR0,FPZERO         FORCE RESULT ARBITRARILY TO ZERO     H 088400
+         CLC   $FPFP,FPZERO        COMPARE AGAIN TO SET COND CODE       H 088500
+        SUBOUT ,                   RETURN TO CALLER                     H 088600
+         EJECT                                                          H 088700
+*********************************************************************** H 088800
+*        INVOKE FLOATING POINT CONVERSION ROUTINE                     * H 088900
+*********************************************************************** H 089000
+         SPACE 1                                                        H 089100
+*        THIS ROUTINE INVOKES THE FLOATING POINT CONVERSION ROUTINE     H 089200
+*         'CNVFRFP', AND IS IN TURN INVOKED FROM ELSEWHERE WITHIN       H 089300
+*         PARROTH WHENEVER SUCH CONVERSION IS REQUIRED.  THIS REDUCES   H 089400
+*         THE AMOUNT OF CODE GENERATED BY THE MULTITUDE OF CBALS.       H 089500
+         SPACE 1                                                        H 089600
+CONVFRFP SUBIN SAVE=R4             PRESERVE RETURN REGISTER             H 089700
+         CBAL  R4,CNVFRFP          CONVERT VALUE FROM FLOATING POINT    H 089800
+        SUBOUT RESTORE=R4          RESTORE AND RETURN TO CALLER         H 089900
+         EJECT                                                          H 090000
+*********************************************************************** H 090100
+*        CONVERT BINARY POSITION TO EBCDIC                            * H 090200
+*********************************************************************** H 090300
+         SPACE 1                                                        H 090400
+CONVPOS  SUBIN ,                   ENTER ROUTINE                        H 090500
+         MVC   $WRKSNGL,BLDMASK    MOVE EDIT MASK TO WORK AREA          H 090600
+         CVD   R1,$WRKDUBL         CONVERT VALUETO DECIMAL              H 090700
+         ED    $WRKSNGL,$WRKDUBL+6 RETURN TO CALLER                     H 090800
+        SUBOUT ,                   RETIRN TO CALLER                     H 090900
+         TITLE 'PARROTH - EXECUTED INSTRUCTIONS'                        H 091000
+*********************************************************************** H 091100
+*        EXECUTED INSTRUCTIONS                                        * H 091200
+*********************************************************************** H 091300
+         SPACE 1                                                        H 091400
+MVCKEY   MVC   HDGHEAD-HDGNTRY+L'TW80HD2B+1(0,R2),FSACHAR-FSANTRY(R14)  H 091500
+UNPKKEY  MVC   HDGHEAD-HDGNTRY+L'TW80HD2B(0,R2),$FPDEC                  H 091600
+MVCNAME  MVC   0(0,R1),FSACHAR-FSANTRY(R14) ADD NAME TO HEADING         H 091700
+         TITLE 'PARROTH - MISCELLANEOUS CONSTANTS AND FIELDS'           H 091800
+FPZERO   DC    D'0E0'              FP CONSTANT OF ZERO                  H 091900
+FPONE    DC    D'1E0'              FP CONSTANT OF ONE                   H 092000
+FP100    DC    D'1E2'              FP CONSTANT OF 100                   H 092100
+         SPACE 1                                                        H 092200
+BLDMASK  DC    X'40212020'         EDIT MASK FOR ERROR MESSAGES         H 092300
+         SPACE 1                                                        H 092400
+TW80ED1  DC    X'402021204B202060'           ' ZZ9.99-'                 H 092500
+TW80ED2  DC    X'402020202020212060'         ' ZZZZZZ9-'                H 092600
+TW80ED3  DC    X'4020202020202020212060'     ' ZZZZZZZZ9-'              H 092700
+         TITLE 'PARROTH - ERROR MESSAGES'                               H 092800
+LINE07   DS    0CL94                                                    H 092900
+         DC    C'PRTH-007-W  TWENTY80 ANALYSIS REQUEST SPECIFIES'       H 093000
+         DC    C' UNKNOWN LABEL ('                                      H 093100
+LINE07L  DC    C'XX'                                                    H 093200
+         DC    C') - TWENTY80 REQUEST IGNORED'                          H 093300
+LINE08   DS    0CL109                                                   H 093400
+         DC    C'PRTH-008-W  TWENTY80 ANALYSIS REQUEST SPECIFIES THE '  H 093500
+         DC    C'LABEL ('                                               H 093600
+LINE08L  DC    C'XX'                                                    H 093700
+         DC    C') OF A NON-NUMERIC FIELD TYPE - REQUEST IGNORED'       H 093800
+         TITLE 'PARROTO1 - DEFAULT HEADINGS FOR TWENTY80 ANALYSIS'      H 093900
+TW80HD1  DS    0CL16                                                    H 094000
+         DC    AL1(SPCE2AFT)       CARRIAGE CONTROL CHARACTER           H 094100
+         DC    C'RANGE ANALYSIS.'                                       H 094200
+         SPACE 1                                                        H 094300
+TW80HD2  DS    0CL133                                                   H 094400
+         DC    AL1(SPCE2AFT)       CARRIAGE CONTROL CHARACTER           H 094500
+TW80HD2B DC    C'SUB-ANALYSIS FOR MAJOR KEY '                           H 094600
+TW80HD2D DC    CL46' '                                                  H 094700
+TW80HD2C DC    C'RANGE ANALYSIS FOR VARIABLE: '                         H 094800
+TW80HD2A DC    CL30' '                                                  H 094900
+         SPACE 1                                                        H 095000
+TW80HD3  DS    0CL105                                                   H 095100
+         DC    AL1(SPCE1AFT)       CARIAGE CONTROL CHARACTER            H 095200
+         DC    CL72' '                                                  H 095300
+         DC    C'-----------CUMULATIVE-----------'                      H 095400
+         SPACE 1                                                        H 095500
+TW80HD4  DS    0CL105                                                   H 095600
+         DC    AL1(SPCE2AFT)                                            H 095700
+         DC    CL11' ',C'RANGE',CL16' '                                 H 095800
+         DC    C'ENTRIES    %          VALUE   %',CL9' '                H 095900
+         DC    C'ENTRIES    %           VALUE   %'                      H 096000
+         SPACE 5                                                        H 096100
+        SCSEND H                  TERMINATE CSET PARROTH                H 096200
+         END                                                            H 096300

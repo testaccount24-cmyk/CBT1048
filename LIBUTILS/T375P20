@@ -1,0 +1,467 @@
+T375P20  START 0
+         PRINT ON,GEN
+         SPACE 2
+*******************************************************************
+*                                                                 *
+*        PROGRAM ID. :             T375P20                        *
+*                                                                 *
+*        DATE WRITTEN :            OCTOBER, 1975.                 *
+*                                                                 *
+*        AUTHOR :                  J. NOLS                        *
+*                                                                 *
+*        LOCATION :                EUROPEAN COMPUTER CENTER       *
+*                                                                 *
+*******************************************************************
+         SPACE 3
+*******************************************************************
+*                                                                 *
+*        PURPOSE                                                  *
+*       ---------                                                 *
+*        TO PRODUCE A REPORT OF UNASSIGNED EXTENSION NUMBERS,     *
+*         WITH INFORMATIONS FROM THE MASTER FILE OF IBM 3750 -    *
+*         SWITCHING SYSTEM.                                       *
+*                                                                 *
+*******************************************************************
+         EJECT
+*******************************************************************
+*                                                                 *
+*        LIMITATION                                               *
+*       ------------                                              *
+*        NONE.                                                    *
+*                                                                 *
+*******************************************************************
+         SPACE 3
+*******************************************************************
+*                                                                 *
+*        THE LOW AND HIGH NUMBERS OF EXTENSION SERIAL NUMBERS     *
+*         TO BE CONTROLLED MAY BE SUPPLIED IN THE FIELD OF PARM   *
+*         OF EXEC CARD. IF OMITTED THE LOW NUMBER '2000' AND      *
+*         THE HIGH NUMBER '3999' ARE ASSUMED BY DEFAULT.          *
+*                                                                 *
+*        FORMAT OF PARM MUST BE :  PARM='LLLL-HHHH'               *
+*                                         *    *                  *
+*                                         *    ***> HIGH NUMBER.  *
+*                                         *                       *
+*                                         ***> LOW NUMBER.        *
+*                                                                 *
+*******************************************************************
+         EJECT
+*******************************************************************
+*        REGISTER EQUATES AND USAGES.                             *
+*******************************************************************
+         SPACE 1
+R0       EQU   0    SVC COMMUNICATIONS AND WORK REGISTER
+R1       EQU   1    SVC COMMUNICATIONS AND WORK REGISTER
+R2       EQU   2    SUB-ROUTINE CONTROL INFORMATION AND WORK REG.
+R3       EQU   3    WORK REGISTER
+R4       EQU   4    BAL RETURN ADDRESS
+R5       EQU   5    ADDRESS OF WORK AREA GETMAINED
+R6       EQU   6    WORK REGISTER
+R7       EQU   7    WORK REGISTER
+R8       EQU   8    WORK REGISTER
+R9       EQU   9    WORK REGISTER
+R10      EQU   10   WORK REGISTER
+R11      EQU   11   WORK REGISTER
+R12      EQU   12   WORK REGISTER
+R13      EQU   13   SAVE AREA POINTER / BASE REGISTER 1
+R14      EQU   14   BALR RETURN ADDRESS
+R15      EQU   15   BALR ROUTINE ADDRESS AND WORK REGISTER
+         SPACE 3
+*******************************************************************
+*        HOUSEKEEPING                                             *
+*******************************************************************
+         SPACE 1
+         PGMIN EQUATES=NO,USING=(R13)   ESTABLISH ADDRESSABILITY
+         PRINT NOGEN               SUPPRESS MACRO EXPANSION
+         SPACE 3
+*******************************************************************
+*        SAVE ADDRESS AND LENGTH OF PARM OF EXEC CARD             *
+*******************************************************************
+         SPACE 1
+         L     R1,0(R1)            LOAD ADDRESS OF PARM INTO R1
+         MVC   PARMLGTH+2(2),0(R1) STORE LENGTH OF PARM INFO'S
+         LA    R1,2(R1)            GET ADDRESS OF PARM INFO'S
+         ST    R1,PARMADDR         STORE ADDRESS OF PARM INFO'S
+         EJECT
+*******************************************************************
+*        TEST WHICH ARE THE DD'S SUPPLIED, AND OPEN DATA SETS     *
+*         PRESENT.                                                *
+*******************************************************************
+         SPACE 1
+         LA    R3,MAXDS            ESTABLISH LOOP
+         LA    R2,DCBTABLE         POINT R2 AT DCB TABLE
+         OI    0(R2),DDINT         INDICATE DD INTEREST
+         BAL   R4,TESTIOT          GO TEST IF DD STATEMENT PRESENT
+         BAL   R4,OPEN             GO OPEN DATA SET
+         LA    R2,DCBNTRY(R2)      POINT AT NEXT TABLE ENTRY
+         BCT   R3,*-16             PROCESS NEXT DATA SET
+         SPACE 1
+         UT458 ,                   EXECUTE UT458
+         MVC   REPDATE,UTREPORT    MOVE IPL DATE TO HEAD LINE
+         EJECT
+*******************************************************************
+*                                                                 *
+*                                                                 *
+*******************************************************************
+         SPACE 1
+         CLC   PARMLGTH,ZEROWORD   TEST IF PARM SUPPLIED
+         BE    LOADEFT             BRANCH IF NO
+         CLC   PARMLGTH+2(2),=H'9'    TEST IF LENGTH OF PARM IS 9
+         BE    CONVPVAL            BRANCH IF YES
+         WTO   'T375P20 ** ERROR IN PARM OF EXEC CARD **'
+ABEND    ABEND 3750,DUMP
+         SPACE 1
+LOADEFT  LA    R10,1999            LOAD LOW NUMBER -1  **
+         LA    R11,2000            LOAD LOW NUMBER      *> DEFAULTS
+         LA    R12,3999            LOAD HIGH NUMBER    **
+         B     COMMON
+         SPACE 1
+CONVPVAL L     R1,PARMADDR         LOAD PARM ADDRESS INTO R1
+         MVC   LANDHNO,0(R1)       MOVE LOW AND HIGH NUMBER TO HEAD LNE
+         PACK  DECIMAL,0(4,R1)     PACK LOW NUMBER FROM PARM
+         CVB   R11,DECIMAL         CONVERT TO BINARY
+         LTR   R10,R11             LOAD AND TEST LOW NUMBER INTO R10
+         BZ    *+6                 SKIP NEXT INSTRUCTION IF L.N. = ZERO
+         BCTR  R10,0               GET LOW NUMBER -1
+         PACK  DECIMAL,5(4,R1)     PACK HIGH NUMBER FROM PARM
+         CVB   R12,DECIMAL         CONVERT TO BINARY
+         SPACE 1
+COMMON   LR    R9,R12              R9 CONTAIN THE NUMBER OF
+         SR    R9,R10                 EXTENSION TO BE CONTROLLED.
+         GETMAIN R,LV=(R9)         ACQUIRE CORE FOR WORK AREA
+         LR    R8,R1               SAVE ADDRESS OF CORE GETMAINED
+LOOP1    C     R9,=F'256'          TEST IF REST OF LENGTH < 256 BYTES
+         BL    LT256               BRANCH IF YES
+         XC    0(256,R1),0(R1)     ZEROISE 256 BYTES OF CORE GETMAINED
+         LA    R1,256(R1)          INCREMENT POINTER
+         S     R9,=F'256'          DECREMENT REST OF LENGTH
+         B     LOOP1               GO PROCEED FOR NEXT 256 B. OR REST
+LT256    LTR   R9,R9               TEST IF REST OF LENGTH = ZERO
+         BZ    *+10                BRANCH IF YES
+         BCTR  R9,0                DECREMENT ONE FOR EXECUTE INSTRUCT.
+         EX    R9,*+8              EXECUTE 'XC' INSTRUCTION
+         B     *+10                SKIP NEXT INSTRUCTION
+         XC    0(0,R1),0(R1)       ZEROISE REST OF CORE GETMAINED
+         EJECT
+*******************************************************************
+*                                                                 *
+*                                                                 *
+*******************************************************************
+         SPACE 1
+READIN   BAL   R4,RUT1             GO READ SYSUT1 RECORD
+         CLI   96(R6),BLANK        TEST FOR BLANK
+         BE    READIN              YES - GO READ NEXT RECORD
+         CLI   17(R6),C'5'         TEST IF RECORD WITH '5' IN POS. 18
+         BE    READIN              YES - GO READ NEXT RECORD
+         PACK  DECIMAL,93(4,R6)    PACK EXTENSION NUMBER
+         CVB   R5,DECIMAL          CONVERT TO BINARY
+         LTR   R5,R5               TEST IF ZERO
+         BZ    READIN              GO READ NEXT RECD IF ZERO
+         CR    R5,R11              TEST IF CURR. EXT. NO < LOW NO
+         BL    ERROR               YES = ERROR
+         CR    R5,R12              TEST IF CURR. EXT. NO < HIGH NO
+         BH    ERROR               YES = ERROR
+         SR    R5,R10              = DISPLACEMENT FOR
+         BCTR  R5,0                    GETMAINED TABLE
+         LA    R5,0(R8,R5)         GET ADDRESS IN TABLE
+         MVI   0(R5),ON            INDICATE THIS EXTENSION NO IS USED
+         B     READIN              GO READ NEXT RECORD
+ERROR    MVI   MSGER+1,X'00'       INDICATE NEED WRITE ERROR MSG
+         B     READIN              GO READ NEXT RECORD
+         EJECT
+*******************************************************************
+*                                                                 *
+*                                                                 *
+*******************************************************************
+         SPACE 1
+EODUT1   EQU   *
+         ZAP   LINECOUN,MAXLINE    FORCE HEAD LINE
+         BAL   R4,WHL                  TO SYSPRINT
+         BAL   R4,PRINT
+         MVI   0(R5),SPCE2AFT      ESTABLISH SPACE 2 AFTER WRITE
+MSGER    B     *+20
+         MVC   0(L'MSGER1,R5),MSGER1
+         AP    LINECOUN,=P'2'
+         BAL   R4,PRINT
+         MVI   0(R5),SPCE2AFT      ESTABLISH SPACE 2 AFTER WRITE
+         SR    R12,R10             ESTABLISH LOOP
+         LA    R5,4(R5)
+         LA    R6,20
+LOOP3    CLI   0(R8),ON
+         BNE   CEN
+         AP    NEASSIGN,ONE        COUNT NUMBERS OF EXTENSION ASSIGNED
+LOOP4    LA    R8,1(R8)
+         LA    R11,1(R11)
+         BCT   R12,LOOP3
+         B     EL
+CEN      CVD   R11,DECIMAL         CONVERT TO DECIMAL
+         UNPK  DECIMAL(5),DECIMAL+5(3)  UNPACK
+         OI    DECIMAL+4,SIGN           FORCE SIGN TO 'F'
+         MVC   0(4,R5),DECIMAL+1   MOVE TO PRINT
+         LA    R5,6(R5)            INCREMENT POINTER OF PRINT LINE
+         BCT   R6,LOOP4
+         BAL   R4,WHL              GO WRITE HEAD LINE (IF NEED)
+         BAL   R4,PRINT            GO WRITE TO SYSPRINT DATA SET
+         MVI   0(R5),SPCE2AFT      ESTABLISH SPACE 2 AFTER WRITE
+         AP    LINECOUN,=P'2'      ADD TWO TO LINE COUNT
+         LA    R5,4(R5)
+         LA    R6,20
+         B     LOOP4
+EL       EQU   *
+         BAL   R4,PRINT
+         BAL   R4,PRINT
+         ED    NOASSIGN,NEASSIGN
+         MVC   20(L'NOASSIGN+L'MSG1,R5),NOASSIGN
+         EJECT
+*******************************************************************
+*        JOB TERMINATION ROUTINE -                                *
+*         CLOSE ANY OPEN DATA SETS,                               *
+*         SET A COMPLETION CODE IN REGISTER 15, AND RETURN.       *
+*******************************************************************
+         SPACE 1
+JOBEND   EQU   *
+         LA    R3,MAXDS            ESTABLISH LOOP
+         LA    R2,DCBTABLE         POINT AT START OF DCB TABLE
+         BAL   R4,CLOSE            CLOSE DATA SET IF OPEN
+         LA    R2,DCBNTRY(R2)      POINT AT NEXT TABLE ENTRY
+         BCT   R3,*-8              CLOSE NEXT DATA SET
+         PGMOUT RC=COMPCODE        SET COND CODE AND RETURN
+         EJECT
+*******************************************************************
+*        WRITE HEAD LINE                                          *
+*******************************************************************
+         SPACE 1
+WHL      SUBIN SAVE=(R4)
+         CP    LINECOUN,MAXLINE
+         BL    0(R4)
+         NOP   *+12
+         MVI   *-3,X'F0'
+         B     *+12
+         BAL   R4,PRINT
+         MVI   0(R5),PAGESKIP
+         BAL   R4,PRINT
+         AP    PAGECOUN,ONE
+         UNPK  DECIMAL(3),PAGECOUN
+         OI    DECIMAL+2,SIGN
+         MVC   PAGENO,DECIMAL
+         MVC   0(133,R5),HEADLINE
+         ZAP   LINECOUN,=P'3'
+         SUBOUT RESTORE=(R4)
+         TITLE 'I/O SUB-ROUTINES'
+*******************************************************************
+*        WRITE SUBROUTINE FOR SYSPRINT                            *
+*******************************************************************
+         SPACE 1
+PRINT    SUBIN ,
+         TM    PRINTSW,DDINT+DDPRES+DDOPEN   TEST IF NEED TO WRITE
+         BNO   PRINTX              BRANCH IF NO
+         PUT   SYSPRINT            WRITE RECORD TO SYSPRINT D/S
+         LR    R5,R1               SAVE BUFFER ADDRESS
+         MVI   1(R5),BLANK         MOVE BLANK TO START OF LINE
+         MVC   2(131,R5),1(R5)      AND PROPAGANTE THROUGH
+PRINTX   SUBOUT ,                  RETURN TO CALLER
+         SPACE 2
+*******************************************************************
+*        READ SUBROUTINE FOR SYSUT1                               *
+*******************************************************************
+         SPACE 1
+RUT1     SUBIN ,
+         GET   SYSUT1              READ RECORD FROM SYSUT1 D/S
+         LR    R6,R1               SAVE RECORD ADDRESS
+         AP    CNTUT1,ONE          INCREMENT RECORD COUNTER
+         SUBOUT ,                  RETURN TO CALLER
+         SPACE 2
+         EJECT
+*******************************************************************
+*        SUPPLY DEFAULT RECORD LENGTH AND/OR BLOCK SIZE           *
+*         IF NOT CODED.                                           *
+*******************************************************************
+         SPACE 1
+BLKSZRTN SUBIN ,                   SUPPLY DEFAULT LRECL AND/OR BLKS
+         USING IHADCB,R1           ESTABLISH DCB ADDRESSABILITY
+         CLC   DCBLRECL,ZEROWORD   TEST IF LRECL SUPPLIED
+         BNE   *+8                 BYPASS DEFAULT IF YES
+         MVI   DCBLRECL+1,80       FORCE LRECL TO 80
+         CLC   DCBBLKSI,ZEROWORD   TEST IF BLKSIZE SUPPLIED
+         BNE   0(R14)              RETURN TO OPEN IF YES
+         MVC   DCBBLKSI,DCBLRECL   FORCE SINGLE BLOCKING
+         DROP  R1                  DROP DCB ADDRESSABILITY
+         SUBOUT RETURN=(R14)       RETURN TO OPEN ROUTINES
+         SPACE 2
+*******************************************************************
+*        I/O ERROR ROUTINE                                        *
+*******************************************************************
+         SPACE 1
+IOERROR  SUBIN ,                   ANALYSE I/O ERROR
+         MVC   COMPCODE,COND16     SET COMPLETION CODE
+         SYNADAF ACSMETH=QSAM      CALL ANALYSIS ROUTINE
+         MVC   WTOIOE+27(86),50(R1) ADD RESULT OF ANALYSIS TO LINE
+         SYNADRLS ,                RELEASE OS BUFFER
+         WTO   MF=(E,WTOIOE)       TELL OPERATOR OF ERROR
+         SUBOUT RETURN=JOBEND      TERMINATE JOB
+         EJECT
+*******************************************************************
+*        TEST IF A DD STATEMENT IS PRESENT BEFORE OPEN            *
+*******************************************************************
+         SPACE 1
+TESTIOT  SUBIN ,                   TEST TASK INPUT/OUTPUT TABLE
+         TESTIOT DDNAME=4(R2)      TEST IF DDNAME FOUND IN TIOT
+         B     *+4(R15)            TEST CONDITION CODE
+         OI    0(R2),DDPRES        TELL THAT DD STATEMENT SUPPLIED
+         SUBOUT ,                  RETURN TO CALLER
+         SPACE 3
+*******************************************************************
+*        OPEN ROUTINE                                             *
+*******************************************************************
+         SPACE 1
+OPEN     SUBIN SAVE=(R3)           OPEN DATA SET
+         TM    0(R2),DDINT+DDPRES  TEST IF DD INTERESTING AND
+         BNO   OPENX               BRANCH IF NO    / PRESENT.
+         L     R3,0(R2)            GET DCB ADDRESS
+         CLC   12(8,R2),=C'INPUT   ' TEST FOR INPUT D/S
+         BE    OPENZ               BRANCH IF INPUT D/S
+         OPEN  ((R3),(OUTPUT))     OPEN OUTPUT DATA SET
+         B     OPENY               GO SET SWITCH
+OPENZ    OPEN  ((R3),(INPUT))      OPEN INPUT DATA SET
+OPENY    OI    0(R2),DDOPEN        INDICATE DATA SET OPEN
+OPENX    SUBOUT RESTORE=(R3)       RETURN TO CALLER
+         SPACE 3
+*******************************************************************
+*        CLOSE ROUTINE                                            *
+*******************************************************************
+         SPACE 1
+CLOSE    SUBIN SAVE=(R3)           CLOSE DATA SET
+         TM    0(R2),DDOPEN        TEST IF DATA SET OPEN
+         BZ    CLOSEX              EXIT IF NOT
+         L     R3,0(R2)            GET DCB ADDRESS
+         CLOSE ((R3))              CLOSE DATA SET
+         NI    0(R2),FF-DDOPEN     SET OFF 'OPEN' SWITCH
+CLOSEX   SUBOUT RESTORE=(R3)       RETURN TO CALLER
+         TITLE 'DCB''S AND I/O CONTROL TABLES'
+*******************************************************************
+*        DCB'S TABLE                                              *
+*******************************************************************
+         SPACE 1
+DCBTABLE DS    0F
+PRINTSW  DC    X'00',AL3(SYSPRINT),CL8'SYSPRINT',CL8'OUTPUT'
+SYSUT1SW DC    X'00',AL3(SYSUT1),CL8'SYSUT1',CL8'INPUT'
+         SPACE 1
+TABSIZE  EQU   *-DCBTABLE          DCB'S TABLE SIZE
+DCBNTRY  EQU   20                  LENGTH OF ONE TABLE ELEMENT
+MAXDS    EQU   TABSIZE/DCBNTRY     MAXIMUN NUMBER OF DCB'S
+         SPACE 1
+DDINT    EQU   16                  DD INTEREST
+DDPRES   EQU   8                   DD PRESENT
+DDOPEN   EQU   1                   DATA SET IS OPEN
+         SPACE 2
+EXITLIST DC    X'85',AL3(BLKSZRTN) ENTRY FOR DCB MODIFICATION
+         SPACE 2
+WTOIOE   DS    0F
+         DC    AL2(WTOEND-*),H'0',CL109'******** - I/O ERROR -'
+WTOEND   EQU   *
+         EJECT
+*******************************************************************
+*        DATA CONTROL BLOCKS                                      *
+*******************************************************************
+         SPACE 1
+SYSPRINT DCB   DDNAME=SYSPRINT,                                        C
+               DSORG=PS,                                               C
+               SYNAD=IOERROR,                                          C
+               EXLST=EXITLIST,                                         C
+               RECFM=FBM,                                              C
+               MACRF=PL,                                               C
+               LRECL=133
+         SPACE 3
+SYSUT1   DCB   DDNAME=SYSUT1,                                          C
+               DSORG=PS,                                               C
+               SYNAD=IOERROR,                                          C
+               EXLST=EXITLIST,                                         C
+               RECFM=FB,                                               C
+               MACRF=GL,                                               C
+               EODAD=EODUT1
+         SPACE 3
+         TITLE 'MISCELLANIOUS EQUATES, CONSTANTS AND WORK AREAS'
+*******************************************************************
+*        EQUATES                                                  *
+*******************************************************************
+         SPACE 1
+FF       EQU   255                 FOR 'NI' INSTRUCTION
+BLANK    EQU   X'40'               BLANK
+ON       EQU   X'FF'               ON
+OFF      EQU   X'00'               OFF
+HIGHVAL  EQU   X'FF'               HIGH VALUE
+LOWVAL   EQU   X'00'               LOW VALUE
+SIGN     EQU   X'F0'               FOR FORCE SIGN TO 'F'
+         SPACE 1
+SPCE1AFT EQU   X'09'               SPACE 1 AFTER PRINTING
+SPCE2AFT EQU   X'11'               SPACE 2 AFTER PRINTING
+SPCE3AFT EQU   X'19'               SPACE 3 AFTER PRINTING
+PAGESKIP EQU   X'89'               SKIP TO NEW PAGE
+         EJECT
+*******************************************************************
+*        CONSTANTS                                                *
+*******************************************************************
+         SPACE 1
+ZEROWORD DC    F'0'                BINARY ZERO FULLWORD FOR TESTS
+         SPACE 1
+COND4    DC    H'4'                COMPLETION CODE OF 4
+COND8    DC    H'8'                COMPLETION CODE OF 8
+COND12   DC    H'12'               COMPLETION CODE OF 12
+COND16   DC    H'16'               COMPLETION CODE OF 16
+         SPACE 1
+ZERO     DC    PL1'0'              PACKED CONSTANT OF ZERO
+ONE      DC    PL2'1'              PACKED CONSTANT OF ONE
+         EJECT
+*******************************************************************
+*        WORK AREAS                                               *
+*******************************************************************
+         SPACE 1
+DECIMAL  DS    D                   WA FOR DECIMAL OPERATIONS
+COMPCODE DC    H'0'                CONDITION CODE
+         SPACE 1
+PARMLGTH DC    F'0'                LENGTH OF PARM OF EXEC CARD
+PARMADDR DS    F                   ADDRESS OF PARM INFO'S
+         SPACE 1
+PAGECOUN DC    PL2'0'              COUNT OF PAGES
+LINECOUN DC    PL2'0'              COUNT OF LINES
+MAXLINE  DC    PL2'55'             MAXIMUM NUMBER OF LINES PER PAGE
+         SPACE 1
+CNTUT1   DC    PL4'0'
+         SPACE 1
+HEADLINE DS    0CL133
+         DC    X'19' SPACE 3 AFTER WRITE
+         DC    CL16'T375P20'
+         DC    CL30'          -  COMET SYSTEM  -'
+         DC    CL30'UNASSIGNED EXTENSION NUMBERS ('
+LANDHNO  DC    C'2000-3999'
+         DC    CL13')'
+REPDATE  DS    CL9
+         DC    CL14'         PAGE '
+PAGENO   DS    CL3
+         DC    CL8' '
+         SPACE 1
+DETLINE  DC    CL133' '
+         SPACE 1
+MSGER1   DS    CL133
+         ORG   MSGER1
+         DC    X'11' SPACE TWO AFTER WRITE
+         DC    CL132'** RECDS WITH EXT. NO NOT IN RANGE OF THIS REP.'
+         SPACE 1
+NEASSIGN DC    PL3'0'
+NOASSIGN DC    X'40202020212040'
+MSG1     DC    C'EXTENSION NUMBERS ASSIGNED'
+         EJECT
+*******************************************************************
+*        LITERAL POOL                                             *
+*******************************************************************
+         SPACE 1
+         LTORG
+         TITLE 'DCB DSECT'
+*******************************************************************
+*        DCB DSECT                                                *
+*******************************************************************
+         SPACE 1
+         PRINT GEN
+         DCBD  DSORG=PS            GENERATE DCB DSECT
+         PRINT NOGEN
+         END

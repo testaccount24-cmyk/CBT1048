@@ -1,0 +1,497 @@
+T580P210 CSECT
+         PRINT GEN
+         SPACE 2
+*******************************************************************
+*                                                                 *
+*         PROGRAM ID.  :      T580P210                            *
+*                                                                 *
+*         DATE WRITTEN :      NOVEMBER, 1976                      *
+*                                                                 *
+*         AUTHOR       :      J.P. RAINSON                        *
+*                                                                 *
+*         LOCATION     :      BRUSSELS                            *
+*                                                                 *
+*******************************************************************
+         SPACE 3
+*******************************************************************
+*                                                                 *
+*    DESCRIPTION:   THIS PROGRAM GENERATE THE NECESSARY SUPERZAP  *
+*    -----------    CONTROL D/S TO RECREATE THE PROJECT TABLE     *
+*                   BASE ON THE PROJECT LOG D/S COST.T580F050     *
+*                                                                 *
+*    OPERATION REQUIRED DD STATEMENTS: (ALL MANDATORY)            *
+*    --------------------------------                             *
+*                                                                 *
+*         HASPOLIB  -    HASP PROJECT TABLE                       *
+*                                                                 *
+*         COSTDS    -    COST PROJECT LOG                         *
+*                                                                 *
+*         ZAPDS     -    SUPERZAP CONTROL CARDS                   *
+*                                                                 *
+*    ACCESS METHOD:      QSAM                                     *
+*    -------------                                                *
+*                                                                 *
+*******************************************************************
+         EJECT
+**********************************************************************
+*        DCB DSECT                                                   *
+**********************************************************************
+         SPACE 1
+         PRINT NOGEN
+         DCBD  DSORG=PS,DEVD=DA    GENERATE DCB DSECT
+T580P210 CSECT
+         EJECT
+*******************************************************************
+*        COST PROJECT LOG DSECT                                   *
+*******************************************************************
+         SPACE 1
+         PRINT GEN
+COSTREC  DSECT
+         DS    CL4                 PROJECT NUMBER (T...)
+COSTPROJ DS    CL4                 CHARGE CODE
+         DS    CL5                 COST CENTRE
+         DS    CL3                 % CHARGE
+         DS    CL8                 ACRONYM
+         DS    CL29                DESCRIPTION
+         DS    CL15                ISSUED TO
+         DS    CL6                 DATE OPENED (DDMMYY)
+COSTCLOS DS    CL6                 DATE CLOSED (DDMMYY)
+COSTLNGT EQU   *-COSTREC           LENGTH OF DSECT
+T580P210 CSECT                     END OF COST PROJECT LOG DSECT
+         EJECT
+*******************************************************************
+*        REGISTER EQUATES AND USAGES.                             *
+*******************************************************************
+         SPACE 1
+R0       EQU   0    SVC COMMUNICATIONS AND WORK REGISTER
+R1       EQU   1    SVC COMMUNICATIONS AND WORK REGISTER
+R2       EQU   2    WORK
+R3       EQU   3    WORK
+R4       EQU   4    BAL RETURN ADDRESS
+R5       EQU   5    CSECT START ADDRESS
+R6       EQU   6    CSECT START OFFSET (1140)
+R7       EQU   7    CSECT END   OFFSET (FFFF)
+R8       EQU   8    COST PROJECT LOG DSECT POINTER
+R9       EQU   9    DSECT ADDRESSABILITY
+R10      EQU   10   ZAP OFFSET ADDRESS
+R11      EQU   11
+R12      EQU   12   BASE REGISTER 2
+R13      EQU   13   SAVE AREA POINTER / BASE REGISTER 1
+R14      EQU   14   BALR RETURN ADDRESS
+R15      EQU   15   BALR ROUTINE ADDRESS AND WORK REGISTER
+         SPACE 3
+*******************************************************************
+*        HOUSEKEEPING                                             *
+*******************************************************************
+         PRINT GEN
+         SPACE 1
+         PGMIN EQUATES=NO,USING=(R13,R12)    ESTABLISH ADDRESSABILITY
+         ST    R1,PARMADR                    STORE PARM ADDRESS
+         EJECT
+**********************************************************************
+*        TEST WHICH ARE THE DD'S SUPPLIED, AND OPEN D/S PRESENT.     *
+**********************************************************************
+         SPACE 1
+         LA    R3,MAXDS            ESTABLISH LOOP
+         LA    R2,DCBTABLE         POINT R2 AT DCB TABLE
+         OI    0(R2),DDINT         INDICATE DD INTEREST
+         BAL   R4,TESTIOT          GO TEST IF DD STATEMENT PRESENT
+         BAL   R4,OPEN             GO OPEN DATA SET
+         LA    R2,DCBNTRY(R2)      POINT AT NEXT TABLE ENTRY
+         BCT   R3,*-16             PROCESS NEXT DATA SET
+         SPACE 3
+**********************************************************************
+*        TEST IF MANDATORY DD'S ARE PRESENT AND OPEN                 *
+**********************************************************************
+         SPACE 1
+DDHASP   TM    HASPSW,DDINT+DDPRES+DDOPEN  TEST HASPOLIB OPEN
+         BO    DDCOST              YES - BRANCH
+         WTO   'T580P210 **  HASPOLIB DD STATEMENT MISSING  **'
+         B     BADEND
+         SPACE 1
+DDCOST   TM    COSTSW,DDINT+DDPRES+DDOPEN  TEST COSTDS OPEN
+         BO    DDZAP               YES - BRANCH
+         WTO   'T580P210  **  COSTDS DD STATEMENT MISSING   **'
+         B     BADEND
+         SPACE 1
+DDZAP    TM    ZAPSW,DDINT+DDPRES+DDOPEN   TEST ZAPDS OPEN
+         BO    DDTESTX             YES - BRANCH
+         WTO   'T580P210  **  ZAPDS DD STATEMENT MISSING    **'
+         SPACE 1
+DDTESTX  EQU   *
+         EJECT
+**********************************************************************
+*        READ OVERLAY LIBRARY TO FIND PROJECT CODE VALIDATION CSECT  *
+**********************************************************************
+         SPACE 1
+OVLYLOOP EQU   *
+         GET   HASPOLIB            GET NEXT RECORD
+         CLC   0(4,R1),OVRLYID     IS THIS THE ONE WANTED?
+         BNE   OVLYLOOP            NO - GET NEXT RECORD
+         LR    R5,R1               R5 = CSECT START ADDRESS
+         B     HASPPROC            GO PROCESS HASP PROJECT LOG
+         SPACE 3
+**********************************************************************
+*        HASPOLIB END OF DATASET BEFORE OVERLAY FOUND - SO ABEND     *
+**********************************************************************
+OVLYEND  EQU   *
+         WTO   'T580P210 ** HASP PROJECT LOG NOT FOUND     **'
+         B     BADEND              GO TO BAD END PROCESSING
+         EJECT
+**********************************************************************
+*        PROCESS HASP PROJECT LOG TO FIND SUPERZAD OFFSET            *
+**********************************************************************
+         SPACE 1
+HASPPROC EQU   *
+         SR    R10,R10             INIT OFFSET POINTER
+         SPACE 1
+*        FIND HASP LOG TABLE IDENTIFIER
+         SPACE 1
+HASPTABL EQU   *
+         LA    R10,1(0,R10)        INCREMENT OFFSET
+         CH    R10,OFSETMAX        IS OFFSET > CSECT LENGTH
+         BL    HASPTABC            NO - CONTINUE LOOP
+         WTO   'T580P210  ** HASP LOG TABLE-ID NOT FOUND    **'
+         B     BADEND              GO TO BADEND PROCESSING
+         SPACE 1
+HASPTABC EQU   *
+         LA    R2,0(R5,R10)        GET ABSOLUTE ADDRESS
+         CLC   OVRLYTAB,0(R2)      FIND TABLE PROJECT-ID?
+         BNE   HASPTABL            NO - GO ROUND AGAIN
+         SPACE 1
+*        FIND HASP LOG KEY PROJECT (1140)
+         SPACE 1
+HASPBEGL EQU   *
+         LA    R10,2(0,R10)        INCREMENT OFFSET
+         CH    R10,OFSETMAX        IS OFFSET > CSECT LENGTH
+         BL    HASPBEGC            NO - CONTINUE LOOP
+         WTO   'T580P210  ** HASP LOG KEY PROJ NOT FOUND    **'
+         B     BADEND              GO TO BADEND PROCESSING
+         SPACE 1
+HASPBEGC EQU   *
+         LA    R2,0(R5,R10)        GET ABSOLUTE ADDRESS
+         CLC   OVRLYBEG,0(R2)      FIND HASP KEY PROJECT?
+         BNE   HASPBEGL            NO - GO ROUND AGAIN
+         LR    R6,R10              R6 = START OF ZAP OFFSET
+         SPACE 1
+*        FIND HASP LOG END PROJECT (FFFF)
+         SPACE 1
+HASPENDL EQU   *
+         LA    R10,2(0,R10)        INCREMENT OFFSET
+         CH    R10,OFSETMAX        IS OFFSET > CSECT LENGTH
+         BL    HASPENDC            NO - CONTINUE LOOP
+         WTO   'T580P210  ** HASP LOG END PROJ NOT FOUND    **'
+         B     BADEND              GO TO BADEND PROCESSING
+         SPACE 1
+HASPENDC EQU   *
+         LA    R2,0(R5,R10)        GET ABSOLUTE ADDRESS
+         CLC   OVRLYEND,0(R2)      FIND PROJECT LOG END
+         BNE   HASPENDL            NO - GO ROUND AGAIN
+         LR    R7,R10              R7 = END OFFSET
+         SPACE 1
+*        CREATE SUPERZAP 2 FIRST RECORDS (CCHHR + VER PROJ.'CODE 1140)
+         SPACE 1
+SUPFIRST EQU   *
+         USING IHADCB,R9           ESTABLISH DCB ADDRESSABILITY
+         LA    R9,HASPOLIB         SET UP ADDRESSABILITY OF DCB
+         MVC   ZCCHHR(5),=C'CCHHR' MOVE CONSTANT
+         LA    R1,DCBFDAD+3        GET ADDRESS OF CCHH FROM DCB
+         BAL   R4,HEXPAND          CONVERT TO DISPLAY FORMAT
+         MVC   ZABSADDR(8),HEXOUTPT  MOVE TO ZAPREC
+         LA    R1,DCBFDAD+3+4      GET ADDRESS OF R IN CCHHR
+         BAL   R4,HEXPAND          CONVERT TO DISPLAY FORMAT
+         MVC   ZABSADDR+8(2),HEXOUTPT  MOVE TO ZAPREC
+         BAL   R4,PUTZAPDS         GO WRITE HEADER RECORD
+         DROP  R9                  DROP DCB ADDRESSABILITY
+         SPACE 1
+SUPSECND EQU   *
+         MVC   ZVERREP(3),=C'VER'    MOVE CONSTANT
+         STH   R6,OFSTSTOR         STORE ZAP OFFSET
+         LA    R1,OFSTSTOR         POINT TO IT
+         BAL   R4,HEXPAND          CONVERT TO DISPLAY FORMAT
+         MVC   ZOFFSET(4),HEXOUTPT MOVE TO ZAPREC
+         LA    R1,OVRLYBEG         ADDRESS OF FIRST PROJECT CONSTANT
+         BAL   R4,HEXPAND          CONVERT TO DISPLAY FORMAT
+         MVC   ZPROJCT(4),HEXOUTPT MOVE IN ZAPREC
+         MVC   FSTPROJ,ZPROJCT     SAVE FIRST PROJECT CODE
+         BAL   R4,PUTZAPDS         GO WRITE VERIF START PROJECT CODE
+         SPACE 1
+*        CREATE ZAP VERIFY FOR OVERLAY LAST PROJECT CODE
+         SPACE 1
+SUPLAST  EQU   *
+         MVC   ZVERREP(3),=C'VER'  MOVE CONSTANT
+         STH   R7,OFSTSTOR         STORE ZAP OFFSET
+         LA    R1,OFSTSTOR         POINT TO IT
+         BAL   R4,HEXPAND          CONVERT TO DISPLAY FORMAT
+         MVC   ZOFFSET(4),HEXOUTPT MOVE TO ZAPREC
+         LA    R1,OVRLYEND         ADDRESS OF LAST PROJECT CONSTANT
+         BAL   R4,HEXPAND          CONVERT TO DISPLAY FORMAT
+         MVC   ZPROJCT(4),HEXOUTPT MOVE TO ZAPREC
+         BAL   R4,PUTZAPDS         GO WRITE ZAP RECORD
+         EJECT
+**********************************************************************
+*        READ THE COST PROJECT LOG AND GENERATE ZAP RECORDS          *
+**********************************************************************
+         USING COSTREC,R9          ESTABLISH COST RECORDS ADDRESSABITY
+         LR    R10,R6              INIT OFFSET ZAP ADDRESS
+         SPACE 1
+COSTREAD EQU   *
+         GET   COSTDS              READ NEXT COST PROJ LOG RECORD
+         LR    R9,R1               SET UT COST REC DSECT ADDRESSABILITY
+         CLC   COSTPROJ,=C'    '   PROJECT NO SUPPLIED?
+         BE    COSTREAD            NO - GO READ NEXT RECORD
+         CLI   COSTPROJ,C'0'       PROJECT CODE 1ST POS = 0
+         BE    COSTREAD            YES - GO READ NEXT RECORD
+         CLC   COSTCLOS,=CL6' '    IS CLOSED DATE BLANK?
+         BNE   COSTREAD            NO - GO READ NEXT RECORD
+         CLC   COSTPROJ,OLDPROJ    COMPARE WITH THE LAST ONE PROCESS
+         BE    COSTREAD            IF = GO READ NEXT RECORD
+         BH    COSTZAP             IF > GO CREATE ZAP RECORD
+COSTSEQ  EQU   *                   IF < COST FILE OUT OF SEQUENCE
+         WTO   'T580P210 ** COST PROJECT LOG OUT OF SEQUENCE *'
+         B     BADEND              GO TO BADEND PROCESSING
+         SPACE 1
+COSTZAP  EQU   *
+         MVC   OLDPROJ,COSTPROJ    MOVE NEW PROJ CODE TO OLD CODE
+         LA    R10,2(0,R10)        INCREMENT OFFSET
+         CR    R10,R7              END OF CSECT?
+         BL    COSTZAPB            NO - GO CONTINUE ZAP
+         WTO   'T580P210 ** HASP PROJECT LOG IS FULL        **'
+         B     BADEND              GO TO BAD END PROCESSING
+         SPACE 1
+COSTZAPB EQU   *
+         MVC   ZVERREP(3),=C'REP'  MOVE CONSTANT
+         STH   R10,OFSTSTOR        STORE ZAP OFFSET
+         LA    R1,OFSTSTOR         POINT TO IT
+         BAL   R4,HEXPAND          CONVERT TO DISPLAY FORMAT
+         MVC   ZOFFSET(4),HEXOUTPT MOVE TO ZAPREC
+         PACK  DWORD,COSTPROJ      PACK PROJECT NO
+         CVB   R1,DWORD            CONVERT IT IN BINARY
+         ST    R1,DWORD            STORE IT
+         LA    R1,DWORD            POINT TO IT
+         BAL   R4,HEXPAND          CONVERT TO DISPLAY FORMAT
+         MVC   ZPROJCT(4),HEXOUTPT+4 MOVE PROJECT CODE TO ZAPREC
+         CLC   ZPROJCT(4),FSTPROJ  DOES THIS EQUATE TO THE KEY PROJECT?
+         BE    COSTREAD            YES - GO READ NEXT RECORD
+         BAL   R4,PUTZAPDS         GO WRITE ZAP RECORD
+         B     COSTREAD            GO READ NEXT RECORD
+         SPACE 1
+         DROP  R9                  DROP COST RECORD ADDRESSABILITY
+         EJECT
+**********************************************************************
+*        COST RECORD END OF FILE PROCESSING                          *
+**********************************************************************
+         SPACE 1
+READUPND EQU   *
+         SPACE
+*        COMPLETE HASP LOG WITH LOW VALUES UP TO END OF TABLE PROJECT
+         SPACE
+SUPLOWL  EQU   *
+         LA    R10,2(0,R10)        INCREMENT OFFSET
+         CR    R10,R7              END OF CSECT?
+         BNL   SUPLOWCK            YES - GO CHECK LAST OFFSET
+         MVC   ZVERREP(3),=C'REP'  MOVE CONSTANT
+         STH   R10,OFSTSTOR        STORE ZAP OFFSET
+         LA    R1,OFSTSTOR         POINT TO IT
+         BAL   R4,HEXPAND          CONVERT TO DISPLAY FORMAT
+         MVC   ZOFFSET(4),HEXOUTPT MOVE TO ZAPREC
+         MVC   ZPROJCT(4),DUMMYPRO MOVE DUMMY PROJECT TO ZAPREC
+         BAL   R4,PUTZAPDS         GO WRITE ZAP RECORD
+         B     SUPLOWL             LOOP UNTIL END OF CSECT
+         SPACE 1
+*        CHECK IF OFFSET POINT TO LAST HASP LOG PROJECT
+         SPACE 1
+SUPLOWCK EQU   *
+         LA    R2,0(R5,R10)        GET ABS ADDRESS OF HASP END PROJECT
+         CLC   OVRLYEND,0(R2)      OFFSET POINT TO IT?
+         B     JOBEND              BRANCH TO END OF JOB PROCESSING
+         WTO   'T580P210  **  END HASP LOG VERIFY INVALID   **'
+         B     BADEND          GO TO BADEND PROCESSING
+         EJECT
+**********************************************************************
+*        EXPAND 4-BYTES INTERNAL HEX FORMAT TO A DISPLAY FORMAT      *
+*        R1 - POINTS TO THE FULLWORD TO BE EXPANNED                  *
+**********************************************************************
+         SPACE 1
+HEXPAND  SUBIN SAVE=(R2,R3)        DISPLAY FORMAT CONVERSION ROUTINE
+         LA    R2,8                INIT BCT LOOP
+         LA    R3,HEXOUTPT         GET ADDRESS OF OUTPUT FIELD
+         MVC   HEXOUTPT(4),0(R1)   MOVE FULLWORD TO WORK AREA
+HEXLOOP  EQU   *
+         MVO   0(5,R3),0(4,R3)     MOVE 4-BYTES ONE TO THE RIGHT
+*                                  LEAVE ZERO IN FIRST FOUR BITS
+*                                  AND DIGIT PORTION IN SECOND FOUR
+         LA    R3,1(0,R3)          POINT TO NEXT BYTE OF WORK AREA
+         BCT   R2,HEXLOOP          LOOP UNTIL ALL FIELD PROCESS
+         TR    HEXOUTPT(8),HEXTABLE   ADD ZONES TO EACH DIGIT PORTION
+         SUBOUT RESTORE=(R2,R3)    RETURN TO CALLER
+         EJECT
+**********************************************************************
+*        ZAPDS WRITE ROUTINE                                         *
+**********************************************************************
+         SPACE 1
+PUTZAPDS SUBIN ,                   WRITE ROUTINE ENTRY
+         PUT   ZAPDS,ZAPREC        WRITE RECORD TO ZAPDS
+         MVI   ZAPREC,C' '         MOVE BLANK IN COL 1
+         MVC   ZAPREC+1(79),ZAPREC  BLANKIZE ZAPREC
+         SUBOUT ,                  RETURN TO CALLER
+         EJECT
+**********************************************************************
+*        JOB TERMINATION ROUTINE -                                   *
+*              CLOSE ANY OPEN DATA SETS,                             *
+*              SET COMPLETION CODE IN REGISTER 15,                   *
+*              DUMP IF COMLETION CODE NOT = 0 AND RETURN             *
+**********************************************************************
+         SPACE 1
+JOBEND   EQU   *
+         LA    R3,MAXDS            ESTABLISH LOOP
+         LA    R2,DCBTABLE         POINT AT START OF DCB TABLE
+         BAL   R4,CLOSE            CLOSE DATA SET IF OPEN
+         LA    R2,DCBNTRY(R2)      POINT AT NEXT TABLE ENTRY
+         BCT   R3,*-8              CLOSE NEXT DATA SET
+         SPACE 1
+*        DUMP IF CC NOT = 0
+         CLC   COMPCODE,COND0      TEST IF CONDITION CODE = 0
+         BE    JOBOK               YES - DROP ABEND PROCESSING
+         WTO   'T580P210 ** BAD END OF PROGRAM              **'
+         ABEND 1140,DUMP,STEP      ABEND WITH U1140
+         SPACE 1
+*        RETURN WITH COMPLETION CODE
+         SPACE 1
+JOBOK    EQU   *
+         PGMOUT RC=COMPCODE        SET COMPLETION CODE AND RETURN
+         SPACE 3
+**********************************************************************
+*        BAD END ROUTINE                                             *
+**********************************************************************
+         SPACE 1
+BADEND   EQU   *
+         MVC   COMPCODE,COND16     SET COMPLETION CODE TO 16
+         B     JOBEND
+         EJECT
+**********************************************************************
+*        I/O ERROR ROUTINE                                           *
+**********************************************************************
+         SPACE 1
+IOERROR  SUBIN ,                   ANALYSE I/O ERROR
+         MVC   COMPCODE,COND16     SET COMPLETION CODE
+         SYNADAF ACSMETH=QSAM      CALL ANALYSIS ROUTINE
+IOERRMES EQU   *                   LET OPERATOR KNOW OF I/O ERROR
+         MVC   WTOIOE+27(86),50(R1) ADD RESULT OF ANALYSIS TO LINE
+         SYNADRLS ,                RELEASE OS BUFFER
+         WTO   MF=(E,WTOIOE)       TELL OPERATOR OF ERROR
+         SUBOUT RETURN=JOBEND      TERMINATE JOB
+         EJECT
+**********************************************************************
+*        TEST IF A DD STATEMENT IS PRESENT BEFORE OPEN               *
+**********************************************************************
+         SPACE 1
+TESTIOT  SUBIN ,                   TEST TASK INPUT/OUTPUT TABLE
+         CLC   4(8,R2),=CL8' '     TEST IF DDNAME BLANK
+         BNE   *+12                NO - BYPASS FORWARD CHAINING
+         L     R15,=F'4'           SET R15 TO 4 (NOT FOUND)
+         B     TESTIOTX            RETURN
+         TESTIOT DDNAME=4(R2)      TEST IF DDNAME FOUNT IN TIOT
+         B     *+4(R15)            TEST CONDITION CODE
+         OI    0(R2),DDPRES        TELL THAT DD STATEMENT SUPPLIED
+TESTIOTX EQU   *
+         SUBOUT ,                  RETURN TO CALLER
+         SPACE 3
+**********************************************************************
+*        OPEN D/S ROUTINE                                            *
+**********************************************************************
+         SPACE 1
+OPEN     SUBIN SAVE=(R3)           OPEN DATA SET ROUTINE
+         TM    0(R2),DDINT+DDPRES  DD INT AND PRESENT?
+         BNO   OPENX               NO - BYPASS OPEN PROCESSING
+         L     R3,0(R2)            GET DCB ADDRESS
+         CLC   12(8,R2),=C'INPUT   '  TEST FOR INPUT D/S
+         BE    OPENZ               YES - BRANCH
+         OPEN  ((R3),(OUTPUT))     OPEN OUTPUT D/S
+         B     OPENY               GO SET SWITCH
+OPENZ    OPEN  ((R3),(INPUT))      OPEN INPUT D/S
+OPENY    OI    0(R2),DDOPEN        INDICATE D/S OPEN
+OPENX    SUBOUT RESTORE=(R3)       RETURN TO CALLER
+         SPACE 3
+**********************************************************************
+*        CLOSE D/S ROUTINE                                           *
+**********************************************************************
+         SPACE 1
+CLOSE    SUBIN SAVE=(R3)           CLOSE D/S ROUTINE
+         TM    0(R2),DDOPEN        TEST IF D/S OPEN
+         BNO   CLOSEX              NO - EXIT
+         L     R3,0(R2)            GET DCB ADDRESS
+         CLOSE ((R3))              CLOSE DATA SET
+         NI    0(R2),FF-DDOPEN     INDICATE D/S NOW CLOSED
+CLOSEX   SUBOUT RESTORE=(R3)       RETURN TO CALLER
+         EJECT
+**********************************************************************
+*        DATA CONTROL BLOCKS                                         *
+**********************************************************************
+         PRINT NOGEN
+         SPACE 1
+HASPOLIB DCB   DDNAME=HASPOLIB,MACRF=(GL),DSORG=PS,                    C
+               RECFM=U,BLKSIZE=1024,BUFNO=1,EODAD=OVLYEND,SYNAD=IOERROR
+         SPACE 3
+COSTDS   DCB   DDNAME=COSTDS,MACRF=(GL),DSORG=PS,                      C
+               RECFM=FB,LRECL=80,EODAD=READUPND,SYNAD=IOERROR
+         SPACE 3
+ZAPDS    DCB   DDNAME=ZAPDS,MACRF=(PM),DSORG=PS,                       C
+               RECFM=FB,LRECL=80,SYNAD=IOERROR
+         EJECT
+**********************************************************************
+*        DCB'S TABLE                                                 *
+**********************************************************************
+         SPACE 1
+DCBTABLE DS    0F
+HASPSW   DC    X'00',AL3(HASPOLIB),CL8'HASPOLIB',CL8'INPUT'
+COSTSW   DC    X'00',AL3(COSTDS),CL8'COSTDS',CL8'INPUT'
+ZAPSW    DC    X'00',AL3(ZAPDS),CL8'ZAPDS',CL8'OUTPUT'
+TABSIZE  EQU   *-DCBTABLE          DCB'S TABLE SIZE
+DCBNTRY  EQU   20                  LENGTH OF ONE DCB TABLE ELEMENT
+MAXDS    EQU   TABSIZE/DCBNTRY     MAXIMUM NUMBER OF DCB'S
+FF       EQU   255                 FOR NI INSTRUCTION
+DDMAN    EQU   32                  DD MANDATORY
+DDINT    EQU   16                  DD INTEREST
+DDPRES   EQU   8                   DD PRESENT
+DDOPEN   EQU   1                   D/S IS OPEN
+         EJECT
+**********************************************************************
+*        CONSTANTS DATA AREA ETC.                                    *
+**********************************************************************
+         SPACE 1
+WTOIOE   DS    0F
+         DC    AL2(WTOEND-*),H'0',CL109'******** - I/O ERROR -'
+WTOEND   EQU   *
+COMPCODE DC    H'0'                COMPLETION CODE
+COND0    DC    H'0'                COMPLETION CODE OF 0
+COND4    DC    H'4'                COMPLETION CODE OF 4
+COND8    DC    H'8'                COMPLETION CODE OF 8
+COND12   DC    H'12'               COMPLETION CODE OF 12
+COND16   DC    H'16'               COMPLETION CODE OF 16
+PARMADR  DS    F
+OVRLYID  DC    CL4'RJBV'           OVERLAY RECORD ID
+OVRLYTAB DC    H'1190'             HASP PROJECT LOG TABLE-ID
+OVRLYBEG DC    H'1140'             FIRST VALID HASP PROJECT CODE
+OVRLYEND DC    X'FFFF'             LAST HASP PROJECT CODE
+OFSETMAX DC    H'1024'             MAXIMUM OFFSET ALLOWED
+ZAPREC   DC    CL80' '             ZAP RECORD FIELD
+ZCCHHR   EQU   ZAPREC+5
+ZVERREP  EQU   ZAPREC+5
+ZABSADDR EQU   ZAPREC+12
+ZOFFSET  EQU   ZAPREC+9
+ZPROJCT  EQU   ZAPREC+14
+FSTPROJ  DC    X'00000000'         KEY PROJECT SAVE IN DISPLAY FORMAT
+OLDPROJ  DC    X'00000000'         LAST COST PROJECT PROCESS
+DUMMYPRO DC    CL4'0000'           USED TO COMPLETE HASP PROJ LOG
+DWORD    DC    D'0'                WORK FLD FOR DISPLAY FRMT CONVERSION
+OFSTSTOR DC    H'0'                WORK FLD FOR DISPLAY FRMT CONVERSION
+HEXOUTPT DC    CL12' '             WORK FLD FOR DISPLAY FRMT CONVERSION
+HEXTABLE DC    XL16'F0F1F2F3F4F5F6F7F8F9C1C2C3C4C5C6'
+         EJECT
+**********************************************************************
+**********************************************************************
+*        LITERAL POOL                                                *
+         SPACE 1
+         LTORG
+         END

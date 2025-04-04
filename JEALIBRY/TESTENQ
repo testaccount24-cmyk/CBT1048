@@ -1,0 +1,197 @@
+//TESTENQ  JOB (1580,5),'0000 JEA',CLASS=N
+//STEP01       EXEC LIBRARYN,FILE=MVS,INTRDR=INTRDR,HASP=HASP
+//SYSIN DD DATA,DLM='??'
+-OPT NOLIST,EXEC
+-DLM TESTENQ,TENQ
+-ADD TESTENQ,TENQ
+-PGMR JEABBEY
+-DESC ENQ TEST ROUTINE
+//JEASTENQ JOB (1580,5),'0000 J ABBEY',CLASS=N
+// EXEC ASMFCL,L=H,LOPT='RENT,AC=1'
+//SYSLIB DD DSN=SYS1.MACLIB,DISP=SHR
+// DD DSN=JEABOC.MACLIB,DISP=SHR
+         TITLE 'DATA SET STATUS DETERMINATION'
+***********************************************************************
+*                                                                     *
+*        TESTENQ; A MODULE TO TEST THE STATUS OF A DATA SET.          *
+*                                                                     *
+*        PARAMETERS; BY STANDARD LINKAGE REG1 POINTS TO THE           *
+*              ADDRESS OF AN AREA UP TO 45 BYTES LONG WHICH CONTAINS  *
+*              THE NAME OF THE DATA SET FOLLOWED BY AT LEAST 1 BLANK. *
+*                                                                     *
+*        ATTRIBUTES; REENTRANT, CODED ASSEMBLER VS.                   *
+*                                                                     *
+*        INSTALLATION DEPENDANCIES; USES INSTALLATION HOUSEKEEPING    *
+*              MACROS ZCSECT AND ZRETURN.                             *
+*                                                                     *
+*        RETURN; BY STANDARD LINKAGE TO CALLER.                       *
+*              REGISTER 15 CONTAINS A RETURN CODE:-                   *
+*              0    DATA SET IS NOT IN USE BY ANY OTHER TASK          *
+*              4    DATA SET IS UNAVAILABLE TO THIS TASK.             *
+*              8    A SERIOUS ERROR WAS ENCOUNTERED WHILE             *
+*                      PROCESSING THE QCB CHAINS.                     *
+*              REGISTER 1 CONTAINS THE ADDRESS OF THE QEL CHAIN.      *
+*              OR, IF THE INPUT PARAMETER BEGINS WITH AN ASTERISK,    *
+*              REG1 CONTAINS THE ADDRESS OF THE WHOLE SYSDSN QCB CHAIN*
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING                                   *
+***********************************************************************
+TESTENQ  ZCSECT GETMAIN=1
+         L     REG2,0(REG1)        ADDRESS OF INPUT PARMS
+         XC    24(4,REG11),24(REG11) CLEAR RETURN REG 1 CONTENTS
+         USING PARMD,REG2          ADDRESSABILITY
+         USING MAJQCB,REG4
+         USING MINQCB,REG6
+         USING QEL,REG9
+         EJECT
+***********************************************************************
+*        DETERMINE THE LENGTH OF THE DATA SET NAME                    *
+***********************************************************************
+         SPACE 2
+         LA    REG14,PARMDSN        LOAD ADDRESS START OF NAME
+         LR    REG15,REG14         SAVE START ADDRESS
+NAMELOOP LA    REG14,1(REG14)      ADDRESS NEXT BYTE OF NAME
+         CLI   0(REG14),C' '       END OF NAME YET ?
+         BNE   NAMELOOP            LOOP TO END OF NAME
+         SR    REG14,REG15         CALCULATE LENGTH OF NAME
+         BCTR  REG14,0             SUBTRACT 1 TO GIVE EXECUTABLE LENGTH
+         EJECT
+***********************************************************************
+*        LOOP ROUND ALL MAJOR NAMES                                   *
+***********************************************************************
+         SPACE 2
+         XR    REG8,REG8           CLEAR LENGTH REGISTER
+         L     REG3,16             LOAD ADDRESS OF CVT
+         LA    REG4,CVTFQCB(REG3)  ADDRESS OF FIRST MAJOR QCB
+         LH    REG15,ERROR         ASSUME INVALID CHAINS
+MAJLOOP  L     REG4,QCBNMAJ        LOAD ADDRESS NEXT MAJOR QCB
+         LTR   REG4,REG4           TEST FOR PRESCENCE OF ANOTHER QCB
+         BZ    MAJEXIT             EXIT FROM LOOP IF NONE
+         CLC   SYSDSN,QCBNAME      IS THIS DATA SET ENQ CHAIN ?
+         BNE   MAJLOOP             NO. GET NEXT MAJOR QCB
+         LA    REG11,MAJEXIT       LOAD RETURN LINK REGISTER
+         CLI   PARMDSN,ASTERISK    SPECIAL FUNCTION REQUESTED ?
+         BE    SPECIALF            YES. BRANCH TO THAT ROUTINE
+         B     MINORQCB            NO. GO PROCESS MINOR QCB CHAIN
+MAJEXIT  B     EXITPGM             BRANCH TO NEXT ROUTINE
+         SPACE 2
+ERROR    DC    H'8'                SYSDSN MAJOR QCB NOT FOUND
+SYSDSN   DC    CL8'SYSDSN'         DATASET ENQ MAJOR NAME
+         EJECT
+***********************************************************************
+*        COMMON PROGRAM EXIT                                          *
+***********************************************************************
+         SPACE 2
+EXITPGM  DS    0H
+         ZRETURN RC=(15)           RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        SPECIAL FUNCTION REQUESTED. SET RETURN REGISTERS             *
+***********************************************************************
+         SPACE 2
+SPECIALF DS    0H
+         L     REG1,4(REG13)       LOAD ADDRESS PREVIOUS SAVE AREA
+         MVC   24(4,REG1),QCBFMIN  MOVE MIN QCB CHAIN ADDR TO REG 1
+         XR    REG15,REG15         RESET RETURN CODE
+         BR    REG11               RETURN TO MAINLINE
+         EJECT
+***********************************************************************
+*        LOOP ROUND EACH MINOR QCB     AND PROCESS IT                 *
+***********************************************************************
+         SPACE 2
+MINORQCB DS    0H
+         LA    REG6,QCBFMIN        ADDRESS OF FIRST MIN QCB
+         LH    REG15,AVAIL         ASSUME D/S WILL BE AVAILABLE
+MINLOOP  L     REG6,QCBNMIN        LOAD ADDRESS OF NEXT MINOR QCB
+         LTR   REG6,REG6           TEST FOR PRESCENCE OF MORE MINORS
+         BZ    MINEXIT             NONE. EXIT FROM LOOP
+         IC    REG8,QCBRLEN        LOAD LENGTH DSNAME IN QCB
+         BCTR  REG8,0              SUBTRACT 1 FROM DSN LENGTH
+         CR    REG8,REG14          COMPARE LENGTH INPUT NAME/QCB NAME
+         BNE   MINLOOP             NOT SAME. GET NEXT MINOR QCB
+         EX    REG8,CLCDSN         COMPARE THE TWO NAMES
+         BNE   MINLOOP             NOT SAME. GET NEXT MINOR QCB
+         BAL   REG14,TESTQEL       DETERMINE STATUS OF THIS DATA SET
+MINEXIT  BR    REG11               RETURN TO MAINLINE
+         SPACE 2
+AVAIL    DC    H'0'                GOOD RETURN CODE
+CLCDSN   CLC   PARMDSN(0),QCBRNAME COMPARE QCB NAME & PARM NAME
+         EJECT
+***********************************************************************
+*        A MATCH HAS BEEN FOUND. TEST FOR ENQ'D USERS                 *
+***********************************************************************
+         SPACE 2
+TESTQEL  DS    0H
+         LA    REG9,QCBFQEL
+         L     REG1,4(REG13)       ADDRESS PREVIOUS SAVE AREA
+         MVC   24(4,REG1),0(REG9)  MOVE ADDRESS QEL CHAIN TO REG1 S/A
+         L     REG10,QCBLQEL       ADDRESS OF LAST QEL
+         L     REG1,CVTTCBP(REG3)  TCBWORDS
+         L     REG1,4(REG1)        ADDRESS OF CURRENT TCB
+         LA    REG1,0(REG1)        STRIP OFF TOP BYTE
+QELLOOP  L     REG9,QELNQEL        LOAD ADDRESS OF NEXT QEL
+         LTR   REG9,REG9           TEST FOR PRESCENCE OF MORE QELS
+         BZ    QELEXIT             NONE. EXIT FROM LOOP
+         C     REG1,QELTCB         THIS ENQ FOR THIS TASK
+         BE    QELLOOP             YES. NO PROBLEM. GET NEXT QEL
+         TM    QELFLG,SHARE        IS THIS A SHARED REQUEST ?
+         BO    QELLOOP             YES. NO PROBLEM. GET NEXT QEL
+         LH    REG15,UNAVAIL       NO. DATA SET CANNOT BE USED
+QELEXIT  BR    REG14               RETURN TO CALLER
+         SPACE 2
+UNAVAIL  DC    H'4'                DATA SET NOT AVAILABLE
+         EJECT
+***********************************************************************
+*                                                                     *
+*        EQUATES USED IN THE MODULE.                                  *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+ASTERISK EQU   C'*'                USED TO TEST FOR SPECIAL FUNCTION
+SHARE    EQU   X'80'               DISPOSITION BIT IN QEL
+CVTTCBP  EQU   0                   OFFSET TO TCB WORDS IN CVT
+CVTFQCB  EQU   X'280'              ADDRESS OF FIRST MAJOR QCB
+CVTLQCB  EQU   X'284'              ADDRESS OF LAST  MAJOR QCB
+         EJECT
+MAJQCB   DSECT
+QCBNMAJ  DS    A
+QCBPMAJ  DS    A
+QCBFMIN  DS    A
+QCBLMIN  DS    A
+QCBNAME  DS    CL8
+         EJECT
+MINQCB   DSECT
+QCBNMIN  DS    A
+QCBPMIN  DS    A
+QCBFQEL  DS    A
+QCBLQEL  DS    A
+QCBRLEN  DS    X
+QCBMNFLG DS    X
+QCBASCB  DS    XL2
+QCBRNAME DS    X
+         EJECT
+QEL      DSECT
+QELNQEL  DS    A
+QELPQEL  DS    A
+QELTCB   DS    A
+QELFLG   DS    X
+QELRSRV  DS    XL9
+         EJECT
+PARMD    DSECT
+PARMDSN  DS    CL44                DATA SET NAME
+         END
+//LKED.SYSLMOD DD  DSN=SYS1.MLPALIB,DISP=SHR
+ INCLUDE LINKLIB(AUXCOMM)
+ ENTRY AUXCOMM
+ ALIAS AUXCMM06
+ ALIAS AUXCMM10
+ NAME AUXCOMM(R)
+//LINKLIB DD DSN=SYS1.MLPALIB,DISP=SHR
+-EMOD
+-END
+??

@@ -1,0 +1,151 @@
+         TITLE 'DATA SET CHARACTERISTIC DETERMINATION MODULE'
+***********************************************************************
+*                                                                     *
+*            THIS ROUTINE WILL FIND OUT THE DATA SET NAME, LRECL      *
+*        BLOCKSIZE, AND RECORD FORMAT FOR A GIVEN FILE AND CONVERT    *
+*        THEM TO A FORM SUITABLE FOR USE BY ANOTHER PROGRAM. I.E.     *
+*        IT WILL CONVERT THE LRECL AND BLOCKSIZE TO EBCDIC AND        *
+*        GENERATE ONE OF THE ACCEPTED ACRONYMS FOR RECORD FORMAT.     *
+*                                                                     *
+*            PARAMETERS PASSED TO THE PROGRAM BY STANDARD CONVENTIONS *
+*        ARE ONE AREA OF FIXED FORMAT AS FOLLOWS:-                    *
+*                                                                     *
+*        DDNAME    8 BYTES. FILLED IN BY CALLER.                      *
+*        DSNAME    44 BYTES. TO CONTAIN DATA SET NAME ON EXIT         *
+*        LRECL     5 BYTES. TO CONTAIN EBCDIC RECORD LENGTH.          *
+*        BLKSIZE   5 BYTES. TO CONTAIN EBCDIC BLOCK SIZE.             *
+*        RECFM     3 BYTES. TO CONTAIN THE RECORD FORMAT ACRONYM.     *
+*        RETCODE   1 BYTE. TO INDICATE SUCCESS OR FAILURE.            *
+*                                                                     *
+*            THE RETCODE FIELD ABOVE WILL CONTAIN, ON EXIT, ONE OF    *
+*        THE FOLLOWING VALUES:-                                       *
+*                                                                     *
+*        '0'       ZERO RETURN CODE. ALL INFORMATION IS PROVIDED.     *
+*        '1'       ERROR. DDNAME IS MISSING.                          *
+*                                                                     *
+*            THE PROGRAM OPERATES BY INITILISING A DCB FOR THE        *
+*        DDNAME PROVIDED BY CALLER AND OPENING IT. AT THE SAME TIME   *
+*        THE JOB FILE CONTROL BLOCK IS READ INTO CORE AND FROM THIS   *
+*        AND THE OPEN DCB, ALL REQUIRED INFORMATION CAN BE EXTRACTED  *
+*        AND FORMATTED.                                               *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        DSECTS USED IN THE PROGRAM                                   *
+***********************************************************************
+         SPACE 2
+PARMAREA DSECT
+DDNAME   DS    CL8
+DSNAME   DS    CL44
+MEMBNAME DS    CL8
+LRECL    DS    CL5
+BLKSIZE  DS    CL5
+RECFM    DS    CL3
+FLAG     DS    C
+         SPACE 2
+         DCBD  DEVD=DA,DSORG=QS
+         EJECT
+***********************************************************************
+*        PROGRAM INITIALISATION                                       *
+***********************************************************************
+JPRUSER6 ZCSECT
+         L     REG3,0(REG1)        LOAD ADDRESS OF PARAMETER AREA
+         USING PARMAREA,REG3       ADDRESSABILITY FOR PARM AREA
+         LA    REG4,DCB            LOAD ADDRESS OF DCB
+         USING IHADCB,REG4         ADDRESSABILITY FOR DCB
+         EJECT
+***********************************************************************
+*        CHECK FOR CORRECT WORK AREA PASSED                           *
+***********************************************************************
+         SPACE 2
+         CLI   FLAG,C'*'           IS THERE AN ASTERISK HERE ?
+         BE    ALLOK               YES CARRY ON
+         ABEND 999,DUMP,STEP       ABEND IF INVALID
+         EJECT
+***********************************************************************
+*        INITIALISE THE DCB AND READ JFCB INTO CORE                   *
+***********************************************************************
+         SPACE 2
+ALLOK    MVI   FLAG,C'0'           INITIALISE RETURN FLAG
+         MVC   DCBDDNAM,DDNAME     MOVE DDNAME TO DCB
+         OPEN  (DCB,INPUT)         OPEN THE FILE
+         TM    DCBOFLGS,DCBOFOPN   OPEN SUCCESSFUL ?
+         BZ    OPENFAIL            NO. ERROR RETURN TO CALLER
+         RDJFCB (DCB)              READ IN JOB FILE CONTROL BLOCK
+         MVC   DSNAME(L'DSNAME+L'MEMBNAME),JFCB  NAME TO PARM AREA
+         EJECT
+***********************************************************************
+*        FORMAT THE LRECL AND BLKSIZE FROM THE DCB                    *
+***********************************************************************
+         SPACE 2
+         LH    REG10,DCBLRECL      LOAD LRECL FOR FILE
+         CVD   REG10,DBLWORD       CONVERT IT TO DECIMAL
+         UNPK  LRECL,DBLWORD+5(3)  UNPACK IT TO PARM AREA
+         OI    LRECL+L'LRECL-1,X'F0' MAKE LAST BYTE USABLE
+         LH    REG10,DCBBLKSI      LOAD LENGTH OF A BLOCK
+         CVD   REG10,DBLWORD       CONVERT IT TO DECIMAL
+         UNPK  BLKSIZE,DBLWORD+5(3) UNPACK IT TO PARM AREA
+         OI    BLKSIZE+L'BLKSIZE-1,X'F0' MAKE LAST BYTE USABLE
+         EJECT
+***********************************************************************
+*        ANALYSE THE RECORD FORMAT AND ARRIVE AT AN ACRONYM           *
+***********************************************************************
+         SPACE 2
+         LA    REG10,RECFMTAB-4    LOAD START ADDRESS OF TABLE
+LOOP     LA    REG10,4(REG10)      ADDRESS FIRST/NEXT ENTRY
+         CLI   0(REG10),X'FF'      END OF TABLE ?
+         BO    RECFMERR            YES. NOT KNOWN RECORD FORMAT
+         CLC   DCBRECFM(1),0(REG10) THIS IS CORRECT FLAG ?
+         BNE   LOOP                NO. LOOK FOR NEXT ENTRY
+         MVC   RECFM,1(REG10)      MOVE RECORD FORMAT TO PARM AREA
+         EJECT
+***********************************************************************
+*        TERMINATION PROCESSING                                       *
+***********************************************************************
+         SPACE 2
+CLOSE    CLOSE (DCB)               CLOSE THE FILE
+ZRETURN  ZRETURN RC=0
+         EJECT
+***********************************************************************
+*        ERROR ROUTINES                                               *
+***********************************************************************
+         SPACE 2
+RECFMERR MVI   FLAG,C'2'           SET RETURN CODE
+         B     CLOSE               RETURN TO CALLER
+OPENFAIL MVI   FLAG,C'1'           SET RETURN CODE
+         B     ZRETURN             RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        CONSTANTS AND WORK AREAS                                     *
+***********************************************************************
+         SPACE 2
+DBLWORD  DS    D                   WORK AREA FOR UNPACK
+RECFMTAB DS    0F
+         DC    X'80',CL3'F'        FIXED
+         DC    X'40',CL3'V'        VARIABLE
+         DC    X'C0',CL3'U'        UNDEFINED
+         DC    X'84',CL3'FA'       FIXED. ASA
+         DC    X'44',CL3'VA'       VARIABLE ASA
+         DC    X'82',CL3'FM'       FIXED MACHINE CHAR
+         DC    X'42',CL3'VM'       VARIABLE MACHINE CHAR
+         DC    X'90',CL3'FB'       FIXED BLOCKED
+         DC    X'98',CL3'FBS'      FIXED BLOCKED STANDARD
+         DC    X'50',CL3'VB'       VARIABLE BLOCKED
+         DC    X'58',CL3'VBS'      VARIABLE BLOCKED SPANNED
+         DC    X'94',CL3'FBA'      FIXED BLOCKED ASA
+         DC    X'54',CL3'VBA'      VARIABLE BLOCKED ASA
+         DC    X'92',CL3'FBM'      FIXED BLOCKED MACHINE CHAR
+         DC    X'52',CL3'VBM'      VARIABLE BLOCKED MACHINE CHAR
+         DC    X'FF',AL3(0)        END OF TABLE INDICATOR
+         PRINT NOGEN
+DCB      DCB   DDNAME=LINKNAME,DSORG=PS,MACRF=GL,BUFNO=1,EXLST=EXLST
+         PRINT GEN
+EXLST    DS    0F                  EXIT LIST FOR DCB ABOVE
+         DC    X'87'               LAST ENTRY. JFCB EXIT
+         DC    AL3(JFCB)           ADDRESS OF BUFFER FOR JFCB
+JFCB     DS    CL176               WORK AREA FOR JFCB
+         LTORG
+         END

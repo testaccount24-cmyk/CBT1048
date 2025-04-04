@@ -1,0 +1,519 @@
+         TITLE 'BUDGIE3A - INTERNAL MACROS'                             A 000010
+         MACRO                                                          A 000020
+         $CB   &PRINT=OFF                                               A 000030
+         PUSH PRINT                PRESERVE CURRENT PRINT STATUS        A 000040
+         PRINT &PRINT              ESTABLISH NEW PRINT STATUS           A 000050
+               TITLE 'CBPREFIX - CONTROL BLOCK PREFIX'                  A 000060
+      CBPREFIX ,                   GENERATE DSECT                       A 000070
+               TITLE 'CB02 - CB02 CONTROL BLOCK'                        A 000080
+         CB02  ,                   GENERATE DSECT                       A 000090
+               TITLE 'CCB  - CENTRAL CONTROL BLOCK'                     A 000100
+         CCB   ,                   GENERATE DSECT                       A 000110
+               TITLE '     - CSECT IDENTIFICATION PREFIX'               A 000120
+       CSECTID ,                   GENERATE DSECT                       A 000130
+               TITLE 'DCB  - DATA CONTROL BLOCK'                        A 000140
+         DCBD  DSORG=(PO,IS)       GENERATE DSECT                       A 000150
+               TITLE '     - GENERAL EQUATES'                           A 000160
+       EQUATES ,                   GENERATE EQUATES                     A 000170
+               TITLE '     - STORAGE POOL DEFINITION'                   A 000180
+      POOLDEFN ,                   GENERATE DSECT                       A 000190
+               TITLE '     - USER ROUTINE LINKAGE AREA'                 A 000200
+      URTNPARM ,                   GENERATE DSECT                       A 000210
+               TITLE '     - UT460 LINKAGE AREA'                        A 000220
+         UT460 ,                   GENERATE DSECT                       A 000230
+         POP   PRINT               RESTORE ORIGINAL PRINT STATUS        A 000240
+         MEND                                                           A 000250
+         SPACE 5                                                        A 000260
+BUDGIE3A CSECT                                                          A 000270
+         $CB   ,                   GENERATE DSECTS AND EQUATES          A 000280
+         TITLE 'BUDGIE3A - INITIALISATION ROUTINES'                     A 000290
+        SCSECT A                   DEFINE START OF CSECT BUDGIE3A       A 000300
+         ENTRY GETMSC              AMOUNT OF CORE TO BE PRESERVED       A 000310
+         ENTRY INITPH1             1ST PHASE OF INITIALISATION          A 000320
+         ENTRY INITPH2             2ND PHASE OF INITIALISATION          A 000330
+         ENTRY INITPH3             3RD PHASE OF INITIALISATION          A 000340
+         ENTRY UPARMADR            ADDRESS OF UPARM ( IN PARM FIELD )   A 000350
+         ENTRY UPARMDES            DISPLACEMENT OF DESTINATION          A 000360
+         ENTRY UPARMLEN            EXECUTABLE LENGTH OF UPARM           A 000370
+         TITLE 'BUDGIE3A - 1ST PHASE OF INITIALISATION'                 A 000380
+*********************************************************************** A 000390
+*        1ST PHASE OF INITIALISATION - MAIN-LINE                      * A 000400
+*********************************************************************** A 000410
+         SPACE 1                                                        A 000420
+INITPH1  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              A 000430
+         L     R15,16              GET CVT ADDRESS                      A 000440
+         MVC   OSLEVEL,CVTDCB(R15) PRESERVE OPEREATING SYSTEM LEVEL FLA A 000450
+         CBAL  R4,GETDATE          GET IPL DATE FOR REPORTS             A 000460
+         CBAL  R4,CALCSIZ          DETARMINE SIZE OF ALL CSECTS         A 000470
+         CBAL  R4,DDFIND           DETERMINE WHICH DD STATS ARE PRESENT A 000480
+         CBAL  R4,OPENPRNT         OPEN SYSPRINT IF PRESENT             A 000490
+         CBAL  R4,OPENUT1          OPEN SYSUT1                          A 000500
+         CBAL  R4,DDTELL           TELL OF DD STATS PRESENT/MISSING     A 000510
+         CBAL  R4,PRINT            SPACE 1 BLANK LINE                   A 000520
+        SUBOUT RESTORE=R4          RESTORE AND RETURN                   A 000530
+         EJECT                                                          A 000540
+*********************************************************************** A 000550
+*        GET IPL DATE                                                 * A 000560
+*********************************************************************** A 000570
+         SPACE 1                                                        A 000580
+GETDATE  SUBIN ,                   ENTER ROUTINE                        A 000590
+         UT458 ,                   GET IPL DATE ( IN ENGLISH )          A 000600
+         MVC   $IPLDATE,UTYYDDD    PRESERVE IPL DATE IN FORM YYDDD      A 000610
+         MVC   $MMDDYY,UTMMDDYY    PRESERVE IPL DATE IN FORM MMDDYY     A 000620
+         MVC   $DATEREP,UTREPORT   PRESERVE IPL DATE IN REPORT FORMAT   A 000630
+        SUBOUT ,                   RESTORE AND RETURN                   A 000640
+         EJECT                                                          A 000650
+*********************************************************************** A 000660
+*        DETERMINE SIZE OF ALL CSECTS                                 * A 000670
+*********************************************************************** A 000680
+         SPACE 1                                                        A 000690
+*        THE CCB CONTAINS THE ADDRESS OF THE START AND END OF EVERY     A 000700
+*         CSECT IN PARROT.  THIS ROUTINE REPLACES THE END ADDRESS WITH  A 000710
+*         THE SIZE OF THE CSECT.  THIS ENABLES THE 'GETMAIN' ROUTINE TO A 000720
+*         USE ANY UNWANTED CSECTS AS STORAGE POOLS FWHILE BUILDING      A 000730
+*         THE CONTROL BLOCKS, AND AFTER INITIALISATION ENABLES          A 000740
+*         UNWANTED CSECTS TO BE FREEMAINED TO MAXIMISE THE CORE         A 000750
+*         AVAILABLE TO THE INTERNAL SORT.                               A 000760
+         SPACE 1                                                        A 000770
+CALCSIZ  SUBIN ,                   ENTER ROUTINE                        A 000780
+         SR    R10,R10             ZEROISE WORK REGISTER                A 000790
+         LH    R10,$POOLNO         SET NO OF POOLS FOR LOOP             A 000800
+         L     R11,$ADRVCON         POINT AT 1ST POOL DEFINITION        A 000810
+CALCSIZ1 LM    R1,R2,0(R11)         LOAD START AND END ADDRESSES        A 000820
+         TM    0(R11),POOLCSCT      DOES POOL DEFINE A CSECT            A 000830
+         BZ    CALCSIZ2            BR IF NOT A CSECT                    A 000840
+         LA    R1,0(,R1)           PURIFY HIGH-ORDER BYTE ( FLAG )      A 000850
+         SR    R2,R1               CALCULATE SIZE OF CSECT              A 000860
+         BNM   *+6                 BR IF RESULT >= 0                    A 000870
+         SR    R2,R2               SOMETHING ISWRONG SO ZERISE -VE SIZE A 000880
+         ST    R2,4(R11)            PRESERVE SIZE IN POOL DEFINITON     A 000890
+CALCSIZ2 LA    R11,POOLLGTH(,R11)    INCREMENT TO NEXT POOL             A 000900
+         BCT   R10,CALCSIZ1        LOOP BACK IF ANY LEFT                A 000910
+        SUBOUT ,                   RETURN TO VALLER                     A 000920
+         EJECT                                                          A 000930
+*********************************************************************** A 000940
+*        DETERMINE WHICH DD STATEMENTS ARE PRESENT                    * A 000950
+*********************************************************************** A 000960
+         SPACE 1                                                        A 000970
+DDFIND   SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              A 000980
+         IOM   TIOTSCAN,SYSUT1,LOOP=IOMMAXDD,RTN=TIOTSCN SCAN TIOT      A 000990
+        SUBOUT RESTORE=R4          RESTORE AND RETURN                   A 001000
+         EJECT                                                          A 001010
+*********************************************************************** A 001020
+*        OPEN SYSPRINT ( IF PRESENT )                                 * A 001030
+*********************************************************************** A 001040
+         SPACE 1                                                        A 001050
+OPENPRNT SUBIN SAVE=R4             PRESREV RETURN ADDRESS               A 001060
+         IOM   OPEN,SYSPRINT       OPEN SYSPRINT NOW TO MINIMISE FRAG'N A 001070
+         LA    R1,LINE01           POINT R1 AT MESSAGE POOL             A 001080
+         TM    SYSPRINT+IOPSSW,IOSWPRES IS SYSPRINT PRESENT             A 001090
+         BO    *+8                 BR IF YES                            A 001100
+         ST    R1,SYSPRINT+IOPSRECA USE MESSAGE AREA AS DUMMY BUFFER    A 001110
+         CBAL  R4,PRINT            ISSUE 1ST PUT TO RETRIEVE BUFFER ADD A 001120
+         L     R5,SYSPRINT+IOPSRECA RETRIRVE CURRENT BUFFER ADDRESS     A 001130
+         LINE  S=P                 SKIP TO HEAD OF PAGE                 A 001140
+         LINE  LINE01,0,S=2        PRINT SYSPRINT HEADING               A 001150
+         LR    R1,R13              POINT R1 AT START OF CCB             A 001160
+         S     R1,=A(CSIDLGTH)     DECREMENT BY LENGTH OF PREFIX        A 001170
+         USING CSECTID,R1          ESTABLISH PREFIX ADDRESSABILITY      A 001180
+         MVC   LINE02V,CSIDVERS+5  SET UP VESRION NUMBER IN LINE        A 001190
+         MVC   LINE02T,CSIDTIME    SET UP TIME OF ASSEMBLY              A 001200
+         MVC   LINE02D,CSIDDATE    SET UP DATE OF ASSEMBLY              A 001210
+         DROP  R1                  DROP CCB PREFIX ADDRESSABILITY       A 001220
+         LINE  LINE02              ISSUE IDENTIFICATION MESSAGE PART 1  A 001230
+         LINE  LINE02A,S=2         ISSUE STATION IDENTIFICATION PART 2  A 001240
+        SUBOUT RESTORE=R4          RESTORE AND RETURN                   A 001250
+         EJECT                                                          A 001260
+*********************************************************************** A 001270
+*        OPEN SYSUT1                                                  * A 001280
+*********************************************************************** A 001290
+         SPACE 1                                                        A 001300
+OPENUT1  SUBIN SAVE=R4             PRESZRV RETURN ADDRESS               A 001310
+         IOM   OPEN,SYSUT1         OPEN SYSUT1 ( TO GET LRECL )         A 001320
+        SUBOUT RESTORE=R4          RESTOE AND RETURNL                   A 001330
+         EJECT                                                          A 001340
+*********************************************************************** A 001350
+*        REPORT ON DD STATEMENTS PRESENT                              * A 001360
+*********************************************************************** A 001370
+         SPACE 1                                                        A 001380
+DDTELL   SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              A 001390
+         IOM   AUDIT,SYSUT1,(R5),ABEND12,RTN=PRINT,LOOP=IOMMAXDD,      *A 001400
+               MSGID='BDG3A-013-I'                                      A 001410
+        SUBOUT RESTORE=R4          RESTORE AND RETURN                   A 001420
+         SPACE 1                                                        A 001430
+ABEND12  ABEND 12                  MANDATORY STATMENT MISSING SO ABEND  A 001440
+         TITLE 'BUDGIE3A - 2ND PHASE OF INITIALISATION'                 A 001450
+*********************************************************************** A 001460
+*        2ND PHASE OF INITIALI ATION - MAIN-LINE                      * A 001470
+*********************************************************************** A 001480
+         SPACE 1                                                        A 001490
+INITPH2  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              A 001500
+         CBAL  R4,GETCB            ACQUIRE CORE FOR CONTROL BLOCKS      A 001510
+         CBAL  R4,LOGBUFF          ACQUIRE CORE FOR BATCH LOG IF NEC    A 001520
+        SUBOUT RESTORE=R4          RESTORE AND RETURN                   A 001530
+         EJECT                                                          A 001540
+*********************************************************************** A 001550
+*        ACQUIRE CORE FOR CONTROL BLOCKS                              * A 001560
+*********************************************************************** A 001570
+         SPACE 1                                                        A 001580
+GETCB    SUBIN ,                   ENTER ROUTINE                        A 001590
+         L     R0,$GETCORE+4       RETIREVE LENGTH OF C/B AREA          A 001600
+         L     R1,$GETCORE+4       RETIREVE LENGTH OF C/B AREA          A 001610
+         LTRR  R1,R1               PURIFY AND TEST FOR ZERO             A 001620
+         BZ    GETCB1              BR IF ZERO SIZE                      A 001630
+       GETMAIN R,LV=(0)            ACQUIRE CORE FOR POOL                A 001640
+         ST    R1,$GETCORE         STORE ADDRESS OF POOL                A 001650
+         OI    $GETCORE,POOLUSE+POOLGTM FLAG AS AVAILABLE FOR USE       A 001660
+GETCB1  SUBOUT ,                   RETURN TO CALLER                     A 001670
+         EJECT                                                          A 001680
+*********************************************************************** A 001690
+*        ACQUIRE CORE FOR BATCH LOG                                   * A 001700
+*********************************************************************** A 001710
+         SPACE 1                                                        A 001720
+LOGBUFF  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              A 001730
+         TM    LOGOUT+IOPSSW,IOSWPRES IS BATCH LOG REQUIRED             A 001740
+         BO    LOGBUFF1            BR IF YES TO ACQUIRE CORE            A 001750
+         TM    LOGLIST+IOPSSW,IOSWPRES IS BATCH LOG LIST REQURIED       A 001760
+         BZ    LOGBUFFX            EXIT IF NOT                          A 001770
+LOGBUFF1 OI    APSWITCH,APSWLOG    FLAG TO CREATE BATCH LOG RECORD      A 001780
+         TM    SUSPOUT+IOPSSW,IOSWPRES DOES SUUPENSE FIEL EXIST         A 001790
+         BO    *+8                 BR IF YES                            A 001800
+         MVI   $LOGSUSP,C'R'       ALTER FLAG FROM 'S' TO 'R'           A 001810
+         LA    R2,80               SET SIZE OF BATCH LOG RECORD         A 001820
+         CBAL  R4,GETMAIN          ACQUIRE CORE                         A 001830
+         ST    R1,LOGOUT+IOPSRECA  PRESERVE ADDRESS OF RECORD AREA      A 001840
+LOGBUFFX SUBOUT RESTORE=R4         RESTORE AND RETURN                   A 001850
+         TITLE 'BUDGIE3A - 3RD PHASE OF INITIALISATION'                 A 001860
+*********************************************************************** A 001870
+*        3RD PHASE OF INITIALISATION                                  * A 001880
+*********************************************************************** A 001890
+         SPACE 1                                                        A 001900
+INITPH3  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              A 001910
+         CBAL  R4,FREECSCT         FREEMAIN REDUNDANT CSECTS            A 001920
+         CBAL  R4,LOADRTNS         LOAD ANY REQUIRED UTIL RTNS          A 001930
+         CBAL  R4,OPENALL          OPEN ALL AVAIALABLE FILES            A 001940
+         CBAL  R4,GETWA            ACQUIRE USER EXIT LINKAGE/WORK AREA  A 001950
+         CBAL  R4,GETDBUFF         ACQUIRE DUMMY BUFFER FOR MISSING DD  A 001960
+         CBAL  R4,GETCONC          ACQUIRE CORE FOR CONCATENATING SYSUT A 001970
+         CBAL  R4,GETBUFFA         GET BUFFER ADDRESSES & PRINT HEADING A 001980
+         CBAL  R4,MOVEUPRM         MOVE USER PARM TO WORK AREA          A 001990
+         CBAL  R4,INITURTN         LOAD AND INITIALISE USER ROUTINES    A 002000
+         CBAL  R4,GETDYN           DYNAMICALLY ACQUIRE ALL FREE CORE    A 002010
+         CBAL  R4,INITPOOL         INITIALISE STORAGE POOL PROCESSING   A 002020
+        SUBOUT RESTORE=R4          RESTORE AND RETURN                   A 002030
+         EJECT                                                          A 002040
+*********************************************************************** A 002050
+*        LOAD ANY REQUIRED ROUTINES                                   * A 002060
+*********************************************************************** A 002070
+         SPACE 1                                                        A 002080
+LOADRTNS SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              A 002090
+         TM    SWINIT,SWLDDATE     TEST IF UT458 REQUIRED               A 002100
+         BZ    CCLOAD01            BR IF NOT REQUIRED                   A 002110
+         LOAD  EP=UT458            LOAD SUB-ROUTINE UT458               A 002120
+         ST    R0,$ADUT458         PRESERVE ADDRESS OF DATA ROUTINE     A 002130
+CCLOAD01 TM    SWINIT,SWLD435      TEST IF CURRENCY CONVERSION RTN REQD A 002140
+         BZ    CCLOAD02            BR IF NOT REQUIRED                   A 002150
+         LOAD  EP=UT460            LOAD CURRENCY CONVERSION RTN         A 002160
+         ST    R0,$ADUT460         PRESERVE ADDRESS OF ROUTINE          A 002170
+         LA    R2,UT460LGT         SET LENGTH OF LINKAGE AREA           A 002180
+         CBAL  R4,GETMAIN          ACQUIRE CORE FOR LINKAGE AREA        A 002190
+         ST    R1,$PMUT460         PRESERVE ADDRESS OF LINKAGE AREA     A 002200
+         USING UT460LNK,R1         ESTABLISH LINKAGE AREA ADDREESSABILY A 002210
+         MVC   UT460OTC,=C'VN'     RESUEST VERSION NUMBER               A 002220
+         LA    R1,$PMUT460         ESTABLISH LINKAGE FOR UT460          A 002230
+         L     R15,$ADUT460        GET ADDRESS OF UT460                 A 002240
+         BALR  R14,R15             DETERMINE VERSION NUMBER             A 002250
+         L     R1,$PMUT460         RETRIEVE LINKAGE AREA ADDRESS        A 002260
+         MVC   $VERSNO,UT460OTV    PRESERVE CURR RTN VERSION NUMBER     A 002270
+         DROP  R1                  DROP LINKAEG AREA ADDRESSABILITY     A 002280
+CCLOAD02 TM    SWINIT,SWLDRIGM     TEST IF RIGAM REQUIRED               A 002290
+         BZ    CCLOAD03            BR IF NOT REQUIRED                   A 002300
+         LOAD  EP=RIGAM            LOAD RIGAM INTO CORE                 A 002310
+         ST    R0,$ADRIGAM         PRESERVE ADDRESS OF RIGAM            A 002320
+CCLOAD03 EQU   *                                                        A 002330
+        SUBOUT RESTORE=R4          RESTORE AND RETRUN                   A 002340
+         EJECT                                                          A 002350
+*********************************************************************** A 002360
+*        FREEMAIN REDUANANT CSECTS IF REQUIRED                        * A 002370
+*********************************************************************** A 002380
+         SPACE 1                                                        A 002390
+FREECSCT SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              A 002400
+         USING POOLDEFN,R11        ESTABLISG STORAGE POOL C/B ADDRESS'Y A 002410
+INTIL02  EQU   *                   ENTRY POINT IN INITIALISATION CSECT  A 002420
+         TM    OSLEVEL,OSLMFT+OSLPCP TEST IF THIS IS MFT  OR PCP        A 002430
+         BZ    FREEMX              AVOID ILLEGAL FREEMAINS IF NOT MFT/P A 002440
+         TM    YPSWITCH,YPSWFREE   TEST IF FREEMAINS REQUESTED          A 002450
+         NOP   FREEMX              BYPASS I NOT REQUIRED - SUPPRESSED   A 002460
+         NI    $VBUDG3A,FF-POOLPFRE AVOID FREEMAINING THIS CSECT        A 002470
+         LH    R10,$POOLNO         GET NUMBER OF POOL DEFINITIOMS       A 002480
+         L     R11,$ADRVCON         GET ADDRESS OF 1ST POOL DEFINITION  A 002490
+FREEM01  TM    POOLSW,POOLPFRE     MAY POOL BE FREEMAINED               A 002500
+         BZ    FREEM02             BR IF NOT TO GET NEXT                A 002510
+         L     R0,POOLSIZ          SET SIZE OF CSECT IN R0              A 002520
+         L     R1,POOLADR          SET ADDREES OF CSECT IN R1           A 002530
+       FREEMAIN R,LV=(0),A=(1)     FREE CSECT                           A 002540
+         NI    POOLSW,FF-POOLUSE   SET CSECT UNAVAILABLE TO WORK FILE   A 002550
+         OI    POOLSW,POOLFREE     FLAG THAT POOL FREEMAINED            A 002560
+         NI    POOLSW,FF-POOLGTM   SET UNAVAILABLE TO GETMAIN RTNS      A 002570
+FREEM02  LA    R11,POOLLGTH(,R11)    POINT AT NEXT CSECT RCORD          A 002580
+         BCT   R10,FREEM01         LOOP BACK IF ANY CSECTS LEFT         A 002590
+         OI    $VBUDG3A,POOLPFRE   ALLOW THIS CSECT TO BE FREEMAINED LA A 002600
+FREEMX   EQU   *                   END OF FREEMAIN ROUTINE              A 002610
+        SUBOUT RESTORE=R4          RESTIRE AND RETURN                   A 002620
+         DROP  R11                  DROP STAOAGE POOL ADDRESSABILITY    A 002630
+         EJECT                                                          A 002640
+*********************************************************************** A 002650
+*        OPEN ALL AVAILABLE DATA SETS                                 * A 002660
+*********************************************************************** A 002670
+         SPACE 1                                                        A 002680
+OPENALL  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              A 002690
+         TM    WORK+IOPSSW,IOSWPRES IS WORK DD STAEMENT PRESENT         A 002700
+         BZ    *+8                 BR IF NOT                            A 002710
+         OI    BRSWITCH,SWBRWRKP   FLAG THAT WORK IS PRESENT            A 002720
+         NI    WORK+IOPSSW,FF-IOSWPRES SET OFF WORK PRESENT TO AVOID OP A 002730
+         NI    SYSIN+IOPSSW,FF-IOSWPRES SET SYSIN NOT PRESENT TO AVOID  A 002740
+         IOM   OPEN,SYSUT1,LOOP=IOMMAXDD OPEN ALL AVAILABLE D/S         A 002750
+         TM    BRSWITCH,SWBRWRKP   IS WORK DD STAMENET PRESENT          A 002760
+         BZ    *+8                 BR IF NOT                            A 002770
+         OI    WORK+IOPSSW,IOSWPRES RESET TO SHOW WORK DD STATMENT PRES A 002780
+         OI    SYSIN+IOPSSW,IOSWPRES SET SYSIN PRESENT FOR AUDIT        A 002790
+        SUBOUT RESTORE=R4          RESTORE AND RETURN                   A 002800
+         EJECT                                                          A 002810
+*********************************************************************** A 002820
+*        ACQUIRE CORE FOR INPUT AND REFORMATED RECORDS                * A 002830
+*********************************************************************** A 002840
+         SPACE 1                                                        A 002850
+GETWA    SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              A 002860
+         CLC   $RECLINT,$RECLUT1   IS INTERNAL LENGTH LESS THAN INPUT   A 002870
+         BH    *+10                BR IF YES                            A 002880
+         MVC   $RECLINT,$RECLUT1   FORCE INTRENAL LGTH TO INPUT TO      A 002890
+*                                   PREVENT OVERWRITING C/BS WITH DAYA  A 002900
+         LH    R2,$RECLUT1         GET LENGTH OF SYSUT1 RECORD          A 002910
+         LA    R2,URTNOUT-URTNPARM(,R2) INCREMENT BY USER RTN INFO      A 002920
+         LR    R10,R2              PRESERVE OUTPUT RECORD DISPLACEMENT  A 002930
+         AH    R2,$RECLINT         INCREMENT BY INTERNAL RECORD LENGTH  A 002940
+         CBAL  R4,GETMAIN          GET CORE FOR WORK AREA               A 002950
+         ST    R1,$PTRPARM         PRESERVE PTR FOR USER RTN PROCESSING A 002960
+*                                   THIS IS ALSO THE PLACE IN WHICH     A 002970
+*                                   THE UNMODIFIED INPUT REC IS HELD    A 002980
+         AH    R1,$RECLUT1         POINT AT L/A CONTROL INFO POSN       A 002990
+         ST    R1,$PTRPRMU         PRESERVE THIS PTR AS WELL            A 003000
+         LA    R1,URTNOUT-URTNPARM(,R1) INCREMENT BY LGTH OF CONTROL    A 003010
+*                                   INFO TO POINT AT 'OUTPUT' REC RREA  A 003020
+         ST    R1,SYSUT1+IOPSRECA  TELL SYSUT1 WHERE TO GET-MOVE TO     A 003030
+        SUBOUT RESTORE=R4          RETORE ABD TREURN                    A 003040
+         EJECT                                                          A 003050
+*********************************************************************** A 003060
+*        ACQUIRE DUMMY BUFFER FOR MISSING DD STATEMENTS               * A 003070
+*********************************************************************** A 003080
+         SPACE 1                                                        A 003090
+GETDBUFF SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              A 003100
+         USING IHADCB,R3           ESTABLISH DCB ADDRESSABILITY         A 003110
+         LA    R10,IOMMAXDD        SET NO OF DCBS FOR LOOP              A 003120
+         LA    R2,SYSUT1           POINT AT 1ST DCB SWITCH              A 003130
+         SR    R1,R1               ZEROISE WORK REGISTER                A 003140
+$DBUFF01  L     R3,IOPSDCB(R2)      POINT R3 AT DCB ADDRESS             A 003150
+         CH    R1,DCBLRECL         IS THIS LRECL LAREGR THAN ANY PREVIO A 003160
+         BNL   *+8                 BR IF NOT                            A 003170
+         LH    R1,DCBLRECL         PRESERVE THIS LRECL AS GREATEST      A 003180
+         LA    R2,IOPSLGTH(,R2)    POINT AT NEXT CB SWITCH              A 003190
+         BCT   R10,$DBUFF01         LOOP BACK IF ANY LEFT               A 003200
+         LR    R2,R1               SET LRECL IN R2                      A 003210
+         CBAL  R4,GETMAIN          ACQUIRE CORE FOR DUMMY BUFFER        A 003220
+         ST    R1,$DBUFF            PRESERVE ADDRESS OF DUMMY BUFFER    A 003230
+         LA    R10,IOMMAXDD        RESET DCB COUNT FOR LOOP             A 003240
+         LA    R2,SYSUT1           POINT AT 1ST DCB SWITCH              A 003250
+$DBUFF02  NC    IOPSRECA(4,R2),IOPSRECA(R2) DOES BUFFER ADDRESS EXIST   A 003260
+         BNZ   *+8                 AVOID OVERWRITING IF YES             A 003270
+         ST    R1,IOPSRECA(R2)     PRESERVE DUMMY BUFFER ADDRESS IN SWI A 003280
+         LA    R2,IOPSLGTH(,R2)    POINT AT NEXT DCB SWITCH             A 003290
+         BCT   R10,$DBUFF02         LOOP BACK IF ANY LEFT               A 003300
+         DROP  R3                  DROP DCB ADDRESSABILITY              A 003310
+        SUBOUT RESTORE=R4          RESTORE AND RETURN                   A 003320
+         EJECT                                                          A 003330
+*********************************************************************** A 003340
+*        ACQUIRE CORE FOR CONCATENATING SYSUT1 YY SYSUT2              * A 003350
+*********************************************************************** A 003360
+         SPACE 1                                                        A 003370
+GETCONC  SUBIN SAVE=R4             PRESERVE RETRUN ADDRESS              A 003380
+*        THIS AREA IS REQUIRED FOR WORK FILE PROCESSING, BUT ONLY IF    A 003390
+*         SF=IN HAS BEEN SPECIFIED.                                     A 003400
+         SPACE 1                                                        A 003410
+         TM    YPSWITCH,YPSWSFIN   WAS SF=IN SPECIFIED                  A 003420
+         BZ    GETSFWAX            BYPASS ROUTINE IF NOT                A 003430
+         LH    R2,$RECLUT2         RETRIEVE LENGTH OF SYSUT2 RECORD     A 003440
+         AH    R2,$RECLUT1         ADD LENGTH OF INPUT RECORD           A 003450
+         CBAL  R4,GETMAIN          ACQUIRE CORE FOR CONCATENATION AREA  A 003460
+         ST    R1,$PTRPRM2         PRESERVE ADDRESS OF AREA             A 003470
+GETSFWAX EQU   *                   END OF ROUTINE                       A 003480
+        SUBOUT RESTORE=R4          RESTORE AND RETRUN                   A 003490
+         EJECT                                                          A 003500
+*********************************************************************** A 003510
+*        GET BUFFER ADDRESSES AND PRINT HEADINGS                      * A 003520
+*********************************************************************** A 003530
+         SPACE 1                                                        A 003540
+GETBUFFA SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              A 003550
+         CBAL  R4,PRNTLOG          RETRIEVE LOGLIST BUFFER ADDRESS      A 003560
+         CBAL  R4,HEADLOG          WRITE LOGLIST HEADINGS               A 003570
+         CBAL  R4,PRNTBBL          RETRIEVE PRINT BUFFER ADREESS        A 003580
+         L     R7,PRINTBB+IOPSRECA RETRIEVE RECORD ADDRESS FOR PRINT    A 003590
+         CBAL  R4,READLIN          RETRIEVE AND PRINT BUDGIE LOGO       A 003600
+         IOM   CLOSE,SYSLIN        CLOSE LOGO DATA SET IF PRESENT       A 003610
+        SUBOUT RESTORE=R4          RESORE AND RETURN                    A 003620
+         EJECT                                                          A 003630
+*********************************************************************** A 003640
+*        MOVE USER PARM TO WORK AREA                                  * A 003650
+*********************************************************************** A 003660
+         SPACE 1                                                        A 003670
+MOVEUPRM SUBIN SAVE=R4             PRESERVE RETIRN ADDRESS              A 003680
+         L     R1,SYSUT1+IOPSRECA  RETRIEVE ADDR OF REC AREA || W/A     A 003690
+         LH    R15,UPARMDES        RETRIEVE DISPLACEMENT OF DESTINATION A 003700
+         AR    R15,R1              ADD ADDRESS OF RECORD || WORK AREA   A 003710
+         LH    R1,UPARMLEN         RETRIEVE EXECUTABLE LENGTH OF USER P A 003720
+         L     R14,UPARMADR        RETRIEVE ADDRESS OF USER PARM        A 003730
+         LTR   R14,R14             TEST IF USER PARM SIPPLIED           A 003740
+         BZ    *+8                 BR IF NO USER PARM                   A 003750
+         EX    R1,MVCKEY           MOVE PARM NTO WORK AREA              A 003760
+        SUBOUT RESTORE=R4          RESTORE AND RETRN                    A 003770
+         EJECT                                                          A 003780
+*********************************************************************** A 003790
+*        LOAD AND INITIALISE ALL USER ROUTINES                        * A 003800
+*********************************************************************** A 003810
+         SPACE 1                                                        A 003820
+INITURTN SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              A 003830
+         USING CB02NTRY,R7         ESTABLISH CB02 ADDRESSABILITY        A 003840
+         TM    YPSWITCH,YPSWNOLD   HAS PRELOADING BEEN SUPPRESSED       A 003850
+         BO    CCLOAD05            BR IF YES TOBYPASS LOADING           A 003860
+         L     R7,$FSTCB02         GET ADDRESS OF 1ST CB02              A 003870
+         B     *+8                 BYPASS FORWARD CHAINING              A 003880
+CCLOAD04 L     R7,CB02CB02         GET ADDRESS OF NEXT CB02             A 003890
+         LTRR  R7,R7               TEST FOR END OF CHAIN                A 003900
+         BZ    CCLOAD05            BR IF END OF CHAIN                   A 003910
+         TM    CB02SW,SW02URTN     IS THERE A USER ROUTINE              A 003920
+         BZ    CCLOAD04            IF NOT GO GET NEXT CB02              A 003930
+         TM    CB02SW,SW02IRTN     HAS RTN ALRERDY BEEN LOADED          A 003940
+         BO    CCLOAD04            IF YES GO GET NEXT CB02              A 003950
+         LR    R10,R7              POINT R10 AT CB02 (FOR SUBRTN)       A 003960
+         L     R11,$PTRPRMU         POINT R11 AT LINKAGE AREAA          A 003970
+         SPACE 1                                                        A 003980
+*        SOME BRIGHT SPARKS GO INTO A LOOP IN USER EXIT INITIALISATION, A 003990
+*         SO ESTABLISH USER ABEND U072 IF DO NOT RETURN WITHIN 5 SECS   A 004000
+         SPACE 1                                                        A 004010
+        STIMER TASK,$STIMEND,DINTVL=$DINTVL ABEND IF NO READS FOR 5 SEC A 004020
+CCLOAD06 CBAL  R4,URTLOAD          GO LOAD USER RTN & INITIALISE        A 004030
+        TTIMER CANCEL              CANCEL STIMER SINCE HE DIDN'T LOOP   A 004040
+         B     CCLOAD04            GO GET NEXT CB02                     A 004050
+CCLOAD05 EQU   *                   END OF USER ROUTINE LOADING          A 004060
+         DROP  R7                  DROP CB02 ADDRESSABILITY             A 004070
+         L     R7,PRINTBB+IOPSRECA RESET 'PRINT' BUFFER ADDRESS         A 004080
+        SUBOUT RESTORE=R4          REWTORE AND RETURN                   A 004090
+         EJECT                                                          A 004100
+*********************************************************************** A 004110
+*        DYNAMICALLY ACQUIRE ALL FREE CORE                            * A 004120
+*********************************************************************** A 004130
+         SPACE 1                                                        A 004140
+GETDYN   SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              A 004150
+         USING POOLDEFN,R5         ESTABLISH CORE POOL DEFN ADDRESS'Y   A 004160
+         NC    $GETMMC,$GETMMC     IS AMOUNT TO ACQUIRE SET TO ZERO     A 004170
+         BZ    GETCOREX            EXIT IF YES                          A 004180
+         TM    BRSWITCH,SWBRNOBC   IS PARM=NOBC SPECIFIED               A 004190
+         BO    GETCOREX            IF YES THEN NO WORK FILE SO EXIT     A 004200
+         LA    R5,$GETPL1          POINT AT 1ST DYNAMIC POOL DEFINITION A 004210
+         LA    R10,5               ESTABLISH LOOP OF UP TO 5 BUCKETS    A 004220
+         SR    R1,R1               ZEROISE WORK REGISTER                A 004230
+         NC    GETMSC,GETMSC       AS AMOUNT OF CORE TO SAVE SPECIFIED  A 004240
+         BNZ   GETCORE1            BR IF YES TO ACQUIRE IT              A 004250
+         TM    WORK+IOPSSW,IOSWPRES DOES WORK DD STAT EXIST             A 004260
+         BZ    GETCORE2            BR IF NO TO AVOID SAVING BUFFERS     A 004270
+         L     R1,$WRKMBLK         GET MAX BLOCK SIZE FOR WORK FILE     A 004280
+         SLL   R1,1                DOUBLE IT FOR 2 BUFFERS              A 004290
+         LA    R1,1000(,R1)        ADD 1000 FOR VARIOUS AXTRAS          A 004300
+GETCORE2 LA    R1,1500(,R1)        ADD 1500 TO PLAY SAFE                A 004310
+         ST    R1,GETMSC           SET AS AMOUNT TO PRESERVE            A 004320
+GETCORE1 MVC   GETMSCA,GETMSC      SET SAME AMOUNT AS MINIMUM REGUIRED  A 004330
+       GETMAIN VC,LA=GETMSCA,A=GETMMCW2                                 A 004340
+         MVC   GETMSCA(8),GETMMCW2 ORESERVE ADD AND LGTH OF CORE        A 004350
+         LTR   R15,R15             TEST IF CORE AVAILABLE               A 004360
+         BZ    GETCORE3            BR IF CORE IS AVAILABLE              A 004370
+         ABEND 68                  CORE NOT AVAILABLE SO ABEND          A 004380
+GETCORE3 L     R1,$GETMMC           GET AMOUNT OF CORE TO ACQUIRE       A 004390
+         S     R1,GETMMCG          SUBTRACT AMOUNT ALREADY ACQUIRED     A 004400
+         BZ    GETCORE4            IF ALL ACQUIRED THEN GO FREE SAVED   A 004410
+         ST    R1,POOLSIZ          SET UPPER LIMIT FOR GETMAIN          A 004420
+         MVI   POOLADR+3,X'08'     SET LOWER LIMIT FOR GETMAIN          A 004430
+         MVC   GETMMCWA(8),POOLADR SET UPPER AND LOWER LIMIT IN W/A     A 004440
+       GETMAIN VC,LA=GETMMCWA,A=GETMMCW2 CONDITIONALLY ACQUIRE CORE     A 004450
+         EJECT                                                          A 004460
+*********************************************************************** A 004470
+*        DYNAMICALLY ACQUIRE COR  ( CONT'D )                          * A 004480
+*********************************************************************** A 004490
+         SPACE 1                                                        A 004500
+         MVC   POOLADR(8),GETMMCW2 MOVE ADDR AND LGTH TO POOL DEFINITIO A 004510
+         LTR   R15,R15             TEST IF CORE AVAILABLE               A 004520
+         BNZ   GETCORE4            IF NOT AVAILABLE GO FREE SAVED CORE  A 004530
+         OI    POOLSW,POOLUSE      FLAG POOL AVAILABLE TO WORK FILE     A 004540
+         L     R1,GETMMCG          RETRIEVE AMOUNT ALREADY ACQUIRED     A 004550
+         A     R1,POOLSIZ          INCREMENT BY THIS AMOUNT             A 004560
+         ST    R1,GETMMCG          PRESERVE UPDATED AMOUNT              A 004570
+         LA    R5,POOLLGTH(,R5)    INCREMENT TO NEXT AVAILABLE POOL     A 004580
+         BCT   R10,GETCORE3        LOOP BACK IF NOT ACQUIRED 5 BUCKETS  A 004590
+GETCORE4 MVC   $GETMDYN,GETMMCG    PRESERVE AMOUNT DYNAMICALLY ACQUIRED A 004600
+         SPACE 5                                                        A 004610
+*********************************************************************** A 004620
+*        FREE CORE PRESERVED FOR SAFETY                               * A 004630
+*********************************************************************** A 004640
+         SPACE 1                                                        A 004650
+    FREEMAIN   V,A=GETMSCA         FREE CORE PRESERVED FOR SAFETY       A 004660
+GETCOREX EQU   *                   END OF DYNAMIC ACQUISITION           A 004670
+         DROP  R5                  DROP POOL DEFN ADDRESSABILITY        A 004680
+        SUBOUT RESTORE=R4          RESTORE AND RETURN                   A 004690
+         EJECT                                                          A 004700
+*********************************************************************** A 004710
+*        INITIALISE STORAGE POOL CONTROL BLOCKS                       * A 004720
+*********************************************************************** A 004730
+         SPACE 1                                                        A 004740
+INITPOOL SUBIN SAVE=R4             PRESERVE REYURN ADDRES               A 004750
+         LH    R1,$RECLUT2         RETRIEVE LENGTH OF SYSUT2 RECORD     A 004760
+         TM    YPSWITCH,YPSWSFIN   WAS SF=IN SPECIFIED                  A 004770
+         BZ    *+8                 BR IF NOT SF=IN                      A 004780
+         AH    R1,$RECLUT1         ADD LENGTH OF INPUT REORD            A 004790
+         STH   R1,$POOLRCL         PRESERVE LRECL IN POOL C/B           A 004800
+         CBAL  R4,WORKCAP          INITIALISE STORAGE POOLS & WORKFILE  A 004810
+        SUBOUT RESTORE=R4          RESTORE AND RETURN                   A 004820
+         TITLE 'BUDGIE3A - EXECUTED INSTRUCTIONS'                       A 004830
+*********************************************************************** A 004840
+*        EXECUTED INSTRUCTIONS                                        * A 004850
+*********************************************************************** A 004860
+         SPACE 1                                                        A 004870
+MVCKEY   MVC   0(0,R15),0(R14)     MOVE USER PARM TO WORK AREA          A 004880
+         TITLE 'BUDGIE3A - MISCELLANEOUS CONSTANTS AND FIELDS'          A 004890
+UPARMADR DC    A(0)                ADDRESS OF USER PARM ( IN PARM FLD ) A 004900
+GETMSCA  DC    A(8)                ADDRESS OF PRESERVEED CORE           A 004910
+GETMSC   DC    A(0)                AMOUNT OFCORE TO BE PRESERVED        A 004920
+GETMMCG  DC    A(0)                AMOUNT OF CORE DYNAMICALLY ACQUIRED  A 004930
+GETMMCWA DS    2F                  WORK AREAFOR DYNAIIC GETMAINS        A 004940
+GETMMCW2 DS    2F                  ADDR AND LGTH OF GETMAINED CORE      A 004950
+         SPACE 1                                                        A 004960
+UPARMDES DC    H'0'                DISPLACEMENT OF DESTINATION FLD      A 004970
+UPARMLEN DC    H'0'                EXECUTABLE LENGTH OF USER PARM       A 004980
+         SPACE 1                                                        A 004990
+LINE01   DS    0CL133                                                   A 005000
+         DC    CL5' ',C'BDG3A-001-I',CL39' '                            A 005010
+         DC    C'BUDGIE3 MESSAGE DATA SET',CL25' '                      A 005020
+         DC    CL29' '                                                  A 005030
+LINE02   DS    0CL40                                                    A 005040
+         DC    C'BDG3A-002-I  THIS IS BUDGIE3 VERSION '                 A 005050
+LINE02V  DC    C'XYZ'                                                   A 005060
+LINE02A  DS    0CL50                                                    A 005070
+         DC    C'BDG3A-002-I   ( ASSEMBLED AT '                         A 005080
+LINE02T  DC    C'HH.MM.SS'                                              A 005090
+         DC    C' ON '                                                  A 005100
+LINE02D  DC    C'99JAN31'                                               A 005110
+         DC    C' )'                                                    A 005120
+         SPACE 1                                                        A 005130
+        SCSEND A                   TERMINATE CSECT BUDGIE3A             A 005140
+         END                                                            A 005150
+         SPACE 1                                                        A 005160
+         REPRO                                                          A 005170
+ IDENTIFY BUDGIE3A('INITIALISATION ROUTINES')                           A 005180
+         END                                                            A 005190

@@ -1,0 +1,795 @@
+STOW     TITLE 'STOW ROUTINE - DIRECTORY PROCESSING'
+         MACRO
+&NAME    STERCD &CODE
+         GBLA  &INTER
+&INTER   SETA  &CODE
+         MEND
+         SPACE 2
+         MACRO
+&NAME    GENER &ER,&DUMP=YES
+         GBLA  &INTER
+         LCLC  &QTE
+&QTE     SETC  ''''
+&INTER   SETA  &INTER+1
+*                                                          *
+************************************************************
+*                                                          *
+         MNOTE 0,'*******   ERROR CODE   ****** &INTER *****'
+*                                                          *
+************************************************************
+*                                                          *
+&NAME    LA    R14,X&QTE.&INTER.&QTE
+         AIF   ('&DUMP' EQ 'NO').TGL2
+         O     R14,=X'80000000'
+.TGL2    ANOP
+         L     R15,=A(ERRPNTS)
+         ST    R14,8(R15)
+         MVC   0(8,R15),=A(&ER,L&QTE.&ER-1)
+         ZSCALL ERRPRT
+         MEND
+         EJECT
+STOWSUBR CSECT
+         SPACE 2
+         ZREG
+R12      EQU   12
+         EJECT
+         DS    CL15              FOR STOWNAME
+         SPACE
+         ENTRY STOWDIR,MNAME,USEDATA
+         EXTRN JFCBA,ERRPRT,ERRPNTS
+         EXTRN WARN3
+STOWDIR  ZSENT ,
+         STM   RWK,R12,REGSAVE   SAVE CALLING REGISTERS             P
+         L     RWK,JFADDR        SET JFCB ADDR FOR TYPE J OPEN      P
+         L     RWK,0(RWK)
+         ST    RWK,JF
+         L     RA1,DIRBUFA       SAVE ADDR OF DIRECTORY BUFFER      P
+         L     RB1,ENDPNT        SET RHE POINTER                    C
+         OPEN  (DIRECTRY,INPUT),TYPE=J  OPEN FOR DIRECTORY PROCESSING
+         SPACE 2
+         GETBUF DIRECTRY,(RWK)   GET WORK BUFFER                    I
+         SR    RB,RB
+         ST    RWK,DIRWRKA
+DRT02    L     RW1,DIRWRKA       WORK BUFFER                        P
+         READ  DIRDE1,SF,DIRECTRY,(RW1),'S'
+         CHECK DIRDE1
+         NOTE  DIRECTRY
+         ST    R1,DTTRN1         SAVE TTR ADDR                      P
+         IC    R1,DIRBLKS
+         LA    R1,1(R1)
+         STC   R1,DIRBLKS        INCREMENT DIRECTORY BLK COUNTER    P
+         IF    DRT02,FINIS       ALL MEMBER ACCOUNTED FOR           DN
+         LH    RW3,0(RW1)
+         C     RW3,=F'0'         ANY ENTRIES THIS DIRECTORY BLOCK   DY
+         BE    DRT02                                                C
+         AR    RW3,RW1           SET EOB ADDR                       P
+         BCTR  RW3,0
+         LA    RW1,2(RW1)        SET TO START OF FIRST ENTRY        P
+         USING DIRDUM,RA1        AND SET COVERAGE FOR DSECT         C
+         SPACE 2
+DRT06    RES   NOADV
+         CR    RW1,RW3           ALL ENTRIES PROCESSED              DN
+         BNL   DRT02                                                C
+         CLC   0(8,RW1),=8X'FF'  ALL ENTRIES PROCESSED              DY
+         BNE   DRT06A                                               C
+         SET   FINIS
+         B     DRT02                                                B
+         SPACE
+DRT06A   DS    0H
+         CLC   0(8,RW1),MNAME    ARE WE UPDATING THIS MEMBER       DY
+         BNE   DRT07                                                C
+         SET   NOADV
+         SPACE
+DRT07    DS    0H
+         XC    MEMUDATA,MEMUDATA
+         MVC   MEMBER,0(RW1)     SAVE MEMBER NAME,                  P
+         MVC   MEMTTR,8(RW1)     TTR,                               C
+         MVC   MEMCID,11(RW1)    AND ID                             C
+         CLI   MEMCID,X'00'      ANY USER DATA                      DY
+         BE    DRT10                                                C
+         MVC   MEMTTRN,12(RW1)   SAVE TTRN                           P
+         MVC   MEMUDATA,16(RW1)  SAVE USER DATA
+         CLC   MEMUDATA+1(2),=X'FEFE'   THIS STOW ID                DY
+         BNE   DRT10                                                C
+         MVC   MEMDATE,19(RW1)   SET LAST STOW DATE                 P
+         MVC   MEMTIME,23(RW1)   AND TIME                           C
+         SPACE 2
+DRT10    DS    0H
+         SR    RA,RA
+         IC    RA,MEMCID         COMPUTE LENGTH OF USER DATA FLD    P
+         N     RA,ANDMSK         CLEAR ALL BUT LOW 4 BITS
+         SLL   RA,1
+         LA    RW1,12(RA,RW1)    SET INPUT BUFF POINTER TO NXT MEM  P
+         IF    DRT06,NOADV       THIS MEMBER BEING REPLACED         DN
+         LA    RB,1(RB)          SET TABLE ID INDEX                 P
+         LA    RA1,L'SENTRY(RA1)  ADV DIRECTORY BUFF POINTER        P
+         CR    RA1,RB1           TABLE OVERFLOW                     DY
+         BNH   DRT06                                                C
+         OI    ERRORS,X'01'      EXCESSIVE MEMBERS FOR UNUSED SPACE  P
+*                                PROCESSING                         C
+         L     R1,=A(WARN3)
+         MVI   0(R1),X'09'       SET TABLE OVERFLOW MESSAGE         P
+         SET   ENDRSET
+         SR    RB,RB
+         SPACE 2
+DRT30    DS    0H                DIRECTORY EOF                      N
+         MVC   DTTRN2(4),DTTRN1  FUDGE TABLE ENTRIES                P
+         L     RWK,DIRWRKA
+         FREEBUF DIRECTRY,(RWK)
+         CLOSE (DIRECTRY)
+         MVC   0(8,RA1),=8X'FF'  SET END OF BUFFER DELM             P
+         CH    RB,=H'1'          MORE THAN 1 ENTRY                  DY
+         BNH   DRT50                                               C
+         SPACE
+         ST    RA1,DIRRHE        SAVE BUFFER RHE ADDR               P
+         SPACE
+*        SORT THE DIRECTORY
+         ZSCALL INTSRT           INTERNAL SORT                      S
+         DC    A(DIRBUF)
+DIRRHE   DC    A(0)              RHE ADDRESS
+         SPACE
+DRT50    LM    RWK,R12,REGSAVE   RESTORE CALLING REGISTERS          P
+         ZSEX  0                 NORMAL RETURN                      E
+         TITLE 'STOW ROUTINE - UNUSED SPACE CALCULATOR'
+         ENTRY SYSGOEOF
+         ENTRY FLE2EOF,FL1BPOOL,PCHBPOOL
+         EXTRN TRKDEAD,FRAGS
+         EXTRN BLKSI
+         EXTRN LOADDCB,FILE2
+         EXTRN NEWBLKS,WARN6,WARN4,WARN9
+         ENTRY STOWUSP
+         EXTRN DEVCODE
+         SPACE 5
+STOWUSP  ZSENT ,
+         SPACE
+         STERCD 35               INIT ERROR RETURN CODE             P
+         STM   RWK,R12,REGSAVE   SAVE CALLING REGISTERS             P
+         SPACE
+*  FIRST PASS THROUGH THIS SECTION COMPUTES RECORDS PER TRACK.      T
+*    SECOND PASS COMPUTES DIRECTORY BLOCKS PER TRACK.               C
+         SPACE
+         L     RWK,=A(LOADDCB)   SET ADDR OF SYSGO FILE             P
+         GETBUF (RWK),(RW1)      SYSGO BUFFER                      I
+         ST    RW1,BUFWRKA       SAVE BUFFER ADDR                   P
+         L     R1,=A(BLKSI)
+         LH    R1,0(R1)          SET SYSGO BLOCKSIZE                P
+         STH   R1,IBLKSI         AND SAVE                           C
+         L     R15,=A(DEVCODE)
+         MVC   DEVTYPE,0(R15)    SAVE DEVICE CODE
+         TM    ERRORS,X'01'      TOO MANY MEMBERS FOR UNUSED        DN
+*                                SPACE PROCESSING                   C
+         BO    USP40                                                C
+         LA    RA1,2             SET LOOP COUNTER                   P
+USPA     CLI   DEVTYPE,X'29'     IS DEVICE 3330                     DY
+         BNE   USP1                                                 C
+         SPACE
+*  3330 RECORDS/TRACK = TRK CAPICITY (13165) / DL+135
+         LA    R1,135(R1)        ADD FUDGE FACTOR TO BLKSIZE        P
+         ST    R1,NXTDIV
+         LH    R1,TKCB3330       GET TRACK CAPICITY FOR 3330        P
+         SR    R0,R0
+         D     R0,NXTDIV         COMPUTE # RECORDS/TRACK            P
+         B     USP3                                                 B
+         SPACE
+USP1     TAG
+         SR    RA,RA
+         CLI   DEVTYPE,X'28'     DEVICE 2314                        DY
+         BNE   USP2                                                 C
+         LA    RA,4              SET INDEX
+USP2     SR    R0,R0
+         M     R0,MULTB(RA)      MULT BY 537 OR 2137 (2311  2314)
+         D     R0,DIVB(RA)       DIV BY 512 OR 2048
+         A     R1,ADDB(RA)       ADD FUDGE VALUE 61 OR 101
+         ST    R1,NXTDIV
+         L     R1,TRKCB(RA)      GET TRACK CAPICITY (3625 OR 7294)
+         SH    R1,IBLKSI         SUBTRACT SYSGO BLKSIZE             P
+         SR    R0,R0
+         D     R0,NXTDIV
+         LA    R1,1(R1)
+         SPACE
+USP3     LR    R14,RA1
+         BCTR  R14,0
+         SLL   R14,1             SET STORE INDEX                    P
+         STH   R1,DIRLIM(R14)    SET DIRECTORY/RECORD LIMITS        P
+         LA    R1,256+8+56       SET DIRECTORY BLK LEN + KEY LEN    P
+*                                + FUDGE FACTOR                     C
+         BCT   RA1,USPA          END OF LOOP                        DY
+         SPACE 2
+*    WHEN THE PDS BLKSIZE IS LESS THAN THE SIZE OF A DIRECTORY BLK  T
+*    THE 'C' BYTE OF THE TTRC FIELD IS SET TO A HEX 'EE'. DEAD      C
+*    SPACE IMMEDIATELY FOLLOWING THE DIRECTORY WILL NOT BE USED     C
+*    BECAUSE UNUSED RECORDS CANNOT BE ACCURATELY COMPUTED.          C
+         SPACE
+         CLC   DIRLIM(2),DIRLIM+2   DIR BLK LARGER THAN PDS BOOCK   DY
+         BNL   USP6                                                 C
+         MVI   DIDC1,X'EE'
+         MVI   DIDC2,X'EE'
+         SPACE 2
+*    DIRECTORY FORMAT
+         SPACE
+*    MEMBERS STOWED VIA AIDSMDAT OR AIDSSTOW CONTAIN A TWO BYTE
+*    IDENTIFIER IN THE FIRST HALFWORD OF THE USER DATA FIELD. IT IS
+*    IN THE HEX FORMAT 'FEFE'. THESE DIRECTORY ENTRIES CONTAIN A
+*    TTRN FIELD WHICH REPRESENTS THE TTR OF THE LAST BLOCK OF THE
+*    MEMBER.
+         SPACE 2
+USP6     L     R1,=A(NEWBLKS)
+         LH    R1,0(R1)
+         STH   R1,ADDBLKS        SAVE # OF RECORDS OF NEW MEMBER    P
+         LA    RA1,DIRBUF        SET DIRECTORY BUFF LHE ADDR        P
+         ST    RA1,TBPOINT
+         B     USP12B                                               B
+         SPACE 2
+USP12    DS    0H
+         L     RA1,TBPOINT
+         LA    RA1,L'SENTRY(RA1)
+USP12B   CLC   0(8,RA1),=8X'FF'  IS THIS LAST ENTRY                 DN
+         BE    USP50                                                C
+         MVC   DENTRY2,0(RA1)    SAVE NEXT ENTRY                    P
+         CLC   DUSDT2,STOWID     IS THIS AIDSSTOW IDENTIFIER        DY
+         BNE   USP12F                                               C
+         CLI   DIDC2,X'27'       AIDSSTOW ID FIELD                  DN
+         BE    USP14                                                C
+USP12F   TAG
+         LA    RWK,DENTRY2
+         ZSCALL READRT           RESTOW THE ENTRY                   S
+         B     USP68             STOW ERROR RETURN                  DN
+         B     USP40             NON RELOC TYPE MEMBER              DN
+         MVI   DIDC2,X'27'       SET ID BYTE                        P
+         MVC   DTTRN2,TTRN       SAVE LAST BLK ADDR                 P
+         SPACE 2
+*    COMPUTE UNUSED TRACKS AND FRAGMENTS                            T
+USP14    DS    0H
+         ST    RA1,TBPOINT
+         LH    RA1,DTTN1         ENDING ADDR OF MEMBER 1            P
+         LH    RB1,DTT2          STARTING ADDR OF MEMBER 2
+         XR    RA,RA
+         XR    RB,RB
+         XR    R1,R1
+         IC    RA,DTRN1          SAVE RECORD IDS                   P
+         IC    RB,DTR2
+         SR    RB1,RA1
+         BNZ   USP14B                                               C
+         SR    RB,RA             UNUSED RECORDS THIS TRACK          P
+         BCTR  RB,0
+         CH    RB,=H'1'          REALLY UNUSED RECORDS              DY
+         BNH   USP16                                                C
+         AR    R1,RB             SAVE UNUSED RECORDS                P
+         B     USP14G                                               B
+         SPACE 2
+USP14B   DS    0H
+         LH    R14,RECLIM        TOTAL RECORDS / TRACK
+         SR    R14,RA            UNUSED RECORDS MEMBER 1            DY
+         BNP   USP14D                                              C
+         AR    R1,R14            UNUSED RECS MEMBER 1
+USP14D   BCTR  RB,0
+         AR    R1,RB             UNUSED RECORDS MEMBER 2
+         SPACE
+*    COMPUTE NUMBER OF UNUSED TRKS                                  T
+         BCTR  RB1,0
+         MH    RB1,RECLIM
+         AR    R1,RB1            UNUSED TRACKS
+USP14G   L     RA,=A(TRKDEAD)
+         LH    R14,0(RA)
+         AR    R14,R1
+         STH   R14,0(RA)         SUB-TOTAL UNUSED SPACE            P
+         L     RA,=A(FRAGS)
+         LH    R14,0(RA)
+         LA    R14,1(R14)
+         STH   R14,0(RA)         SUB-TOTAL FRAGMENTS               P
+         SPACE 2
+*    CHECK START AND END ADDR FOR EACH MEMBER. ALSO CHECK END
+*    ADDR WITH START ADDR OF NEXT MEMBER TO MAKE SURE NO OVERLAY
+*    IN DIRECTORY TTRS'
+         SPACE
+USP16    DS    0H
+         CLC   DTTR1,DTTRN1      MEMBER START AND END OK            DY
+         BH    RESTOW                                               C
+         CLC   DTTR2,DTTRN1      END AND NEXT MEMBER START OK       DY
+         BNH   RESTOW
+         RES   RETRY
+         LH    RW1,DTTN1         GET LAST TT FOR FIRST ENTRY        P
+         LH    RW2,DTT2          GET TT FOR SECOND ENTRY            C
+         CR    RW1,RW2           BOTH MEMBER SAME TRACK             DN
+         BE    USP18                                                B
+         SR    RW2,RW1           COMPUTE NUMBER OF DEAD TRACKS      P
+         BCTR  RW2,0
+         B     USP30                                                C
+         SPACE 2
+RESTOW   TAG
+         TM    DIDC1,X'E0'       THIS DIRECTORY POINTER             DN
+         BO    DIRERR                                               C
+RESTOW2  LA    RWK,DENTRY1
+         SPACE
+RESTOW4  TAG
+         IF    RSTERR,RETRY      HAVE WE TRIED TO RESTOW MEMBER     DN
+         SET   RETRY
+         ZSCALL READRT           RESTOW THE MEMBER                  S
+         B     USP68             STOW ERROR                         DN
+         B     USP40             NON RELOC TYPE MEMBER              DN
+         MVC   12(4,RWK),TTRN    SET USER TTR                       P
+         IF    USP50,DIRFINIS  FINISHED DIRECTORY PROCESSING        DN
+         B     USP16                                                B
+         SPACE 2
+RSTERR   TAG
+          MVC  ERRNAME(8),0(RWK)    MOVE MEMBER NAME TO MESSAGE     P
+         GENER ER11
+         SPACE 2
+DIRERR   TAG
+         GENER ER12              DIRECTORY OVERLAP                  S
+         SPACE 2
+USP18    DS    0H
+         MVC   DENTRY1,DENTRY2   MOVE SND ENTRY TO FIRST ENTRY SLOT  P
+         B     USP12                                                B
+         SPACE 3
+USP30    DS    0H                AT LEAST 1 FULL TRACK              N
+         MH    RW2,RECLIM        COMPUTE # OF UNUSED RECORDS        P
+         SR    RA,RA
+         IC    RA,DTRN1          SAVE LAST RECORD                   P
+         LH    R1,RECLIM
+         LA    RA,1(RA)          SET REC POINTER TO LAST BLOCK      P
+         CR    RA,R1             ANY UNUSED BLKS THIS TRACK         DY
+         BNL   USP36                                                C
+         SR    R1,RA             COMPUTE # OF UNUSED TRACKS         P
+         AR    RW2,R1            ON LAST PARTIALLY USED TRACK       C
+         SPACE 2
+USP36    DS    0H
+         CH    RW2,ADDBLKS       DO WE HAVE SPACE FOR NEW MEMBER    DY
+         BL    USP18                                                C
+         CH    RW2,LASTSLOT      SMALLEST SLOT                      DY
+         BH    USP18                                                C
+         SET   DSFLG
+         MVC   SENTRY,DENTRY1   SAVE DIRECTORY ENTRY                P
+         STH   RW2,LASTSLOT      SAVE UNUSED AREA SIZE              P
+         B     USP18                                                B
+         SPACE 2
+*    DURING RESTOW PROCESSING, IF A NON RELOC TYPE MEMBER IS        T
+*    ENCOUNTERED, THE INPUT MEMBER WILL BE STOWED IN ANY AVAILABLE  C
+*    SPACE BELOW THE NON-RELOC MEMBER. IF THIS CANNOT BE DONE THE   C
+*    NEW MEMBER WILL BE STOWED AT THE EXISTING HIGH TRK ADDR FOR THE
+*    PDS.
+         SPACE
+USP40    TAG
+         IF    USP52,DSFLG       IS THERE AVAILABLE SPACE           DN
+         L     R1,=A(WARN6)
+         MVI   0(R1),X'09'       SET NO UNUSED SPACE PROCESSING MESSAGE
+         SET   ENDRSET
+         B     USP60                                                B
+         SPACE 2
+USP50    TAG
+         SET   DIRFINIS
+         CLC   DTTR2,DTTRN2      TTR POINTER OK                     DN
+         BNH   USP52                                                C
+         LA    RWK,DENTRY2
+         B     RESTOW4                                              B
+         SPACE
+USP52    TAG
+         IFN   USP54,DSFLG   DID WE FIND SPACE FOR THIS MEMBER      DY
+         NI    ERRORS,X'FD'
+         MVC   DENTRY2,SENTRY    SET FOR FILE REPOSITIONING         P
+         B     USP58                                                B
+         SPACE 2
+USP54    TAG
+         L     R14,=A(ENDRSET)
+         MVI   0(R14),X'FF'      UPDATE LAST BLK FLAG              P
+         TM    DIDC2,X'E0'       THIS DIRECTORY POINTER (EMPTY      DN
+*                                DATA SET)                          C
+         BO    USP60                                                C
+         MVC   SENTRY,DENTRY2
+         B     USP59                                                B
+         SPACE 2
+USP58    TAG   ,
+         CLI   DIDC2,X'EE'       CHECK DIRECTORY POINTER            D
+         BE    USP54             DIR BLKSIZE > PDS BLOCKSIZE        C
+         BL    USP59             NOT A DIRECTORY ENTRY              C
+         SPACE 2
+*    THE FOLLOWING SECTION WILL SET A "POINT AFTER" TTR WHEN THE    T
+*    DEAD SPACE IS BETWEEN THE FIRST MEMBER AND THE DIRECTORY.      C
+         SPACE
+         SR    R1,R1
+         SR    RA1,RA1
+         IC    R1,DIRBLKS        SET NUMBER OF DIR BLKS THIS PDS    P
+         LTR   R1,R1             ZERO DIVIDEND                      DN
+         BZ    USP60                                                C
+         SR    R0,R0
+         LH    RWK,DIRLIM        SET # OF DIR BLKS PER TRK          P
+         O     RA1,=X'00000100'  "POINT AFTER" FUDGE FACTOR         P
+         DR    R0,RWK            COMPUTE # OF TRKS USED BY DIRECTORY
+         SLL   R1,16             SET TRACK PART OF TTR              P
+         SLL   R0,8              SET RECORD PART OF TTR             C
+         OR    R1,R0
+         AR    R1,RA1            COMPUTE "POINT AFTER" ADDRESS      P
+         ST    R1,POINTA
+         OI    POINTA+3,X'01'    SET "POINT AFTER" INDICATOR        P
+         L     RA1,=A(LOADDCB)
+         B     USP59E                                               B
+         SPACE 2
+USP59    TAG   ,
+         LA    RA1,SENTRY        SET RA1 TO REPOSITIONING ENTRY     P
+         MVC   STOWNAME,MEMBER   SET MEMBER NAME                    P
+         MVC   TTRC,MEMTTR       STARTING TTR,                      C
+         MVI   TTRC+3,X'27'      USER ID LENGTH,                    C
+         MVC   TTRN(3),MEMTTRN   ENDING TTR,                        C
+         MVI   TTRN+3,X'00'
+         MVC   STOWDATE,MEMDATE  DATE AND                           C
+         MVC   STOWTIME,MEMTIME    TIME                             C
+         MVC   POINTA,TTRN
+*    MUST POSITION FILE POINTER PAST EOF BLOCK
+         SPACE
+         L     RA1,=A(LOADDCB)
+         MVC   33(3,RA1),=AL3(USP52E)   SET EOF ADDR               P
+         OPEN  ((RA1))           OPEN SYSGO                         I
+         POINT (RA1),POINTA      POSITION FILE                     I
+         L     RWK,BUFWRKA
+         READ  USPDE,SF,(RA1),(RWK),'S'      DUMMY READ FOR REPOSITION
+         CHECK USPDE
+USP52E   L     R14,USPDE+16      ADDR OF IOB                        P
+         LH    R14,14(R14)       SAVE BYTES TRANSFERED
+         STH   R14,LASTBLK       AND SAVE FOR REWRITE               C
+         CLOSE ((RA1))           CLOSE SYSGO                        I
+USP59E   OPEN  ((RA1),OUTPUT),TYPE=J
+         POINT (RA1),POINTA      POSITION FILE TO REWRITE LAST      I
+         CLI   DIDC2,X'EF'       THIS DIRECTORY POINTER             DN
+         BE    USP61                                                C
+*                                DATA BLOCK                         C
+         LH    RA,IBLKSI         INPUT BLOCKSIZE                    P
+         SH    RA,LASTBLK        COMPUTE BLOCKSIZE                  P
+         STH   RA,62(RA1)        AND SET IN DCB                     P
+         WRITE USPDE1,SF,(RA1),(RWK),(RA)
+         CHECK USPDE1
+         MVC   0(3,RA1),TTRC
+         STOW  (RA1),STOWITW,R   RESTOW TO POSITION PAST EOF BLK    I
+         CH    R15,=H'8'         CHECK EXCEPTIONAL RETURNS          D
+         BH    USP68                                                C
+         B     USP61                                                B
+         SPACE 2
+USP60    DS    0H
+         L     RA1,=A(LOADDCB)
+         OPEN  ((RA1),OUTPUT),TYPE=J
+         SPACE 2
+USP61    TAG
+         L     RWK,BUFWRKA       SET BUFFER ADDRESS                 P
+         L     RW1,=A(FILE2)
+         OPEN  ((RW1),INPUT)      OPEN WORK FILE
+         SPACE 2
+*    RWK - LOADDCB BUFFER LHE POINTER
+*    RW1 - FILE2
+*    RA1 - LOADDCB
+*    RB1 - LOADDCB CURRENT RECORD LHE POINTER
+*    RB - BUFFER LENGTH
+*    RA - 80
+         SPACE
+         LA    RA,80
+         LR    RB1,RWK           RESET BUFFER POINTER              P
+         SR    RB,RB
+         SPACE
+USP62    GET   (RW1),(RB1)       GET INPUT RECORD                  I
+         AR    RB,RA             INCREMENT BLOCK LEN               P
+         AR    RB1,RA            AND BUFFER POINTER                C
+         CH    RB,IBLKSI         FULL BUFFER                       DY
+         BL    USP62                                               B
+         B     USP64             WRITE OUTPUT BUFFER               B
+         SPACE 2
+USP63    DS    0H                FILE2 EOF                         N
+         CH    RB,=H'0'          MUST WE FLUCH BUFFER              DY
+         BE    USP66                                               C
+         SET   LSTWRT
+         SPACE 2
+USP64    DS    0H
+         STH   RB,62(RA1)        SET OUTPUT BLKSIZE                P
+         WRITE USPDE2,SF,(RA1),(RWK),'S'  WRITE TO SYSGO           I
+         CHECK USPDE2
+         IF    USP65,NOTEFLG     HAVE FIRST REC BEEN NOTED          DN
+         NOTE  (RA1)
+         ST    R1,TTRC           SAVE TTR OF FIRST BLOCK           P
+         SET   NOTEFLG
+USP65    IFN   USP61,LSTWRT      LAST WRITE                         DY
+         SPACE 2
+USP66    DS    0H
+         NOTE  (RA1)
+         ST    R1,TTRN           SAVE TTR FOR LAST BLOCK           P
+         MVI   TTRN+3,X'00'
+         MVC   0(3,RA1),TTRC     SET DCBRELADR                     P
+         MVI   TTRC+3,X'27'      SET ID FOR USER DATA FLD          P
+         MVC   STOWNAME,MNAME    MEMBER NAME                        C
+         MVC   STOWDATA,USEDATA  SET DATE AND TIME                  C
+         STOW  (RA1),STOWITW,R   STOW MEMBER IN DIRECTRY           P
+         CH    R15,=H'8'         CHECK EXCEPTIONAL RETURNS         D
+         BNH   USP70                                               C
+USP68    TAG   ,                 CHECK RETURN CODE                  N
+         CH    R15,=H'12'        NO SPACE IN DIRECTORY              DY
+         BH    STOWER16                                             C
+         GENER ER10,DUMP=NO
+STOWER16 GENER ER9,DUMP=NO
+         SPACE 2
+USP70    DS    0H
+         L     RW2,BUFWRKA
+         FREEBUF (RA1),(RW2)
+         CLI   ENDRSET,X'FF'     WRITTEN PAST HIGH TRK ADDR        DN
+         BE    USP73                                               C
+         NI    48(RA1),X'7F'     FUDGE SO LAST I/O NOT WRITE       P
+         SPACE
+USP73    DS    0H
+         CLOSE ((RW1),,(RA1))   CLOSE FILE2 AND SYSGO              I
+         SPACE 2
+*    COMPUTE TOTAL NUMBER OF UNUSED TRACKS                         T
+         L     RA,=A(TRKDEAD)
+         LH    RW1,0(RA)
+         LTR   RW1,RW1           ANY UNUSED RECORDS                DY
+         BZ    USP80                                               C
+         SR    RWK,RWK
+         STH   RWK,0(RA)         SET TRKDEAD TO ZERO
+         LH    RB,RECLIM
+         DR    RWK,RB            TATAL COUNT IN RECORDS - CONVERT  P
+*                                IT TO TRACKS                      C
+         LTR   RW1,RW1           AT LEAST 1 TRACK                  DY
+         BNP   USP80                                               C
+         STH   RW1,0(RA)
+USP80    DS    0H
+         LM    RWK,R12,REGSAVE   RESTORE CALLING REGISTERS          P
+         ZSEX  0                 RETURN TO CALLING PROGRAM          E
+         SPACE 5
+*    *****  CANNOT DESTROY RA1 THIS ROUTINE  *****
+         SPACE
+READRT   ZSENT ,
+         OI    ERRORS,X'02'      SET NON RELOC TYPE RESTOW FLAG     P
+*   RWK HAS ADDR OF DIRECTORY TO BE RESTOWED                        N
+         L     RA,=A(LOADDCB)
+         OPEN  ((RA),INPUT)      SYSGO DATA SET                     I
+         MVC   STOWNAME,0(RWK)   SAVE MEMBER NAME                   P
+         MVC   STOWDATE,USECDTE   SET CURRENT DATE                  P
+         MVC   STOWTIME,=XL3'999999'      AND FUDGE TIME            C
+         XC    TTRC(8),TTRC
+         MVC   TTRC(3),8(RWK)    SAVE TTR                           C
+         POINT (RA),TTRC         POSITION FILE TO MEMBER            I
+         SPACE 2
+READ4    DS    0H
+         XR    RW2,RW2
+         L     RW3,BUFWRKA
+         READ  READDE1,SF,(RA),(RW3),'S'
+         CHECK READDE1
+         NOTE  (RA)              TTRN IS LAST DATA BLOCK
+         ST    R1,TTRN
+         IF    READ4,TXTFLG      HAVE WE CHECKED FIRST TXT REC      DN
+         USING TXTREC,RW3        SET COVERAGE FOR DSECT
+         SPACE
+READ4D   CLI   TXTTYP,X'02'      THIS RELOC RECORD                  DY
+         BNE   READ4F                                               C
+         NI    ERRORS,X'FD'      RESET NON RELOC RESTOW FLAG        P
+         CLC   TXTTYP,TXT        THIS TXT RECORD                    DN
+         BE    READ5                                                C
+READ4F   LA    RW3,80(RW3)       SET BUFFER POINTER TO NEXT RECORD  P
+         LA    RW2,80(RW2)
+         CH    RW2,IBLKSI        DONE THIS BUFFER LOAD              D
+         BL    READ4D            CHECK NEXT RECORD                  C
+         B     READ4             READ NEXT BLOCK                    B
+         SPACE 2
+*    MEMBERS HAVING A $$$$0007 TXT ADD RECORD WILL BE RESTOWED WITH T
+*    THE DATE AND TIME OF THE LAST ASSEMBLY.                        C
+*                                                                   *
+*    MEMBERS NOT HAVING A $$$$0007 TXT ADD RECORD ARE RESTOWED WITH
+         SPACE
+*    THE CURRENT DATE AND HEX '99' FOR THE TIME
+READ5    TAG
+         SET   TXTFLG
+         CLC   TXTSEQ,=C'$$$$0007'     THIS TXTADD RECORD           DY
+         BNE   READ4                                                C
+         MVC   DTTMWK(2),TXTMM   SET MONTH                          P
+         MVC   DTTMWK+2(2),TXTDD    DAY                             C
+         MVC   DTTMWK+4(2),TXTYY    AND YEAR                        C
+         PACK  DTTMPK,DTTMWK
+         L     R14,DTTMPK
+         SRL   R14,4             SHIFT OUT LOW BITS
+         ST    R14,DTTMPK
+         MVC   STOWDATE,DTTMPK+1    SET DATE OF LAST ASSEMBLY       P
+         MVC   DTTMWK(2),TXTHH     SET HOUR                         P
+         MVC   DTTMWK+2(2),TXTMIM    MINUTES                        C
+         MVC   DTTMWK+4(2),TXTSS    SECONDS                         C
+         PACK  DTTMPK,DTTMWK
+         L     R14,DTTMPK
+         SRL   R14,4
+         ST    R14,DTTMPK
+         MVC   STOWTIME,DTTMPK+1   SET TIME OF LAST ASSEMBLY        P
+         B     READ4             READ NEXT BLOCK                    B
+         SPACE 2
+READ6    DS    0H                EOF ADDR                           N
+         CLOSE ((RA))            CLOSE SYSGO AS INPUT               I
+         RES   TXTFLG
+         IF    READ6F,RETRY      THIS STOW RETRY                    DN
+         CLC   TTRN,=F'0'        DOES MEMBER OCCUPY ANY DS SPACE    DN
+         BNE   READ6A                                               C
+         L     R1,=A(WARN9)
+         B     READ6B                                               B
+         SPACE
+READ6A   TM    ERRORS,X'02'      NON RELOC MEMBER                   DY
+         BNO   READ6F                                               C
+         L     R1,=A(WARN4)
+READ6B   MVI   0(R1),X'09'       SET CC TO PRINT MESSAGE            P
+         MVC   1(8,R1),STOWNAME    AND SET MEMBER NAME              C
+         ZSEX  4                 NON RELOC RESTOW RETURN            E
+         SPACE
+READ6F   TAG
+         OPEN  ((RA),OUTPUT),TYPE=J    NOW OPEN AS OUTPUT
+         MVC   0(4,RA),TTRC      SET DCBRELADR                      P
+         MVI   TTRC+3,X'27'      SET USER DATA ID
+         NI    48(RA),X'7F'      FUDGE SO LAST I/O NOT WRITE        C
+         STOW  (RA),STOWITW,R    RESTOW MEMBER IN DIRECTORY         I
+         CH    R15,=H'4'         CHECK EXCEPTIONAL RETURNS         D
+         BNH   READ8                                               C
+         STH   R15,RTNCD
+         ZSEX  0                 STOW ERROR RETURN                 E
+READ8    DS    0H
+         CLOSE ((RA))
+         ZSEX  8                 NORMAL DATA RETURN                 E
+         SPACE
+         DROP  RW3
+         SPACE 5
+INTSRT   XISRT AD=A,SORTMOD=S,IESW=INT,RECSIZ=24,KYLEN=3,KYSTRT=8
+         SPACE 5
+FLE2EOF  EQU   USP63
+SYSGOEOF EQU   READ6
+         SPACE
+REGSAVE  DC    (R12-RWK+1)F'0'
+DECIMAL  DC    D'0'
+DIRBUFA  DC    A(DIRBUF)
+POINTA   DC    F'0'
+DIRWRKA  DC    A(0)
+BUFWRKA  EQU   DIRWRKA
+JFADDR   DC    A(JFCBA)
+         SPACE 2
+         DS    0F
+STOWITW  DS    0CL26
+STOWNAME DS    CL8
+TTRC     DS    1F
+TTRN     DS    1F
+         DC    X'00'
+STOWID   DC    XL2'FEFE'
+STOWDATA DS    0XL7
+STOWDATE DC    XL3'0'
+         DC    X'0'
+STOWTIME DC    XL3'0'
+         SPACE 2
+SENTRY   DS    CL24
+LASTBLK  DC    H'0'
+DIRDUM   DSECT
+MEMBER   DS    CL8
+MEMTTR   DS    CL3
+MEMCID   DS    CL1
+MEMTTRN  DS    CL3
+MEMUDATA DS    CL3
+*   FIRST BYTE OF MEMUDATA IS TABLE INDEX NUMBER
+MEMDATE  DS    XL3
+MEMTIME  DS    XL3
+STOWSUBR CSECT
+         SPACE 2
+TXTREC   DSECT
+TXTTYP   DS    CL4
+         DS    CL50
+TXTMM    DS    CL3
+TXTDD    DS    CL3
+TXTYY    DS    CL3
+TXTHH    DS    CL3
+TXTMIM   DS    CL3
+TXTSS    DS    CL3
+TXTSEQ   DS    CL8
+STOWSUBR CSECT
+         SPACE 2
+JF       DS    0F
+         DC    X'87'
+         DC    AL3(0)
+         SPACE
+TXT      DS    0CL4
+         DC    X'02'
+         DC    C'TXT'
+MNAME    DS    CL8
+DTTMPK   DC    F'0'
+DTTMWK   DC    CL6' '
+         SPACE
+USEDATA  DS    0XL10
+         DC    XL3'0'            STOW DATE FOR INPUT MEMBER
+         DC    X'0'
+         DC    XL3'0'            STOW TIME
+USECDTE  DC    XL3'0'            CURRENT DATE
+         SPACE 2
+         DS    0F
+DENTRY1  DS    0CL24
+DMNAME1  DS    CL8
+DTTR1    DS    0CL3
+DTT1     DC    XL2'0'
+DTR1     DC    X'00'
+DIDC1    DC    X'EF'   FUDGE ID FOR DIRECTORY ENTRY
+DTTRN1   DS    0CL3
+DTTN1    DS    CL2
+DTRN1    DS    CL1
+         DS    CL1
+DUSDT1   DS    CL2
+DDTE1    DS    XL3               DATE
+DTME1    DS    XL3               TIME
+         SPACE 2
+         DS    0F
+DENTRY2  DS    0CL24
+DMNAME2  DS    CL8
+DTTR2    DS    0CL3
+DTT2     DC    XL2'0'
+DTR2     DC    X'00'
+DIDC2    DC    X'EF'   FUDGE ID FOR DIRECTORY ENTRY
+DTTRN2   DS    0CL3
+DTTN2    DS    CL2
+DTRN2    DS    CL1
+         DS    CL1
+DUSDT2   DS    CL2
+DDTE2    DS    CL3
+DTME2    DS    CL3
+         SPACE 2
+*    VALUES FOR COMPUTING # RECORDS/TRK
+MULTB    DC    F'537'            2311
+         DC    F'2137'           2314
+DIVB     DC    F'512'            2311
+         DC    F'2048'           2314
+ADDB     DC    F'61'
+         DC    F'101'
+TRKCB    DC    F'3625'
+         DC    F'7294'
+NXTDIV   DC    F'0'
+         DS    0F
+ANDMSK   DC    X'0000000F'
+TBPOINT  EQU   ANDMSK
+TKCB3330 DC    H'13165'          3330 TRK/CAPICITY
+         SPACE
+*********************************************************************
+*                                                                   *
+*        DO NOT ALTER THE LOCATION OF THE FOLLOWING TAGS            *
+*                                                                   *
+DIRLIM   DC    H'0'
+RECLIM   DC    H'0'
+*                                                                   *
+*********************************************************************
+         SPACE
+IBLKSI   DC    H'0'
+ADDBLKS  DC    H'0'
+RTNCD    DC    H'0'
+LASTSLOT DC    XL2'7FFF'
+LSTTRN   DC    CL3' '
+DIRBLKS  DC    X'00'             DIRECTORY BLOCK COUNT              P
+DEVTYPE  DC    X'00'             DEVICE CODE
+         SPACE 2
+NOTEFLG  DC    X'00'
+ENDRSET  DC    X'00'
+LSTWRT   DC    X'00'
+NOADV    DC    X'00'
+DSFLG    DC    X'00'
+NOGO     DC    X'00'
+TXTFLG   DC    X'00'
+DIRFINIS DC    X'00'
+RETRY    DC    X'00'
+RDFLG    DC    X'00'
+ERRORS   DC    X'00'
+FINIS    EQU   NOADV
+         SPACE 2
+ER9      DC    C'STOW MACRO - PERMANENT I/O ERROR WHILE ATTEMPTING TO UX
+               PDATE THE DIRECTORY'
+ER10     DC    C'STOW MACRO - NO SPACE LEFT IN THE DIRECTORY'
+ER11     DC    C'MEMBERNM HAS AN ERRONEOUS DIRECTORY TTR - RESTOWING THX
+               E MEMBER DID NOT CORRECT THE PROBLEM'
+ERRNAME  EQU   ER11
+ER12     DC    C'TTR POINTER OF FIRST MEMBER OVERLAPS DIRECTORY POINTERX
+               S'
+         SPACE 2
+DIRECTRY DCB   DSORG=PS,MACRF=RP,DDNAME=SYSGO,EODAD=DRT30,BUFNO=1,     X
+               RECFM=U,BLKSIZE=256,EXLST=JF
+         SPACE 2
+         LTORG
+         SPACE
+*    MEMBER NAME TABLE MAX ENTRIES = 800
+ENDPNT   DC    A(DIRBRHE)
+         CNOP  0,8               BUFFER POOL ALIGNMENT
+DIRBUF   EQU   *
+FL1BPOOL DS    0F
+         ORG   *+8+(7280*2)      FILE1 BUFFER POOL
+         SPACE
+PCHBPOOL DS    0F
+         ORG   *+8+(80*2)        SYSPCH BUFFER POOL
+         ORG   DIRBUF+19200+8
+DIRBRHE  EQU   *-8
+         SPACE
+         END

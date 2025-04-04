@@ -1,0 +1,1953 @@
+//ASM  EXEC  PGM=IFOX00,PARM='OBJ,NODECK',REGION=200K
+//SYSLIB  DD  DSN=SYS1.MACLIB,DISP=SHR
+//        DD  DSN=HJSTP.SORLIB,DISP=OLD
+//SYSUT1  DD  DSN=&&SYSUT1,UNIT=SYSDA,SPACE=(CYL,(1,1))
+//SYSUT2  DD  DSN=&&SYSUT2,UNIT=SYSDA,SPACE=(CYL,(1,1))
+//SYSUT3  DD  DSN=&&SYSUT3,UNIT=SYSDA,SPACE=(CYL,(1,1))
+//SYSPRINT  DD  SYSOUT=A
+//SYSGO  DD  DSN=HJSTP.OBJLIB(HJSTRGEN),DISP=OLD,
+//             DCB=(LRECL=80,RECFM=FB,BLKSIZE=1600)
+RGEN     TITLE 'HJSTP - REGENERATION PROCESSOR '
+HJSTRGEN CSECT
+         HJENTRY GENHJCT=NOGEN,GENSYMB=NOGEN,BASE=(HJBASE1,HJBASE2)
+         ENTRY JOBDCB              ENTRY POINT FOR THE HJJOBS DCB
+         ST    R13,GRGENSAV        SAVE PTR TO SAVE AREA            *14
+         LR    R3,R1               SAVE THE RECORD ADDRESS
+         USING HJRDSECT,R3
+         USING IHADCB,GDCBREG
+         LA    GDCBREG,JOBDCB      ADDRESS OF THE DCB
+         TM    CTOUTSYS,CTSYSJ23+CTSYSJ24 HASP OR JES2 ?
+         BZ    GNOTJES2            MUST BE HASP
+         LA    R5,250              SET UP FOR JES2
+         B     GSAVEMAX            GO TO SET UP THE MAX LENGTH
+GNOTJES2 EQU   *
+         LA    R5,76               EIGHTY FOR HASP INTERNAL READER
+         MVC   DCBLRECL(2),=H'80'  SET UP HASP RECORD LENGTH
+         OI    GENFLGS1,HASP       INDICATE HASP RECEIVING SYSTEM
+GSAVEMAX EQU   *
+         STH   R5,GMAXLNG          SAVE THE MAX RECORD LENGTH
+         TM    HJRFLGS1,HJR1INUL+HJR1ONUL   IS THIS A HDR/TRLR ?
+         BNO   GNOTHDTR            IF NOT - GO SEE IF JCL OR DATA SET
+         TM    HJRHTTYP,HJRJOBHD+HJRJOBTR IS IT A JOB HDR/TRLR ?
+         BNM   GNOTJOB             IF NOT GO TO THE DATA SET RTN
+         TM    HJRHTTYP,HJRJOBHD   IS IT A JOB HEADER ?
+         BNO   GJOBTRLR            MUST BE JOB TRAILER
+     SPACE 1
+***********************************************************************
+*
+*     JOB HEADER PROCESSOR ROUTINE
+*          - PERFORM INITIALIZATION
+*          - IMPLEMENT /* PRIORITY REQUIREMENTS
+*          - CALL MAP FOR DEST MAPPING REQUIREMENTS
+*          - BUILD A JOB CARD FOR OUTPUT JOBS
+*          - BUILD A /*JOBPARM RECORD IF REQUIRED
+*          - BUILD //*COMMENT IDENTIFIER RECORDS
+*
+***********************************************************************
+     SPACE 1
+         MVI   GENFLGS1,0          RESET
+         MVI   GENFLGS2,0          RESET ALL FLAGS
+         MVI   GDSCTR,0            RESET DATA SET # TO ZERO
+         MVI   GSTEPCTR,0          RESET STEP CTR TO ZERO
+         MVI   GCTOUTDS,0          SET OUT DATA SET COUNT TO ZERO
+         TM    JHFLGS1,JH1PRICD    /*PRIORITY CARD PRESENT
+         BNO   GNOPRIOR            IF NOT SKIP PUTTING ONE
+         SPACE 3
+         MVI   GJCLWORK,C' '       CLEAR THE WORK AREA
+         MVC   GJCLWORK+1(L'GJCLWORK-1),GJCLWORK FOR PUTTING RECORD
+         MVC   GJCLWORK(L'GSLPRIOR),GSLPRIOR   MOVE IN THE RECORD
+         SR    REG,REG             CLEAR THE REGISTER
+         IC    REG,JHPRTY          GET THE JOB PRIORITY
+         SRL   REG,4               GET RID OF LOW ORDER PRTY
+         CVD   REG,GDBLAREA        CONVERT TO DEC
+         OI    GDBLAREA+7,15       INSURE PROPER ZONE
+         UNPK  GJCLWORK+L'GSLPRIOR(2),GDBLAREA+6(2)
+         CH    REG,=H'9'           IS IT TWO DIGITS
+         BH    GOKPRIOR            IF SO - DON'T ADJUST
+         MVC   GJCLWORK+L'GSLPRIOR(1),GJCLWORK+L'GSLPRIOR+1
+         MVI   GJCLWORK+L'GSLPRIOR+1,C' ' INSERT A BLANK
+GOKPRIOR EQU   *
+         LA    R1,GJCLWORK         ADDRESS OF THE PRIORITY CARD
+         BAL   R14,GPUTINRD        PUT IT TO THE INTERNAL RDR
+         SPACE 3
+GNOPRIOR EQU   *
+         HJCALL MAP,((R3))         CALL MAP FOR DESTINATION MAPPING
+         TM    JHPRCSTG,JHPRCQO+JHPRCIO  OUTPUT JOB?
+         BM    GQIOUTP             IF NOT - MUST BE EXECUTION
+         OI    GENFLGS1,JCLFLAG    T/N THE JCL FLAG
+         TM    JHFLGS1,JH1XBM      IS IT EXECUTION BATCH MONITOR ?
+         BNO   GNOTXBM             IF NOT DON'T T/N NOSCAN
+         OI    GENFLGS1,NOSCAN     TURN ON THE NOSCAN FLAG
+         B     GNORMRET            RETURN TO CALLING ROUTINE
+GNOTXBM  EQU   *
+         TM    JHFLGS1,JH1TSCAN    IS THIS A TYPRUN=SCAN JOB
+         BNO   GNORMRET            IF NOT - RETURN
+         TM    CTOUTSYS,CTSYSJ23+CTSYSJ24 - SYSTEM ?
+         BNM   GHASPRCV            MUST BE HASP RECEIVING SYS
+         OI    GENFLGS1,NOSCAN     JES2 - OK FOR TYPRUN=SCAN
+         B     GNORMRET            GO TO NORMAL RETURN
+GHASPRCV EQU   *
+         BAL   R6,GPUTSLSH         PUT /*DEL TO INTRDR
+         LA    GMSGREG,GREJECTH    POINT TO REJECT MESSAGE
+         LA    GCODEREG,JOBKILL    INDICATE NORMAL RETURN
+         B     GMSGPUT             GO PUT THE MESSAGE TO REPORT
+         EJECT
+     SPACE 1
+***********************************************************************
+*
+*     JOB CARD BUILD ROUTINE FOR OUTPUT TYPE JOBS
+*          - CONSTRUCTS A JOB CARD FROM INFORMATION
+*          - EXTRACTED FROM THE JOB HEADER RECORD
+*          - AND THE USER SUPPLIED OR DEFAULT INFORMATION
+*          - FROM THE HJCT
+*
+***********************************************************************
+     SPACE 1
+GQIOUTP  EQU   *
+         SR    R2,R2               CLEAR THE REGISTER
+         XC    GSAVELST,GSAVELST   CLEAR THE PARM POINTER
+         XC    GHSTART(GHEND),GHSTART CLEAR THE WORK AREA
+         MVC   GJ(L'GJN),GJN       //JOBNAME JOB (
+         MVC   GJ+2(L'JHJOBNAM),JHJOBNAM PUT THE JOBNAME IN THE REC
+         LA    R1,GJ+L'GJN-1       ADDRESS OF THE LEFT PAREN
+         CLI   CTACCTNO,0          USER SPECIFIED ACCT # ?
+         BE    GCHKACCT            NO - CHECK JES2/HASP ACCT
+     SPACE 1
+***********************************************************************
+*
+*     ACCTNO=USER SUPPLIED
+*
+***********************************************************************
+     SPACE 1
+         LA    R1,1(R1)            POINT TO THE NEXT FIELD
+         IC    R2,CTACCTNO         GET THE ACCT NUMBER LENGTH
+         BCTR  R2,0                DECREMENT FOR AN EXECUTE
+         EX    R2,GACTMVC          (USERACCT#
+         LA    R1,1(R2,R1)         POINT TO THE END OF THE FIELD
+         ST    R1,GSAVELST         SAVE THE ADDRESS
+         MVI   0(R1),C','           ANTICIPATE NEXT FIELD
+     SPACE 1
+***********************************************************************
+*
+*     TO SUPPORT BOTH THE USER SUPPLIED ACCT NUMBER (ACCTNO)
+*     AND THE HASP/JES2 PANO AND ROOM PARAMETERS,
+*     REMOVE THE FOLLOWING BRANCH INSTRUCTION - LABEL
+*     'GUACTBR'
+*     THE RESULT OF THIS WILL BE :
+*          (ACCTNO,PANO,ROOM...
+*          (ACCTNO,PANO...
+*          (ACCTNO,,ROOM...
+*
+***********************************************************************
+     SPACE 1
+GUACTBR  B     GCHKCONT            SKIP THE HASP/JES2 ACCT AND ROOM
+         EJECT
+GCHKACCT EQU   *
+          SPACE 1
+***********************************************************************
+*
+*    HASP/JES2 'PANO' & 'ROOM' FIELDS
+*
+***********************************************************************
+          SPACE 1
+         LA    R1,1(R1)            POINT TO NEXT FIELD START
+         CLC   JHACCTNO,=XL8'0'     ACCT NUMBER SPECIFIED
+         BE    GCHKROOM            IF NOT GO CHECK FOR ROOM
+         MVC   0(L'JHACCTNO,R1),JHACCTNO MOVE IN THE ACCT NUMBER
+         LA    R1,L'JHACCTNO-1(R1) POINT TO THE NEXT
+GCHKACTB EQU   *
+         CLI   0(R1),C' '          GET RID OF
+         BNE   GINCRR1              ANY TRAILING
+         BCTR  R1,0                  BLANKSIN THE
+         B     GCHKACTB               ACCT FIELD
+GINCRR1  EQU   *
+         LA    R1,1(R1)            POINT TO NEXT FIELD
+         ST    R1,GSAVELST         SAVE THE LAST ADDRESS
+GCHKROOM EQU   *
+         MVI   0(R1),C','          PUT IN , FOR FIELD
+         LA    R1,1(R1)            AND POINT PAST IT
+         CLC   JHROOMN,=XL8'0'      WAS ROOM NUMBER SPECIFIED
+         BE    GCHKCONT            IF NOT SKIP THE ROOM RTN
+         MVC   0(L'JHROOMN,R1),JHROOMN MOVE IN THE ROOM ID
+         LA    R1,L'JHROOMN-1(R1)
+GCKROOMB EQU   *
+         CLI   0(R1),C' '          GET RID OF
+         BNE   GINCRR2              ANY TRAILING
+         BCTR  R1,0                  BLANKS IN
+         B     GCKROOMB                 THE ROOM FIELD
+GINCRR2  EQU   *
+         LA    R1,1(R1)            INCREMENT TO NEXT FIELD
+         ST    R1,GSAVELST         SAVE THE LAST ADDRESS
+GCHKCONT EQU   *
+         LA    R8,GJ+160           ADDRESS TO PUT JOBPARM INFO
+         LR    R2,R1               SAVE REGISTER 1
+         LA    R1,GJBXLEP          ADDRESS OF THE PARM TABLE
+         LA    R4,GHSTART          ADDRESS OF THE HASP WORK AREA
+         BAL   R14,GBLDCTRL        GO TO THE PARM SCAN RTN
+         LR    R1,R2               RESTORE REGISTER 1
+         TM    CTOUTSYS,CTSYSH31   IS IT A HASP31 RCVNG SYS
+         BNO   GPUTPARM            IF NOT DONT FILL IN JOBCARD
+          SPACE 1
+***********************************************************************
+*
+*    HASP31 'TIME' PARAMETER FIELD - (NOT USED)
+*
+***********************************************************************
+          SPACE 1
+         MVI   0(R1),C','          PUT IN A FILLER FOR TIME PARM
+         MVI   1(R1),C','           AND  ONE FOR NEXT
+         LA    R1,2(R1)            INCR TO THE NEXT FIELD
+         EJECT
+          SPACE 1
+***********************************************************************
+*
+*    HASP31 ESTIMATED LINES FIELD - FROM JOB HEADER
+*
+***********************************************************************
+          SPACE 1
+         CLC   GHLINES,=XL8'0'     LINES REQUIRED
+         BE    GPUTCOM3            IF NOT GO TO NEXT
+         MVC   0(4,R1),GHLINES     PUT IN THE LINES SPECIFICATION
+         LA    R1,4(R1)            POINT TO THE END
+         ST    R1,GSAVELST         ADDRESS OF THE LAST
+GPUTCOM3 EQU   *
+         MVI   0(R1),C','          FOR THE NEXT FIELD
+         LA    R1,1(R1)            POINT TO THE NEXT FIELD
+          SPACE 1
+***********************************************************************
+*
+*    HASP31 ESTIMATED CARDS FIELD - FROM JOB HEADER
+*
+***********************************************************************
+          SPACE 1
+         CLC   GHCARDS,=XL8'0'     CARDS SPECIFIED
+         BE    GPUTCOM4            IF NOT SKIP CARDS CODE
+         MVC   0(4,R1),GHCARDS+3   MOVE IN THE EST CARDS
+         LA    R1,4(R1)            POINT TO THE NEXT FIELD
+         ST    R1,GSAVELST         ADDRESS OF THE LAST PARM
+GPUTCOM4 EQU   *
+         MVI   0(R1),C','          DELIMETER
+         LA    R1,1(R1)            INCREMENT TO NEXT FIELD
+          SPACE 1
+***********************************************************************
+*
+*    HASP31 JOB 'FORMS' FIELD - FROM JOB HEADER
+*
+***********************************************************************
+          SPACE 1
+         CLC   GHFORMS,=XL8'0'     FORMS REQUIRED
+         BE    GPUTCOM5            IF NOT - SKIP
+         MVC   0(4,R1),GHFORMS     MOVE IN THE FORMS ID
+         LA    R1,3(R1)            POINT TO THE END
+GFREEBLK EQU   *
+         CLI   0(R1),C' '          IS IT ALL BLANK
+         BNE   GFREEDN             IF NOT ITS OK
+         BCTR  R1,0                DECREMENT BY ONE
+         B     GFREEBLK            GO LOOK FOR MORE
+GFREEDN  EQU   *
+         LA    R1,1(R1)            POINT TO THE NEXT FIELD
+         ST    R1,GSAVELST         SAVE THE LAST ADDRESS
+GPUTCOM5 EQU   *
+         MVI   0(R1),C','          DELIMETER
+         LA    R1,1(R1)            POINT TO NEXT
+         EJECT
+          SPACE 1
+***********************************************************************
+*
+*    HASP31 JOB 'COPIES' FIELD - FROM JOB HEADER
+*
+***********************************************************************
+          SPACE 1
+         CLC   GHCOPIES,=XL8'0'    COPIES SPECIFIED
+         BE    GPUTCOM6            IF NOT - SKIP
+         MVC   0(2,R1),GHCOPIES+1  MOVE IN THE COPY COUNT
+         LA    R1,2(R1)            INCREMENT TO THE NEXT
+         ST    R1,GSAVELST         LAST PARM ADDRESS
+GPUTCOM6 EQU   *
+          SPACE 1
+***********************************************************************
+*
+*    HASP31 'NOLOG' OPTION FIELD - (NOT USED)
+*
+***********************************************************************
+          SPACE 1
+         MVI   0(R1),C','          DELIMETER
+         MVI   1(R1),C','          ANOTHER FOR NOLOG OPTION
+         LA    R1,2(R1)            FOR THE LOG OPTION
+         MVI   0(R1),C','          DELIMETER
+          SPACE 1
+***********************************************************************
+*
+*    HASP31 'LINE COUNT' PER PAGE FIELD - FROM JOB HEADER
+*
+***********************************************************************
+          SPACE 1
+         CLC   GHLINECT,=XL8'0'    LINECT REQ
+         BE    GPUTPARM            IF NOT SKIP CODE
+         MVC   0(2,R1),GHLINECT+1  MOVE IN THE LINE COUNT
+         LA    R1,2(R1)            POINT TO THE NEXT
+         ST    R1,GSAVELST         SAVE THE ADDRESS
+GPUTPARM EQU   *
+         ICM   R1,7,GSAVELST+1     GET THE PARM ADDRESS
+         BNZ   GPARMSOK            IF NOT ZERO PARMS WERE FOUND
+         MVI   GJ+L'GJN-1,C','     MOVE IN THE DELIMETER
+         LA    R1,GJ+L'GJN         NO PARMS - RESET THE POINTER
+         B     GCLEARGJ            AND GO CLEAR RECORD
+GPARMSOK EQU   *
+         MVC   0(3,R1),=C'), '     END OF THE PARMS
+         LA    R1,2(R1)            POINT TO THE BLANK
+GCLEARGJ EQU   *
+         ST    R1,GSAVELST         SAVE THE LAST VALID POINTER
+          SPACE 1
+***********************************************************************
+*
+*    PROGRAMMER NAME - FROM JOB HEADER
+*
+***********************************************************************
+          SPACE 1
+         CLC   JHPNAME,=XL20'0'    PGMR NAME SPECIFIED ?
+         BE    GALLPUT             NO - SKIP
+         MVI   0(R1),C''''         PUT IN '
+         MVC   1(L'JHPNAME,R1),JHPNAME
+         OC    1(L'JHPNAME,R1),=CL20' ' MAKE IT PRINTABLE
+         LA    R1,L'JHPNAME(R1)    INCR TO LAST CHAR
+GPNAMBLK EQU   *
+         CLI   0(R1),C' '          IS IT BLANK ?
+         BNE   GPNAMOK             IF NOT - DONE
+         BCTR  R1,0                DECREMENT TO PREV CHAR
+         B     GPNAMBLK             AND GO CHECK IT
+GPNAMOK  EQU   *
+         MVC   1(2,R1),=C''','     MOVE IN ',
+         LA    R1,3(R1)            POINT TO FIELD AFTER
+         BAL   R6,GCHKRTNX         SEE IF LENGTH HAS BEEN EXCEEDED
+GALLPUT  EQU   *
+         USING    GJCLSA,R1
+          SPACE 1
+***********************************************************************
+*
+*    CLASS,MSGCLASS,MSGLEVEL
+*         - CLASS - USER SUPPLIED - DEFAULT=A
+*         - MSGCLASS - FROM JOB HEADER
+*         - MSGLEVEL=(1,1)
+*
+***********************************************************************
+          SPACE 1
+         MVC   0(L'GCARD2,R1),GCARD2   MOVE IN THE REST OF THE IMAGE
+         MVC   GJCLS,CTGNJBCL      MOVE IN THE JOB CLASS
+         MVC   GMCLS,JHMSGCLS      MOVE IN THE MESSAGE CLASS
+         MVI   L'GCARD2(R1),C','   ANTICIPATE ANOTHER
+         LA    R1,L'GCARD2+1(R1)   POINT TO THE NEXT FIELD
+         BAL   R6,GCHKRTNX         SEE IF LENGTH EXCEEDED
+         TM    JHFLGS1,JH1HOLD     TYPRUN=HOLD SPECIFIED
+          SPACE 1
+***********************************************************************
+*
+*    TYPRUN=HOLD - FROM JOB HEADER
+*
+***********************************************************************
+          SPACE 1
+         BNO   GCKGRP              IF NOT GO CHECK FOR GROUP
+         MVC   0(L'GTYPRR,R1),GTYPRR MOVE IN THE TYPRUN KEYWORD
+         LA    R1,L'GTYPRR(R1)     POINT TO THE NEXT FIELD
+         BAL   R6,GCHKRTNX         SEE IF LENGTH EXCEEDED
+GCKGRP   EQU   *
+         CLC   CTGROUP,=CL20' '    WAS GROUP SPECIFIED ?
+          SPACE 1
+***********************************************************************
+*
+*    GROUP - SUPPORT FOR RACF OR EQUIVALENT
+*
+***********************************************************************
+          SPACE 1
+         BE    GCKUSER             IF NOT - GO CHECK FOR USER
+         MVC   0(L'GRP,R1),GRP     MOVE IN THE GROUP=
+         MVC   L'GRP(L'CTGROUP,R1),CTGROUP MOVE IN THE GROUP ID
+         LA    R1,L'GRP+L'CTGROUP-1(R1) POINT TO LAST CHAR OF GRP
+GGRPLP   EQU   *
+         CLI   0(R1),C' '          GET RID OF
+         BNE   GENDGRP               ALL TRAILING
+         BCTR  R1,0                    BLANKS AND
+         B     GGRPLP                    GO GET THE NEXT
+GENDGRP  EQU   *
+         MVI   1(R1),C','          ANTICIPATE ANOTHER PARM
+         LA    R1,2(R1)            POINT TO NEXT FIELD
+         BAL   R6,GCHKRTNX         SEE IF LENGTH EXCEEDED
+GCKUSER  EQU   *
+         CLC   CTUSER,=CL20' '     WAS USER SPECIFIED
+          SPACE 1
+***********************************************************************
+*
+*    USER - SUPPORT FOR RACF OR EQUIVALENT
+*
+***********************************************************************
+          SPACE 1
+         BE    GCKPSWD             IF NOT - GO CHECK FOR PASSWORD
+         MVC   0(L'GUSR,R1),GUSR  MOVE IN THE USER= KEYWORD
+         MVC   L'GUSR(L'CTUSER,R1),CTUSER MOVE IN THE USER ID
+         LA    R1,L'GUSR+L'CTUSER-1(R1) POINT TO THE LAST CHAR
+GUSRLP   EQU   *
+         CLI   0(R1),C' '          IS IT A BLANK
+         BNE   GENDUSR             IF NOT END OF SCAN
+         BCTR  R1,0                IF SO - GO BACK ONE
+         B     GUSRLP               AND GO BACK TO LOOK FOR MORE
+GENDUSR  EQU   *
+         MVI   1(R1),C','          ANTICIPATE ANOTHER PARM
+         LA    R1,2(R1)            POINT TO NEXT FIELD
+         BAL   R6,GCHKRTNX         SEE IF LENGTH EXCEEDED
+GCKPSWD  EQU   *
+         CLC   CTPASSWD,=CL20' '   WAS A PASSWORD SPECIFIED
+          SPACE 1
+***********************************************************************
+*
+*    PASSWORD - SUPPORT FOR RACF OR EQUIVALENT
+*
+***********************************************************************
+          SPACE 1
+         BE    GCHKNTFY            IF NOT - END OF JOBCARD 3
+         MVC   0(L'GPSWD,R1),GPSWD MOVE IN  'PASSWORD='
+         MVC   L'GPSWD(L'CTPASSWD,R1),CTPASSWD MOVE IN THE PASSWORD
+         LA    R1,L'GPSWD+L'CTPASSWD-1(R1) POINT TO LAST
+GPSWDLP  EQU   *
+         CLI   0(R1),C' '          CHECK FOR TRAILING BLANKS
+         BNE   GENDPSWD            IF NOT - END OF SCAN
+         BCTR  R1,0                IF SO - BACK UP THE POINTER
+         B     GPSWDLP             AND GO BACK FOR MORE
+GENDPSWD EQU   *
+         MVI   1(R1),C','          ANTICIPATE ANOTHER PARM
+         LA    R1,2(R1)            POINT TO NEXT FIELD
+         BAL   R6,GCHKRTNX         SEE IF LENGTH EXCEEDED
+         EJECT
+GCHKNTFY EQU   *
+          SPACE 1
+***********************************************************************
+*
+*    NOTIFY - FROM JOB HEADER
+*
+***********************************************************************
+          SPACE 1
+         CLC   JHTSUID,=CL20' '    WAS TSUID SPECIFIED
+         BE    GENDCRD3            IF NOT - EXIT
+         CLC   JHTSUID,=XL8'0'     MAYBE ITS ALL ZEROS
+         BE    GENDCRD3            IF SO DONT BUILD THE PARM
+         MVC   0(L'GNOTIFY,R1),GNOTIFY PUT IN THE NOTIFY KEYWORD
+         MVC   L'GNOTIFY(L'JHTSUID,R1),JHTSUID MOVE IN THE USER ID
+         LA    R1,L'GNOTIFY+L'JHTSUID-1(R1) POINT TO THE LAST CHAR
+GNTFYLP  EQU   *
+         CLI   0(R1),C' '          GET RID OF THE
+         BNE   GENDNTFY            IF NOT END OF SCAN
+         BCTR  R1,0                GO BACK ONE CHAR
+         B     GNTFYLP             GO LOOK FOR MORE
+GENDNTFY EQU   *
+         MVI   1(R1),C','          FOR THE NEXT POSSIBLE PARM
+         LA    R1,2(R1)            POINT TO THE NEXT FIELD
+         BAL   R6,GCHKRTNX         SEE IF LENGTH HAS BEEN EXCEEDED
+GENDCRD3 EQU   *
+         BCTR  R1,0                POINT TO THE LAST COMMA
+         MVI   0(R1),C' '          PUT IN A BLANK CHAR
+         MVC   1(80,R1),0(R1)       AND PROPAGATE IT TO THE END
+         LA    R1,GJCLWORK         POINT TO THE RECORD
+         BAL   R14,GPUTINRD        PUT IT TO THE INTERNAL READER
+         EJECT
+GJBDONE  EQU   *
+         LA    R14,GENDCONT        RETURN ADDRESS
+     SPACE 1
+***********************************************************************
+*
+*
+*     ROUTINE TO CONSTRUCT TWO //* COMMENT
+*     RECORDS DESCRIBING THE SYSTEM ENVIRONMENT
+*     AS TO TIME, DATE AND ORIGINATING SUBSYSTEM
+*
+***********************************************************************
+     SPACE 1
+GJBDONE1 EQU   *
+         STM   R0,R15,GREGSAVE     SAVE ALL OF THE REGISTERS
+         MVO   GDBLAREA(3),SHTIME(2) MOVE IN THE HH:MM FOR CONVERSION
+         OI    GDBLAREA+2,X'0F'    CORRECT THE ZONE
+         UNPK  GJXFTIME+1(4),GDBLAREA(3) PUT TIME IN COMMENT
+         MVC   GJXFTIME(2),GJXFTIME+1 MOVE IT OVER
+         MVI   GJXFTIME+2,C'.'     PUT IN A DELIMETER
+         UNPK  GJXFDATE+1(5),SHDATE UNPACK THE DATE FOR PRINT
+         OI    GJXFDATE,X'F0' CORRECT THE ZONE
+         MVC   GJXFDATE(2),GJXFDATE+1 MOVE IT OVER
+         MVI   GJXFDATE+2,C'.'     MOVE IN THE PERIOD DELIM
+         MVC   GJ(GJXLEN),GJXFMSG  MOVE IN THE COMMENT RECORD
+         MVC   GJ+GJXLEN(L'GJ-GJXLEN),GJ+GJXLEN-1
+         LA    R1,GJCLWORK         ADDRESS OF THE RECORD
+         BAL   R14,GPUTINRD        PUT IT TO THE INTERNAL RDR
+         MVC   GJ(L'GJORGMSG),GJORGMSG MOVE IN THE COMMENT RECORD
+         MVC   GJ+L'GJORGMSG(L'GJ-L'GJORGMSG),GJ+L'GJORGMSG-1 CLEAR
+         LA    R1,8                MAX ENTRIES
+         LA    R2,GINSYSDC         ADDRESS OF INSYS DC'S
+         LA    R4,X'80'            CODE FOR HASP31
+GCMPRX   EQU   *
+         CLM   R4,1,SHORIGSY       COMPARE TO ORIGIN SYS
+         BE    GMVSYSX             IF EQUAL GO MOVE IT TO COMMENT
+         LA    R2,L'GINSYSDC(R2)   ADDRESS OF THE NEXT
+         SRL   R4,1                SHIFT TO NEXT ID
+         BCT   R1,GCMPRX           GO LOOK AT NEXT
+GMVSYSX  EQU   *
+         MVC   GJ+L'GJORGMSG(L'GINSYSDC),0(R2) MOVE TO OUT AREA
+         LA    R1,GJCLWORK         ADDRESS OF THE RECORD
+         BAL   R14,GPUTINRD        PUT TO THE INTERNAL READER
+         LM    R0,R15,GREGSAVE     RESTORE THE REGISTERS
+         BR    R14                 RETURN TO THE CALLER
+         SPACE 1
+***********************************************************************
+*
+*        DETERMINE IF A /*JOBPARM CARD IS REQUIRED AND
+*         IF SO BUILD IT AND PUT
+*          IT TO THE INTERNAL READER
+*
+***********************************************************************
+          SPACE 1
+GENDCONT EQU   *
+         TM    CTOUTSYS,CTSYSH31   IS IT A HASP31 SYSTEM
+         BO    GCHKLOCL            IF HASP31 - SKIP /*JOBPARM       *04
+         MVC   GJ(L'GJOBPARM),GJOBPARM MOVE IN THE /*JOBPARM PROF
+         MVC   GJ+L'GJOBPARM(L'GJ-L'GJOBPARM),GJ+L'GJOBPARM-1
+         LA    R8,GJ+L'GJOBPARM    ADDRESS TO PUT THE FIRST OPERAND
+         LA    R1,GJBXLEP          ADDRESS OF THE TABLE ADDRESSES
+         BAL   R14,GBLDCTRL        GO TO THE BUILD ROUTINE
+         TM    GENFLGS1,ONEFND     IS ONE REQUIRED ?
+         BNO   GCHKLOCL            IF NOT - NORMAL RETURN
+         LA    R1,GJCLWORK         ADDRESS OF THE RECORD
+         BAL   R14,GPUTINRD        PUT IT TO THE INTERNAL RDR
+         SPACE 1
+***********************************************************************
+*
+*        DETERMINE IF /*ROUTE IS REQUIRED
+*         AND IF SO BUILD IT AND PUT IT
+*          TO THE INTERNAL READER
+*
+***********************************************************************
+         SPACE 1
+GCHKLOCL EQU   *
+         CLC   JHPRRMT,=CL8'LOCAL' PRINT ROUTE REQUESTED ?
+         BE    GNOPRRTE            IF NOT DON'T BUILD RECORD
+         MVC   GJCLWORK(L'GROUTE),GROUTE MOVE IN THE ROUTE   RECORD
+         MVC   GJ+L'GROUTE(L'GJ-L'GROUTE),GJ+L'GROUTE-1
+         MVC   GJCLWORK+L'GROUTE(8),JHPRRMT PUT IN THE ROUTING
+         LA    R1,GJCLWORK         ADDRESS OF THE RECORD TO BE
+         BAL   R14,GPUTINRD         PUT TO THE INTERNAL READER
+         SPACE 2
+***********************************************************************
+*
+*        CHECK ALSO FOR /*ROUTE PUNCH AND DO THE SAME
+*
+***********************************************************************
+          SPACE 1
+GNOPRRTE EQU   *
+         CLC   JHPURMT,=CL8'LOCAL' PUNCH ROUTE REQUESTED ?
+         BE    GNORMRET            IF NOT GO CHECK FOR JOBPARM
+         MVC   GJCLWORK(L'GROUTEPU),GROUTEPU SET UP THE ROUTEPU CARD'
+         MVC   GJ+L'GROUTEPU(L'GJ-L'GROUTEPU),GJ+L'GROUTEPU-1
+         MVC   GJCLWORK+L'GROUTEPU(8),JHPURMT
+         LA    R1,GJCLWORK         ADDRESS OF THE RECORD TO BE
+         BAL   R14,GPUTINRD        TO THE INTERNAL READER
+         B     GNORMRET            NORMAL RETURN TO THE CALLER
+         EJECT
+     SPACE 1
+***********************************************************************
+*
+*     JOB TRAILER PROCESSING ROUTINE
+*          THE ROUTINE TESTS THE JOB COMPLETION CODE AND UPDATES
+*          THE APPROPRIATE COUNTERS IN THE HJCT. A MESSAGE IS
+*          WRITTEN TO THE HJREPT DATA SET DESCRIBING THE PROCESSING
+*          DISPOSITION OF THE JOB. IF SUCCESSFULLY TRANSFERRED,
+*          AND THE MODE IS 'XFER' A $CANCEL COMMAND IS WRITTEN
+*          TO THE HJCANCEL DATA SET FOR THE JOB - EXAMPLE:
+*          $CJXXX;CJXXX   OR   $CJXXX,P
+*
+***********************************************************************
+     SPACE 1
+GJOBTRLR EQU   *
+         TM    JTFLGS1,JT1NORM     NORMAL JOB TRAILER ?
+         BO    GNORMJT             GO TO NORMAL TRAILER ROUTINE
+         TM    JTFLGS1,JT1DELET    IS THE DELETE FLAG ON
+         BNO   GUPDTINC            THEN ITS AN INCOMPLETE JOB
+         LH    R1,CTNOXFR          GET THE NOT XFERRED COUNT
+         LA    R1,1(R1)             INCREMENT IT BY ONE
+         STH   R1,CTNOXFR            AND PUT IT BACK
+         B     GENDJTBD            SKIP THE INC COUNT UPDATE
+GUPDTINC EQU   *
+         LH    R1,CTINCCNT         GET THE INCOMPLETE COUNT
+         LA    R1,1(R1)              AND INCREMENT IT BY ONE
+         STH   R1,CTINCCNT             AND PUT IT BACK
+         HJCALL RPRT,(GINCMPLT)    WRITE THE JOB INCMPLT MSG
+         B     GNOROUT             SKIP THE DEL RECORD
+GENDJTBD EQU   *
+         LA    R6,GNORMRET         POINT TO THE RETURN ADDRESS
+         B     GPUTSLSH            GO TO DELETE THE JOB
+         SPACE 4
+GNORMJT  EQU   *
+         TM    JHPRCSTG,JHPRCQO+JHPRCIO  IS IT XEQ TYPE ?
+         BZ    GRPRTSUC            GO PUT SUCCESSFUL MESSAGE
+         ICM   GTESTREG,1,GCTOUTDS NUMBER OF OUT DATASETS=0 ?
+         BNZ   GNOROUT             NO - PUT SUCCESSFUL MSG
+         BAL   R6,GPUTSLSH         GO PUT /*DEL
+         LA    GMSGREG,GNOHELD     ADDRESS OF THE MESSAGE
+         TM    CTFLGS1,CT1HLDDS    HELD DATA SETS BEING XFERRED
+         BO    GPUTRPRT            PUT IT TO THE REPORT DATA SET
+         LA    GMSGREG,GREJECT1    REJECT - NO OUTPUT DATA SETS
+         B     GPUTRPRT            GO PUT IT IN THE REPORT
+         SPACE 1
+GRPRTSUC EQU    *
+         TM    JHFLGS1,JH1XBM      TEST FOR XBM JOB
+         BO    GNOROUT              AND SKIP COMMENTS AND /*ROUTE IF SO
+         BAL   R14,GJBDONE1        GO BUILD COMMENT RECORDS
+         CLC   JHPRRMT,=CL8'LOCAL' IS PRINT LOCAL ?
+         BE    GPRRTEOK            YES - EXIT
+         CLC   JHPRRMT,=CL8' '     IS IT SET TO BLANKS ?
+         BE    GPRRTEOK            YES - EXIT
+         MVC   GJCLWORK(L'GROUTE),GROUTE MOVE IN THE ROUTE   RECORD
+         MVC   GJ+L'GROUTE(L'GJ-L'GROUTE),GJ+L'GROUTE-1
+         MVC   GJCLWORK+L'GROUTE(8),JHPRRMT PUT IN THE ROUTING
+         LA    R1,GJCLWORK         ADDRESS OF THE RECORD TO BE
+         BAL   R14,GPUTINRD         PUT TO THE INTERNAL READER
+         SPACE 2
+GPRRTEOK EQU   *
+         CLC   JHPURMT,=CL8'LOCAL'   IS PUNCH LOCAL ?
+         BE    GNOROUT             YES - EXIT
+         CLC   JHPURMT,=CL8' '     IS IT SET TO BLANKS ?
+         BE    GNOROUT             YES - EXIT
+         MVC   GJCLWORK(L'GROUTEPU),GROUTEPU SET UP THE ROUTEPU
+         MVC   GJ+L'GROUTEPU(L'GJ-L'GROUTEPU),GJ+L'GROUTEPU-1
+         MVC   GJCLWORK+L'GROUTEPU(8),JHPURMT
+         LA    R1,GJCLWORK         ADDRESS OF THE RECORD TO BE
+         BAL   R14,GPUTINRD         PUT TO THE INTERNAL READER
+GNOROUT  EQU   *
+         MVC   GJ(L'GSLEOF),GSLEOF MOVE IN THE /*EOF RECORD
+         MVC   GJ+L'GSLEOF(L'GJ-L'GSLEOF),GJ+L'GSLEOF-1
+         LA    R1,GJCLWORK         POINT TO THE EOF RECORD
+         BAL   R14,GPUTINRD        PUT IT TO THE INTERNAL READER
+         TM    CTMODE,CTMRELD      IS IT RELD MODE ?
+         BO    GSKP$CJ             IF SO DONT GEN CANCEL CMDS
+         MVC   GJ(L'G$CJ),G$CJ     MOVE IN THE /*$CJ COMMAND
+         MVC   GJ+L'G$CJ(L'GJ-L'G$CJ),GJ+L'G$CJ-1 CLEAR THE RECORD
+         SR    R9,R9               SET BASE FOR 'J'
+         CLI   JHJOBTYP,C'S'       TEST JOBTYPE
+         BL    GTYPEFND            IF LOW - IT IS 'J'
+         BE    GADD10K             IF EQ - IT IS 'S'
+         LH    R9,=H'10000'        ADJUST FOR 'T'
+GADD10K  EQU   *
+         AH    R9,=H'10000'        ADJUST THE BASE NUMBER
+GTYPEFND EQU   *
+         LH    R1,JHJOBNO          GET THE JOB NUMBER
+         SR    R1,R9               CORRECT FOR EXTERNAL USE
+         CVD   R1,GDBLAREA         CONVERT IT TO DECIMAL
+         OI    GDBLAREA+7,X'0F'    CORRECT THE ZONE
+         LA    R1,GJ+L'G$CJ-1      POINT TO THE JOB NUMBER FIELD
+         UNPK  0(5,R1),GDBLAREA+5(3) UNPK THE JOB NUMBER
+         LA    R2,5(R1)            POINT TO THE END
+GLPCANC  EQU   *
+         CLI   0(R1),C'0'          GET RID OF THE
+         BNE   GENDCANC              LEADING ZEROS
+         BCTR  R2,0                DECREMENT BY ONE
+         MVC   0(5,R1),1(R1)       MOVE THE RECORD BACK ONE
+         B     GLPCANC             GO LOOK FOR MORE
+GENDCANC EQU   *
+         MVI   0(R2),C','          PUT IN A COMMA
+         TM    CTINSYS,CTSYSJ23+CTSYSJ24 IS IT A JES2 SYSTEM
+         BNM   GHCANC              IF NOT DO THE HASP ROUTINE
+         MVI   1(R2),C'P'          PUT IN PURGE FOR JES2
+         MVC   GJ+4(L'JHJOBTYP),JHJOBTYP MOVE IN THE JOBTYPE
+         B     GENDCRTN            GO TO THE END OF THE RTN
+GHCANC   EQU   *
+         MVI   0(R2),C';'          CHANGE  COMMA TO SEMI COLON
+         LA    R2,1(R2)            POINT TO THE NEXT AREA
+         LR    R9,R2               ADDRESS IN REG NINE
+         SR    R9,R1               COMPUTE THE AMOUNT TO BE MOVED
+         EX    R9,*+L'*            EXECUTE THE FOLLOWING INSTR
+         MVC   0(*-*,R2),GJ+3      MOVE IN THE CJNNN
+GENDCRTN EQU   *
+         L     R1,CTCANDCB         GET THE CANCEL DCB
+         PUT   (1),GJCLWORK        PUT TO THE HJCANCEL DATA SET
+GSKP$CJ  EQU   *
+         TM    JTFLGS1,JT1INCMP    WAS THE JOB INCOMPLETE ?
+         BNO   GPUTSUCX            IF NOT SKIP THE END SEQUENCE
+         MVI   GENFLGS1,0          CLEAR ANY REMAINING FLAGS
+         B     GNORMRET            RETURN TO THE CALLER
+GPUTSUCX EQU   *
+         LH    R1,CTSUCXFR         GET THE TRANSFER COUNT
+         LA    R1,1(R1)            INCREMENT IT BY ONE
+         STH   R1,CTSUCXFR          AND PUT IT BACK
+         LA    GMSGREG,GSUCCESS    ADDR OF SUCCESSFUL MSG
+         SPACE 1
+GPUTRPRT EQU   *
+         MVI   GENFLGS1,0          CLEAR THE FLAGS
+         LA    GCODEREG,NORM       NORMAL END CODE
+         B     GMSGPUT             GO PUT THE MESSAGE
+         EJECT
+GNOTJOB  EQU   *
+     SPACE 1
+***********************************************************************
+*
+*     DATA SET TRAILER PROCESSING ROUTINE
+*
+***********************************************************************
+     SPACE 1
+         TM    HJRHTTYP,HJRDSTLR   DATA SET TRAILER ?
+         BNO   GDSHDER             NO - MUST BE HEADER
+          SPACE 1
+*
+*        TEST FOR SYSIN DATA SET TRAILER
+*
+          SPACE 1
+         TM    GENFLGS1,SYSIN      SYSIN BEING PROCESSED
+         BNO   GNOTSYIN            NO -- OK
+         XI    GENFLGS1,JCLFLAG+SYSIN T/F SYSIN AND T/N JCL
+         B     GNORMRET            RETURN TO THE CALLER
+GNOTSYIN EQU   *
+         ICM   R6,1,GCTOUTDS       GET THE DATA SET COUNT
+         LA    R6,1(R6)            INCREMENT IT BY ONE
+         STC   R6,GCTOUTDS         PUT IT BACK
+         MVI   GENFLGS2,0     CLEAR THE FLAGS
+         NI    GENFLGS1,255-ONEFND-DESTFND CLEAR FLGS
+         TM    DTFLGS1,DT1NORM     IS IT A NORMAL TRAILER
+         BO    GNORMRET            IF SO, GO TO NORMAL END
+GPUTDEL  EQU   *                    OTHERWISE, DELETE JOB
+         LA    GMSGREG,GDSTRUNC    ADDRESS OF 'TRUNCATED' MSG
+         LA    GCODEREG,NORM       INDICATE NORMAL RETURN
+         B     GMSGPUT             GO PUT THE MESSAGE IN THE REPORT
+         SPACE 3
+GPUTSLSH EQU   *
+     SPACE 1
+***********************************************************************
+*
+*     COME HERE TO PUT A /*DEL RECORD TO THE INTERNAL READER
+*     WHEN A PARTIALLY CONSTRUCTED JOB IS TO BE DELETED.
+*
+***********************************************************************
+     SPACE 1
+         MVI   GJCLWORK,C' '       CLEAR THE AREA TO BUILD
+         MVC   GJCLWORK+1(L'GJCLWORK-1),GJCLWORK THE RECORD
+         MVC   GJCLWORK(L'GSLSHDEL),GSLSHDEL CLEAR THE AREA
+         LA    R1,GJCLWORK         AND POINT TO THE RECORD
+         BAL   R14,GPUTINRD        PUT IT TO THE INTERNAL READER
+         MVI   GENFLGS1,0          CLEAR THE FLAGS
+         BR    R6                  RETURN TO THE CALLING ROUTINE
+         EJECT
+GDSHDER  EQU   *
+     SPACE 1
+***********************************************************************
+*
+*     DATA SET HEADER PROCESSING ROUTINE
+*          FOR JOBS QUEUED FOR OUTPUT, JCL AND CONTROL INFORMATION
+*          IS CONSTRUCTED. THE INFORMATION IS AS FOLLOWS:
+*               IF SYSOUTXR=SPOOL:
+*                   //HJSTEPNN EXEC HJSTP
+*                   /*OUTPUT   HNNN  (IF REQUIRED)
+*                   //HJPARM
+*
+***********************************************************************
+     SPACE 1
+         TM    HJRHTTYP,HJRSIHDR   IS IT A SYSIN HEADER ?
+         BO    GNOCALLM            IF SO DONT CALL MAP
+         HJCALL MAP,((R3))         GO MAP THE DESTINATIONS
+GNOCALLM EQU   *
+         TM    JHPRCSTG,JHPRCQO+JHPRCIO IS IT AN OUTPUT JOB ?
+         BNZ   GCHKMODE            IF OUTP - GO PUT OUT JCL
+         TM    HJRHTTYP,HJRSIHDR   IS IT A SYSIN HEADER
+         BNO   GNORMRET            IF NOT GO TO NORMAL RETURN
+         XI    GENFLGS1,SYSIN+JCLFLAG T/F JCL AND T/N SYSIN
+         B     GNORMRET            AND RETURN TO THE CALLER
+         EJECT
+GCHKMODE EQU   *
+          SPACE 1
+***********************************************************************
+*
+*        PUT THE JCL FOR THE JOB TO THE INTERNAL READER
+*
+***********************************************************************
+          SPACE 1
+         SR    REG,REG             CLEAR FOR INSERT CHARACTER
+         IC    REG,GCTOUTDS        GET THE PREVIOUS DATA SET COUNT
+         LA    REG,1(REG)          INCREMENT TO REFLECT THIS ONE
+         CVD   REG,GDBLAREA        CONVERT IT TO DECIMAL
+         OI    GDBLAREA+7,X'0F'    CORRECT THE ZONE
+         UNPK  GOUTDS#,GDBLAREA+6(2) SAVE THE DATA SET NUMBER
+         SR    GCODEREG,GCODEREG   CLEAR THE REGISTER
+         ICM   GCODEREG,1,GDSCTR   GET THE COUNTER VALUE
+         BNZ   GPROCSYO            IS IT ZERO
+         SR    REG,REG             CLEAR THE REGISTER
+         IC    REG,GSTEPCTR        GET THE CURRENT STEP NUMBER
+         LA    REG,1(REG)          INCREMENT IT BY ONE
+         STC   REG,GSTEPCTR        SAVE THE NEW STEP NUMBER
+         CVD   REG,GDBLAREA        CONVERT IT TO DECIMAL
+         OI    GDBLAREA+7,15       MAKE IT A GOOD ZONE
+         MVI   GJCLWORK,C' '       CLEAR THE WORK AREA
+         MVC   GJCLWORK+1(L'GJCLWORK-1),GJCLWORK IN WHICH
+         TM    CTFLGS1,CT1INSTR    IS THE MODE INSTREAM ?
+         BO    GPROCXX             IF SO - OK
+         TM    CTMODE,CTMRELD      IS IT RELOAD MODE
+         BNO   GDIROPUT            IF NOT - THEN DIRO
+GPROCXX  EQU   *
+         MVC   GJCLWORK(L'GPRPUEXC),GPRPUEXC TO BUILD THE JCL
+         B     GEXECPUT            GO PUT FOR PRPU EXEC CARD
+GDIROPUT EQU   *
+         MVC   GJCLWORK(L'GDIROEXC),GDIROEXC
+         MVC   GJCLWORK+L'GDIROEXC(L'CTDIRPRC),CTDIRPRC APPEND THE PROC
+GEXECPUT EQU   *
+         UNPK  GJCLWORK+8(2),GDBLAREA+6(2) FOR HJSTPRPU
+         LA    R1,GJCLWORK         PUT THE EXEC CARD
+         BAL   R14,GPUTINRD         TO THE INTERNAL READER
+GUPCNTR  EQU   *
+         TM    CTFLGS1,CT1INSTR    IS IT INSTREAM
+         BO    GPROCSYO            IF NOT - DONT PROCESS HJPARM RECORDS
+         TM    CTMODE,CTMRELD      IS IT RELOAD MODE
+         BO    GPROCSYO            IF SO SKIP HJPARM PROCESSING
+GPROCSY1 EQU   *
+         MVC   GJCLWORK(L'GHJPRM),GHJPRM MOVE IN THE DD CARD
+         MVC GJCLWORK+L'GHJPRM(L'GJCLWORK-L'GHJPRM),GJCLWORK+L'GHJPRM-1
+         BAL   R14,GPUTINRD        PUT RECORD TO INTERNAL READER
+         SPACE 1
+         LA    GMSGREG,8           MAX NUMBER OF ENTRIES
+         LA    GTESTREG,GINSYSDC   ADDRESS OF THE CONSTANTS
+         LA    REG,X'80'           CONSTANT FOR HASP31
+GCMPRSYS EQU   *
+         CLM   REG,1,CTINSYS       IS THIS THE CORRECT ONE
+         BE    GMVINSYS            IF SO GO MOVE IN THE EBCDIC
+         LA    GTESTREG,L'GINSYSDC(GTESTREG) POINT TO THE NEXT ENTRY
+         SRL   REG,1               SET UP FOR NEXT ENTRY
+         BCT   GMSGREG,GCMPRSYS    GO BACK UNTIL DONE
+GMVINSYS EQU   *
+         MVC   GJ(L'GDPRM),GDPRM   MOVE IN THE BASE RECORD
+         MVC   GJ+L'GDPRM(L'GJ-L'GDPRM),GJ+L'GDPRM-1 CLEAR THE REST
+         MVC   GJCLWORK+L'GDPRM-1(L'GINSYSDC),0(GTESTREG)
+         LA    R1,GJCLWORK         ADDRESS OF THE RECORD
+         BAL   R14,GPUTINRD        PUT TO THE INTERNAL READER
+         MVC   GJ(L'GDMODE),GDMODE PUT IN THE MODE=DIRO RECORD
+         MVC   GJ+L'GDMODE(L'GJ-L'GDMODE),GJ+L'GDMODE-1 BLANK OUT REST
+         LA    R1,GJCLWORK         ADDRESS OF THE RECORD TO PUT
+         BAL   R14,GPUTINRD        PUT TO THE INTERNAL READER
+         SPACE 1
+         MVC   GJ(L'GDREPT),GDREPT PUT IN THE REPORT= RECORD
+         MVC   GJ+L'GDREPT(L'GJ-L'GDREPT),GJ+L'GDREPT-1
+         LA    R1,GJCLWORK         ADDRESS OF THE RECORD
+         BAL   R14,GPUTINRD        PUT TO THE INTERNAL READER
+         SPACE 1
+         MVC   GJCLWORK(L'GJOBN),GJOBN MOVE IN THE JOBNUM PARAM
+         MVC   GJCLWORK+L'GJOBN(L'GJCLWORK-L'GJOBN),GJCLWORK+L'GJOBN-1
+         LH    REG,JHJOBNO         GET THE JOB NUMBER
+         CVD   REG,GDBLAREA        CONVERT IT TO DECIMAL
+         OI    GDBLAREA+7,15       SET THE CORRECT ZONE
+         UNPK  GJCLWORK+L'GJOBN-1(5),GDBLAREA+5(3) UNPK THE JOB NUMBER
+         LA    R1,GJCLWORK         ADDRESS OF THE RECORD
+         BAL   R14,GPUTINRD        PUT IT TO THE INTERNAL READER
+         SPACE 1
+         MVC   GJCLWORK(L'GDSNBR),GDSNBR MOVE IN THE BEGDSNUM PARM
+         MVC   GJ+L'GDSNBR(L'GJ-L'GDSNBR),GJ+L'GDSNBR-1 CLEAR REST
+         MVC   GJ+L'GDSNBR-1(L'GOUTDS#),GOUTDS# PUT IT IN RECORD
+         LA    R1,GJCLWORK         ADDRESS OF THE RECORD
+         BAL   R14,GPUTINRD        PUT IT TO THE INTERNAL READER
+         SPACE 1
+         MVC   GJ(L'GTSUDS+L'GTH),GTSUDS PUT IN THE TSU KEYWORD
+         MVC GJ+L'GTSUDS+L'GTH(L'GJ-L'GTSUDS-L'GTH),GJ+L'GTSUDS+L'GTH-1
+         TM    CTFLGS1,CT1HLDDS    IS THE HELD SYSOUT FLAG ON
+         BO    GALLTSU             IF SO ACCEPT THE DEFAULT
+         MVC   GJ+L'GTSUDS(L'GTA),GTA SUBSTITUTE ALL FOR HELD
+GALLTSU  EQU   *
+         LA    R1,GJCLWORK         ADDRESS OF THE RECORD
+         BAL   R14,GPUTINRD        PUT IT TO THE INTERNAL READER
+         SPACE 1
+         MVC   GJ(L'GMAXDD),GMAXDD GET THE MAX DD # COUNT
+         MVC   GJ+L'GMAXDD(L'GJ-L'GMAXDD),GJ+L'GMAXDD-1 CLEAR
+         SR    REG,REG             CLEAR REG FOR INSERT CHARACTER
+         IC    REG,CTMAXSDD        GET MAX NUMBER OF DD'S PER STEP
+         CVD   REG,GDBLAREA        CONVERT IT TO PRINTABLE
+         OI    GDBLAREA+7,X'0F'    CORRECT THE ZONE
+         UNPK  GJ+L'GMAXDD-1(3),GDBLAREA+6(2) PUT IT IN OUT RECORD
+         LA    R1,GJCLWORK         ADDRESS OF THE RECORD
+         BAL   R14,GPUTINRD        PUT IT TO THE INTERNAL READER
+         EJECT
+GPROCSYO EQU   *
+         LA    GCODEREG,1(GCODEREG) INCREMENT THE DATA SET COUNTER
+         STC   GCODEREG,GDSCTR     UPDATE THE DATA SET COUNTER
+         CVD   GCODEREG,GDBLAREA   CONVERT THE DATA SET #
+         OI    GDBLAREA+7,15       MAKE THE ZONE GOOD
+         UNPK  GUNPKSAV(2),GDBLAREA+6(2) UNPK AND SAVE IT
+         MVC   GJ(L'GSLOUTDD),GSLOUTDD MOVE IN THE CONTROL RECORD
+         MVC   GJ+L'GSLOUTDD(L'GJ-L'GSLOUTDD),GJ+L'GSLOUTDD-1
+         MVC   GJ+L'GSLOUTDD-4(L'GOUTDS#),GOUTDS# MOVE IN THE DS NUMBER
+         LA    R8,GJ+L'GSLOUTDD    ADDRESS IN WHICH TO PUT THE FIRST
+         LA    R1,GOUTBXLP         ADDRESS OF THE TABLE POINTER
+         BAL   R14,GBLDCTRL        LINK TO  BUILD CTRL CARD
+         TM    CTOUTSYS,CTSYSH31   IS IT A HASP31 RECEIVING SYSTEM
+         BNO   GPROCOUT            IF NOT H31 - CONTINUE
+         NI    GENFLGS1,255-ONEFND-DESTFND CLEAR /*OUTPUT INDICATORS
+         B     GH31NOOP            SKIP THE /*OUTPUT PROCESSING
+GPROCOUT EQU   *
+         STM   R1,R9,GREGSAVE      SAVE THE REGISTERS
+         ST    R8,GSAVELST         SAVE THE LAST VALID PARM PTR
+         NI    GENFLGS1,255-DESTFND T/F THE DEST FOUND FLAG
+         TM    GENFLGS1,ONEFND     HAS ONE PARM BEEN FOUND
+         BNO   GCHKDF              IF NOT - SET IT UP
+         MVI   0(R8),C','          DELIMIT THE FIELD
+         LA    R8,1(R8)            POINT TO THE NEXT FIELD
+GCHKDF   EQU   *
+         CLC   DHFORMS,=CL8' '     IS IT BLANKS
+         BE    GNOFRM1             IF SO - SKIP IT
+         CLC   DHFORMS,GDDFORMS    IS IT THE DEFAULT
+         BE    GNOFRM1             IF SO - SKIP IT
+         CLC   DHFORMS,JHFORMS     IS IT SAME AS JOB FORMS
+         BE    GNOFRM1             IF SO - SKIP IT
+         MVC   0(2,R8),=C'F='      PUT IN THE KEYWORD
+         MVC   2(L'DHFORMS,R8),DHFORMS MOVE IN THE FORM ID
+         LA    R8,L'DHFORMS+1(R8)  POINT TO THE LAST CHAR
+GFRMLP   EQU   *
+         CLI   0(R8),C' '          IS IT A BLANK
+         BNE   GENDFRMX            IF NOT END OF SCAN
+         BCTR  R8,0                GO BACK ONE
+         B     GFRMLP              GO LOOK FOR MORE
+GENDFRMX EQU   *
+         LA    R8,1(R8)            POINT TO THE NEXT FIELD
+         ST    R8,GSAVELST         SAVE THE LAST ADDR
+         OI    GENFLGS1,ONEFND     INDICATE ONE FOUND
+         MVI   0(R8),C','          ANTICIPATE ANOTHER
+         LA    R8,1(R8)            POINT TO THE KEYWORD FIELD
+GNOFRM1  EQU   *
+         MVC   0(3,R8),=C'D=('     FOR THE DESTINATION PARM
+         LA    R8,2(R8)            POINT TO THE PAREN
+         LA    R7,DHRMT1           ADDRESS OF THE FIRST PARM
+         LA    R9,4                MAXIMUM OF 4 DESTINATIONS
+GLOOP2   EQU   *
+         CLC   =CL8' ',0(R7)       IS IT THE DEFAULT
+         BE    GTSTDFND            IF SO THERE ARE NO MORE
+         CLC   JHPRRMT,JHPURMT     ARE PRINT AND PUNCH THE SAME
+         BNE   GENERATE            IF NOT GO GENERATE THE DEST
+         CLC   JHPRRMT,0(R7)       IS DEST EQUAL TO ROUTE
+         BE    GINCRMNT            GO TO SEE IF MORE
+GENERATE EQU   *
+         MVC   1(L'DHRMT1,R8),0(R7) MOVE IN THE DESTINATION
+         LA    R8,L'DHRMT1(R8)     INCREMENT TO THE LAST CHARACTER
+         OI    GENFLGS1,DESTFND    INDICATE THAT ONE WAS FOUND
+GTSTBLN  EQU   *
+         CLI   0(R8),C' '          IS IT A BLANK
+         BNE   GNOBLNK1            IF NOT DONT ADJUST
+         BCTR  R8,0                DECREMENT TO STRIP THE BLANK
+         B     GTSTBLN             GO LOOK FOR MORE
+GNOBLNK1 EQU   *
+         LA    R8,1(R8)            POINT TO THE CHAR AFTER THE LAST
+         MVI   0(R8),C','          INSERT COMMA IN CASE MORE
+GINCRMNT EQU   *
+         LA    R7,2*L'DHRMT1(R7)   POINT TO THE NEXT DEST
+         BCT   R9,GLOOP2           GO BACK TO CHECK NEXT UNTIL 4
+GTSTDFND EQU   *
+         TM    GENFLGS1,DESTFND    WAS ONE FOUND
+         BNO   GCHKONEF            IF NOT - GO CHECK OTHERS FOUND
+         MVI   0(R8),C')'          PUT IN A CLOSING PAREN
+         B     GPUTOUT             GO TO PUT TO INTRDR
+GCHKONEF EQU   *
+         TM    GENFLGS1,ONEFND     WAS A PARM FOUND FOR /*OUT
+         BNO   GETOUTD             NO - SKIP PUT TO INTERNAL RDR
+         L     R8,GSAVELST         GET THE LAST VALID ADDRESS
+         MVI   0(R8),C' '          BLANK IN LAST FIELD
+         MVC   1(80,R8),0(R8)      CLEAR EXTRANEOUS GARBAGE
+GPUTOUT  EQU   *
+         LA    R1,GJCLWORK         ADDRESS OF THE RECORD
+         BAL   R14,GPUTINRD        PUT TO THE INTERNAL READER
+GETOUTD  EQU   *
+         LM    R1,R9,GREGSAVE      RESTORE THE REGISTERS
+         EJECT
+GH31NOOP EQU   *
+         MVI   GJCLWORK,C' '       CLEAR THE WORK AREA
+         MVC   GJCLWORK+1(L'GJCLWORK-1),GJCLWORK IN WHICH
+         MVC   GJCLWORK(L'GHJSOUT),GHJSOUT TO BUILD THE
+         MVC   GJCLWORK+L'GHJSOUT(1),DHCLASS THE JCL FOR SYSOUT
+         MVC   GJCLWORK+8(2),GUNPKSAV PUT IN THE DDNUMBER
+         LA    R1,GJ+L'GHJSOUT+1   POINT TO THE NEXT FIELD
+         NI    GENFLGS2,255-MOD    CLEAR THE MODIFICATION FLAG
+         CLC   DHWTRID,=CL8' '     IS THERE A WRITER ID OR DSID
+         BE    GCHKCODE            IF NOT GO CHECK FOR 'CODE
+         TM    DHFLGS1,DH1DSID     IS IT A DSID
+         BO    GCHKCODE            YES - IF SO IGNORE IT FOR NOW
+         OI    GENFLGS2,MOD        INDICATE SYSOUT DD MODIFICATION
+         BCTR  R1,0                ADJUST THE FIELD POINTER
+         MVC   0(3,R1),GCDE        MOVE IN (X,
+         MVC   1(1,R1),DHCLASS     MOVE IN THE CLASS - (A,
+         LA    R1,3(R1)            POINT TO THE NEXT FIELD - (A,_
+         MVC   0(L'DHWTRID,R1),DHWTRID IS NOW (A,WRITERID
+         LA    R1,L'DHWTRID-1(R1)  POINT TO THE LAST CHAR
+GSCNBLNK EQU   *
+         CLI   0(R1),C' '          IS THE LAST CHAR A BLANK
+         BNE   GSCNDONE            NO - END OF THE SCAN
+         BCTR  R1,0                DECREMENT ADR BY ONE
+         B     GSCNBLNK            GO CHECK FOR MORE BLANKS
+GSCNDONE EQU   *
+         LA    R1,1(R1)            POINT TO NEXT - (A,WRITERID_
+GCHKCODE EQU   *
+         TM    CTOUTSYS,CTSYSH31   IS THE SYSTEM HASP 3.1
+         BNO   GJESCONT            IF NOT SKIP FORMS PROCESSING
+         CLC   DHFORMS,=CL8' '     IS IT DEFAULT ?
+         BE    GMODDONE            IF SO - END OF PROCESS
+         CLC   DHFORMS,GDDFORMS    IS IT DEFINED DEFAULT
+         BE    GMODDONE            YES - DONE
+         CLC   DHFORMS,JHFORMS     DS FORMS = TO JOB FORMS
+         BE    GMODDONE            IF SO DON'T PUT ON DD
+         OI    GENFLGS2,H31FORMS   INDICATE H31 FORMS PROCESS
+         B     GH31CONT            SKIP THE NEXT TEST               *05
+GJESCONT EQU   *
+         TM    GENFLGS1,ONEFND+DESTFND IS CODE REQUIRED
+         BZ    GMODDONE            NO - THEN WE ARE DONE
+GH31CONT EQU   *                                                    *05
+         TM    GENFLGS2,MOD        IS IT PARTLY DONE
+         BO    GPARTDNE            YES - SKIP INITIAL CHANGES
+         BCTR  R1,0                ADJUST THE POINTER
+         MVC   0(GC,R1),GCDE       MOVE IN (X,,HJ
+         MVC   1(1,R1),DHCLASS     MOVE IN CLASS (A,,H
+         LA    R1,GC(R1)
+         OI    GENFLGS2,MOD        INDICATE MODIFICATION MADE
+         B     GINITDNE            SKIP NEXT SETUP
+GPARTDNE EQU   *
+         MVC   0(L'GCDE1,R1),GCDE1 MOVE IN THE  - ,H
+         LA    R1,L'GCDE1(R1)      POINT TO END
+GINITDNE EQU   *
+         TM    GENFLGS2,H31FORMS   H31 FORMS TO BE DONE
+         BNO   GNOTH31F            IF NOT - SKIP THIS CODE
+         BCTR  R1,0                DECREMENT THE POINTER
+         MVC   0(L'DHFORMS,R1),DHFORMS MOVE IN THE FORMS ID
+         LA    R1,L'DHFORMS(R1)
+GLOOPHX  EQU   *
+         CLI   0(R1),C' '          IS THE CHARACTER A BLANK
+         BNE   GNOBLH31             IF NOT EXIT
+         BCTR  R1,0                IF SO - GET RID OF IT
+         B     GLOOPHX             AND GO LOOK FOR MORE
+GNOBLH31 EQU   *
+         LA    R1,1(R1)            POINT TO THE NEXT FIELD
+         B     GSKPMODT            AND CONTINUE
+GNOTH31F EQU   *
+         MVC   0(L'GOUTDS#,R1),GOUTDS# MOVE IN THE DS NUMBER
+         LA    R1,L'GOUTDS#(R1)    POINT TO THE NEXT FIELD
+GMODDONE EQU   *
+         TM    GENFLGS2,MOD        MODIFICATION BEEN MADE ?
+         BNO   GSOUTOK             IF NOT END OF WORK
+GSKPMODT EQU   *
+         MVI   0(R1),C')'          END OF THE STATEMENT
+         LA    R1,1(R1)            INCREMENT BY ONE
+GSOUTOK  EQU   *
+         MVI   0(R1),C','          START OF THE NEXT OPERAND
+         LA    R1,1(R1)            POINT TO THE NEXT FIELD
+         BAL   R6,GCHKRTNX         SEE IF LENGTH IS EXCEEDED
+         MVC   0(L'GFRCL,R1),GFRCL PUT IN FREE=CLOSE              *JEA*
+         LA    R1,L'GFRCL(R1)      POINT TO NEXT FIELD            *JEA*
+         BAL   R6,GCHKRTNX         SEE IF LENGTH IS EXCEEDED      *JEA*
+         TM    CTOUTSYS,CTSYSJ23+CTSYSJ24 IS IT A JES2 RCV SYSTEM
+         BNM   GTSTDSID            IF NOT - NO HOLD
+         TM    DHFLGS1,DH1HOLD     WAS THE DATA SET HELD
+         BNO   GTSTDSID            IF NOT GO CHECK FOR DSID
+         MVC   0(L'GDSHOLD,R1),GDSHOLD MOVE IN HOLD=YES
+         LA    R1,L'GDSHOLD(R1)    POINT TO NEXT AREA
+         BAL   R6,GCHKRTNX         SEE IF LENGTH IS EXCEEDED
+GTSTDSID EQU   *
+         TM    DHFLGS1,DH1DSID     DSID SPECIFIED ?
+         BNO   GNODSID             IF NOT SKIP DSID= CODE
+         MVC   0(L'GDSID,R1),GDSID MOVE IN ,GDSID=
+         MVC   L'GDSID(L'DHDSID,R1),DHDSID DSID=DSIDNAME
+         LA    R1,L'GDSID+L'DHDSID-1(R1) POINT TO THE LAST CHAR
+GDSIDBLK EQU   *
+         CLI   0(R1),C' '          CHECK FOR TRAILING BLANK
+         BNE   GDSIDEND            IF NOT ONE - END OF SCAN
+         BCTR  R1,0                ADJUST THE LENGTH
+         B     GDSIDBLK            GO LOOK FOR MORE
+GDSIDEND EQU   *
+         MVI   1(R1),C','          START OF THE NEXT FIELD
+         LA    R1,2(R1)            POINT TO THE NEXT FIELD
+         BAL   R6,GCHKRTNX         SEE IF LENGTH IS EXCEEDED
+GNODSID  EQU   *
+         MVC   0(L'GDCB,R1),GDCB   MOVE IN DCB FOR BLKSIZE
+         SR    R2,R2               CLEAR THE REGISTER
+         ICM   R2,3,DHLRECL        GET THE MAX RECORD LENGTH
+         CVD   R2,GDBLAREA         CONVERT IT TO DEC
+         OI    GDBLAREA+7,X'0F'    CORRECT THE ZONE
+         UNPK  L'GDCB(5,R1),GDBLAREA+5(3) PUT IN THE BLKSIZE
+         LA    R1,L'GDCB+5(R1)     UPDATE THE RECORD POINTER
+         TM    DHRECFM,X'06'       RECFM REQUIRED ?
+         BNM   GEXITA              IF NOT SKIP PUTTING IT ON
+         MVC   0(L'GRECFM,R1),GRECFM MOVE IN RECFM=
+         TM    DHRECFM,X'04'       IS IT RECFM CTRL CHAR=A
+         BO    GUPDTR1             IF SO ITS ALREADY THERE
+         MVI   L'GRECFM-1(R1),C'M' IF NOT IT MUST BE MACH
+GUPDTR1  EQU   *
+         LA    R1,L'GRECFM(R1)     POINT TO THE NEXT FIELD
+GEXITA   EQU   *
+         CLI   DHFCTN,X'0'         FUNC= REQUIRED
+         BE    GNOFCTN             IF ZERO - NOT REQUIRED
+         MVC   0(L'GFCTN,R1),GFCTN MOVE IN THE FUNC= KEYSORD
+         LA    R1,L'GFCTN(R1)      POINT TO NEXT
+         SR    R9,R9               CLEAR THE REGISTER
+         LA    R2,GFUNCTBL         ADDRESS OF FUNC TABLE
+         LA    R4,GFNUM            # OF FUNC ENTRIES
+GFUNCLUP EQU   *
+         IC    R9,0(R2)            GET FUNC MASK
+         EX    R9,GTSTFUNC         EXECUTE TEST UNDER MASK
+         BNO   GNOFUNC             IF NOT ON - DON'T MOVE IT
+         MVC   0(1,R1),1(R2)       MOVE IN THE FUNC CHARACTER
+         LA    R1,1(R1)            POINT TO THE NEXT RECORD POSITION
+GNOFUNC  EQU   *
+         LA    R2,2(R2)            POINT TO NEXT TBL ENTRY
+         BCT   R4,GFUNCLUP         GO BACK UNTIL ALL DONE
+GNOFCTN  EQU   *
+         TM    DHFLGS1,DH1OPTJ     WAS OPTCD=J SPECIFIED
+         BNO   GNOOPTJ             IF NOT SKIP IT
+         MVC   0(L'GOPTJ,R1),GOPTJ MOVE IN THE OPTCD=J
+         LA    R1,L'GOPTJ(R1)      POINT TO THE NEXT FIELD
+GNOOPTJ  EQU   *
+         MVI   0(R1),C')'          END OF DCB PARMS
+         MVI   1(R1),C','          FOR THE NEXT FIELD
+         LA    R1,2(R1)            POINT TO THE NEXT FIELD
+         BAL   R6,GCHKRTNX         SEE IF LENGTH IS EXCEEDED
+         TM    CTOUTSYS,CTSYSH31   IS IT HASP 3.1
+         BNO   GCHK3800            IF NOT - NO UCS OR FCB
+         CLC   DHFCB,GDDFCB        IS IT THE DEFAULT
+         BE    GCHKUCS             IF SO GO CHECK UCS
+         CLC   DHFCB,=CL8' '       BLANK FIELD - TREAT AS DEFAULT
+         BE    GCHKUCS             FCB SPECIFIED
+         MVC   0(L'GFCBEQ,R1),GFCBEQ
+         MVC   L'GFCBEQ(L'DHFCB,R1),DHFCB MOVE IN THE FCB ID
+         LA    R1,L'GFCBEQ+L'DHFCB-1(R1) POINT TO THE LAST CHAR
+GLOOP3   EQU   *
+         CLI   0(R1),C' '          GET RID OF ALL
+         BNE   GINCRR1X             TRAILING BLANKS
+         BCTR  R1,0                  IN THE FCB ID
+         B     GLOOP3              GO BACK FOR MORE
+GINCRR1X EQU   *
+         MVI   1(R1),C','          START OF NEXT FIELD
+         LA    R1,2(R1)            POINT TO THE NEXT FIELD
+         BAL   R6,GCHKRTNX         SEE IF LENGTH IS EXCEEDED
+GCHKUCS  EQU   *
+         CLC   DHUCS,GDDUCS        DEFAULT UCS
+         BE    GCHK3800            IF SO - EXIT
+         CLC   DHUCS,=CL8' '       BLANKS ARE ALSO DEFAULT
+         BE    GCHK3800            GO TO EXIT
+         MVC   0(L'GUCSEQ,R1),GUCSEQ MOVE IN UCS=
+         MVC   L'GUCSEQ(L'DHUCS,R1),DHUCS MOVE IN THE UCS ID
+         LA    R1,L'GUCSEQ+L'DHUCS-1(R1)
+GLOOP4   EQU   *
+         CLI   0(R1),C' '          GET RID OF TRAILING
+         BNE   GINCRR2X             BLANKS IN THE UCS
+         BCTR  R1,0                  ID FIELD
+         B     GLOOP4              GO LOOK FOR MORE
+GINCRR2X EQU   *
+         MVI   1(R1),C','          START OF NEXT FIELD
+         LA    R1,2(R1)            POINT TO THE NEXT FIELD
+         BAL   R6,GCHKRTNX         SEE IF LENGTH IS EXCEEDED
+GCHK3800 EQU   *
+         TM    DHFLGS1,DH1BRST     WAS BURST SPECIFIED
+         BNO   GN1                 IF NOT GO CHECK NEXT
+         MVC   0(L'GBRST,R1),GBRST MOVE IN THE BURST KEYWORD
+         LA    R1,L'GBRST(R1)      POINT TO THE NEXT FIELD
+         BAL   R6,GCHKRTNX         GO CHECK RECORD LENGTH
+GN1      EQU   *
+         CLC   DHFLASH,=C'****'    IS IT EQUAL TO DEFAULT
+         BE    GN3                 IF SO GO TO NEXT PARM
+         CLC   DHFLASH,=CL8' '     WAS FLASH SPECIFIED
+         BE    GN3                 IF NOT GO TO NEXT PARM
+         MVC   0(L'GFL,R1),GFL     MOVE IN THE FLASH= KEYWORD
+         MVC   L'GFL(L'DHFLASH,R1),DHFLASH MOVE IN THE FLASH ID
+         LA    R1,L'GFL+L'DHFLASH-1(R1) POINT TO LAST CHARACTER
+GCKBLX   EQU   *
+         CLI   0(R1),C' '          GET RID OF ALL TRAILING
+         BNE   GN2A                  BLANKS IN THE
+         BCTR  R1,0                    FLASH ID
+         B     GCKBLX              GO BACK TO CHECK FOR MORE
+GN2A     EQU   *
+         MVI   1(R1),C','          GET READY FOR NEXT FIELD
+         SR    R2,R2               CLEAR FOR INSERT
+         IC    R2,DHFLSHCT         GET THE REQUESTED FLASH COUNT
+         CVD   R2,GDBLAREA         CONVERT IT TO DECIMAL
+         OI    GDBLAREA+7,X'0F'    CORRECT THE ZONE
+         UNPK  2(3,R1),GDBLAREA+6(2)  PUT IT INTO THE RECORD
+         MVI   5(R1),C')'          END OF THE OPERAND
+         MVI   6(R1),C','          ANTICIPATE ANOTHER
+         LA    R1,7(R1)            POINT TO THE END
+         BAL   R6,GCHKRTNX         GO SEE IF RECORD LNG EXCEEDED
+GN3      EQU   *
+         NI    GENFLGS1,255-DESTFND CLEAR THE DESTFND FLAG
+         LA    R7,DHCHAR1          POINT TO FIRST CHAR PARAM
+         LA    R9,4                MAX NUMBER OF ENTRIES
+GN3LP1   EQU   *
+         CLC   =C'****',0(R7)      IS IT EQUAL TO DEFAULT
+         BE    GN3A                IF SO GET OUT
+         CLC   =CL4' ',0(R7)       WAS CHAR SPECIFIED
+         BE    GN3A                IF NOT - EXIT
+         TM    GENFLGS1,DESTFND    HAS ONE ALREADY BEEN FOUND
+         BO    GN3B                IF SO - SKIP THE KEYWORD
+         MVC   0(L'GCH,R1),GCH     MOVE IN THE CHAR=
+         OI    GENFLGS1,DESTFND    INDICATE THAT ONE HAS BEEN FOUND
+         LA    R1,L'GCH-1(R1)      POINT TO THE LAST CHAR
+         B     GN3C                CONTINUE PROCESSING
+GN3B     EQU   *
+         MVI   0(R1),C','          FOR NEXT PARAMETER
+GN3C     EQU   *
+         MVC   1(L'DHCHAR1,R1),0(R7) MOVE IN THE CHAR ID
+         LA    R1,L'DHCHAR1(R1)    POINT TO THE LAST CHARACTER
+GN3LP    EQU   *
+         CLI   0(R1),C' '          GET RID OF THE
+         BNE   GN3D                  TRAILING BLANKS
+         BCTR  R1,0                    IN THE CHAR ID
+         B     GN3LP               GO SEE IF ANY MORE
+GN3D     EQU   *
+         LA    R1,1(R1)            POINT TO THE NEXT FIELD
+         LA    R7,L'DHCHAR1(R7)    POINT TO THE NEXT CHAR ID
+         BCT   R9,GN3LP1           GO BACK AND LOOK FOR MORE
+GN3A     EQU   *
+         TM    GENFLGS1,DESTFND    WERE ANY FOUND ?
+         BNO   GN4                 IF NOT - EXIT
+         MVI   0(R1),C')'          END OF THE STRING
+         MVI   1(R1),C','          START OF THE NEXT
+         LA    R1,2(R1)            POINT TO THE NEXT FIELD
+         BAL   R6,GCHKRTNX         GO SEE IF LENGTH EXCEEDED
+GN4      EQU   *
+         CLC   DHCPYMOD,=C'****'   IS IT EQUAL TO DEFAULT ?
+         BE    GN5                 IF SO  --  EXIT
+         CLC   DHCPYMOD,=CL8' '    WAS MODIFY REQUESTED
+         BE    GN5                 IF NOT THEN EXIT
+         MVC   0(L'GMODF,R1),GMODF MOVE IN THE MODIFY KEYWORD
+         MVC   L'GMODF(L'DHCPYMOD,R1),DHCPYMOD MOVE IN THE MOD ID
+         LA    R1,L'GMODF+L'DHCPYMOD-1(R1) POINT TO THE NEXT
+GN4LP    EQU   *
+         CLI   0(R1),C' '          GET RID OF ALL
+         BNE   GN4A                  TRAILING BLANKS
+         BCTR  R1,0                    IN THE RECORD
+         B     GN4LP               GO BACK FOR MORE
+GN4A     EQU   *
+         MVI   1(R1),C','          START OF THE NEXT PARM
+         TM    DHMODTRC,X'F0'      CHARACTER REPRESENTATION ?
+         BO    GMOVTRC             IF SO GO MOVE IT IN DIRECTLY
+         SR    R2,R2               CLEAR THE REGISTER
+         IC    R2,DHMODTRC         GET THE TABLE REFERENCE CHAR
+         CVD   R2,GDBLAREA         CONVERT IT TO DECIMAL
+         OI    GDBLAREA+7,X'0F'    CORRECT THE ZONE
+         UNPK  2(1,R1),GDBLAREA+7(1) PUT THE CHAR IN THE RECORD
+         B     GTRCMPLT            EXIT THE ROUTINE
+GMOVTRC  EQU   *
+         MVC   2(L'DHMODTRC,R1),DHMODTRC MOVE IN THE TABLE REF CHAR
+GTRCMPLT EQU   *
+         MVI   2+L'DHMODTRC(R1),C')' END OF THE PARAMETER
+         MVI   3+L'DHMODTRC(R1),C',' FOR THE NEXT PARAMETETR
+         LA    R1,4+L'DHMODTRC(R1) POINT TO THE NEXT FIELD
+         BAL   R6,GCHKRTNX         SEE IF LENGTH IS EXCEEDED
+GN5      EQU   *
+         OC    DHCPYGRP,DHCPYGRP   WAS COPY GROUP SPECIFIED ?
+         BZ    GN6                 IF NOT - EXIT
+         MVC   0(L'GCPY,R1),GCPY   MOVE IN THE COPIES KEYWORD
+         LA    R1,L'GCPY(R1)       INCREMENT TO THE FIRST FIELD
+         SR    R2,R2               CLEAR THE REGISTER
+         IC    R2,DHCOPYS          GET THE COPY COUNT
+         CVD   R2,GDBLAREA         CONVERT IT TO DECIMAL
+         OI    GDBLAREA+7,X'0F'    CORRECT THE ZONE
+         UNPK  0(3,R1),GDBLAREA+6(2) UNPK IT INTO THE RECORD TEXT
+         MVI   3(R1),C','          COMMA FOR SUB-PARAMETER
+         MVI   4(R1),C'('            DITTO
+         LA    R1,5(R1)            POINT TO THE FIRST SUBPARM FIELD
+         LA    R9,8                MAX NUMBER OF GROUPS
+         LA    R7,DHCPYGRP         ADDRESS OF THE COPY GRP FIELD
+GN5LP    EQU   *
+         CLI   0(R7),X'00'         GROUP SPECIFIED ?
+         BE    GN5A                IF NOT - END OF SCAN
+         SR    R2,R2               CLEAR FOR INSERT CHARACTER
+         IC    R2,0(R7)            GET THE GROUP ID
+         CVD   R2,GDBLAREA         CONVERT IT TO DECIMAL
+         OI    GDBLAREA+7,X'0F'    CORRECT THE ZONE
+         UNPK  0(3,R1),GDBLAREA+6(2) UNPK INTO THE JCL RECORD
+         MVI   3(R1),C','          ANTICIPATE ANOTHER PARM
+         LR    R2,R1               DONT DESTROY CURRENT POINTER
+         LA    R1,4(R1)            POINT TO THE NEXT FIELD
+GN5LPA   EQU   *
+         CLI   0(R2),C'0'          IS IT A LEADING ZERO
+         BNE   GN5NDSHF            IF NOT END OF SHIFT
+         BCTR  R1,0                BACK UP THE NEXT FIELD POINTER
+         MVC   0(4,R2),1(R2)       MOVE THE OPERAND BACK ONE
+         B     GN5LPA              GO BACK TO LOOK FOR MORE
+GN5NDSHF EQU   *
+         LA    R7,1(R7)            POINT TO THE NEXT GRP FIELD
+         BCT   R9,GN5LP            GO BACK FOR MORE TIL 8 DONE
+GN5A     EQU   *
+         BCTR  R1,0                BACK IT UP - TO COMMA
+         MVC   0(3,R1),=C')),'     END OF THE PARMS
+         LA    R1,3(R1)            POINT TO THE NEXT
+         BAL   R6,GCHKRTNX         SEE IF LENGTH IS EXCEEDED
+GN6      EQU   *
+         BCTR  R1,0                BACK UP TO THE COMMA
+         MVI   0(R1),C' '          PUT IN A BLANK
+         MVC   1(80,R1),0(R1)      PROPAGATE THE BLANKS
+         LA    R1,GJCLWORK         AND DDNAME #
+         BAL   R14,GPUTINRD        PUT IT TO THE INTERNAL READER
+         TM    CTFLGS1,CT1INSTR    IS IT AN INSTREAM MODE
+         BO    GBLDJ               IF SO BUILD SYSIN DSET
+         TM    CTMODE,CTMRELD      CHECK FOR RELOAD MODE
+         BNO   GCHKMAX             IF NOT GO CHECK LIMITS
+GBLDJ    EQU   *
+         MVC   GJCLWORK(L'GHSYSIN),GHSYSIN BUILD THE SYSINXX JCL
+         MVC   GJ+L'GHSYSIN(2),GUNPKSAV PUT IN THE DD NUMBER
+         MVC   GJCLWORK+L'GHSYSIN+2(L'GHDDSTAR),GHDDSTAR
+         MVC   GJCLWORK+GBL(L'GJCLWORK-GBL),GJCLWORK+GBL-1
+         LA    R1,GJCLWORK         ADDRESS OF THE RECORD
+         BAL   R14,GPUTINRD        TO BE PUT TO INTRDR
+GCHKMAX  EQU   *
+         CLC   CTMAXSDD,GDSCTR     HAVE WE REACHED THE LIMIT
+         BNE   GNORMRET            IF NOT - NORMAL RETURN
+         MVI   GDSCTR,X'00'        LIMIT REACHED - RESET TO ZERO
+         B     GNORMRET            NORMAL RETURN
+         EJECT
+GMOVESAV MVC   GJ+160(*-*),0(GTESTREG)  MOVE TO TEMP AREA - DD CARD
+GMOVBACK MVC   GJ+3(*-*),GJ+160    MOVE FROM TEMP AREA - DD CARD
+GMOVPRM  MVC   0(*-*,R8),0(R3)       MOVE IN THE HEADER VALUE
+GMOVPRM1 MVC   0(*-*,R4),0(R3)
+GCLC     CLC   0(*-*,R2),0(R3)       COMPARE HDR VALUE TO DEFAULT
+GCLCBLNK CLC   0(*-*,R3),=CL8' '     TO COMPARE HEADER FIELDS FOR BLNK
+GCLCZERO CLC   0(*-*,R3),=XL8'00'  TO COMPR HDR FLDS FOR BIN ZEROS  *13
+GUNPK    UNPK  0(*-*,R8),0(*-*,R9)     TO UNPK HEADER INFO
+GUNPK1   UNPK  0(*-*,R4),0(*-*,R9)
+GACTMVC  MVC   0(*-*,R1),CTACCTNO+1
+GTSTFUNC TM    DHFCTN,*-*          TEST FOR FUNC CHARS
+         EJECT
+***********************************************************************
+*
+*    COME HERE TO DETERMINE THE PARAMETER
+*    REQUIREMENTS FOR JOB ACCOUNTING INFORMATION
+*    FOR HASP31, /*JOBPARM INFORMATION AND
+*    /*OUTPUT RECORD INFORMATION
+*
+***********************************************************************
+          SPACE 1
+GBLDCTRL EQU   *
+         STM   R1,R7,GREGSAVE      SAVE THE CALLERS REGISTERS
+         NI    GENFLGS1,255-ONEFND T/F THE CTRL CRD REQ FLG
+         OI    GENFLGS1,FIRSTPRM   INDICATE THIS IS THE FIRST
+         LM    R5,R7,0(R1)         GET THE ADDRESS OF THE TABLE
+GLOOP    EQU   *
+         L     R2,0(R5)            GET LENGTH AND ADDR OF DEFAULTS
+         SR    R3,R3               CLEAR THE REGISTER
+         ICM   R3,3,6(R5)          GET THE FIELD DISPL IN HEADER
+         SR    R1,R1               CLEAR REG ONE
+         IC    R1,0(R5)            LENGTH OF DEF -1 IN R1
+         LA    R3,0(R3,HJCTREG)    RESOLVE HEADER FIELD ADDR
+         EX    R1,GCLC             IS DEFLT = TO HEADER
+         BE    GBXLE               YES - GO SET UP TO PROCESS NEXT
+         EX    R1,GCLCBLNK         MAYBE ITS AN ALL BLANK FIELD
+         BE    GBXLE               IF SO LEAVE IT ALONE
+         EX    R1,GCLCZERO         LIKEWISE, TEST FOR ALL BIN ZEROS *13
+         BE    GBXLE                AND IGNORE IT IF SO             *13
+         LA    R9,1(R2,R1)         POINT TO KEYWORD
+         TM    GENFLGS1,FIRSTPRM   IS THIS THE 1ST PARM
+         BO    GITSFRST            IF IT IS DON'T
+         MVI   0(R8),C','          PUT IN A COMMA
+         LA    R8,1(R8)            INCR R8 PAST THE COMMA
+         B     GNOTFRST            SKIP THE NEXT TEST
+GITSFRST EQU   *
+         XI    GENFLGS1,FIRSTPRM+ONEFND T/F FIRST AND T/N ONEFND
+GNOTFRST EQU   *
+         MVC   0(2,R8),0(R9)       MOVE IN THE KEYWORD
+         LA    R8,2(R8)            INCREMENT PAST THE KEYWORD
+         TM    4(R5),GCVD          REQUIRE CONVERSION ?
+         BNO   GBIN0TST            IF NOT, TEST FOR LEADING BIN 0'S *13
+         SR    R2,R2               CLEAR WORK REGISTER
+         IC    R2,0(R3)            ANTICIPATE A ONE CHAR FIELD
+         CLI   0(R5),0             IS IT ZERO
+         BE    GDOEXEC             IF SO DO THE IC
+         L     R2,0(R3)            IF NOT ONE CHAR - LOAD FOUR
+GDOEXEC  EQU   *
+         TM    4(R5),GDIV          DIVISION BY 1000 REQ ?
+         BNO   GNODIV              NO - DON'T CHANGE IT
+         LR    R3,R2               MOVE TO EVEN/ODD REGS
+         SR    R2,R2
+         D     R2,=F'1000'         DIVIDE BY 1000
+         LR    R2,R3               PUT QUOTIENT IN R2 FOR CVD
+GNODIV   EQU   *
+         TM    4(R5),GSUB          IS IT LINDEX OR INDEX ?
+         BNO   GNOSUB              IF NOT DON'T MESS WITH IT
+         SH    R2,=H'128'          CHECK ON HIGH ORDER BIT
+         BM    GADDIT              IF NEGATIVE GO ADD IT BACK
+         STC   R2,0(R3)            PUT IT BACK FOR LINDEX
+         SH    R8,=H'3'            POINT BACK TO THE PREVIOUS
+         CLI   0(R8),C' '          IS THIS THE FIRST ?
+         BNE   GBXLE               IF NOT THEN ITS OK
+         LA    R8,1(R8)            GO FORWARD ONE
+         XI    GENFLGS1,FIRSTPRM+ONEFND RESET THE FLAGS
+         B     GBXLE               GO CHECK THE NEXT ONE
+GADDIT   EQU   *
+         AH    R2,=H'128'          PUT THE NUMBER POSITIVE
+         MVI   0(R3),X'00'         SET TO DEFAULT FOR LINDEX
+GNOSUB   EQU   *
+         CVD   R2,GDBLAREA         CONVERT IT TO DECIMAL
+         OI    GDBLAREA+7,15       SET THE CORRECT ZONE
+         SR    R2,R2               CLEAR FOR INSERT CHAR
+         IC    R2,5(R5)            GET THE UNPK LENGTHS
+         LR    R1,R2               PUT LENGTHS IN R1
+         N     R1,=X'0000000F'     LEAVE ONLY THE 2ND OP LNG
+         LA    R9,GDBLAREA+7       START ADDRESS
+         SR    R9,R1               ADJUST THE ADDRESS
+         EX    R2,GUNPK            EXEC THE UNPK
+         TM    CTOUTSYS,CTSYSH31   HASP31 RCVNG SYS
+         BNO   GNOTH31             IF NOT SKIP
+         TM    4(R5),GH31          IS IT A VALID HASP31 PARM
+         BNO   GNOTH31             IF NOT SKIP
+         EX    R2,GUNPK1           SAVE IT FOR JOBB CARD
+GNOTH31  EQU   *
+         SRL   R2,4                SHIFT OUT THE LOW HALF BYTE
+         LR    R1,R2                 AND PUT IT IN REGISTER ONE
+         B     GNOTH31A            SKIP THE NORMAL MOVE
+         SPACE 2
+GBIN0TST EQU   *                                                    *13
+         LR    R15,R3              LOAD PTR TO HDR FLD INTO WORK REG*13
+GBIN0LP  CLI   0(R15),0            TEST FOR LEADING 0               *13
+         BNE   GMOVEIT              IF NOT, GO MOVE HDR TO RECD     *13
+         MVI   0(R15),C'0'          IF SO, CHANGE IT TO EBCDIC      *13
+         LA    R15,1(R15)          INCR HDR FLD PTR                 *13
+         B     GBIN0LP              AND LOOP                        *13
+GMOVEIT  EQU   *
+         EX    R1,GMOVPRM          MOVE PARAM TO RECORD
+         TM    CTOUTSYS,CTSYSH31   IS IT A HASP31 REC SYS
+         BNO   GNOTH31A            IF NOT SKIP
+         TM    4(R5),GH31          IS IT A VALID H31 PARM
+         BNO   GNOTH31A            IF NOT SKIP
+         EX    R1,GMOVPRM1         MOVE IT TO THE HASP AREA
+GNOTH31A EQU   *
+         LR    R2,R8               GET ORIGIN ADDRESS
+         LA    R8,0(R8,R1)         POINT TO LAST CHAR POSITION
+         TM    4(R5),GCVD          CAN IT HAVE LEADING ZEROS
+         BNO   GCLRBLNK            YES - EXIT
+GSHFTLP  EQU   *
+         CLI   0(R2),C'0'          IS IT A LEADING 0
+         BE    GCLRZERO            IF SO - GO CLEAR IT
+         CLI   0(R2),C' '          HAVE WE GONE TOO FAR
+         BNE   GNOBLANK            GUESS NOT - GET OUT
+         LA    R8,1(R8)            PUT BACK ONE ZERO
+         MVI   0(R8),C'0'          SHOULDNT TAKE ALL OF THE PARM
+         B     GNOBLANK            GO TO COMPLETE PROCESS
+GCLRZERO EQU   *
+         BCTR  R8,0                DECREMENT NEXT FIELD POINTER
+         MVC   0(8,R2),1(R2)       MOVE IT BACK ONE
+         B     GSHFTLP             GO LOOK FOR MORE
+GCLRBLNK EQU   *
+         CLI   0(R8),C' '          IS IT A BLANK ?
+         BNE   GNOBLANK            IF NOT - LEAVE IT ALONE
+         BCTR  R8,0                IF IT IS - GET RID OF IT
+         B     GCLRBLNK            AND GO CHECK FOR MORE BLANKS
+GNOBLANK EQU   *
+         LA    R8,1(R8)            INCREMENT TO POINT TO NEXT AREA
+GBXLE    EQU   *
+         TM    4(R5),GH31          IS IT VALID FOR HASP31
+         BNO   GNOTH3PM            SKIP IF NOT HASP31
+         TM    4(R5),GCVD          IS IT A CONVERT TYPE
+         BNO   GINCRH31            IF NOT SKIP HASP UPDTE
+         IC    R1,5(R5)            GET THE LENGTH
+         SRL   R1,4                GET RID OF THE 2ND OP LNG
+GINCRH31 EQU   *
+         LA    R4,1(R1,R4)         POINT TO THE NEXT ENTRY
+GNOTH3PM EQU   *
+         BXLE  R5,R6,GLOOP         GO BACK FOR NEXT
+         MVI   0(R8),C' '          CLEAR THE REST OF
+         MVC   1(79,R8),0(R8)        THE RECORD AREA
+         LM    R1,R7,GREGSAVE      RESTORE REGISTERS
+         BR    R14                 AND RETURN TO CALLER
+         EJECT
+     SPACE 1
+***********************************************************************
+*
+*     COME TO THIS ROUTINE TO DETERMINE IF THE PARAMETER ADDED
+*     TO THE RECORD EXCEEDS RECORD +71
+*     IF SO, REMOVE THE PARM, PUT THE RECORD TO THE INTERNAL
+*     READER, INITIALIZE A NEW RECORD AND PUT THE ADDED PARM
+*     ON THE NEW RECORD
+*
+***********************************************************************
+     SPACE 1
+GCHKRTNX EQU   *
+         STM   R1,R6,GTMPSAVE      SAVE THE REGISTERS
+         LA    R5,GJ+71            END OF THE RECORD
+         CR    R5,R1               PARAMETER EXCEED RECORD LENGTH
+         BNL   GGOBACK             NO - RETURN
+         L     GTESTREG,GSAVELST   GET LAST GOOD ADDRESS
+         SR    R1,GTESTREG         COMPUTE THE LENGTH
+         BCTR  R1,0                DECREMENT FOR EXECUTE
+         LR    R3,R1               SAVE FOR LATER
+         EX    R1,GMOVESAV         MOVE IT TO TEMPORARY SAVEAREA
+         MVI   0(GTESTREG),C' '    PUT A BLANK AT NEW END
+         MVC   1(80,GTESTREG),0(GTESTREG) AND PROPAGATE IT
+         MVI   GJ+71,C'X'          INDICATE CONTINUATION
+         LA    R1,GJCLWORK         ADDRESS OF RECORD START
+         BAL   R14,GPUTINRD        LINK TO PUT TO INTRDR
+         MVC   GJ(3),=C'// '       MOVE IN START OF NEXT RECORD
+         MVC   GJ+3(80),GJ+2       BLANK OUT THE REST OF THE AREA
+         EX    R3,GMOVBACK         MOVE PREVIOUS PARMS INTO RECORD
+         LA    R1,GJ+3+1(R3)       POINT TO NEW - NEXT FIELD
+GGOBACK  EQU   *
+         ST    R1,GSAVELST         SAVE THE LAST AREA POINTER
+         LM    R2,R6,GTMPSAVE+4    RESTORE CALLERS REGISTERS
+         BR    R6                    AND RETURN
+         EJECT
+     SPACE 1
+***********************************************************************
+*
+*     JCL RECORD AND DATA SET RECORD ROUTINE
+*
+***********************************************************************
+     SPACE 1
+GNOTHDTR EQU   *
+         TM    GENFLGS1,JCLFLAG    IS IT A JCL RECORD
+         BNO   GDSETREC            IF NOT - DATA SET RECORD
+         MVI   GJCLWORK,C' '       SET THE RECORDS TO BLANKS
+         MVC   GJCLWORK+1(L'GJCLWORK-1),GJCLWORK REMAINDER OF REC
+         LH    R2,HJRLENG          GET THE HJSTP LENGTH
+         BCTR  R2,0                DECREMENT FOR EXECUTE INST
+         EX    R2,GMVJCLXX         MOVE THE TEXT TO WORK AREA
+         LA    R3,GJCLWORK         NEW ADDRESSABILITY
+         LA    R1,HJRTEXT          ADDRESS OF TEXT IF NOT CALL TO MAP
+         TM    GENFLGS1,NOSCAN     IS THE NOSCAN FLAG ON
+         BO    GPUTJCL             IF SO - DON'T CALL MAP
+GRECALL  EQU   *
+         NI    GENFLGS1,255-RECLLMAP T/F THE RECALL FLAG
+         HJCALL MAP,((R3))         CALL MAP FOR MODIFICATIONS
+         LTR   R15,R15             TEST THE RETURN FROM MAP
+         BNZ   GERRMAP             IF NONZERO - GO FLUSH THE JOB
+         LTR   R1,R1               RETURN EXPECTED
+         BNM   GPUTJCL             NO - DON'T FLAG
+         OI    GENFLGS1,RECLLMAP   T/N RECALL MAP FLAG
+         SPACE 1
+GPUTJCL  EQU   *
+         BAL   R14,GPUTINRD        GO PUT RECORD TO INTERNAL RDR
+         TM    GENFLGS1,RECLLMAP   MAP WANT RECALL ?
+         BNO   GNORMRET            NO - RETURN
+         B     GRECALL             GO TO RECALL MAP ROUTINE
+         SPACE 1
+GMVJCLXX MVC   GJCLWORK(*-*),0(R3) MOVE THE TEXT TO WORK AREA
+         EJECT
+GDSETREC EQU   *
+         TM    GENFLGS1,SYSIN      ARE WE PROCESSING SYSIN ?
+         BNO   GPUTREC             NO - PUT TO OUTPUT
+         SPACE 1
+***********************************************************************
+*
+*        TEST THE RECORD LENGTH AND IF THE RECEIVING
+*         SYSTEM IS HASP AND THE RECORD IS LESS THAN 80
+*          PAD IT WITH BLANKS AND PUT IT -
+*        IF THE RECORD IS GREATER THAN 80 AND THE RECEIVING
+*         SYSTEM IS HASP , PUT A MESSAGE TO THE REPORT
+*          AND GIVE A JOBKILL RETURN
+*
+***********************************************************************
+         SPACE 1
+         TM    CTOUTSYS,CTSYSJ23+CTSYSJ24 JES2 SYS ?
+         BM    GPUTRECI            JES 2 IS OK
+         CLC   HJRLENG,=AL1(86)  GREATER THAN EIGHTY SIX ?
+         BNH   GNTOVR80            NOT GREATER THEN OK
+         BAL   R6,GPUTSLSH         GO PUT A /*DEL RECORD
+         LA    GMSGREG,GLONGSIN    ADDR OF THE
+         LA    GCODEREG,JOBKILL    RETURN CODE OF JOBKILL
+         B     GMSGPUT             GO TO PUT THE MESSAGE
+     SPACE 1
+***********************************************************************
+*
+*     ROUTINE BREAKS RECORDS INTO SEGMENTS OF LENGTH
+*     ACCEPTABLE TO THE INTERNAL READER OF THE RECEIVING
+*     SYSTEM - HASP (80) , JES2 (254). AFTER EACH RECORD
+*     IS ASSEMBLED IT IS PUT TO THE HJJOBS DATA SET.
+*
+***********************************************************************
+     SPACE 1
+GNTOVR80 EQU   *
+         MVI   GJCLWORK,C' '       BLANK OUT THE WORK AREA
+         MVC   GJCLWORK+1(L'GJCLWORK-1),GJCLWORK FOR JCL BUILD
+         LH    R2,HJRLENG          GET THE RECORD LENGTH
+         SH    R2,=H'7'            LENGTH OF TEXT ONLY
+         EX    R2,GMVJCL           MOVE THE RECORD
+         LA    R2,80               LENGTH OF THE DATA TO BE PUT
+         LA    R1,GJCLWORK         ADDRESS OF THE RECORD
+         B     GPUTRECX            GO PUT THE RECORD
+         SPACE 1
+GMVJCL   MVC   GJCLWORK(*-*),HJRTEXT  MOVE THE RECORD
+         SPACE 1
+GPUTRECI EQU   *
+         LA    R1,HJRTEXT          ADDRESS TO PUT TO INTERNAL RDR
+         LH    R2,HJRLENG          GET THE RECORD LENGTH
+         SH    R2,=H'6'            LENGTH OF TEXT ONLY
+         SR    R14,R14             CLEAR WORK REG                   *16
+         IC    R14,HJRLRECL        GET UNTRUNCATED LENGTH           *16
+         CR    R14,R2              TEST FOR TRUNCATION              *16
+         BE    GPUTRECX             AND BR IF NONE                  *16
+         MVI   GJCLWORK,C' '       CLEAR WORK AREA                  *16
+         MVC   GJCLWORK+1(L'GJCLWORK-1),GJCLWORK                    *16
+         BCTR  R2,0                DECR FOR 'EX'                    *16
+         EX    R2,GMVJCL           MOVE RECD TO WORK AREA           *16
+         LA    R1,GJCLWORK         PT TO NEW RECD LOC               *16
+         LR    R2,R14              SET ACTUAL LENGTH                *16
+GPUTRECX EQU   *
+         BAL   R14,GPUTINRL        PUT THE RECORD TO INTRDR
+         B     GNORMRET             AND RETURN TO THE CALLER
+GPUTREC  EQU   *
+         LA    R1,GJCLWORK         ADDRESS OF THE RECORD TO BE PUT
+         LA    R6,HJRTEXT          ADDRESS OF THE RECORD TEXT
+         XC    GJCLWORK(4),GJCLWORK ZERO THE RDW
+         LH    GTESTREG,HJRLENG    GET THE TOTAL LENGTH
+         SH    GTESTREG,=H'6'      SUBTRACT THE HEADER LENGTH
+         LH    GTEXTLNG,GMAXLNG    GET THE MAXIMUM LENGTH
+         BCTR  GTEXTLNG,0          DECREMENT BY ONE FOR EXEC LATER
+RESTDS    EQU   *
+         CH    GTESTREG,GMAXLNG    IS IT GREATER THAN MAX
+         BH    LRGDATA             IF YES - GO BREAK IT UP
+         TM    GENFLGS1,HASP       IS THE RECEIVING SYS HASP ?
+         BO    HASPDS              IF SO - GO TO THE HASP ROUTINE
+         LA    R9,4(GTESTREG)      ADD LENGTH OF THE RDW
+         STH   R9,GJCLWORK         AND PUT IT IN THE RECORD
+         CLI   GJCLWORK+2,CMPLT    WAS PREVIOUS SEG COMPLETE
+         BE    GRECCMPL            IF SO LEAVE RDW ALONE
+         MVI   GJCLWORK+2,LASTSEG  INDICATE LAST OF MPLE IF NOT
+GRECCMPL EQU   *
+         LR    R2,R9               PUT RECORD LENGTH IN REG 2
+         BCTR  GTESTREG,0          DECREMENT FOR EXECUTE
+         EX    GTESTREG,GMVDATA    MOVE THE COMPLETE RECORD
+         BAL   R14,GPUTINRL         AND PUT TO THE INTRDR
+         B     GNORMRET            NORMAL RETURN TO CALLER
+HASPDS   EQU   *
+         LR    GTEXTLNG,GTESTREG   GET RESIDUAL LENGTH OF RECORD
+         BCTR  GTEXTLNG,0          DECREMENT FOR EXEC OF MOVE
+         MVI   GJCLWORK+4,C' '     CLEAR THE WORK AREA
+         MVC   GJCLWORK+5(79),GJCLWORK+4  FOR THE RECORD
+         LA    R9,4(GTESTREG)      ADD IN THE RDW LENGTH
+         STH   R9,GJCLWORK         AND PUT IT IN THE RECORD
+         CLI   GJCLWORK+2,CMPLT    WAS PREVIOUS SEG COMPLETE
+         BE    GRECCPLT            IF SO LEAVE RDW ALONE
+         MVI   GJCLWORK+2,LASTSEG  INDICATE LAST OF MPLE IF NOT
+GRECCPLT EQU   *
+         EX    GTEXTLNG,GMVDATA    MOVE RECORD TO THE PUT AREA
+         BAL   R14,GPUTINRD         AND PUT TO THE INTRDR
+         B     GNORMRET            RETURN TO THE CALLING RTN
+LRGDATA  EQU   *
+         SH    GTESTREG,GMAXLNG    SUBTRACT LENGTH OF THIS SEG
+         LH    R14,GMAXLNG         GET THE TEXT LENGTH
+         LA    R14,4(R14)          ADD IN THE RDW LENGTH
+         STH   R14,GJCLWORK         AND PUT IT IN THE RECORD
+         CLI   GJCLWORK+2,CMPLT    IS THE LAST ONE CMPLT
+         BNE   GSETMID             IF NOT SET MIDDLE SEG INDICATOR
+         MVI   GJCLWORK+2,FIRSTSEG OTHERWISE IT'S FIRST OF MPLE
+         B     GPROCESS            GO PROCESS THE RECORD
+GSETMID  EQU   *
+         MVI   GJCLWORK+2,MIDSEG   INDICATE NEITHER FIRST NOR LAST
+GPROCESS EQU   *
+         EX    GTEXTLNG,GMVDATA    MOVE RECORD TO THE WORK AREA
+         LR    R2,R14              PUT LENGTH OF RECORD IN REG 2
+         BAL   R14,GPUTINRL        AND PUT TO THE INTERNAL READER
+         LA    R6,1(GTEXTLNG,R6)   POINT TO THE NEXT SEGMENT
+         B     RESTDS              GO TO DO THE NEXT SEGMENT
+GMVDATA  MVC   GJCLWORK+4(*-*),0(R6) MOVE RECORD TO THE PUT AREA
+         EJECT
+     SPACE 1
+***********************************************************************
+*
+*     RETURN CODE DETERMINATION ROUTINE
+*          GENERATE A MSG AND WRITE IT INTO THE HJREPT
+*          DATA SET
+*
+***********************************************************************
+     SPACE 1
+GERRMAP  EQU   *
+         BAL   R6,GPUTSLSH         PUT /*DEL FOR THE JOB
+         LA    GMSGREG,GMAPREJ     ADDRESS OF THE REJECT MESSAGE
+         LA    GCODEREG,JOBKILL    INDICATE A JOBKILL RETURN
+         B     GMSGPUT             PUT THE MESSAGE AND RETURN
+GNORMRET EQU   *
+         LA    GCODEREG,NORM       INDICATE NORMAL RETURN
+GERRRET  EQU   *
+         LR    R15,GCODEREG        PUT RETURN CODE IN R15
+         L     R13,4(R13)          GET THE CALLERS SAVE AREA
+         L     R14,12(R13)         RESTORE REG 14
+         LM    R0,R12,20(R13)       AND REGS 0-12
+         BR    R14                 RETURN TO THE CALLING ROUTINE
+GMSGPUT  EQU   *
+         HJCALL RPRT,((GMSGREG))   CALL THE MESSAGE ROUTINE
+         B     GERRRET             GO TO THE RETURN ROUTINE
+         EJECT
+     SPACE 1
+***********************************************************************
+*
+*     COME HERE TO PUT RECORDS TO THE INTERNAL READER (HJJOBS)
+*     OF THE RECEIVING SYSTEM.
+*
+***********************************************************************
+     SPACE 1
+GPUTINRD EQU   *
+         LA    R2,80               LENGTH FOR JCL TYPE RECORDS
+GPUTINRL EQU   *
+         TM    GENFLGS1,HASP       IS IT A HASP RECEIVING SYS
+         BO    GSKPSTOR            IF SO DON'T CHANGE LRECL
+         STH   R2,JOBDCB+82        PUT REC LENGTH IN THE DCB
+GSKPSTOR EQU   *
+         LR    R9,R1               GET THE ADDRESS OF RECORD IN R9
+         STM   R14,R1,GREGSAVE     SAVE REGS 14 - 1
+         PUT   JOBDCB,(R9)         AND PUT RECORD TO INTRDR
+         LM    R14,R1,GREGSAVE     RESTORE REGS 14 - 1
+         BR    14                  RETURN TO CALLING ROUTINE
+         EJECT
+         LTORG                     GATHER PREVIOUS LITERALS         *14
+         SPACE 2                                                    *14
+*   SYNAD EXIT RTN ENTERED ON I/O ERRORS ON INTERNAL READER (HJJOBS)*14
+         DROP  HJBASE1,HJBASE2                                      *14
+         USING GSYNADRT,R15                                         *14
+GSYNADRT OI    CTFLGS2,CT2IRERR    SET INT RDR ERROR FLAG           *14
+         BR    R14                 AND RETURN TO OS                 *14
+         DROP  R15                                                  *14
+         SPACE 4                                                    *14
+*  THIS STAE RETRY RTN FLUSHES THE CURRENT JOB, CLOSES AND REOPENS  *14
+*  THE INTERNAL READER (HJJOBS) DATA SET, REESTABLISHES THE STAE    *14
+*  ENVIRONMENT, AND CONTINUES WITH NORMAL HJSTP PROCESSING.         *14
+         ENTRY GRECVRY             FOR ADDRESSABILITY FROM INIT     *14
+GRECVRY  BALR  HJBASE1,0           SET BASE REG (2 TOO HI)          *14
+         BCTR  HJBASE1,0            BRING IT BACK                   *14
+         BCTR  HJBASE1,0             DOWN TO RTN ENTRY PT           *14
+         USING GRECVRY,HJBASE1     ESTAB ADDRESSABILITY             *14
+         LA    R13,GRCVRSAV        PT TO SAVE AREA FOR THIS RTN     *14
+         L     HJCTREG,=V(HJCT)    SET HJCT PTR                     *14
+         LTR   R0,R0               TEST FOR PRESENCE OF SDWA        *14
+         BZ    GRRESET              AND BR IF NONE                  *14
+         L     R2,X'4C'            GET CVT PTR                      *14
+         TM    X'74'(R2),X'01'     TEST FOR EXECUTION ON MVS        *14
+         BO    *+12                 AND BR IF SO                    *14
+         LA    R0,104              SET LENGTH OF MVT/SVS SDWA       *14
+         B     *+8                  AND GO AROUND MVS INSTR         *14
+         LA    R0,512              SET LENGTH OF MVS SDWA           *14
+         FREEMAIN  R,LV=(0),A=(1)  GET RID OF SDWA                  *14
+GRRESET  NI    CTFLGS2,255-CT2IRERR   RESET INT RDR I/O ERR FLG     *14
+         CLOSE (JOBDCB)            CLOSE INT RDR DCB                *14
+         OPEN  (JOBDCB)             AND RE-OPEN IT                  *14
+         HJCALL  RPRT,(GIRERMSG)   EXPLAIN TO USER WHAT HAPPENED    *14
+         LA    R4,=V(ISTAEXIT)     PT TO STAE EXIT RTN              *14
+         STAE  (R4),CT,PURGE=NONE   AND REESTAB STAE ENVIRONMENT    *14
+         L     R13,GRGENSAV        GET PTR TO RGEN'S SAVE AREA      *14
+         L     R13,4(R13)          PICK UP BACKWARD PTR             *14
+         LA    R15,JOBKILL         SET RETURN CODE                  *14
+         RETURN  (14,12),RC=(15)   SIMULATE RETURN FROM RGEN        *14
+         SPACE 2                                                    *14
+         LTORG                     COLLECT LITERALS                 *14
+         EJECT
+***********************************************************************
+*
+*
+*
+*        EQUATES AND CONSTANTS
+*
+***********************************************************************
+         SPACE 2
+JOBDCB   DCB   DDNAME=HJJOBS,RECFM=U,BLKSIZE=254,DSORG=PS,MACRF=PM, *14X
+               SYNAD=GSYNADRT                                       *14
+         EJECT
+GDBLAREA DC    D'0'                DOUBLE WORD WORK AREA
+GREGSAVE DC    16F'0'              REGISTER SAVE AREA
+GTMPSAVE DC    6F'0'               INTERMEDIATE SAVE AREA
+GRGENSAV DC    F'0'                SAVE AREA FOR PTR TO RGEN S/A    *14
+GRCVRSAV DC    18F'0'              SAVE AREA FOR STAE RETRY RTN     *14
+GSAVELST DC    F'0'                TO SAVE JOB CARD PARM ADDR
+         SPACE 2
+GOUTBXLP DC    A(GFIRST,GINCR,GLAST)
+GJBXLEP  DC    A(GJFIRST,GJINCR,GJLAST)
+GFIRST   EQU   *
+GDHCOPYS DC    AL1(L'GDDCOPYS-1),AL3(GDDCOPYS)
+         DC    AL1(GCVD),X'21',AL2(DHCOPYS-HJCT)
+GDHFCB   DC    AL1(L'GDDFCB-1),AL3(GDDFCB)
+         DC    AL1(0),AL1(0),AL2(DHFCB-HJCT)
+GDHUCS   DC    AL1(L'GDDUCS-1),AL3(GDDUCS)
+         DC    AL1(0),AL1(0),AL2(DHUCS-HJCT)
+GDHINDEX DC    AL1(L'GDDINDEX-1),AL3(GDDINDEX)
+         DC    AL1(GCVD+GSUB),X'21',AL2(DHINDEX-HJCT)
+GDHLNDEX DC    AL1(L'GDDLNDEX-1),AL3(GDDLNDEX)
+         DC    AL1(GCVD+GSUB),X'21',AL2(DHINDEX-HJCT)
+GINCR    EQU   *-GDHLNDEX
+GLAST    EQU   *-GINCR
+GJFIRST  EQU   *
+GJHCOPYS DC    AL1(L'GDDCOPYS-1),AL3(GDDCOPYS)
+         DC    AL1(GCVD+GH31),X'21',AL2(JHCPYCT-HJCT)
+GJHFORMS DC    AL1(L'GDDFORMS-1),AL3(GDDFORMS)
+         DC    AL1(0+GH31),AL1(0),AL2(JHFORMS-HJCT)
+GJHLINCT DC    AL1(L'GJJLINCT-1),AL3(GJJLINCT)
+         DC    AL1(GCVD+GH31),X'21',AL2(JHLINCT-HJCT)
+GJHESTLN DC    AL1(L'GJJESTLN-1),AL3(GJJESTLN)
+         DC    AL1(GCVD+GDIV+GH31),X'32',AL2(JHESTLIN-HJCT)
+GJHESTPN DC    AL1(L'GJJESTPN-1),AL3(GJJESTPN)
+         DC    AL1(GCVD+GH31),X'64',AL2(JHESTPUN-HJCT)
+GJINCR   EQU   *-GJHESTPN
+GJLAST   EQU   *-GJINCR
+         SPACE 1
+GUNPKSAV DC    C'NN'
+GMAXLNG  DC    H'0'                MAX RECORD LENGTH FOR INTRDR
+GDDLNDEX DC    AL1(0),C'L='
+GDDCOPYS DC    AL1(1),C'N='
+GDDFORMS DC    C'STD.',C'F='
+GDDFCB   DC    C'****',C'C='
+GDDUCS   DC    C'****',C'T='
+GDDINDEX DC    AL1(0),C'I='
+GJJLINCT DC    AL1(55),C'K='
+GJJESTLN DC    AL4(4000),C'L='
+GJJESTPN DC    AL4(100),C'C='
+GJJROOMN DC    X'00000000',C'R='
+GBRST    DC    C'BURST=YES,'       BURST FOR 3800
+GFL      DC    C'FLASH=('          FLASH FOR 3800
+GCH      DC    C'CHARS=('          CHARS FOR 3800
+GMODF    DC    C'MODIFY=('         MODIFY FOR 3800
+GCPY     DC    C'COPIES=('         COPIES FOR 3800
+GOPTJ    DC    C',OPTCD=J'         OPTCD=J FOR 3800
+GHSTART  EQU   *
+GHCOPIES DC    AL3(0)              COPIES=
+GHFORMS  DC    AL4(0)              FORMS=
+GHLINECT DC    AL3(0)              LINECT=
+GHLINES  DC    AL4(0)              LINES=
+GHCARDS  DC    XL7'0'              CARDS=
+GHEND    EQU   *-GHSTART
+GFUNCTBL EQU   *                   'FUNC=' TABLE
+         DC    X'40',C'R'          R
+         DC    X'20',C'P'          P
+         DC    X'10',C'W'          W
+         DC    X'08',C'D'          D
+         DC    X'04',C'X'          X
+         DC    X'02',C'T'          T
+         DC    X'80',C'I'          I
+GFNUM    EQU   (*-GFUNCTBL)/2      NUMBER OF ENTRIES
+         EJECT
+GENFLGS1 DC    X'0'                RGEN INTERNAL FLAGS
+*
+NOSCAN   EQU   B'10000000'         NOSCAN BY MAP REQUIRED
+JCLFLAG  EQU   B'01000000'         RECORD BEING PROCESSED IS JCL
+SYSIN    EQU   B'00100000'         SYSIN DATA BEING PROCESSED
+HASP     EQU   B'00010000'         RECEIVING SYSTEM IS HASP
+FIRSTPRM EQU   B'00001000'         FIRST PARM FLAG
+ONEFND   EQU   B'00000100'         CTRL CARD REQUIRED
+RECLLMAP EQU   B'00000010'         RECALL THE MAP ROUTINE
+DESTFND  EQU   B'00000001'         AT LEAST ONE DEST FOUND
+*
+GENFLGS2 DC    X'0'                SECOND FLAGS FIELD
+*
+MOD      EQU   B'10000000'         SYSOUT MODIFICATION MADE
+PGMRNAM  EQU   B'01000000'         PGMR NAME NOT PUT
+H31FORMS EQU   B'00100000'         FORMS REQUIRED FOR HASP 3.1
+DCBMOD   EQU   B'00010000'         DCB MODIFICATION FLAG
+CONTJB3  EQU   B'00001000'         THIRD JOB CARD CONTINUATION
+*
+CMPLT    EQU   B'00000000'         RDW - SEG IS A COMPLETE RECORD
+FIRSTSEG EQU   B'01000000'         SEGMENT IS FIRST OF MULTIPLE
+LASTSEG  EQU   B'10000000'         SEGMENT IS LAST OF MULTIPLE
+MIDSEG   EQU   B'11000000'         SEGMENT IS NEITHER FIRST NOR LAST
+*
+*
+GCVD     EQU   B'10000000'         CONVERT TO DEC REQUIRED
+GIND     EQU   B'01000000'         INDICATE PARM FOUND
+GDIV     EQU   B'00100000'         DIVISION BY 1000 REQUIRED
+GH31     EQU   B'00010000'         VALID HASP31 PARM
+GSUB     EQU   B'00001000'         SUB 80 (INDEX-LINDEX)
+GLPRN    EQU   B'00000100'         LEFT PAREN REQUIRED
+GRPRN    EQU   B'00000010'         RIGHT PAREN REQUIRED
+GCHK     EQU   B'00000001'         CHECK PREVIOUS PARM
+GOUTDS#  DC    AL3(0)              JOB DATA SET NUMBER
+GCTOUTDS DC    AL1(0)              COUNT OF OUTPUT DATA SETS FOR JOB
+GDSCTR   DC    AL1(0)              NUMBER OF THE CURRENT DATA SET
+GSTEPCTR DC    AL1(0)              COUNT OF THE CURRENT STEP NUMBER
+         DS    0H
+GJCLWORK DC    CL254' '            TO BUILD JCL RECORDS
+         EJECT
+***********************************************************************
+*
+*        REGISTER EQUATES
+*
+***********************************************************************
+         SPACE 1
+GTESTREG EQU   R4                  GENERAL WORK REG 1
+REG      EQU   R5                  GENERAL WORK REG 2
+GMSGREG  EQU   R6                  ADDRESS OF ERROR MSGS
+GCODEREG EQU   R7                  TO PASS RETURN CODE
+GDCBREG  EQU   R8                  FOR INTERNAL READER DCB
+GTEXTLNG EQU   GCODEREG            FOR RECORD FORMAT RTN
+         SPACE 2
+***********************************************************************
+*
+*        MESSAGES ISSUED BY RGEN
+*
+***********************************************************************
+         SPACE 1
+GREJECTH DC    CL7'NO'
+         DC    CL26'''SCAN'' FOR HASP REJECTED'
+GREJECT1 DC    CL7'NO'
+         DC    CL26'NO OUTPUT DATA SETS'
+GSUCCESS DC    CL7'YES'
+         DC    CL26'SUCCESSFULLY TRANSFERRED'
+GDSTRUNC DC    CL7'YES'
+         DC    CL26'DATA SET TRUNCATED'
+GMAPREJ  DC    CL7'NO'
+         DC    CL26'XFR BLKD BY //*HJSTP STMT'
+GLONGSIN DC    CL7'NO'
+         DC    CL26'SYSIN TOO LONG FOR OUTSYS'
+GINCMPLT DC    CL7'YES'
+         DC    CL26'JOB INCOMPLETE'
+GNOHELD DC     CL7'NO'
+         DC    CL26'NO HELD DATA SETS '
+GIRERMSG DC    CL7'NO'                                              *14
+         DC    CL26'I/O ERR ON HJJOBS DATA SET'                     *14
+         SPACE 4
+G$CJ     DC    C'/*$CJ '           CANCEL COMMAND FOR JOBS XFERRED
+GSLSHDEL DC    C'/*DEL '           USED TO DELETE THE JOB FROM INTRDR
+GSLEOF   DC    C'/*EOF '
+GSLPRIOR DC    C'/*PRIORITY     '
+GTYPRR   DC    C'TYPRUN=HOLD,'
+GROUTE   DC    C'/*ROUTE  PRINT '
+GROUTEPU DC    C'/*ROUTE  PUNCH '
+GSLOUTDD DC    C'/*OUTPUT HNNN '
+GJOBPARM DC    C'/*JOBPARM '
+GCDE     DC    C'(X,'
+GCDE1    DC    C',H'
+GC       EQU   *-GCDE
+GDSID    DC    C'DSID='            FOR DSID= KEYWORD  FOR DD STMT
+GUCSEQ   DC    C'UCS='             FOR HASP 3.1 DD CARD
+GFCBEQ   DC    C'FCB='             FOR HASP 3.1 DD CARD
+GD       DC    C'D=( '             FOR DESTINATION PARAMS
+GDCB     DC    C'DCB=(BLKSIZE='
+GRECFM   DC    C',RECFM=UA'
+GFCTN    DC    C',FUNC='
+GDSHOLD  DC    C'HOLD=YES,'
+GRP      DC    C'GROUP='
+GUSR     DC    C'USER='
+GPSWD    DC    C'PASSWORD='
+GNOTIFY  DC    C'NOTIFY='          FOR THE NOTIFY OF TSO USERS
+GJXFMSG  DC    C'//*   JOB TRANSFERRED BY HJSTP  -  TIME: '
+GJXFTIME DC    C'NN.NN    DATE: '
+GJXFDATE DC    C'YY.DDD '
+GJXLEN   EQU   *-GJXFMSG
+GJORGMSG DC    C'//*   ORIGINATING SUBSYSTEM -- '
+GJN      DC    C'//JOBNAME1 JOB ('
+GCARD2   DC    C'CLASS=A,MSGCLASS=A,MSGLEVEL=(1,1)'
+GPRPUEXC DC    C'//HJSTEP   EXEC HJSTPRPU'
+GHJSOUT  DC    C'//HJSOUT   DD  SYSOUT='
+GFRCL    DC    C'FREE=CLOSE,'
+GHSYSIN  DC    C'//HJSYIN'
+GHDDSTAR DC    C' DD * '
+GBL      EQU   *-(GHSYSIN-2)
+GDIROEXC DC    C'//HJSTEPNN EXEC HJSTP'
+GHJPRM   DC    C'//HJPARM DD * '
+GDPRM    DC    C' INSYS= '
+GDMODE   DC    C' MODE=DIRO '
+GDREPT   DC    C' REPORT=SHORT '
+GJOBN    DC    C' JOBNUM= '
+GDSNBR   DC    C' BEGDSNUM= ' BEGINNING DATA SET NUMBER FOR DIRO
+GTSUDS   DC    C' SYSOUTDS='
+GTH      DC    C'HELD '
+GTA      DC    C'ALL '
+GMAXDD   DC    C' MAXSTPDD= '      MAX NUMBER OF DD'S PER STEP
+GINSYSDC DC    C'HASP31'
+         DC    C'HASP40'
+         DC    C'HASP41'
+         DC    C'RESRVD'
+         DC    C'JES2R3'
+         DC    C'JES2R4'
+         DC    C'RESRVD'
+         DC    C'RESRVD'
+GJ       EQU   GJCLWORK
+         EJECT
+         PRINT NOGEN
+         IHADCB DSORG=PS
+         EJECT
+GJCLSA   DSECT
+         DS    CL6
+GJCLS    DS    CL1
+         DS    CL10
+GMCLS    DS    CL1
+         DS    CL15
+GTYPR    DS    CL12
+         END

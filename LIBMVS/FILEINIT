@@ -1,0 +1,153 @@
+         TITLE 'SELF REORGANISING SOURCE LIBRARY INITIALISATION'
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING
+***********************************************************************
+         SPACE 2
+FILEINIT ZCSECT 12,GETMAIN=1,WKLEN=WALENGTH
+         USING WORKAREA,REG13      ADDRESSABILITY FOR DSECT
+         EJECT
+***********************************************************************
+*        ANALYSE THE PARM INFORMATION
+***********************************************************************
+         SPACE 2
+         L     REG1,0(REG1)        ADDRESS OF PARM AREA
+         LH    REG2,0(REG1)        LENGTH OF PARM DATA
+         LTR   REG2,REG2           ZERO LENGTH
+         BZ    NOPARM              YES. PARM FIELD OMMITTED
+         BCT   REG2,OVERTHEM       SUBTRACT 1 FOR EXECUTE
+TRTINST  TRT   2(0,REG1),NUMTABLE  TEST FOR NUMERIC DATA
+PACKINST PACK  DBLWORD,2(0,REG1)   PACK THE NUMBER TO WORK AREA
+OVERTHEM EX    REG2,TRTINST        EXECUTE THE NUMERIC TEST
+         BNZ   BADPARM             SORRY THAT AINT NO NUMERIC DATA
+         EX    REG2,PACKINST       LOOKS GOOD. LETS PACK IT
+         CVB   REG1,DBLWORD        AND HAVE IT IN BINARY
+         ST    REG1,TRKCOUNT       STORE RESULT IN WORK AREA
+         EJECT
+***********************************************************************
+*        INITIALISE AND OPEN THE DCB
+***********************************************************************
+         SPACE 2
+         MVC   SYSUT1,DCBMASK      MOVE A MODEL DCB TO WORK AREA
+         OI    OPENLIST,X'80'      TURN ON LAST ENTRY BIT
+         OPEN  (SYSUT1,OUTPUT),MF=(E,OPENLIST) OPEN THE NEW FILE
+         EJECT
+***********************************************************************
+*        INITIALISE AND WRITE THE CONTROL TRACK
+***********************************************************************
+         SPACE 2
+         PUT   SYSUT1              OBTAIN A BUFFER FOR IT
+         LR    REG2,REG1           LOAD A BASE REGISTER FOR IT
+         USING TRKHEADR,REG2       ADDRESSABILITY FOR IT
+         LR    REG0,REG2           PREPARE A REGISTER TO CLEAR
+         LH    REG1,SYSUT1+X'52'   LOAD THE LENGTH OF A RECORD
+         XR    REG14,REG14         CLEAR TWO REGISTERS
+         XR    REG15,REG15         CLEAR TWO REGISTERS
+         MVCL  REG0,REG14          CLEAR THE ENTIRE AREA
+         OI    TRKFLAG,TRKCNTL     FLAG THIS AS A CONTROL TRACK
+         LA    REG1,1              LOAD SUPPOSED ADDRESS OF NEXT TRCAK
+         ST    REG1,LASTONE        SAVE THIS AS LAST CHAIN ADDRESS
+         SLL   REG1,16             SHIFT TO END OF 'TT' OF 'TTR0'
+         ST    REG1,FREEQ          STORE THIS AS START OF FREE Q ADDRES
+         LA    REG1,4              LOAD LENGTH OF DATA INSERTED
+         STH   REG1,TRKDLNTH       UPDATE LENGTH OF CONTAINED DATA
+         EJECT
+***********************************************************************
+*        INITIALISE AND WRITE THE FREE QUEUE CHAIN
+***********************************************************************
+         SPACE 2
+         L     REG4,TRKCOUNT       LOAD COUNT OF TRACKS TO INITIALISE
+FREELOOP EQU   *
+         PUT   SYSUT1              OBTAIN NEXT BUFFER
+         LR    REG2,REG1           LOAD BASE ADDRESS REGISTER
+         LR    REG0,REG2           PREPARE TO CLEAR THE TRACK
+         LH    REG1,SYSUT1+X'52'   LOAD THE LENGTH OF A RECORD
+         XR    REG14,REG14         CLEAR TWO REGISTERS
+         XR    REG15,REG15         CLEAR TWO REGISTERS
+         MVCL  REG0,REG14          CLEAR THE ENTIRE BUFFER
+         OI    TRKFLAG,TRKFREE     FLAG THE TRACK AS A FREE ONE
+         L     REG1,LASTONE        LOAD LAST USED CHAIN ADDRESS
+         LA    REG1,1(REG1)        ADD 1
+         ST    REG1,LASTONE        AND UPDATE WORK AREA
+         SLL   REG1,16             MOVE ADDRESS TO 'TT' OF 'TTR0'
+         ST    REG1,TRKCHAIN       AND STORE IN THE INITIALISED TRACK
+         BCT   REG4,FREELOOP       PROCESS THE REQUIRED NUMBER
+         XC    TRKCHAIN,TRKCHAIN   CLEAR THE LAST INSERTED POINTER
+         EJECT
+***********************************************************************
+*        CLOSE THE INITIALISED FILE
+***********************************************************************
+         SPACE 2
+         CLOSE (SYSUT1),MF=(E,OPENLIST) CLOSE FILE
+         FREEPOOL SYSUT1           FREE THE BUFFER POOL
+         EJECT
+***********************************************************************
+*        RETURN TO CALLER
+***********************************************************************
+         SPACE 2
+         ZRETURN
+         EJECT
+***********************************************************************
+*        ERROR ROUTINES
+***********************************************************************
+         SPACE 2
+NOPARM   DS    0H
+         LA    REG3,4              LOAD THE RETURN CODE
+         BAL   REG2,PUTERROR       LOAD ADDRESS OF ERROR MESSAGE
+         DC    AL1(L'NPERRMSG)
+NPERRMSG DC    C'*** NO TRACK INITIALISATION COUNT SPECIFIED IN THE PARM
+               M FIELD. EXECUTION TERMINATED.'
+BADPARM  DS    0H
+         LA    REG3,8              LOAD RETURN CODE
+         BAL   REG2,PUTERROR       LOAD ADDRESS O ERROR MESSAGE
+         DC    AL1(L'BPERRMSG)     LENGTH OF THE ERROR MESSAGE
+BPERRMSG DC    C'*** INVALID NON-NUMERIC CHARACTER IN THE PARM FIELD. EX
+               XECUTION TERMINATED.'
+PUTERROR DS    0H
+         MVC   SYSPRINT,DCBMASK2   INITIALISE A PRINT DCB
+         OPEN  (SYSPRINT,OUTPUT),MF=(E,OPENLIST) OPEN THE PRINT FILE
+         PUT   SYSPRINT            OBTAIN AN OUTPUT BUFFER
+         XC    0(133,REG1),0(REG1) CLEAR THE PRINT BUFFER
+         MVI   0(REG1),C'1'        SET NEW PAGE
+         MVC   1(L'TITLE,REG1),TITLE MOVE A TITLE INTO HEADING
+         PUT   SYSPRINT            AND GET NEXT BUFFER
+         XC    0(133,REG1),0(REG1) CLEAR THAT ONE TOO
+         MVI   0(REG1),C'0'        SET DOUBLE SPACING
+         IC    REG15,0(REG2)       LOAD LENGTH OF ERROR MESSAGE
+         BCT   REG15,*+10          SUBTRACT 1 FOR ECECUTE
+         MVC   2(0,REG1),1(REG2)   MOVE ERROR MESSAGE IN
+         EX    REG15,*-6           EXECUTE THE MOVE
+         CLOSE (SYSPRINT),MF=(E,OPENLIST) CLOSE THE PRINT FILE
+         FREEPOOL SYSPRINT         FREE THE BUFFER POOL
+         LR    REG15,REG3          LOAD THE RETURN CODE
+         ZRETURN RC=(15)           RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        CONSTANTS NOT CHANGE BY THIS PROGRAM
+***********************************************************************
+         SPACE 2
+NUMTABLE DC    256X'FF'            NUMERIC TEST TRT TABLE
+         ORG   NUMTABLE+C'0'
+         DC    10X'00'             VALID NUMBERS
+         ORG
+DCBMASK  DCB   DDNAME=SYSUT1,DSORG=PS,MACRF=PL,LRECL=13030,RECFM=F,    X
+               BLKSIZE=13030
+DCBMASK2 DCB   DDNAME=SYSPRINT,DSORG=PS,MACRF=PL,LRECL=133,RECFM=FA,   X
+               BLKSIZE=133
+TITLE    DC    C'*** FILEINIT *** ERROR MESSAGE LOG REPORT.'
+         EJECT
+***********************************************************************
+*        DSECTS USED IN THE PROGRAM
+***********************************************************************
+         SPACE 2
+WORKAREA DSECT
+         DS    18F                 REGISTER SAVE AREA
+DBLWORD  DS    D
+TRKCOUNT DS    F                   COUNT OF TRACKS TO BE INITIALISED
+OPENLIST DS    F                   BUILD AREA FOR OPEN MACRO
+LASTONE  DS    F                   LAST ADDRESS USED AS CHAIN ADDRESS
+SYSUT1   DS    CL96                DCB FOR THE DATA FILE
+SYSPRINT DS    CL96                OUTPUT PRINT DCB
+WALENGTH EQU   *-DBLWORD           LENGTH OF THE WORK AREA
+         SPACE 2
+         DATAFILE
+         END

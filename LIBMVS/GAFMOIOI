@@ -1,0 +1,170 @@
+//JEAGFMO2 JOB (1580,5),'0000 J ABBEY',CLASS=N,COND=(0,NE)
+// EXEC ASMFCL,LOPT='RENT,AC=1',L=H
+//SYSLIB DD DSN=SYS1.MACLIB,DISP=SHR
+// DD DSN=JEA.MACLIB,DISP=SHR
+// DD DSN=IMSVS.GENLIB,DISP=SHR
+         TITLE 'GAFMOII I/O INITIALISATION ROUTINE'
+***********************************************************************
+*                          G A F M O I O I                            *
+*                                                                     *
+*        GAFMOII I/O INITIALISATION ROUTINE.                          *
+*                                                                     *
+*            THIS ROUTINE IS INVOKED BY THE GAFMOII I/O PROCESSING    *
+*        ROUTINE WHEN THEY ARE FIRST ENTERED FROM AN APPLICATION      *
+*        PROGRAM WISHING TO ACCESS A DATA BASE.                       *
+*            THIS PROGRAM WILL INITIALISE THE DATA BASE DEFINITIONS   *
+*        AND PREPARE THE PSB FOR USE BY THE I/O PROCESSING ROUTINE.   *
+*        A DATA CONTROL BLOCK IS INITIALISED FOR EACH PHYSICAL FILE   *
+*        AND PREPARED FOR I/O ACCORDING TO THE PROCESSING OPTIONS     *
+*        REQUIRED.                                                    *
+*                                                                     *
+*            PARAMETERS INPUT TO THE ROUTINE ARE:                     *
+*                                                                     *
+*        1)    THE 8 BYTE NAME OF THE PSB TO BE USED BY THE PROGRAM   *
+*                                                                     *
+*        2)    A FULLWORD TO CONTAIN THE ADDRESS OF THE INITIALISED   *
+*              PSB.                                                   *
+*                                                                     *
+*        REGISTER USAGE.                                              *
+*                                                                     *
+*        REG0  PARAMETER REGISTER AND WORK REGISTER.                  *
+*        REG1  PARAMETER REGISTER AND WORK REGISTER.                  *
+*        REG2  WORK REGISTER.                                         *
+*        REG3  ADDRESS OF THE PSB BEING INITIALISED.                  *
+*        REG4  ADDRESS OF THE DBD BEING INITIALISED.                  *
+*        REG5  ADDRESS OF CURRENT ENTRY IN PCB LIST.                  *
+*        REG6  ADDRESS OF CURRENT PCB BEING PROCESSED.                *
+*        REG7  ADDRESS OF WORK AREA FOR CURRENT DBD. (JCB)            *
+*        REG8  WORK REGISTER                                          *
+*        REG9  WORK REGISTER                                          *
+*        REG10 WORK REGISTER.                                         *
+*        REG11 LINK REGISTER BETWEEN SUBROUTINES.                     *
+*        REG12 BASE ADDRESS REGISTER.                                 *
+*        REG13 ADDRESS OF REGISTER SAVE AREA.                         *
+*        REG14 PROGRAM LINK REGISTER AND WORK REGISTER.               *
+*        REG15 PROGRAM LINK REGISTER AND WORK REGISTER.               *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        EQUATES USED IN THIS MODULE                                  *
+***********************************************************************
+         SPACE 2
+         EJECT
+***********************************************************************
+*        DSECTS USED IN THIS MODULE                                   *
+***********************************************************************
+         SPACE 2
+JCB      DSECT ,                   WORK AREA FOR DCB'S ETC. (1 PER DBD)
+JCBDBD   DS    F                   ADDRESS OF DBD FOR THIS PCB
+JCBINBUF DS    F                   ADDRESS OF CURRENT INPUT BUFFER
+JCBWORK  DS    F                   WORK FULLWORD
+JCBSEGTB DS    H                   OFFSET IN SEGTAB TO CURRENT ENTRY
+JCBPARNT DS    H                   OFFSET TO PARENT OF CURRENT ENTRY
+JCBDCBXX DS    0CL1                START OF DCB AREA
+JCBOPN   DS    F                   WORK AREA FOR OPEN MACRO
+JCBCLS   DS    F                   WORK AREA FOR CLOSE MACRO
+JCBINDCB DS    CL96                INPUT QSAM DCB
+JCBEXDCB DS    CL96                OUTPUT QSAM DCB
+DCBXXLEN EQU   *-JCBDCBXX          LENGTH FOR MOVE INST
+JCBLEN   EQU   *-JCB               LENGTH OF AREA
+         SPACE 2
+         IDBD
+         IDLI PSBBASE=0,DPCBASE=0
+         DCBD  DSORG=QS,DEVD=DA
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING                                   *
+***********************************************************************
+         SPACE 2
+GAFMOIOI ZCSECT GETMAIN=1
+         LM    REG2,REG3,0(REG1)   LOAD INCOMING PARAMETER ADDRESSES
+         EJECT
+***********************************************************************
+*        LOAD THE REQUIRED PSB INTO CORE AND INITIALISE RETURN ADDRESS*
+***********************************************************************
+         SPACE 2
+LOADPSB  DS    0H
+         LOAD  EPLOC=(2)           LOAD THE PSB WHOSE NAME WAS PASSED
+         ST    REG0,0(REG3)        SAVE THE ADDRESS IN USER'S FULLWORD
+         LR    REG3,REG0           INITIALISE OUR OWN POINTER
+         LA    REG3,12(REG3)       STEP OVER VECTOR TABLE
+         USING PSB,REG3            ADDRESSABILITY FOR PSB
+         EJECT
+***********************************************************************
+*        LOCATE EACH DBD REFERENCED BY THE PSB                        *
+***********************************************************************
+         SPACE 2
+DBDREF   DS    0H
+         LA    REG5,PSBLIST        ADDRESS OF LIST OF PCB'S
+         AH    REG5,PSBDBOFF       ADD OFFSET TO FIST DLI PCB
+PSBLOOP  L     REG6,0(REG5)        LOAD ADDRESS OF PCB
+         USING DBPCB,REG6          ADDRESSABILITY FOR PCB IN USE
+         BAL   REG11,INITDBD       GO INITIALISE THIS DBD
+         LA    REG5,4(REG5)        STEP OVER THAT ENTRY IN LIST
+         LTR   REG6,REG6           WAS THAT THE LAST ENTRY IN LIST
+         BP    PSBLOOP             NO. GO BACK FOR ANOTHER DBD
+         EJECT
+***********************************************************************
+*        COMMON PROGRAM EXIT                                          *
+***********************************************************************
+         SPACE 2
+         ZRETURN RC=(15)
+         EJECT
+***********************************************************************
+*        LOAD THE REQUIRED DBD AND INITIALISE IT                      *
+***********************************************************************
+         SPACE 2
+INITDBD  DS    0H
+         ST    REG11,PSBIOAWK      SAVE LINK REGISTER
+         GETMAIN R,LV=JCBLEN,SP=1  GETMAIN CORE FOR WORK AREA
+         ST    REG1,DBPCBJCB       SAVE ADDRESS OF WORK AREA IN PCB
+         LR    REG7,REG1           LOAD ADDRESS OF WORK AREA
+         USING JCB,REG7            ADDRESSABILITY FOR WORK AREA
+         XC    JCBINBUF,JCBINBUF   CLEAR CURRENT INPUT BUFFER ADDRESS
+         LOAD  EPLOC=DBPCBDBD      LOAD THE DBD INTO CORE
+         ST    REG0,JCBDBD         SAVE ADDRESS OF THE DBD IN WKAREA
+         LR    REG4,REG0           SET UP OUR OWN POINTER
+         USING DBDDSECT,REG4       GIVE IT A TOUCH OF ADDRESSABILITY
+         L     REG2,APREFIX        LOAD ADDRESS OF DBD PREFIX
+         USING PREFIX,REG2         AND THIS ONE ALSO
+         LA    REG8,PREDD1         LOAD ADDRESS OF FILE DDNAME
+         LA    REG9,PREDD2         LOAD ADDRESS OF OUTPUT DDNAME
+         BAL   REG11,GETDCB        GO ALLOCATE AND INITIALISE DCB(S)
+         L     REG11,PSBIOAWK      RELOAD LINK REGISTER
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        INITIALISE THE DCB(S) FOR THE DATA BASE BEING PROCESSED      *
+***********************************************************************
+         SPACE 2
+GETDCB   DS    0H
+         MVC   JCBDCBXX(DCBXXLEN),DMYDCBS PREPARE VIRGIN WORK AREA
+         LA    REG15,JCBINDCB      LOAD ADDRESS OF MAIN DCB
+         USING IHADCB,REG15        ADDRESSABILITY FOR IT
+         MVC   DCBDDNAM,0(REG8)    MOVE INPUT DDNAME TO DCB
+         OPEN  ((15),UPDAT),MF=(E,JCBOPN) OPEN THE INPUT FILE
+         OI    DBPCBFLG,DBPCBCH    ASSUME UPDATE IS IN PLACE
+         CLI   0(REG9),C' '        OUTPUT FILE SPECIFIED ?
+         BE    DCBEXIT             NO. LEAVE INPUT DCB AS ONLY ONE
+         LA    REG15,JCBEXDCB      LOAD ADDRESS OF OUTPUT DCB
+         MVC   DCBDDNAM,0(REG9)    INITIALISE DCB WITH DD NAME
+         OPEN  ((15),OUTPUT),MF=(E,JCBOPN) OPEN THE OUTPUT FILE
+         LA    REG15,JCBEXDCB      RELOAD ADDRESS OF DCB
+         TM    DCBOFLGS,DCBOFOPN   OPEN SUCCESSFUL ?
+         BZ    DCBEXIT             NO. RETURN TO CALLER
+         NI    DBPCBFLG,255-DBPCBCH RESET IN PLACE FLAG
+DCBEXIT  BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        CONSTANTS AND LITERALS                                       *
+***********************************************************************
+         SPACE 2
+DMYDCBS  DS    0F                  DUMMY DCB DEFINITIONS
+         OPEN  (DMYIN,INPUT),MF=L
+         CLOSE (DMYIN),MF=L
+DMYIN    DCB   DDNAME=SYSUT1,DSORG=PS,MACRF=GL
+DMYOUT   DCB   DDNAME=SYSUT2,DSORG=PS,MACRF=PL
+         END
+//LKED.SYSLMOD DD DSN=SYS2.TESTLIB,DISP=SHR
+ NAME GAFMOIOI(R)

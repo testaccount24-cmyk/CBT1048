@@ -1,0 +1,993 @@
+//AUXCMM10 JOB (1586,5),'** FOR J. NOLS **',CLASS=N
+//STEP01       EXEC GENASMOD
+         TITLE 'AUXCMM10: DYNAMIC CORE EXAMINATION/MODIFICATION'
+***********************************************************************
+*                    A U X C M M 1 0                                  *
+*                                                                     *
+*        THIS ROUTINE HANDLES THE OPERATOR COMMAND ZAP                *
+*        IT IS ATTACHED BY THE COMMAND PROCESSOR AUXCOMM  AS A SUB-   *
+*        TASK OF THE COMMUNICATIONS TASK.                             *
+*          THIS ROUTINE IS BASICALLY THE SAME CODE AS THE INTERACTIVE *
+*        ESTAE ROUTINE 'JES2B005' AND ALLOWS THE OPERATOR TO EXAMINE  *
+*        ANY VALID AREAS OF CORE, REGISTERS AND THE PSW. SELECTED     *
+*        ITEMS CAN ALSO BE ALTERED 'IN FLIGHT'.                       *
+*          THE ROUTINE OPERATES BY INVITING THE OPERATOR TO ENTER     *
+*        A REQUEST TO DISPLAY CORE, REGISTERS OR THE CURRENT PSW      *
+*        AND DISPLAYING THEM ON THE CONSOLE. THE REGISTERS AND PSW    *
+*        ARE TAKEN FROM THE FIRST READY USER TCB ON THE TCB CHAIN FOR *
+*        THIS ADDRESS SPACE.                                          *
+*          SHOULD THE OPERATOR WISH, THE REGISTERS AND THE PSW CAN BE *
+*        UPDATED - ALTHOUGH THE PROTECT KEY, INTERRUPT MASK AND       *
+*        PROBLEM BIT WILL NOT BE CHANGED.                             *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+*        ATTRIBUTES. REENTRANT, REUSABLE, SUPERVISOR MODE.            *
+*                                                                     *
+*        REGISTER USAGE.                                              *
+*        REG0  PARAMETER REGISTER AND WORK REGISTER                   *
+*        REG1  PARAMETER REGISTER AND WORK REGISTER                   *
+*        REG2  WORK REGISTER                                          *
+*        REG3  ADDRESS OF INTERNAL WORK AREA                          *
+*        REG4  ADDRESS OF CURRENT ADDRESS SPACE CONTROL BLOCK         *
+*        REG5  LENGTH OF CURRENT OPERAND                              *
+*        REG6  ADDRESS OF CURRENT OPERAND                             *
+*        REG7  WORK REGISTER                                          *
+*        REG8  WORK REGISTER                                          *
+*        REG9  SECOND BASE REGISTER                                   *
+*        REG10 WORK REGISTER                                          *
+*        REG11 LINK REGISTER BETWEEN ROUTINES                         *
+*        REG12 BASE REGISTER FOR THIS MODULE                          *
+*        REG13 ADDRESS OF THE REGISTER SAVE AREA FOR THIS ROUTINE     *
+*        REG14 RETURN ADDRESS TO ESTAE AND WORK REGISTER              *
+*        REG15 ENTRY POINT ADDRESS AND WORK REGISTER                  *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*                CONSOLE OUTPUT AND RESPONSE SUMMARY                  *
+*                                                                     *
+* MSG-ID     MEANING                               RESPONSE           *
+*                                                                     *
+* ZZZZ001    INFORMATION ABOUT THE ADDRESS SPACE,  NONE               *
+*            GIVING PSW, REGISTERS, INSTRUCTION                       *
+*            IMAGE, ETC.                                              *
+*                                                                     *
+* ZZZZ002    INVITATION TO ENTER A REQUEST         'GO'    OR         *
+*                                                  'DUMP'   OR        *
+*                                                  'DISPLAY'          *
+*                                                                     *
+* ZZZZ003    DISPLAY/ALTER MODE HAS BEEN ENTERED.  'D PSW'/'ST PSW XX'*
+*            ENTER A REQUEST TO DISPLAY PSW, REGS, 'D RN'/'ST RN XX'  *
+*            OR ADDRESS SPACE STORAGE. TO HAVE     'D X X'/'ST X X'   *
+*            THE PSW ETC. RE-OUTPUT, ENTER -       'RESTART'          *
+*            TO CONTINUE EXECUTION,  ENTER -       'RUN'              *
+*                                                                     *
+* ZZZZ004    A REQUEST WAS SUCCESSFULLY COMPLETED  NONE               *
+*                                                                     *
+* ZZZZ005    AN INVALID RESPONSE WAS MADE IN REPLY NONE               *
+*            TO MESSAGE ZZZZ002. RE-ENTER                             *
+*                                                                     *
+* ZZZZ006    AN INVALID RESPONSE WAS MADE IN REPLY NONE               *
+*            TO MESSAGE ZZZZ003. RE-ENTER                             *
+*                                                                     *
+* ZZZZ007    OUTPUT FROM THE DISPLAY COMMAND       NONE               *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        DSECTS USED IN THIS MODULE                                   *
+***********************************************************************
+         SPACE 2
+WKAREA   DSECT ,                   INTERNAL WORK AREA
+GETMNLEN DS    F                   SAVE AREA FOR FREEMAIN DETAILS
+INSTADD  DS    F                   ADDRESS OF FAILING INSTRUCTION
+SAVER111 DS    F                   SAVE AREA FOR LINK REGISTER
+ASCBADDR DS    F                   ADDRESS OF CURRENT ASCB
+ASXBADDR DS    F                   ADDRESS OF CURRENT ASXB
+TCBADDR  DS    F                   ADDRESS OF ABENDING TCB
+RBADDR   DS    F                   ADDRESS OF CURRENT REQUEST BLOCK
+PROGADD  DS    F                   START ADDRESS OF PROGRAM
+PROGEND  DS    F                   END ADDRESS OF PROGRAM
+WTORECB  DS    F                   WAIT ECB FOR CONSOLE INPUT
+WORKBASE DS    F                   BASE FOR DISPLAY ADDRESSING
+CNVRTOP  DS    F                   RESULT FIELD FOR OPERAND CONVERSION
+HEXSTRT  DS    F                   START ADDRESS OF DISPLAY RANGE
+HEXEND   DS    F                   END ADDRESS OF DISPLAY RANGE
+DBLWORD  DS    D                   WORK AREA
+REGCTR1  DS    D                   START INDEX FOR DISPLAY REGISTERS
+REGCTR2  DS    D                   END INDEX FOR DISPLAY REGISTERS
+PROGNAME DS    CL8                 NAME OF ABENDING PROGRAM
+FMTAREA  DS    CL12                FORMAT AREA FOR INSTRUCTIONS
+         DS    CL1                 OVERFLOW AREA FOR FMTAREA
+         DS    0D                  ALIGNMENT FIELD
+WTORCTRL DS    0CL96               WTOR CONTROL FIELDS
+WTORRPAD DS    F                   ADDRESS OF REPLY AREA
+WTORECBA DS    F                   ADDRESS OF WTOR ECB
+WTOCNTRL DS    0CL88               WTO/WTOR CONTROL FIELDS
+WTOCTLEN DS    XL2                 LENGTH FIELD
+WTOMCS   DS    XL2                 MCSFLAGS
+WTODATA  DS    CL80                OUTPUT DATA
+WTODESCR DS    XL2                 DESCRIPTOR CODES
+WTOROUT  DS    XL2                 ROUTING CODES
+RESPONSE DS    CL80                REPLY AREA FOR CONSOLE INPUT
+OPERAND  DS    CL8                 WORK AREA FOR INPUT OPERANDS
+MSGAREA  DS    0CL80               OUTPUT AREA
+MSGIDTXT DS    CL4                 START OF MESSAGE ID
+MSGNUMB  DS    CL4                 MESSAGE TYPE IDENTIFIER
+CLRLINE  DS    0CL72               REFERENCE FOR CLEARING OUTPUT AREA
+         DS    CL2                 PADDING
+HEXADDR  DS    0CL6                IDENTIFYING ADDRESS FOR DISPLAY O/P
+INVTXT01 DS    0CL40               ENTER REQUEST LITERAL
+BASETXT1 DS    0CL30               CURRENT BASE DISPLAY LITERAL
+CNVRTTXT DS    0CL40               INVALID HEX INPUT MESSAGE
+OUTOKMSG DS    0CL40               SUCCESSFUL OPERATION MESSAGE
+NAMETEXT DS    0CL30               MODULE IN CONTROL MESSAGE
+DSPTXT01 DS    0CL70               INITIAL DISPLAY MODE INVITATION
+PROGTEXT DS    0CL20               PROGRAM BEGINS AT LITERAL
+OFFSERR1 DS    0CL70               EXTENT LIMITS UNAVAILABLE ERROR MSG
+ERRORTXT DS    0CL20               INVALID RESPONSE ERROR MESSAGE
+JOBNAME  DS    0CL8                NAME OF FAILING JOB
+PSWTEXT  DS    CL4                 PSW: LITERAL
+OUTREGST DS    0CL10               OUTPUT FOR DISPLAY REGISTERS
+OUTREGND EQU   *+4*L'OUTREGST      ALLOW ROOM FOR 4 REGS PER LINE
+         DS    CL2                 PADDING
+DSPPSW1  DS    0CL8                DISPLAY PSW
+OUTPSW1  DS    0CL8                FAILING PSW IN EBCDIC
+         DS    CL4                 PADDING
+STEPNAME DS    0CL8                NAME OF PROCEDURE STEP
+         DS    CL2                 PADDING
+OUTHEXST DS    0CL9                START OF DISPLAY STORAGE OUTPUT
+OUTHEXND EQU   *+4*L'OUTHEXST      ALLOW ROOM FOR FOUR WORDS PER LINE
+         DS    CL3                 PADDING
+DSPPSW2  DS    0CL8                DISPLAY PSW OUTPUT
+OUTPSW2  DS    0CL8                FAILING PSW 2ND HALF
+         DS    CL5                 PADDING
+PROCSTEP DS    0CL8                STEP NAME
+OUTPROG  DS    0CL6                START ADDRESS OF USER PROGRAM
+OUTOPND  DS    0CL8                RETURN AREA FOR INVALID RESPONSE
+         DS    CL4                 PADDING
+INSTTEXT DS    0CL14               INSTRUCTION: LITERAL
+         DS    CL4                 PADDING
+OFFSTEXT DS    0CL20               OFFSET IN PROGRAM: LITERAL
+OFFSERR2 DS    0CL30               ABEND NOT IN USER PROGRAM: ERROR
+         DS    CL2                 PADDING
+OUTNAME  DS    0CL8                MODULE NAME AT TIME OF ABEND
+FAILTEXT DS    0CL14               HAS ABENDED: LITERAL
+OUTBASE  DS    0CL6                CURRENT BASE FOR DISPLAY
+         DS    CL8                 PADDING
+OUTINST  DS    0CL12               FAILING INSTRUCTION
+         DS    CL6                 PADDING
+ABNDCODE DS    0CL5                ABEND CODE
+         DS    CL2                 PADDING
+OUTOFFS  DS    0CL6                OFFSET IN USER PROGRAM
+         DS    CL24                PADDING
+         DS    0D                  ALIGNMENT
+DESCRBLK DS    40D                 SCAN DESCRIPTOR BLOCKS
+WKARELEN EQU   *-WKAREA            LENGTH OF AREA FOR GETMAIN
+         SPACE 2
+         PRINT NOGEN
+         IHAPSA
+         CVT
+         IHAASCB
+         IHAASXB
+         IKJTCB
+         IKJRB
+         IHALLE ,                  LOAD LIST ELEMENT
+         IHACDE ,                  CONTENTS DIRECTORY ENTRY
+         PRINT GEN
+         EJECT
+***********************************************************************
+*        EQUATES USED IN THIS MODULE                                  *
+***********************************************************************
+         SPACE 2
+MSGLEN   EQU   L'MSGAREA           USED AS LENGTH  OPERAND OF LOADMSG
+XLLEN    EQU   X'8'                LENGTH OF MODULE IN EXTENT LIST
+XLSTRT   EQU   X'C'                ADDRESS OF MODULE IN EXTENT LIST
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING                                   *
+***********************************************************************
+         SPACE 2
+AUXCMM10 ZCSECT 12,9,GETMAIN=1
+         USING WKAREA,REG3         ADDRESSABILITY FOR WORK AREA
+         USING PSA,0               SHOW PSA AT LOCATION 0
+         EJECT
+***********************************************************************
+*        SET THE USER NON-DISPATCHABLE.                               *
+***********************************************************************
+         SPACE 2
+         STATUS SET,ND,STEP        MAKE SUBTASKS NON-DISPATCHABLE
+         EJECT
+***********************************************************************
+*        OBTAIN CORE FOR THE WORK AREA AND INITIALISE IT              *
+***********************************************************************
+         SPACE 2
+GETWORK  DS    0H
+         LA    REG0,WKARELEN       LOAD LENGTH OF WORK AREA
+         O     REG0,SUBPOOL        LOAD UP SUBPOOL ID
+         GETMAIN R,LV=(0)          GETMAIN THE CORE FOR WORK AREA
+         LR    REG3,REG1           LOAD BASE REGISTER FOR WORK AREA
+         ST    REG0,GETMNLEN       SAVE DETAILS FOR FREEMAIN
+         XC    WORKBASE,WORKBASE   ZEROISE BASE ADDRESS FOR DISPLAY
+         MVC   MSGIDTXT,=C'ZZZZ'   IDENTIFY THIS AS AUXCMM10 OUTPUT
+         EJECT
+***********************************************************************
+*        LOCATE THE RELEVANT CONTROL BLOCKS AND SAVE THEIR ADDRESSES  *
+***********************************************************************
+         SPACE 2
+LOCATE   DS    0H
+         L     REG1,PSAAOLD        LOAD ADDRESS OF ASCB
+         ST    REG1,ASCBADDR       STORE IN WORK AREA
+         USING ASCB,REG1           TEMPORARY ADDRESSABILITY
+         L     REG1,ASCBASXB       LOAD ADDRESS OF ASXB
+         ST    REG1,ASXBADDR       SAVE ADDRESS OF ASXB
+         USING ASXB,REG1           TEMPORARY ADDRESSABILITY
+         L     REG1,ASXBFTCB       LOAD ADDRESS OF FIRST RCT TCB
+         USING TCB,REG1            TEMPORARY ADDRESSABILITY
+         L     REG1,TCBLTC         LOAD ADDRESS OF STC TCB
+         L     REG1,TCBLTC         LOAD ADDRESS OF INITIATOR TCB
+         L     REG1,TCBLTC         LOAD ADDRESS OF JOB STEP TCB
+         ST    REG1,TCBADDR        SAVE ADDRESS OF TCB
+         L     REG1,TCBRBP         LOAD ADDRESS OF CURRENT RB
+         S     REG1,PRFXLEN        SUBTRACT LENGTH OF RB PREFIX
+         USING RBPRFX,REG1         TEMPORARY ADDRESSABILITY FOR RB
+         ST    REG1,RBADDR         SAVE ADDRESS OF REQUEST BLOCK
+         EJECT
+***********************************************************************
+*        ANALYSE THE STATUS OF THE TASK  AND WRITE IT OUT             *
+***********************************************************************
+         SPACE 2
+OUTDIAGS DS    0H
+         XC    CLRLINE,CLRLINE     CLEAR THE OUTPUT BUFFER
+         L     REG1,RBADDR         LOAD ADDRESS OF REQUEST BLOCK
+         USING RBPRFX,REG1         ADDRESSABILITY FOR RB
+         MVC   PSWTEXT,PSWLIT      IDENTIFY THIS OUTPUT
+         UNPK  OUTPSW1(L'OUTPSW1+1),RBOPSW(L'RBOPSW/2+1)
+         UNPK  OUTPSW2(L'OUTPSW2+1),RBOPSW+4(L'RBOPSW/2+1)
+         TR    OUTPSW1,TRTABLE-C'0' MAKE IT PRINTABLE
+         TR    OUTPSW2,TRTABLE-C'0' MAKE IT PRINTABLE
+         MVI   OUTPSW1+L'OUTPSW1,C' ' REMOVE UNWANTED SIGN
+         MVI   OUTPSW2+L'OUTPSW2,C' ' REMOVE UNWANTED SIGN
+         SPACE 2
+         MVC   INSTTEXT,INSTLIT    IDENTIFY THIS OUTPUT
+         L     REG2,RBOPSW+4       LOAD ADDRESS OF NEXT INSTRUCTION
+         LA    REG2,0(REG2)        CLEAR TOP BYTE OF REGISTER 2
+         IC    REG7,0(REG2)        LOAD UP THE OPCODE
+         SRL   REG7,6              REMOVE ALL BUT TOP 2 BITS
+         LA    REG7,3(REG7)        ADD THREE TO THIS VALUE
+         N     REG7,=F'6'          ROUND DOWN TO NEAREST M'PLE OF 2
+         EX    REG7,UNPK1          FORMAT INSTRUCTION TO FIXED AREA
+         AR    REG7,REG7           DOUBLE THE LENGTH (NOW PCKD DECIMAL)
+         LA    REG10,FMTAREA+L'FMTAREA END OF FORMATTED INST
+         SR    REG10,REG7          START OF FORMATTED INSTRUCTION
+         BCTR  REG7,0              SUBTRACT 1 FOR EXECUTE
+         EX    REG7,MOVE1          MOVE TO PRINT LINE
+         EX    REG7,TR1            MAKE IT PRINT
+         ST    REG2,INSTADD        SAVE ADDRESS OF INSTRUCTION
+         MVC   MSGNUMB,=C'0001'    IDENTIFY THE MESSAGE TYPE
+         BAL   REG11,OUTLOADR      OUTPUT THIS INFORMATION
+         SPACE 5
+***********************************************************************
+*        OUTPUT THE NAME OF THE MODULE IN CONTROL                     *
+***********************************************************************
+         SPACE 1
+         L     REG1,RBADDR         LOAD ADDRESS OF RB
+         USING RBPRFX,REG1         ADDRESSABILITY FOR RB
+         L     REG10,RBCDE         LOAD ADDRESS OF CDE
+         USING CDENTRY,REG10       TEMPORARY ADDRESSABILITY FOR CDE
+         LA    REG1,CDNAME         LOAD ADDRESS OF PROGRAM NAME
+CONTNAME MVC   PROGNAME,0(REG1)    MOVE PROGRAM NAME TO WORK AREA
+         MVC   NAMETEXT,NAMELIT    IDENTIFY THIS OUTPUT FIELD
+         MVC   OUTNAME,PROGNAME    MOVE PROGRAM NAME TO OUTPUT
+         MVC   MSGNUMB,=C'0001'    IDENTIFY THIS OUTPUT
+         BAL   REG11,OUTLOADR      GO OUTPUT THIS DATA
+         SPACE 5
+***********************************************************************
+*        LOCATE THE PROGRAM CDE AND FIND ITS EXTENTS                  *
+***********************************************************************
+         SPACE 1
+FINDCDE  DS    0H
+LOADXTNT TM    CDATTR,CDMIN        IS THIS A MINOR CDE ?
+         L     REG10,CDXLMJP       LOAD ADDRESS XTNT LIST OR MAJ CDE
+         BO    LOADXTNT            YES. MINOR CDE. LOAD MAJOR ADDRESS
+         L     REG15,XLLEN(REG10)  LOAD LENGTH OF PROGRAM
+         LA    REG15,0(REG15)      STRIP OFF TOP BIT
+         L     REG10,XLSTRT(REG10) LOAD START ADDRESS OF PROGRAM
+         ST    REG10,PROGADD       SAVE START ADDRESS OF PROG
+         AR    REG10,REG15         CALCULATE END ADDRESS OF PROGRAM
+         ST    REG10,PROGEND       SAVE END ADDRESS OF PROGRAM
+         SPACE 5
+***********************************************************************
+*        OUTPUT THE START ADDRESS OF THE PROGRAM                      *
+***********************************************************************
+         SPACE 1
+         MVC   PROGTEXT,PROGLIT    IDENTIFY PROGRAM ADDRESS OUTPUT
+         UNPK  OUTPROG(L'OUTPROG+1),PROGADD+1 UNPACK TO OUTPUT AREA
+         TR    OUTPROG,TRTABLE-C'0' MAKE IT PRINTABLE
+         MVI   OUTPROG+L'OUTPROG,C' ' REMOVE UNWANTED SIGN BYTE
+         SPACE 5
+***********************************************************************
+*        FORMAT AND PREPARE THE INSTRUCTION OFFSET                    *
+***********************************************************************
+         SPACE 1
+         MVC   OFFSTEXT,OFFSLIT    IDENTIFY INSTRUCTION OFFSET OUTPUTL
+         L     REG1,INSTADD        RELOAD ADDRESS OF INSTRUCTION
+         L     REG2,PROGADD        LOAD START ADDRESS OF PROGRAM
+         L     REG10,PROGEND       LOAD END ADDRESS OF PROGRAM
+         CR    REG1,REG2           TEST RANGE OF INSTRUCTION ADDRESS
+         BNH   NOTINIT             INSTRUCTION NOT IN USERS PROGRAM
+         CR    REG10,REG1          TEST UPPER LIMIT
+         BNH   NOTINIT             INSTRUCTION NOT IN USERS PROGRAM
+         SR    REG1,REG2           SUBTRACT FROM START ADDRESS
+         STCM  REG1,7,DBLWORD      STORE OUT TO WORK AREA
+         UNPK  OUTOFFS(L'OUTOFFS+1),DBLWORD(4) UNPACK TO OUTPUT AREA
+         TR    OUTOFFS,TRTABLE-C'0' MAKE IT PRINTABLE
+         MVI   OUTOFFS+L'OUTOFFS,C' ' REMOVE UNWANTED SIGN
+         SPACE 2
+OFFSEXIT MVC   MSGNUMB,=C'0001'    IDENTIFY THIS OUTPUT LINE
+         BAL   REG11,OUTLOADR      GO LOAD UP OUTPUT LINE
+         B     INVITE              GO INVITE OPERATOR TO RESPOND
+         SPACE 2
+NOTINIT  MVC   OFFSERR2,OFFSLIT1   TELL OF INSTR OUTSIDE PROGRAM
+         B     OFFSEXIT            GO TO END OFFSET PROCESSING
+         EJECT
+***********************************************************************
+*        THE OPERATOR IS ASKED HERE FOR HIS INTENDED FUNCTION         *
+***********************************************************************
+         SPACE 2
+INVITE   DS    0H
+         MVC   INVTXT01,INVLIT01   MOVE INVITATION TO OUTPUT AREA
+         MVC   MSGNUMB,=C'0002'    IDENTIFY THIS MESSAGE TYPE
+         BAL   REG11,GETREPLY      INVITE OPERATOT TO REPLY
+         B     MAINROUT            ANALYSE THE REQUEST AND DO IT
+         EJECT
+***********************************************************************
+*        ANALYSE THE OPERATORS INITIAL RESPONSE AND PROCESS IT        *
+***********************************************************************
+         SPACE 2
+MAINROUT DS    0H
+         L     REG2,DESCRBLK       LOAD ADDRESS SCAN BLOCKS
+         LTR   REG2,REG2           ANYTHING BEEN INPUT
+         BZ    INVITE              NO. GO AND TRY AGAIN
+         XR    REG5,REG5           CLEAR REGISTER 5
+         IC    REG5,4(REG2)        LOAD LENGTH OF OPERAND
+         L     REG6,4(REG2)        LOAD ADDRESS OF OPERAND
+         LA    REG1,TABLE1         LOAD ADDRESS OF TABLE VALID REPLIES
+         LA    REG0,TABLE1ND       LOAD ADDRESS OF END OF TABLE
+         BAL   REG11,SCANTABL      VERIFY THAT OPERAND IS VALID
+         B     0(REG1)             BRANCH TO CORRECT ROUTINE
+         SPACE 2
+TABLE1   DS    0D                  TABLE OF VALID RESPONSES
+         B     IGNOREIT            RETRY AFTER ABEND
+         DC    CL8'GO'
+         B     IGNOREIT            SYNONYM FOR IGNORE
+         DC    CL8'G'              SYSNONYM FOR IGNORE
+         B     DUMPIT              CARRY ON WITH THE ABEND
+         DC    CL8'DUMP'
+         B     DUMPIT              SYNONYM FOR DUMP
+         DC    CL8'DU'             SYNONYM FOR DUMP
+         B     DISPLAY             ENTER INTERACTIVE DISPLAY MODE
+         DC    CL8'DISPLAY'
+         B     DISPLAY             SYNONYM FOR DISPLAY
+         DC    CL8'DI'             SYNONYM FOR DISPLAY
+TABLE1ND B     ERROR1              INVALID OPERAND
+         B     INVITE              ADDRESS TO GO AFTER ERROR
+         EJECT
+***********************************************************************
+*        THIS ROUTINE EXAMINES THE TABLE OF OPERANDS                  *
+***********************************************************************
+         SPACE 2
+SCANTABL DS    0H
+         MVC   OPERAND,=CL8' '     MOVE BLANKS TO WORK AREA
+         BCT   REG5,*+10           SUBTRACT ONE FROM THE LENGTH
+         MVC   OPERAND(0),0(REG6)  MOVE THE OPERAND TO WORK AREA
+         N     REG5,MAXLEN         LIMIT LENGTH TO A MAXIMUM
+         EX    REG5,*-10           EXECUTE THE MOVE
+SCANLOOP CR    REG0,REG1           HAVE WE HIT END OF TABLE
+         BE    SCANEXIT            YES. RETURN TO CALLER
+         CLC   OPERAND,4(REG1)     IS THIS THE OPERAND
+         BE    SCANEXIT            YES. RETURN TO CALLER
+         LA    REG1,12(REG1)       STEP TO NEXT TABLE ENTRY
+         B     SCANLOOP            LOOP TO END OF TABLE
+SCANEXIT BR    REG11               RETURN TO CALLER
+         SPACE 2
+         EJECT
+***********************************************************************
+*        SCAN AN OPERATOR RESPONSE AND BREAK INTO PARTS               *
+***********************************************************************
+         SPACE 2
+SCANMSG  DS    0H
+         SCAN  DATA=RESPONSE,LENGTH=80,CHAIN=CHAIN,RETAREA=DESCRBLK,   X
+               DELIM=(' ',',','-')
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        THIS IS THE COMMON OUTPUT WTO ROUTINE                        *
+***********************************************************************
+         SPACE 2
+OUTLOADR DS    0H
+         MVC   WTOCNTRL,WTOLIST    MOVE IN CONTROL INFORMATION
+         MVC   WTODATA,MSGAREA     MOVE OUTPUT DATA TO WTO AREA
+         WTO   ,MF=(E,WTOCNTRL)    WRITE LINE OUT TO OPERATOR
+         XC    CLRLINE,CLRLINE     CLEAR THE BUFFER
+         BR    REG11               RETURN TO CALLER
+         SPACE 2
+WTOLIST  WTO   '                                                       X
+                                        ',ROUTCDE=1,MF=L
+         EJECT
+***********************************************************************
+*        AN INVALID OPERAND HAS BEEN ENTERED                          *
+***********************************************************************
+         SPACE 2
+ERROR1   DS    0H
+         XC    CLRLINE,CLRLINE     CLEAR LAST CONTENTS OF AREA
+         LR    REG10,REG1          SAVE ADDRESS OF TABLE ENTRY
+         MVC   MSGNUMB,=C'0005'    SHOW MESSAGE TYPE
+         MVC   ERRORTXT,OPNDLIT    SPECIFY CAUSE OF ERROR
+         MVC   OUTOPND,OPERAND     RETURN INPUT DATA
+         BAL   REG11,OUTLOADR      GO OUTPUT THE MESSAGE
+         B     4(REG10)            GO ASK HIM AGAIN
+         EJECT
+***********************************************************************
+*        THE OPERATOR HAS REQUESTED INTERACTIVE DISPLAY MODE          *
+***********************************************************************
+         SPACE 2
+DISPLAY  DS    0H
+         MVC   DSPTXT01,DSPLIT01   MOVE IN INVITATION LITERAL
+         MVC   MSGNUMB,=C'0003'    IDENTIFY THE MESSAGE TYPE
+         BAL   REG11,GETREPLY      GO ELICIT FIRST RESPONSE
+         B     DSPLYRTN            GO PROCESS DISPLAY MODE
+         EJECT
+***********************************************************************
+*        THE OPERATOR HAS REPLIED. ANALYSE HIS REQUEST AND ROUTE CTRL *
+***********************************************************************
+         SPACE 2
+DSPLYRTN DS    0H
+         L     REG2,DESCRBLK       LOAD ADDRESS SCAN MACRO OUTPUT
+         LTR   REG2,REG2           TEST FOR NULL RESPONSE
+         BZ    DISPLAY             YE. GO ASK HIM AGAIN
+         XR    REG5,REG5           CLEAR LENGTH REGISTER
+         IC    REG5,4(REG2)        LOAD LENGTH OF FIRST OPERAND
+         L     REG6,4(REG2)        LOAD ADDRESS OF FIRST OPERAND
+         LA    REG1,TABLE2         LOAD ADDRESS VALID OPERAND TABLE
+         LA    REG0,TABLE2ND       LOAD ADDRESS OF END OF TABLE
+         BAL   REG11,SCANTABL      GO TEST FOR VALID KEYWORD
+         B     0(REG1)             BRANCH TO APPROPRIATE ROUTINE
+         SPACE 2
+TABLE2   DS    0D                  TABLE VALID DISPLAY KEYWORDS
+         B     DSPPROC             DISPLAY PROCESSOR
+         DC    CL8'D'              DISPLAY CORE/REGISTER
+         B     STPROC              STORE/UPDATE PROCESSOR
+         DC    CL8'ST'             STORE INTO CORE/REGISTER
+         B     BASEPROC            LOAD BASE REGISTER
+         DC    CL8'BASE'           SET START ADDRESS FOR OFFSETS
+         B     BASEPROC            SYNONYM FOR BASE
+         DC    CL8'B'              SYNONYM FOR BASE
+         B     OUTDIAGS            RE-OUTPUT DIAGNOSTIC INFO
+         DC    CL8'RESTART'        START AGAIN FROM BEGINNING
+         B     OUTDIAGS            SYNONYM FOR RESTART
+         DC    CL8'R'              SYNONYM FOR RESTART
+         B     IGNOREIT            CONTINUE TO EXECUTE
+         DC    CL8'RUN'            RUN THE PROGRAM FROM HERE
+TABLE2ND B     ERROR1              INVALID RESPONSE
+         B     DISPLAY             INVITE ANOTHER GO AT THE REPLY
+         EJECT
+***********************************************************************
+*        THIS ROUTINE WILL INITIALISE THE WORKING BASE FOR DISPLAYS   *
+***********************************************************************
+         SPACE 2
+BASEPROC DS    0H
+         L     REG2,0(REG2)        LOAD ADDRESS NEXT OPERAND
+         LTR   REG2,REG2           OMMITTED ?
+         BE    DISPLAY             IGNORE RESPONSE AND ASK AGAIN
+         IC    REG5,4(REG2)        LOAD LENGTH OF OPERAND
+         L     REG6,4(REG2)        LOAD ADDRESS OF BASE OPERAND
+         CLI   0(REG6),C'*'        CURRENT BASE ADDRESS REQUIRED
+         BE    CURRENT             YES. GO LOAD CURRENT PROGRAM BASE
+         BAL   REG11,CNVRTAD       EXAMINE AND CONVERT THE INPUT DATA
+         MVC   WORKBASE,CNVRTOP    MOVE RESULT TO BASE WORK AREA
+BASEOK   MVC   MSGNUMB,=C'0004'    IDENTIFY OUTPUT MESSAGE
+         MVC   OUTOKMSG,OUTOKLIT   TEL OF SUCCESSFULL COMPLETION
+         BAL   REG11,OUTLOADR      GO OUTPUT THE MESSAGE
+         B     DISPLAY             GO ASK FOR MORE
+         SPACE 2
+CURRENT  L     REG1,PROGADD        LOAD CALCULATED START ADDRESS PROG
+         LTR   REG1,REG1           TEST FOR VALIDITY
+         BZ    ERROR2              CANNOT DO THAT
+         MVC   WORKBASE,PROGADD    USE PROG START ADDRESS AS BASE
+         B     BASEOK              GO OUTPUT OK MESSAGE
+         EJECT
+***********************************************************************
+*        THE OPERATOR HAS REQUESTED DATA TO BE DISPLAYED              *
+***********************************************************************
+         SPACE 2
+DSPPROC  DS    0H
+         L     REG2,0(REG2)        LOAD DESCR BLK NEXT OPERAND
+         LTR   REG2,REG2           ANYTHING CODED ?
+         BZ    DSPPSW              NO. ASSUME PSW
+         IC    REG5,4(REG2)        LOAD LENGTH OPERAND
+         L     REG6,4(REG2)        LOAD ADDRESS OPREAND
+         LA    REG1,TABLE3         LOAD ADDRESS VALID OPERAND TABLE
+         LA    REG0,TABLE3ND       LOAD END ADDRESS OF TABLE
+         BAL   REG11,SCANTABL      SCAN FOR VALID KEYWORD
+         B     0(REG1)             BRANCH TO CORRECT ROUTINE
+         SPACE 2
+TABLE3   DS    0D                  VALID KEYWORDS FOR DISPLAY
+         B     DSPPSW              DISPLAY THE PSW
+         DC    CL8'PSW'
+         B     DSPREGS             DISPLAY ONE OR MORE REGS
+         DC    CL8'REG'
+         B     DSPBASE             DISPLAY CURRENT BASE
+         DC    CL8'BASE'
+TABLE3ND B     DSPHEX              DISPLAY STORAGE
+         DC    CL8'HEX'
+         EJECT
+***********************************************************************
+*        FORMAT AND DISPLAY THE PSW                                   *
+***********************************************************************
+         SPACE 2
+DSPPSW   DS    0H
+         L     REG1,RBADDR         LOAD ADDRESS OF RB
+         USING RBPRFX,REG1         ADDRESSABLILITY FOR RB
+         XC    CLRLINE,CLRLINE     CLEAR THE OUTPUT AREA
+         UNPK  DSPPSW1(L'DSPPSW1+1),RBOPSW(L'RBOPSW/2+1)
+         UNPK  DSPPSW2(L'DSPPSW2+1),RBOPSW+4(L'RBOPSW/2+1)
+         TR    DSPPSW1,TRTABLE-C'0' MAKE IT PRINTABLE
+         TR    DSPPSW2,TRTABLE-C'0' MAKE IT PRINTABLE
+         MVI   DSPPSW1+L'DSPPSW1,C' ' REMOVE UNWANTED SIGN
+         MVI   DSPPSW2+L'DSPPSW2,C' ' REMOVE UNWANTED SIGN
+         MVC   MSGNUMB,=C'0007'    IDENTIFY THIS MESSAGE TYPE
+         BAL   REG11,OUTLOADR      OUTPUT THE MESSAGE
+         B     DISPLAY             GO ASK FOR MORE WORK
+         EJECT
+***********************************************************************
+*        ONE OR MORE REGISTERS IS TO BE DISPLAYED                     *
+***********************************************************************
+         SPACE 2
+DSPREGS  DS    0H
+         L     REG2,0(REG2)        LOAD ADDRESS FIRST SUBOPERAND
+         LTR   REG2,REG2           ANYTHING CODED ?
+         BZ    SETALL              NO. ASSUME ALL REGS REQUIRED
+         IC    REG5,4(REG2)        LOAD LENGTH NUMBER
+         L     REG6,4(REG2)        LOAD ADDRESS NUMBER
+         BCT   REG5,*+10           SUBTRACT 1 FROM THE LENGTH
+         PACK  REGCTR1,0(0,REG6)   PACK NUMBER TO WORK AREA
+         EX    REG5,*-6            EXECUTE THE PACK
+         CP    REGCTR1,=P'15'      TEST SIZE OF INPUT PARM
+         BH    ERROR5              INVALID REGISTER NUMBER
+         L     REG2,0(REG2)        LOAD SECOND SUBOPERAND DETAILS
+         LTR   REG2,REG2           ANYTHING CODED ?
+         BZ    SETONE              NO. ASSUME ONLY ONE REGISTER
+         IC    REG5,4(REG2)        LOAD LENGTH OF NUMBER
+         L     REG6,4(REG2)        LOAD ADDRESS OF NUMBER
+         BCT   REG5,*+10           SUBTRACT ONE FROM LENGTH
+         PACK  REGCTR2,0(0,REG6)   PACK NUMBER TO WORK AREA
+         EX    REG5,*-6            EXECUTE THE PACK
+         CP    REGCTR2,=P'15'      TEST SIZE OF INPUT NUMBER
+         BH    ERROR5              INVALID REGISTER NUMBER
+         B     DOREGS              GO FORMAT THE WANTED REGISTERS
+SETALL   ZAP   REGCTR1,=P'0'       SET START OF RANGE AT ZERO
+         ZAP   REGCTR2,=P'15'      SET END OF RANGE
+         B     DOREGS              GO OUTPUT SELECTED RANGE
+SETONE   ZAP   REGCTR2,REGCTR1     SET END EQUAL TO START
+         SPACE 2
+***********************************************************************
+*        THE RANGE OF REGISTERS IS SET. OUTPUT THE SELECTED ONES      *
+***********************************************************************
+         SPACE 2
+DOREGS   DS    0H
+         XC    CLRLINE,CLRLINE     CLEAR THE OUTPUT AREA
+         LA    REG10,OUTREGST      LOAD ADDRESS FIRST REGISTER O/P
+         CVB   REG8,REGCTR1        LOAD START ADDRESS OF RANGE
+         SLL   REG8,2              MULTIPLY BY FOUR
+         CVB   REG7,REGCTR2        LOAD END ADDRESS OF RANGE
+         SLL   REG7,2              MULTIPLY BY FOUR
+         L     REG4,TCBADDR        LOAD ADDRESS OF TCB
+         USING TCB,REG4            TEMPORARY ADDRESSABILITY FOR TCB
+         LA    REG8,TCBGRS(REG8) LOAD ADDRESS FIRST REGISTER
+         LA    REG7,TCBGRS+4(REG7) LOAD ADDRESS LAST REGISTER+4
+REGLOOP  UNPK  0(9,REG10),0(5,REG8) UNPACK CONTENTS TO OUT AREA
+         TR    0(8,REG10),TRTABLE-C'0' MAKE IT PRINTABLE
+         MVI   8(REG10),C' '       REMOVE UNWANTED SIGN
+         LA    REG8,4(REG8)        STEP TO NEXT REGISTER
+         CR    REG8,REG7           FORMATTED ALL THE REGS YET?
+         BE    REGENDS             YES. OUTPUT FINAL LINES
+         LA    REG2,TCBGRS15       LOAD ADDRESS OF LAST REG SLOT
+         CR    REG8,REG2           ARE WE OFF END OF TABLE
+         BNH   NORESTRT            NO. CARRY ON WITH NEXT SLOT
+         LA    REG8,TCBGRS0        RESET REGISTER 8 TO 1ST SLOT
+NORESTRT LA    REG10,L'OUTREGST(REG10) STEP TO NEXT OUTPUT SLOT
+         LA    REG2,OUTREGND       LOAD ADDRESS LAST REGISTER O/P
+         CR    REG10,REG2          FILLED A LINE YET ?
+         BL    REGLOOP             NO. FORMAT NEXT REGISTER
+         MVC   MSGNUMB,=C'0007'    IDENTIFY THIS MESSAGE TYPE
+         BAL   REG11,OUTLOADR      OUTPUT THE FILLED LINE
+         XC    CLRLINE,CLRLINE     CLEAR THE LINE AREA
+         LA    REG10,OUTREGST      RESET OUTPUT LOCATION POINTER
+         B     REGLOOP             LOOP FOR NEXT REGISTER
+REGENDS  MVC   MSGNUMB,=C'0007'    IDENTIFY THIS MESSAGE TYPE
+         BAL   REG11,OUTLOADR      GO OUTPUT LAST OUTPUT LINE
+         B     DISPLAY             GO ASK FOR MORE WORK
+         EJECT
+***********************************************************************
+*        STORAGE IS TO BE FORMATTED AND OUTPUT. DETERMINE RANGE       *
+***********************************************************************
+         SPACE 2
+DSPHEX   DS    0H
+         IC    REG5,4(REG2)        LOAD LENGTH OF OPERAND
+         L     REG6,4(REG2)        LOAD ADDRESS OF OPERAND
+         BAL   REG11,CNVRTAD       CONVERT START ADDRESS TO USABLE FORM
+         L     REG1,CNVRTOP        LOAD UP START ADDRESS FOR DISPLAY
+         A     REG1,WORKBASE       ADD IN THE WORKING BASE OF DISPLAY
+         ST    REG1,HEXSTRT        SAVE START ADDRESS OF DISPLAY
+         L     REG2,0(REG2)        LOAD ADDRESS NEXT DESCR BLK
+         LTR   REG2,REG2           ANYTHING CODED ?
+         BZ    HEXSET4             NO. ASSUME 4 BYTES
+         IC    REG5,4(REG2)        LOAD LENGTH OPERAND 2
+         L     REG6,4(REG2)        LOAD ADDRESS OPERAND 2
+         BAL   REG11,CNVRTAD       CONVERT ADDRESS TO USABLE FORM
+         L     REG1,CNVRTOP        LOAD ADDRESS ENTERED BY OPERATOR
+         BCTR  REG6,0              ADDRESS BYTE IN FRONT OPERAND
+         CLI   0(REG6),C'-'        IS AN ADDRESS RANGE CODED ?
+         BE    HEXNOADD            YES. GO CALCULATE END ADDRESS
+         A     REG1,HEXSTRT        ADD DISPLAY START ADDRESS TO THIS
+         ST    REG1,HEXEND         STORE INTO END DISPLAY REGISTER
+         B     DOHEX               GO OUTPUT SELECTED RANGE
+HEXNOADD A     REG1,WORKBASE       ADD IN WORKING BASE OF DISPLAY
+         ST    REG1,HEXEND         SAVE END ADDRESS OF DISPLAY
+         B     DOHEX               GO OUTPUT SELECTED RANGE
+HEXSET4  L     REG1,HEXSTRT        LOAD START ADDRESS OF DISPLAY
+         LA    REG1,4(REG1)        STEP ADDRESS UP BY DEFAULT LENGTH
+         ST    REG1,HEXEND         SAVE THIS VALUE AS DISPLAY END ADDR
+         B     DOHEX               GO OUTPUT SELECTED RANGE
+         EJECT
+***********************************************************************
+*        THE DISPLAY RANGE IS SELECTED. OUTPUT THE DATA               *
+***********************************************************************
+         SPACE 2
+DOHEX    DS    0H
+         L     REG8,HEXSTRT        LOAD START ADDRESS OF DISPLAY
+         N     REG8,HEXMSK1        ROUND DOWN TO FULLWORD
+         L     REG7,HEXEND         LOAD END ADDRESS OF DISPLAY
+         LA    REG7,3(REG7)        PREPARE FOR ROUNDING
+         N     REG7,HEXMSK1        ROUND TO FULLWORD
+         CR    REG7,REG8           TEST RANGE OF OUTPUT
+         BNH   ERROR3              START ADDRESS IS ABOVE END ADDRESS
+         BCTR  REG7,0              SUBTRACT 1 FOR BXLE
+         LA    REG6,4              LOAD OUTPUT STEP INCREMENT
+         BAL   REG11,INITLINE      INITIALISE THE OUTPUT AREA
+BXLOOP   CR    REG1,REG10          FILLED A LINE YET
+         BL    NOTFULL             NO. CARRY ON WITH PREPARATION
+         MVC   MSGNUMB,=C'0007'    IDENTIFY THIS MESSAGE TYPE
+         BAL   REG11,OUTLOADR      YES. GO OUTPUT THE LINE
+         BAL   REG11,INITLINE      GO INITIALISE THE NEXT LINE
+NOTFULL  UNPK  0(9,REG1),0(5,REG8) UNPACK DATA TO OUTPUT AREA
+         TR    0(8,REG1),TRTABLE-C'0' MAKE THE OUTPUT PRINTABLE
+         MVI   8(REG1),C' '        REMOVE UNWANTED SIGN BYTE
+         LA    REG1,L'OUTHEXST(REG1) STEP TO NEXT OUTPUT AREA
+         BXLE  REG8,REG6,BXLOOP    LOOP FOR ENTIRE ADDRESS RANGE
+         MVC   MSGNUMB,=C'0007'    IDENTIFY THIS MESSAGE TYPE
+         BAL   REG11,OUTLOADR      OUTPUT FINAL LINE
+         B     DISPLAY             GO ASK FOR MORE WORK
+         SPACE 2
+INITLINE ST    REG8,DBLWORD        STORE NEXT DISPLAY ADDRESS
+         XC    CLRLINE,CLRLINE     CLEAR THE OUTPUT LINE
+         UNPK  HEXADDR(L'HEXADDR+1),DBLWORD(5) UNPACK TO START LINE
+         TR    HEXADDR,TRTABLE-C'0' MAKE LINE ADDRESS PRINTABLE
+         MVI   HEXADDR+L'HEXADDR,C':' BLANK OUT SIGN FIELD
+         LA    REG1,OUTHEXST       LOAD START ADDRESS FOR OUTPUT
+         LA    REG10,OUTHEXND      LOAD END ADDRESS FOR OUTPUT
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        OUTPUT THE CONTENTS OF CURRENT DISPLAY BASE REGISTER         *
+***********************************************************************
+         SPACE 2
+DSPBASE  DS    0H
+         XC    CLRLINE,CLRLINE     CLEAR THE OUTPUT AREA
+         MVC   BASETXT1,BASELIT1   IDENTIFY THIS OUTPUT
+         UNPK  OUTBASE(L'OUTBASE+1),WORKBASE(L'WORKBASE+1)
+         TR    OUTBASE,TRTABLE-C'0' MAKE OUTPUT PRINTABLE
+         MVI   OUTBASE+L'OUTBASE,C' ' REMOVE UNWANTED SIGN
+         MVC   MSGNUMB,=C'0007'    IDENTIFY THIS MESSAGE TYPE
+         BAL   REG11,OUTLOADR      OUTPUT THE PREPARED LINE
+         B     DISPLAY             GO ASK FOR MORE WORK
+         EJECT
+***********************************************************************
+*        ERROR ROUTINES FOR DISPLAY MODE                              *
+***********************************************************************
+         SPACE 2
+ERROR2   DS    0H
+         MVC   DSPTXT01,DSPLIT02   INDICATE CAUSE OF ERROR
+LOADITUP MVC   MSGNUMB,=C'0006'    INDICATE MESSAGE TYPE
+         BAL   REG11,OUTLOADR      OUTPUT THE ERROR MESSAGE
+         B     DISPLAY             GO START AGAIN
+         SPACE 2
+ERROR3   DS    0H
+         MVC   DSPTXT01,DSPLIT03   ADDRESS RANGE IS WRONG MESSAGE
+         B     LOADITUP            LOAD UP AND OUTPUT MESSAGE
+         SPACE 2
+ERROR4   MVC   DSPTXT01,DSPLIT04   MISSING INPUT DATA MESSAGE
+         B     LOADITUP            LOAD UP AND OUTPUT THE MESSAGE
+ERROR5   MVC   DSPTXT01,DSPLIT05   INVALID REGISTER MESSAGE
+         B     LOADITUP            LOAD AND OUTPUT THE MESSAGE
+ERROR6   MVC   DSPTXT01,DSPLIT06   INVALID ADDRESS SPECIFIED
+         B     LOADITUP            GO OUTPUT THE ERROR MESSAGE
+         EJECT
+***********************************************************************
+*        THIS ROUTINE CONVERTS AN INPUT HEX OPERAND TO USABLE FORM    *
+***********************************************************************
+         SPACE 2
+CNVRTAD  DS    0H
+         CLI   4(REG2),X'08'       IS OPERAND TOO LONG ?
+         BH    CNVRTERR            YES. SIGNAL ERROR
+         BCT   REG5,CNVRTIN        SUBTRACT 1 FROM LENGTH
+TRINST1  TR    0(0,REG6),TRTABLE1  CCONVERT LETTERS
+TRTINST1 TRT   0(0,REG6),TRTTABLE  TEST FOR VALID NUMERICS
+PACKINST PACK  DBLWORD,0(0,REG6)   PACK THE NUMBER INTO WORK AREA
+CNVRTIN  EX    REG5,TRINST1        CONVERT LETTERS TO HIGH VALUES
+         EX    REG5,TRTINST1       TEST FOR VALID INPUT
+         BNZ   CNVRTERR            NOT VALID. SIGNAL ERROR
+         LA    REG5,1(REG5)        STEP LENGTH BACK UP ONE
+         EX    REG5,PACKINST       PACK DATA TO WORK AREA
+         MVC   CNVRTOP,DBLWORD+3   MOVE RESULT TO CORRECT AREA
+         BR    REG11               RETURN TO CALLER
+         SPACE 2
+CNVRTERR MVC   CNVRTTXT,CNVRTLIT   MOVE CONVERSION ERROR LITERAL IN
+         MVC   MSGNUMB,=C'0006'    SIGNAL TYPE OF MESSAGE
+         BAL   REG11,OUTLOADR      OUTPUT THE ERROR MESSAGE
+         B     DISPLAY             GO INVITE ANOTHER RESPONSE
+         EJECT
+***********************************************************************
+*        THIS IS THE COMMON INTERACTIVE OUTPUT ROUTINE                *
+***********************************************************************
+         SPACE 2
+GETREPLY DS    0H
+         ST    REG11,SAVER111      SAVE LINK REGISTER
+         MVI   RESPONSE,C' '       PREPARE REPLY AREA FOR CLEARING
+         MVC   RESPONSE+1(L'RESPONSE-1),RESPONSE CLEAR REPLY AREA
+         MVC   WTORCTRL,WTORLIST   INITIALISE THE CONTROL FIELDS
+         MVC   WTODATA,MSGAREA     MOVE OUTPUT DATA TO WTOR AREA
+         LA    REG14,WTORECB       LOAD ADDRESS REPLY ECB
+         LA    REG15,RESPONSE      LOAD ADDRESS OF REPLY AREA
+         WTOR  ,(15),80,(14),MF=(E,WTORCTRL) ASK FOR A REPLY
+         MVI   WTORECB,X'00'       CLEAR WAIT/POST BITS IN ECB
+         WAIT  ECB=WTORECB         WAIT FOR A REPLY
+         BAL   REG11,SCANMSG       BREAK UP RESPONSE INTO PARTS
+         L     REG11,SAVER111      RESTORE LINK REGISTER
+         BR    REG11               RETURN TO CALLER
+         SPACE 2
+WTORLIST WTOR  '                                                       X
+                                        ',0,80,0,ROUTCDE=1,MF=L
+         EJECT
+***********************************************************************
+*        PROGRAM EXIT ROUTINE                                         *
+***********************************************************************
+         SPACE 2
+EXITPGM  DS    0H
+DUMPIT   DS    0H
+         MODESET MODE=SUP,KEY=ZERO
+         L     REG2,RBADDR         LOAD ADDRESS OF RB
+         USING RBPRFX,REG2         ADDRESSABILITY FOR RB
+         L     REG4,TCBADDR        LOAD ADDRESS OF TCB
+         USING TCB,REG4            ADDRESSABILITY FOR TCB
+         L     REG1,16             LOAD ADDRESS OF CVT
+         USING CVTMAP,REG1         ADDRESSABILITY FOR CVT
+         LA    REG1,CVTABEND       LOAD ADDRESS OF SVC 13
+         ST    REG1,RBOPSW+4       SET TASK TO ABEND NEXT INSTRUCTION
+         MVC   TCBGRS1,DUMPCODE    SET ABEND CODE
+         STATUS RESET,ND,STEP      RESET TCB DISPATCHABLE
+         L     REG0,GETMNLEN       LOAD FREEMAIN DETAILS
+         O     REG0,SUBPOOL        RELOAD SUBPOOL ID
+         LR    REG1,REG3           LOAD START ADDRESS FOR FREEMAIN
+         FREEMAIN R,LV=(0),A=(1)   FREE UP THE WORK AREA
+         ZRETURN RC=0              RETURN TO CALLER
+         SPACE 2
+         EJECT
+***********************************************************************
+*        THE FAILING ROUTINE IS TO BE RETRIED.                        *
+***********************************************************************
+         SPACE 2
+IGNOREIT DS    0H
+         STATUS RESET,ND,STEP      RESET TCB DISPATCHABLE
+         L     REG0,GETMNLEN       LOAD FREEMAIN DETAILS
+         O     REG0,SUBPOOL        RELOAD SUBPOOL ID
+         LR    REG1,REG3           LOAD START ADDRESS FOR FREEMAIN
+         FREEMAIN R,LV=(0),A=(1)   FREE UP THE WORK AREA
+         ZRETURN RC=0              RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        THE OPERATOR HAS ENTERED DATA TO BE STORED                   *
+***********************************************************************
+         SPACE 2
+STPROC   DS    0H
+         L     REG2,0(REG2)        LOAD DESCR BLK NEXT OPERAND
+         LTR   REG2,REG2           ANYTHING CODED ?
+         BZ    DISPLAY             NO. IGNORE REQUEST AND ASK AGAIN
+         IC    REG5,4(REG2)        LOAD LENGTH OPERAND
+         L     REG6,4(REG2)        LOAD ADDRESS OPREAND
+         LA    REG1,TABLE4         LOAD ADDRESS VALID OPERAND TABLE
+         LA    REG0,TABLE4ND       LOAD END ADDRESS OF TABLE
+         BAL   REG11,SCANTABL      SCAN FOR VALID KEYWORD
+         B     0(REG1)             BRANCH TO CORRECT ROUTINE
+         SPACE 2
+TABLE4   DS    0D                  VALID KEYWORDS FOR STORE
+         B     STRPSW              STORE THE PSW
+         DC    CL8'PSW'
+         B     STRREGS             STORE ONE OR MORE REGS
+         DC    CL8'REG'
+TABLE4ND B     STRHEX              STORE STORAGE
+         DC    CL8'HEX'
+         EJECT
+***********************************************************************
+*        STORE A VALUE INTO THE PSW                                   *
+***********************************************************************
+         SPACE 2
+STRPSW   DS    0H
+         L     REG2,0(REG2)        LOAD ADDRESS OF NEXT DESCR BLK
+         LTR   REG2,REG2           ANYTHING CODED
+         BZ    ERROR4              NO. TELL HIM OF ERROR
+         IC    REG5,4(REG2)        LOAD LENGTH OF DATA
+         L     REG6,4(REG2)        LOAD ADDRESS OF DATA
+         BAL   REG11,CNVRTAD       GO CONVERT DATA TO USABLE FORM
+         L     REG7,CNVRTOP        LOAD UP AND SAVE FIRST WORD
+         L     REG2,0(REG2)        LOAD ADDRESS NEXT DESCR BLK
+         L     REG1,RBADDR         LOAD ADDRESS OF RB
+         USING RBPRFX,REG1         ADDRESSABILITY FOR RB
+         LTR   REG2,REG2           ANYTHING CODED ?
+         BZ    SETONEOP            NO. ONLY ADDRESS IN PSW ENTERED
+         IC    REG5,4(REG2)        LOAD LENGTH SECOND ENTRY
+         L     REG6,4(REG2)        LOAD ADDRESS SECOND OP
+         BAL   REG11,CNVRTAD       CONVERT THIS DATA TO USABLE FORM
+         L     REG8,CNVRTOP        LOAD UP SECOND HALF OF INPUT PSW
+         STM   REG7,REG8,RBOPSW  STORE DATA INTO PSW
+         B     STRPSWXT            EXIT FROM THIS ROUTINE
+SETONEOP ST    REG7,RBOPSW+4       STORE ADDRESS HALF OF PSW ONLY
+STRPSWXT MVC   MSGNUMB,=C'0004'    IDENTIFY MESSAGE TYPE
+         MVC   OUTOKMSG,OUTOKLIT   TELL OF SUCCESSFUL COMPLETION
+         BAL   REG11,OUTLOADR      GO OUTPUT MESSAGE
+         B     DISPLAY             GO LOOK FOR MORE WORK
+         EJECT
+***********************************************************************
+*        ONE OR MORE REGISTERS ARE TO BE UPDATED                      *
+***********************************************************************
+         SPACE 2
+STRREGS  DS    0H
+         L     REG2,0(REG2)        LOAD ADDRESS FIRST SUBOPERAND
+         LTR   REG2,REG2           ANYTHING CODED ?
+         BZ    ERROR4              NO. MISSING OPERAND. TELL OP
+         IC    REG5,4(REG2)        LOAD LENGTH NUMBER
+         L     REG6,4(REG2)        LOAD ADDRESS NUMBER
+         BCT   REG5,*+10           SUBTRACT 1 FROM THE LENGTH
+         PACK  REGCTR1,0(0,REG6)   PACK NUMBER TO WORK AREA
+         EX    REG5,*-6            EXECUTE THE PACK
+         CP    REGCTR1,=P'15'      TEST VALIDITY OF REGISTER NUMBER
+         BH    ERROR5              INVALID REGISTER NUMBER
+         L     REG7,0(REG2)        TEST FOR AT LEAST ONE OPERAND
+         LTR   REG7,REG7           ANYTHING CODED
+         BZ    ERROR4              MISSING INPUT DATA
+         EJECT
+***********************************************************************
+*        THE RANGE OF REGISTERS IS SET. ALTER  THE SELECTED ONES      *
+***********************************************************************
+         SPACE 2
+DOREGSX  DS    0H
+         L     REG4,TCBADDR        LOAD ADDRESS OF TCB
+         USING TCB,REG4            ADDRESSABILITY FOR TCB
+         CVB   REG8,REGCTR1        LOAD START ADDRESS OF RANGE
+         SLL   REG8,2              MULTIPLY BY FOUR
+         LA    REG8,TCBGRS(REG8)   LOAD ADDRESS FIRST REGISTER
+         LA    REG7,TCBGRS15       LOAD ADDRESS OF END OF TABLE
+REGLOOPX L     REG2,0(REG2)        LOAD ADDRESS FIRST/NEXT DATA DESCR
+         LTR   REG2,REG2           TEST FOR ANYTHING CODED
+         BZ    REGENDSX            NOTHING LEFT. LEAVE ROUTINE
+         IC    REG5,4(REG2)        LOAD LENGTH OF INPUT NUMBER
+         L     REG6,4(REG2)        LOAD ADDRESS INPUT NUMBER
+         BAL   REG11,CNVRTAD       CONVERT NUMBER TO USABLE FORM
+         MVC   0(4,REG8),CNVRTOP   MOVE TO SPECIFIED REGISTER
+         LA    REG8,4(REG8)        STEP TO NEXT REGISTER SLOT
+         CR    REG8,REG7           HAVE WE HIT END OF AVAILABLE SLOTS
+         BNH   REGLOOPX            NO. CARRY ON
+         LA    REG8,TCBGRS0        YES. RESET TO START OF ARRAY
+         B     REGLOOPX            LOOP FOR NEXT REGISTER
+REGENDSX MVC   MSGNUMB,=C'0004'    IDENTIFY THIS MESSAGE TYPE
+         MVC   OUTOKMSG,OUTOKLIT   TELL OF SUCCESSFUL COMPLETION
+         BAL   REG11,OUTLOADR      GO OUTPUT LAST OUTPUT LINE
+         B     DISPLAY             GO ASK FOR MORE WORK
+         EJECT
+***********************************************************************
+*        THE OPERATOR HAS EXPRESSED THE WISH TO ALTER CORE            *
+***********************************************************************
+         SPACE 2
+STRHEX   DS    0H
+         IC    REG5,4(REG2)        LOAD LENGTH OF ADDRESS
+         L     REG6,4(REG2)        LOAD ADDRESS OF THIS OPERAND
+         BAL   REG11,CNVRTAD       CONVERT ADDRESS TO USABLE FORM
+         L     REG1,CNVRTOP        LOAD ADDRESS FOR STORE OPERATION
+         A     REG1,WORKBASE       ADD START ADDRESS FOR DISPLAY
+         ST    REG1,HEXSTRT        SAVE STRAT ADDRESS FOR STORE
+         L     REG10,0(REG2)       LOAD ADDRESS NEXT DESCR BLK
+         LTR   REG10,REG10         ANYTHING BEEN CODED
+         BZ    ERROR4              MISSING OPERAND ERROR
+         L     REG10,HEXSTRT       INITIALISE STORE ADDRESS REGISTER
+STXLOOP  L     REG2,0(REG2)        LOAD ADDRESS FIRST/NEXT OPERAND
+         LTR   REG2,REG2           TEST FOR ANY MORE DATA
+         BZ    STXEXIT             NO MORE. TELL OF OPERATION
+         IC    REG5,4(REG2)        LOAD LENGTH FIRST VALUE
+         L     REG6,4(REG2)        LOAD ADDRESS FIRST/NEXT VALUE
+         BAL   REG11,CNVRTAD       CONVERT ENTRY TO HEX
+         L     REG1,CNVRTOP        LOAD UP THE RESULT FIELD
+         ST    REG1,0(REG10)       STORE OUT NEW CONTENTS
+         LA    REG10,4(REG10)      STEP TO NEW LOCATION
+         B     STXLOOP             LOOP FOR ALL DATA ENTERED
+STXEXIT  MVC   MSGNUMB,=C'0004'    IDENTIFY THIS MESSAGE TYPE
+         MVC   OUTOKMSG,OUTOKLIT   MOVE OK LITERAL TO OUTPUT
+         BAL   REG11,OUTLOADR      GO OUTPUT THE OK MESSAGE
+         B     DISPLAY             INVITE FURTHER WORK FROM OPERATOR
+         EJECT
+***********************************************************************
+*        CONSTANTS AND LITERALS (IN ALPHABETIC ORDER                  *
+***********************************************************************
+         SPACE 2
+ABNDMASK DC    X'4021202020'
+BASELIT1 DC    CL(L'BASETXT1)'CURRENT DISPLAY BASE - '
+CNVRTLIT DC    CL(L'CNVRTTXT)'INVALID HEX INPUT - OPERATION IGNORED'
+DSPLIT01 DC    CL(L'DSPTXT01)'ENTER REQUEST (D,ST,BASE,R,RUN)'
+DSPLIT02 DC    CL(L'DSPTXT01)'BASE ADDRESS FOR PROGRAM NOT AVAILABLE'
+DSPLIT03 DC    CL(L'DSPTXT01)'INPUT ADDRESS RANGE IS INVALID'
+DSPLIT04 DC    CL(L'DSPTXT01)'INPUT HEX DATA FOR STORE OPERATION IS MISS
+               SING'
+DSPLIT05 DC    CL(L'DSPTXT01)'REGISTER NUMBER SPECIFIED IS INVALID'
+DSPLIT06 DC    CL(L'DSPTXT01)'*** ABEND SUSTAINED DURING PREVIOUS REQUES
+               ST. PROCESSING TERMINATED'
+DUMPCODE DS    F                   ABEND CODE FOR FORCED DUMPS
+         DC    X'80'               GIVE DUMP OPTION
+         DC    X'FFF000'           GIVES SYSTEM FFF ABEND
+FAILLIT  DC    CL(L'FAILTEXT)'HAS ABENDED -'
+HEXMSK1  DC    F'-4'               MASK TO STRIP OFF LAST TWO BITS
+INSTLIT  DC    CL(L'INSTTEXT)'NEXT INSTRN:' INSTRUCTION IDENTIFIER
+INVLIT01 DC    CL(L'INVTXT01)'ENTER REQUEST. (G0,DU,DI)'
+JES      DC    CL3'JES'            IDENTIFIES JES APPLICATION
+LLENOTIN DC    CL(L'OFFSERR1)'PROGRAM START/END ADDRESSES UNAVAILABLE'
+MAXLEN   DC    F'7'                MAXIMUM EXECUTED LENGTH OF OPERAND
+MAXUSER  DC    F'4096'             MAXIMUM USER ABEND CODE
+MOVE1    MVC   OUTINST(0),0(REG10)
+NAMELIT  DC    CL(L'NAMETEXT)'MODULE CURRENTLY IN CONTROL'
+OFFSLIT  DC    CL(L'OFFSTEXT)'OFFSET IN PROGRAM:'
+OFFSLIT1 DC    CL(L'OFFSERR1)'INSTR NOT IN USER PROGRAM'
+OPNDLIT  DC    CL(L'ERRORTXT)'INVALID RESPONSE - '
+OUTOKLIT DC    CL(L'OUTOKMSG)'OPERATION COMPLETE'
+PRFXLEN  DC    F'64'               LENGTH OF RB PREFIX
+PROGLIT  DC    CL(L'PROGTEXT)'PROGRAM BEGINS AT:'
+PSWLIT   DC    CL(L'PSWTEXT)'PSW:'   PSW IDENTIFIER
+SIXTEEN  DC    H'16'               USED TO TEST INTERRUPT CODE
+SUBPOOL  DS    0F                  REFERENCE FOR REGISTER AND INSTR
+         DC    AL1(1)              SUBPOOL ID FOR WORK AREA
+         DC    AL3(0)              MUST BE ZERO.
+TRTABLE  DC    C'0123456789ABCDEF' TABLE FOR TRANSLATE INSTRUCTION
+TRTABLE1 DC    256AL1(*-TRTABLE1)  CONVERT INPUT LETTERS TO USEFUL FORM
+         ORG   TRTABLE1+C'A'
+         DC    X'FAFBFCFDFEFF'
+         ORG
+TRTTABLE DC    256X'FF'            TEST TABLE FOR VALID INPUT
+         ORG   TRTTABLE+C'0'
+         DC    16X'00'             VALID RANGE
+         ORG
+TR1      TR    OUTINST(0),TRTABLE-C'0'
+UNPK1    UNPK  FMTAREA(L'FMTAREA+1),0(0,REG2)
+         LTORG
+         END
+//LKED.SYSIN   DD   *
+ SETCODE AC(1)
+ NAME AUXCMM0A(R)
+ INCLUDE MLPALIB(AUXCOMM)
+ INCLUDE MLPALIB(AUXCMM0A)
+ ENTRY AUXCOMM
+ ALIAS AUXCMM10
+ ALIAS AUXCMM06
+ SETCODE AC(1)
+ NAME AUXCOMM(R)
+/*

@@ -1,0 +1,180 @@
+         MACRO
+&LABEL   SCAN2 &DATA=,&LENGTH=256,&END=,&DELIM=',',                    X
+               &RETAREA=,&BLKLEN=8
+.**********************************************************************
+.*
+.*       THIS IS A REWRITE OF THE UBIQUITIOUS 'SCAN' MACRO.
+.*       UNDERTAKEN 25 OCTOBER 1978 BY J ABBEY.
+.*
+.*       FUNCTION:
+.*           THE MACRO IS DESIGNED TO PROCEED ALONG A SPECIFIED
+.*       CHARACTER STRING SPLITTING IT INTO FIELDS DEFINED BY CERTAIN
+.*       DELIMITER CHARACTERS SUCH AS COMMAS, QUOTES, BLANKS ETC.
+.*       FOR EACH FIELD DELIMITED BY THESE CHARACTERS, THE MACRO BUILDS
+.*       A 'DESCRIPTOR BLOCK' WHICH HAS THE FORM:
+.*
+.*       BYTE 0-3                  ADDRESS OF NEXT BLOCK OR ZERO
+.*       BYTE 4                    LENGTH OF THE FIELD
+.*       BYTE 5-7                  ADDRESS OF THE START OF THE FIELD
+.*
+.*           THESE BLOCKS ARE BUILT IN A WORK AREA PROVIDED BY THE USER
+.*       WHICH OF COURSE MUST BE LONG ENOUGH TO CONTAIN THE MAXIMUM
+.*       NUMBER OF BLOCKS LIKELY TO BE GENERATED. THE FIRST WORD OF
+.*       THIS WORK AREA CONTAINS THE ADDRESS OF THE START OF THE CHAIN
+.*       OR ZERO (IF THE WHOLE FIELD CONTAINS NOTHING BUT DELIMITERS).
+.*
+.*           THE MACRO OPERATES BY USING TRANSLATE AND TEST TO SCAN
+.*       ALONG THE DATA STRING USING A PREDEFINED TABLE TO IDENTIFY THE
+.*       DELIMITER CHARACTERS. A SPECIFIC LENGTH CAN BE SPECIFIED OR A
+.*       TERMINATING CHARACTER (  'END=('X')'   ) CAN BE USED TO
+.*       CONTROL THE EXTENT OF THE SCAN OPERATION.
+.*
+.*       NOTES:
+.*           THIS VERSION DOES NOT OFFER ALL THE FACILITIES OF THE
+.*       PREVIOUS VERSION BUT IS DESIGNED FOR USE IN RE-ENTRANT
+.*       SUPERVISOR ROUTINES. THIS IS WHY AN EXTERNAL AREA GETMAINED
+.*       BY THE CALLER MUST BE SPECIFIED. THE FORMAT AND ARRANGEMENT
+.*       OF THE BUILT 'DESCRIPTOR BLOCKS' IS IDENTICAL HOWEVER.
+.*
+.*
+.*       OPERANDS:
+.*
+.*       DATA=                     ADDRESS OF DATA TO BE SCANNED. CAN
+.*                                 BE A LABEL OR A REGISTER IN BRACKETS
+.*       LENGTH=                   LENGTH OF THE FIELD. CAN BE A
+.*                                 NUMBER, A REGISTER IN BRACKETS OR
+.*                                 AN EQUATED CONSTANT. (DEFAULT=256)
+.*       DELIM=                    LIST OF CHARACTERS TO BE USED AS
+.*                                 DELIMITERS. SPECIFIED IN THE FORM:
+.*                                 DELIM=('X','Y'). (DEFAULT - ',')
+.*       END=                      LIST OF ONE OR MORE CHARACTERS TO BE
+.*                                 TAKEN AS THE END OF THE SCAN
+.*                                 OPERATION. SPECIFIED AS FOR 'DELIM'.
+.*       RETAREA=                  ADDRESS OF THE BUILD AREA FOR THE
+.*                                 'DESCRIPTOR BLOCKS' CAN BE A LABEL
+.*                                 OR A REGISTER IN BRACKETS.
+.*       BLKLEN=                   LENGTH OF STORAGE TO BE ASSIGNED FOR
+.*                                 EACH DESCRIPTOR BLOCK. (DEFAULT=8)
+.*
+.**********************************************************************
+.*
+.*       MACRO WORK AREAS AND CONSTANTS
+.*
+.**********************************************************************
+         LCLA  &NUM                LOCAL LOOP COUNTER
+         LCLC  &W                  USED TO MAKE LABELS LOOK NEAT
+&W       SETC  'IHB&SYSNDX'        LOAD STANDARD LABEL PREFIX
+&LABEL   DS    0H SCAN MACRO EXPANSION. REENTRANT VERSION. 25 OCT 1978.
+.**********************************************************************
+.*
+.*
+.*       LOAD UP INTO WORK REGISTERS THE SPECIFIED PARAMETERS
+.*
+.*
+.**********************************************************************
+         AIF   ('&LENGTH'(1,1) NE '(').NOLENR LENGTH NOT IN A REG
+         LA    15,0&LENGTH         LOAD LENGTH OF DATA STRING
+         AGO   .DECRMT             AND GO SUBTRACT FOR EXECUTE
+.NOLENR  ANOP  ,                   LENGTH IS A LABEL
+         LA    15,&LENGTH          LOAD LENGTH OF DATA STRING
+.DECRMT  ANOP  ,                   LENGTH IS LOADED IN REG 15
+         BCTR  15,0                SUBTRACT ONE FOR EXECUTE INSTR.
+         AIF   ('&DATA'(1,1) NE '(').NODREG GO IF ADDRESS IS LABEL
+         LA    1,0&DATA            LOAD ADDRESS OF DATA STRING
+         AGO   .RETTEST            GO TEST FOR WORK AREA ADDRESS
+.NODREG  ANOP  ,                   DATA ADDRESS IS A LABEL
+         LA    1,&DATA             LOAD ADDRESS OF DATA STRING
+.RETTEST ANOP  ,                   TEST FOR WORKAREA SPECIFICATION
+         AIF   (T'&RETAREA EQ 'O').ERROR1 MUST HAVE A WORK AREA ADDRESS
+         AIF   ('&RETAREA'(1,1) NE '(').NORREG OPERAND IS A LABEL
+         LA    14,0&RETAREA        LOAD ADDRESS OF BLOCK BUILD AREA
+         AGO   .BLDTAB             GO BUILD A TRT TABLE
+.NORREG  ANOP  ,                   RETAREA ADDRESS IS A LABEL
+         LA    14,&RETAREA         LOAD ADDRESS OF BLOCK BUILD AREA.
+         AGO   .BLDTAB             GO BUILD A TRT TABLE
+.**********************************************************************
+.*
+.*
+.*
+.*       BUILD A 256 BYTE TABLE FOR THE TRT INSTRUCTION
+.*
+.*
+.*
+.**********************************************************************
+.BLDTAB  ANOP  ,                   BUILD THE TRANSLATE TABLE
+         XC    0(4,14),0(14)       CLEAR THE INITIAL WORK POINTER
+         B     &W.A                JUMP OVER THE TABLE
+&W.I     TRT   0(0,1),&W.T         TRANSLATE AND TEST EXECUTED INSTR.
+&W.T     DC    256X'00'            BASIC TABLE FOR TRANSLATE AND TEST
+         AIF   (T'&END EQ 'O').NOENDCH NO SPECIAL END CHARACTER
+&NUM     SETA  0                   INITIALISE LOOP COUNTER
+.DCLOOP1 ANOP  ,                   END CHARACTER LOOP START
+&NUM     SETA  &NUM+1              INCREMENT LOOP COUNTER
+         ORG   &W.T+C&END(&NUM)    POSITION ASSEMBLER ORIGIN
+         DC    X'01'               DEFINE TABLE ENTRY FOR END CHARACTER
+         AIF   (N'&END GT &NUM).DCLOOP1 PROCESS ALL 'END' CHARACTERS
+.NOENDCH ANOP
+&NUM     SETA  0                   INITIALISE LOOP COUNTER
+.DCLOOP2 ANOP  ,                   DELIM CHARACTER LOOP START
+&NUM     SETA  &NUM+1              INCREMENT LOOP COUNTER
+         ORG   &W.T+C&DELIM(&NUM)  POSITION ASSEMBLER ORIGIN
+         DC    X'02'               DEFINE TABLE ENTRY FOR DELIM CHARACT
+         AIF   (N'&DELIM GT &NUM).DCLOOP2 PROCESS ALL 'DELIM' CHARACTER
+         ORG   &W.T+256            RESET ORIGIN TO END OF TABLE
+&W.A     DS    0H                  CONTINUE PROCESSING
+.**********************************************************************
+.*
+.*       INITIALISE AND EXECUTE THE TRT. THEN CHECK FOR END OF DATA
+.*
+.*
+.**********************************************************************
+&W.L     EQU   *                   START OF BASIC PROCESSING LOOP
+         LR    0,1                 SAVE START ADDRESS OF THE DATA STRIN
+         EX    15,&W.I             EXECUTE THE TRANSLATE AND TEST
+         BC    7,&W.M              MORE DATA IS LEFT IN THE STRING
+         LA    1,0(15,1)           HAVE HIT END. SET UP REG1 MYSELF
+         LA    2,1                 AND SIMULATE PICK-UP IN REG2
+&W.M     EQU   *                   ANALYSE THE STRING JUST DELIMITED
+.**********************************************************************
+.*
+.*       GET LENGTH OF FIELD, LENGTH REMAINING AND CHECK FOR TWO
+.*           DELIMITER BYTES IN A ROW
+.*
+.**********************************************************************
+         SLL   2,24                KEEP THREE FREE BYTES IN REG2
+         OR    2,1                 AND USE THEM TO SAVE FIELD END ADDRE
+         SR    1,0                 GIVES LENGTH OF STRING
+         BZ    &W.N                IGNORE IT. TWO DELIMITERS IN A ROW
+         SR    15,1                GIVES LENGTH OF REMAINING DATA
+.**********************************************************************
+.*
+.*
+.*       BUILD AND INITIALISE A 'DESCRIPTOR BLOCK'
+.*
+.*
+.**********************************************************************
+         SLL   1,24                SHIFT LENGTH TO TOP BYTE
+         OR    0,1                 GET LENGTH AND ADDRESS IN REG 0
+         LA    1,&BLKLEN.(14)      GET ADDRESS OF NEXT BLOCK
+         ST    1,0(14)             CHAIN IT TO THE LAST ONE
+         LR    14,1                AND TAKE THIS AS THE CURRENT ONE
+         XC    0(4,14),0(14)       CLEAR THE CHAIN POINTER
+         ST    0,4(14)             STORE IN THE DETAILS
+.**********************************************************************
+.*
+.*       PREPARE THE REGISTERS FOR THE NEXT ITERATION AND TEST FOR
+.*           THE END OF DATA STRING.
+.*
+.**********************************************************************
+&W.N     EQU   *                   PREPARE FOR NEXT ITERATION
+         LA    1,1(2)              ADDRESS OF START OF NEXT FIELD
+         BCTR  15,0                SUBTRACT ONE FOR THE DELIMITER
+         LTR   15,15               ANY DATA LEFT TO LOOK AT
+         BM    &W.Z                NO. SCAN TERMINATED
+         SRL   2,24                GET REG2 LOOKING NORMAL AGAIN
+         BCT   2,&W.L              GO PROCESS MORE IF NOT END
+&W.Z     EQU   *                   END OF SCAN PROCESSING
+         MEXIT
+.ERROR1  ANOP  ,                   NO WORKAREA ADDRESS SPECIFIED
+         MNOTE 12,'**** REQUIRED 'RETAREA' SPECIFICATION IS MISSING'
+         MEND

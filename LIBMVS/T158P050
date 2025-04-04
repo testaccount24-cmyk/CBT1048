@@ -1,0 +1,373 @@
+P050     TITLE 'T158P050    LIBRARYN - CMS  INTERFACE'
+T158P050 CSECT
+         PGMIN ,                   MONSANTO ENTRY
+         EJECT
+*******************************************************************
+*                                                                 *
+*        PURPOSE.                                                 *
+*        ---------                                                *
+*                                                                 *
+*        THIS PROGRAM FINDS A LIBRARYN DATASET MODULE AND         *
+*        CREATES A LIBRARIAN INPUT STREAM TO SELECT THE           *
+*        MODULE BY NAME AND PASSWORD AND A :READ CARD             *
+*        TO RETURN THE MODULE TO THE CORRECT CMS USER VIA         *
+*        'TSGCMS' EXEC RUNNING IN A BACKGROUND CMS MACHINE.       *
+*        IF THE MODULE IS NOT AVAILABLE FOR CHANGE AN             *
+*        ERROR MESSAGE IS RETURNED TO THE CMS USER.               *
+*        IT WAS WRITTEN AS PART OF THE MONSANTO/TSG               *
+*        PROCEDURES FOR TRANSFER OF LIBRARIAN MODULES             *
+*        BETWEEN MVS AND CMS.                                     *
+*                                                                 *
+*        D.CARTWRIGHT MONSANTO MISD/TSG BRUSSELS 8-2-77           *
+*                                                                 *
+*******************************************************************
+         EJECT
+*******************************************************************
+*                                                                 *
+*        INPUT                                                    *
+*        -----                                                    *
+*                                                                 *
+*        PARM     - MANDATORY AND COMPOSED OF THREE FIELDS:       *
+*                     ACTIVITY CODE OF OPERATION - FOUR CHARS.    *
+*                     CMS USER ID AS NEXT THREE CHARACTERS        *
+*                     LIBRARIAN MODULE NAME LAST EIGHT CHARS.     *
+*                                                                 *
+*        MASTER   - DEFINES LIBRARIAN DATA SET                    *
+*                                                                 *
+*******************************************************************
+         SPACE 3
+*******************************************************************
+*                                                                 *
+*        OUTPUT                                                   *
+*        ------                                                   *
+*                                                                 *
+*        SYSUT2     - DEFINES OUTPUT FILE CONTAINING              *
+*                     LIBRARIAN CONTROL STATEMENTS.               *
+*                                                                 *
+*        SYSPUNCH   - DEFINES THE RETURN PATH TO CMS.             *
+*                     NORMALLY VIA A VM SPOOL PUNCH.              *
+*                                                                 *
+*******************************************************************
+         EJECT
+*******************************************************************
+*                                                                 *
+*        TECHNIQUE                                                *
+*        -----------                                              *
+*                                                                 *
+*        USES 'FAIR' ROUTINES WHICH MUST BE LINK-EDITED           *
+*        INTO THE LOAD MODULE.SEE LIBRARIAN DOCUMENTATION         *
+*        FOR DETAILS OF THESE ROUTINES.                           *
+*                                                                 *
+*******************************************************************
+         EJECT
+*******************************************************************
+*        LIBRARIAN CONTROL FIELDS.                                *
+*******************************************************************
+         SPACE 3
+         SUMCRCD  ,                MAP LIBRARIAN CONTROL FIELDS
+T158P050 CSECT                     RETURN TO PROGRAM
+         EJECT
+*******************************************************************
+*                                                                 *
+*        INITIALISATION                                           *
+*        SAVE PARM,OPEN LIBRARIAN MASTER FILE AND OUTPUT FILES    *
+*        OUTPUT CMS :READ CARD VIA SYSPUNCH.                      *
+*                                                                 *
+*******************************************************************
+         SPACE 2
+         L     R1,0(,R1)           GET ADDRESS OF PARM FIELD
+         LH    R2,0(,R1)           PICK UP LENGTH OF PARM
+         CH    R2,=H'22'           TEST FOR VALID LENGTH
+         BH    ABEND               BLOW UP IF ERROR
+         CH    R2,=H'8'            TEST MINIMUM LENGTH
+         BL    ABEND               BLOW UP IF INVALID
+         LA    R1,2(,R1)           POINT R1 AT START OF PARM
+         SCAN  DATA=(R1),LENGTH=(R2),DELIM=(','),CHAIN=PARMCHN
+         L     R1,PARMCHN          POINT AT FIRST SUBPARM DEFINITION
+PARMLOOP L     R14,4(,R1)          GET ADDRESS OF SUBPARM
+         IC    R15,4(R1)           GET LENGTH OF SUBPARM
+         BCTR  R15,0               DECREMENT LENGTH FOR EXECUTE
+         EX    R15,MOVEACNT        MOVE SUBFIELD TO DESIRED LOCN
+         L     R1,0(,R1)           GET NEXT SUBPARM DEFINITION
+         L     R14,4(,R1)          GET ADDRESS OF SUBPARM
+         IC    R15,4(R1)           GET LENGTH OF SUBPARM
+         BCTR  R15,0               DECREMENT LENGTH FOR EXECUTE
+         MVC   ID,0(R14)           SAVE MACHINE ID ( 1ST 3 CHARS )
+         EX    R15,MOVEIDFT        SAVE MACHINE ID + OPTIONAL FILETYPE
+         L     R1,0(,R1)           GET NEXT SUBPARM DEFINITION
+         L     R14,4(,R1)          GET ADDRESS OF SUBPARM
+         IC    R15,4(R1)           GET LENGTH OF SUBPARM
+         BCTR  R15,0               DECREMENT FOR EXECUTE
+         EX    R15,MOVEJOBN        SAVE JOB NAME
+         LA    R3,MODULE+7         SET NAME START ADDRESS
+         SR    R3,R15              RIGHT JUSTIFIED IN FIELD
+         EX    R15,PARMMOVE        SAVE PARM FIELD RIGHT ALIGNED
+         EJECT
+***********************************************************************
+*        INITIALISATION ( CONT'D )                                    *
+***********************************************************************
+         SPACE 1
+         OPEN  (SYSUT2,OUTPUT,SYSPUNCH,OUTPUT) OPEN OUTPUT FILES
+         MVC   READNAME,MODULE     SHOW CMS FILE NAME
+         MVC   READID,IDFT         SHOW MACHINE TO SEND IT TO
+         PUT   SYSPUNCH,READCARD   OUTPUT :READ CARD
+         OI    READFLAG,ON         SHOW THAT PARM APPEARED OK
+         MVI   OPN,C'O'            SHOW OPERATION FOR DEBUG
+         CALL  MASTOPN,(0,RETCODE),VL OPEN LIBRARIAN MASTER
+         CLI   RETCODE,C'0'        TEST COMPLETION
+         BNE   ABEND               BLOW UP ON ERROR
+         SPACE 1
+         MVI   OPN,C'F'            SHOW OPERATION FOR DEBUG
+         EJECT
+***********************************************************************
+*        INITIALISATION ( CONT'D )                                    *
+***********************************************************************
+         SPACE 1
+         CALL  MASTMOD,(JOBNAME,RETCODE,INFO,0,CONTROL),VL FIND MODULE
+         LA    R10,CONTROL         POINT TO CONTROL INFO
+         USING DESCDEF,R10         ESTABLISH ITS ADDRESSABILITY
+         CLI   RETCODE,C'0'        TEST COMPLETION
+         BNE   ABEND               BLOW UP ON ERROR
+         BAL   R4,CHECKUSE         SEE IF MODULE ELIGIBLE
+         B     ABEND               NO,END OF RUN
+         MVI   OPN,C'C'            SHOW NEXT OPERATION
+         B     PROCESS             GO PROCESS FILE
+         SPACE 2
+PARMMOVE MVC   0(0,R3),0(R14)      SAVE MODULE NAME * EXECUTED *
+MOVEACNT MVC   ACNT(0),0(R14)      MOVE ACTIVITY CODE TO S/A
+MOVEIDFT MVC   IDFT(0),0(R14)      MOVE MACHINE ID || FILE TYPE
+MOVEJOBN MVC   JOBNAME(0),0(R14)   MOVE JOB ( MODULE ) NAME
+         EJECT
+*******************************************************************
+*                                                                 *
+*        MAIN-LINE                                                *
+*        CREATE A JOB CARD ON THE CMS FILE AND                    *
+*        CREATE A LIBRARIAN CONTROL DATASET AND OUTPUT IT.        *
+*                                                                 *
+*******************************************************************
+         SPACE 1
+PROCESS  DS    0H                  MAIN LINE OF PROGRAM
+         MVC   JOBACNT,ACNT        PUT ACTIVITY CODE IN JOBCARD
+         MVC   JOBCHGC,ACNT        PUT CHARGE CODE IN JOBCARD
+         MVC   JOBID,ID             PROGRAMMER NAME
+         PUT   SYSPUNCH,JOBCARD    OUTPUT JOB CARD
+         SPACE 1
+         MVC   SELNAME,MODULE      TELL LIBRARIAN NAME
+         MVC   SELPSWD,PASSWORD    ALLOW LIBRARIAN ACCESS TO IT
+         MVC   SELVERS,DDATUP      SET VERS OPERAND
+         MVC   LANGID,ID           SET UP -LANG CARD
+         MVC   HSTNAME,MODULE      SET UP -HST NAME
+         MVC   HSTID,ID            SET UP -HST DETAIL
+         SPACE 1
+*
+*        NOW OUTPUT LIBRARIAN CONTROL CARDS
+*
+         SPACE 1
+         PUT   SYSUT2,OPTCARD      -OPT
+         PUT   SYSUT2,SELCARD      -SEL
+         PUT   SYSUT2,LANGCARD     -LANG
+         PUT   SYSUT2,HSTCARD     -HST
+         PUT   SYSUT2,ENDCARD      -END
+         EJECT
+*******************************************************************
+*                                                                 *
+*        TERMINATION                                              *
+*        CLOSE FILES AND EXIT.                                    *
+*                                                                 *
+*******************************************************************
+         SPACE 3
+ENDUP    DS    0H                  END OF PROCESSING
+         CALL  MASTCLS             CLOSE LIBRARIAN MASTER FILE
+         CLOSE (SYSUT2,,SYSPUNCH)  CLOSE OUTPUT FILES
+         PGMOUT ,                  MONSANTO EXIT TO SUPERVISOR
+         EJECT
+*******************************************************************
+*                                                                 *
+*        CHECKUSE ROUTINE.                                        *
+*        COMPARE THE -LANG PARAMETER OF THE LIBRARIAN MODULE      *
+*        WITH A LIST OF CMS USERS.IF THERE IS A MATCH THE         *
+*        MODULE HAS BEEN SELECTED FOR CMS BY ANOTHER USER         *
+*        AND IS NOT ELIGIBLE FOR SELECTION.                       *
+*                                                                 *
+*******************************************************************
+         SPACE 3
+CHECKUSE SUBIN SAVE=(R4)           SUBROUTINE ENTRY
+         MVC   OLDLANG,DDLANG      ASSEMBLER(F) FRIG
+         SCAN  USERLIST,OLDLANG,LIMIT=LISTEND CHECK LIST
+         B     ELIGIBLE            MODULE IS NOT IN USE
+         MVC   USENAME,MODULE      SHOW NAME OF MODULE
+         MVC   USEUSER,DDLANG      SHOW USERS NAME
+         PUT   SYSPUNCH,USECARD    TELL CMS USER OF DUPLICATION
+         SUBOUT RESTORE=(R4)       RETURN TO MAINLINE
+         SPACE 2
+ELIGIBLE DS    0H                  MODULE IS NOT IN USE
+         SUBOUT RESTORE=(R4),RETURN=4(R4) RETURN AND CARRY ON
+         EJECT
+*******************************************************************
+*                                                                 *
+*        ERROR ROUTINE                                            *
+*        ON ANY ERROR THE PROGRAM TRANSMITS AN ERROR              *
+*        MESSAGE TO THE CMS USER AND ABENDS U2048.                *
+*                                                                 *
+*******************************************************************
+         SPACE 3
+ABEND    DS    0H                  AN ERROR HAS OCCURRED
+         DROP  R10                 END CONTROL INFO ADDRESSABILITY
+         CLI   READFLAG,ON         DID WE CREATE A :READ CARD?
+         BE    ABEND2              YES,CARRY ON
+         OPEN  (SYSPUNCH,OUTPUT)   OPEN FILE
+         PUT   SYSPUNCH,READCARD   OUTPUT ERROR FILE
+         SPACE 2
+ABEND2   DS    0H                  NOW SAFE TO SEND A MESSAGE
+         MVC   ERRNAME,MODULE      SHOW MODULE NAME
+         PUT   SYSPUNCH,ERRMSSG    TELL USER OF PROBLEM
+         CLOSE (SYSPUNCH,,SYSUT2)  FLUSH BUFFERS
+         ABEND 2048,DUMP           HALT EXECUTION
+         EJECT
+*******************************************************************
+*        SUPPLY DEFAULT RECORD LENGTH AND/OR BLOCK SIZE           *
+*         IF NOT CODED.                                           *
+*******************************************************************
+         SPACE 1
+BLKSZRTN SUBIN ,                   SUPPLY DEFAULT LRECL AND/OR BLKS
+         USING IHADCB,R1           ESTABLISH DCB ADDRESSABILITY
+         CLC   DCBLRECL,ZEROWORD   TEST IF LRECL SUPPLIED
+         BNE   *+8                 BYPASS DEFAULT IF YES
+         MVI   DCBLRECL+1,80       FORCE LRECL TO 80
+         CLC   DCBBLKSI,ZEROWORD   TEST IF BLKSIZE SUPPLIED
+         BNE   0(R14)              RETURN TO OPEN IF YES
+         MVC   DCBBLKSI,DCBLRECL   FORCE SINGLE BLOCKING
+         DROP  R1                  DROP DCB ADDRESSABILITY
+         SUBOUT RETURN=(R14)       RETURN TO OPEN ROUTINES
+         EJECT
+*******************************************************************
+*                                                                 *
+*                        DATA AREAS.                              *
+*                                                                 *
+*******************************************************************
+         SPACE 3
+PARMCHN  DC    F'0'                CHAIN ANCHOR FOR PARM ANALYSIS
+IDMODULE DS    0CL23               PARM FIELD SAVE AREA
+ACNT     DC    CL4' '              ACTIVITY CODE
+ID       DC    CL3' '              CMS IDENTIFIER
+IDFT     DC    CL8' '              CMS || FT  IDENTIFIER
+MODULE   DC    CL8' '              LIBRARIAN MODULE NAME
+INFO     DS    0CL100              LIBRARIAN MODULE INFORMATION
+PASSWORD DC    CL4' '              LIBRARIAN MODULE PASSWORD
+         DC    CL96' '             LIBRARIAN MODULE INFORMATION
+AREA     DS    0CL100              LIBRARIAN RECORD AREA
+         DC    CL80' '             CARD IMAGE
+         DC    CL20' '             ADDITIONAL INFORMATION
+         SPACE 1
+CONTROL  DC    360CL1' '           LIBRARIAN CONTROL INFORMATION
+         SPACE 2
+OLDLANG  DC    CL3' '              FRIG FOR SCAN MACRO
+READFLAG DC    XL1'00'             FLAG TO SAY :READ CARD CREATED
+ON       EQU   X'FF'               GOOD READFLAG VALUE
+ZEROWORD DC    F'0'                FULLWORD ZERO FOR TESTS
+         EJECT
+*
+*        TABLE OF CMS USERS
+*
+         SPACE 3
+USERLIST DS    0CL120              TABLE START
+         DC    CL5'TSG'
+         DC    CL5'DAM'
+         DC    CL5'DHC'
+         DC    CL5'PSG'
+         DC    CL5'JOE'
+         DC    CL5'JPR'
+         DC    CL5'JEA'
+         DC    CL5'IBM'
+         DC    CL5'MFT'
+         DC    CL5'MVS'
+         DC    CL5'RSC'
+         DC    CL5'OPE'
+         DC    CL5'MAI'
+         DC    CL5'CMS'
+         DC    10CL5'XXX'        SPARE ENTRIES
+LISTEND  EQU   *                   END OF LIST
+         EJECT
+*
+*        CMS CONTROL CARDS
+*
+         SPACE 3
+READCARD DS    0CL80               CMS :READ CARD
+         DC    CL6':READ'          OPERATION
+READNAME DC    CL8'ERROR'          DEFAULT CMS FILE NAME
+         DC    CL1' '
+READID   DC    CL8'TSG'            DEFAULT CMS USER ID
+         DC    CL1' '
+         DC    CL2'A3'             DEFAULT CMS FILE MODE
+         DC    CL54' '             PADDING
+         SPACE 2
+ERRMSSG  DS    0CL80               ERROR MESSAGE TO CMS
+ERRNAME  DC    CL8' '              MODULE NAME
+         DC    CL28' NOT RETRIEVED - ERROR CODE ' MESSAGE
+OPN      DC    CL1'P'              LIBRARIAN OPERATION IN PROGRESS
+RETCODE  DC    CL1'9'              LIBRARIAN RETURN CODE
+         DC    CL42' '             PADDING
+         SPACE 2
+USECARD  DS    0CL80               MODULE IN USE MESSAGE
+USENAME  DC    CL8' '              LIBRARIAN MODULE NAME
+         DC    CL14' IS IN USE BY ' ERROR MESSAGE
+USEUSER  DC    CL3' '              USER'S NAME
+         DC    CL55' '             PADDING
+         SPACE 3
+JOBCARD  DS    0CL80               O/S JOBCARD
+         DC    CL2'//'             JCL
+JOBNAME  DC    CL8' '              JOB NAME
+         DC    CL6' JOB ('
+JOBCHGC  DS    CL4
+         DC    CL5',5),'''
+JOBACNT  DC    CL4'99999'          ACTIVITY CODE
+         DC    CL1' '
+JOBID    DC    CL3' '              PROGRAMMER NAME
+         DC    CL47''',CLASS=N'    REST OF JOB CARD
+         EJECT
+*
+*        LIBRARIAN CONTROL CARDS
+*
+         SPACE 3
+OPTCARD  DC    CL80'-OPT NOEXEC,LIST,NOPC' LIBRARIAN -OPT CARD
+         SPACE 2
+SELCARD  DS    0CL80               LIBRARIAN -SEL CARD
+         DC    CL5'-SEL'           OPERATION
+SELNAME  DC    CL8' '              MODULE NAME RIGHT JUSTIFIED
+         DC    CL1','              A COMMA
+SELPSWD  DC    CL4' '              PASSWORD
+         DC    CL6',VERS='         THIS IS A PERMANENT UPDATE
+SELVERS  DC    CL4' '              DATE OF LAST UPDATE
+         DC    CL52' '             PADDING
+         SPACE 2
+LANGCARD DS    0CL80               LIBRARIAN -LANG CARD
+         DC    CL6'-LANG'          OPERATION
+LANGID   DC    CL3' '              CMS USER ID IS USED
+         DC    CL71' '             PADDING
+         SPACE 2
+HSTCARD  DS    0CL80               LIBRARIAN -HST CARD
+         DC    CL5'-HST'           OPERATION
+HSTNAME  DC    CL8' '              MODULE NAME
+         DC    CL38' MODULE REQUESTED FOR CMS TRANSFER BY ' DETAIL
+HSTID    DC    CL3' '              REQUESTOR'S NAME
+         DC    CL31' '             PADDING
+         SPACE 2
+ENDCARD  DC    CL80'-END'          LIBRARIAN -END CARD
+         EJECT
+SYSUT2   DCB   DDNAME=SYSUT2,DSORG=PS,MACRF=PM,RECFM=FB,               C
+               EXLST=EXITLIST      LIBRARIAN CONTROL FILE DEFINITION
+         SPACE 3
+SYSPUNCH DCB   DDNAME=SYSPUNCH,DSORG=PS,MACRF=PM,RECFM=FB,             C
+               EXLST=EXITLIST      CMS CONTROL FILE DEFINITION
+         SPACE 2
+EXITLIST DC    X'85',AL3(BLKSZRTN)  ENTRY FOR DCB COMPLETION
+         SPACE 3
+         LTORG
+         TITLE 'DCB DSECT'
+*******************************************************************
+*        DCB DSECT                                                *
+*******************************************************************
+         SPACE 1
+         PRINT NOGEN
+         DCBD  DSORG=PS            GENERATE DCB DSECT
+         END

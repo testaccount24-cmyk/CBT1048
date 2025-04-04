@@ -1,0 +1,235 @@
+         TITLE 'PARROTM - ISAM ROUTINES'
+         MACRO
+         $CB   &PRINT=OFF          MACRO TO GENERATE DSECTS
+         PUSH  PRINT               PRESERVE PRINT OPTIONS
+         PRINT &PRINT              SET PRINT OPTIONS FOR DSECTS
+               EJECT
+         CBPREFIX ,                CONTROL BLOCK PREFIX
+               EJECT
+         CCB   ,                   CENTRAL CONTROL BLOCK
+               EJECT
+         CSECTID ,                 CSECT IDENTIFICATION PREFIX
+               EJECT
+         DCBD  DSORG=IS            DSECT FOR ISAM DCB
+               EJECT
+         EQUATES ,                 GENERATE STANDARD EQUATES
+               EJECT
+         ISR   ,                   INDEXED SEQUENTIAL RETRIEVAL DEF'N
+         POP   PRINT               RESTORE ORIGINAL PRINT OPTIONS
+         MEND
+         SPACE 5
+PARROTM  CSECT
+         $CB   ,                   GENERATE DSECTS AND EQUATES
+         EJECT
+     SCSECT M
+         USING PARROTM,R12         ESTABLSH CSECT ADDRESABILITY
+         USING CCBNTRY,R13         ESTABLISH CCN ADDRESSABILITY
+         SPACE 1
+         ENTRY PARENDM             END OF CSECT
+         ENTRY ISOPEN              OPEN I.S. DATA SETS
+         ENTRY ISCLOSE             CLOSE I.S. DATA SETS
+         ENTRY ISRANDM             READ ISAM RANDOMLY
+         ENTRY BLDISCB             BUILD I.S. DCB DYNAMICALLY
+         TITLE 'PARROTM - OPEN ROUTINE FOR I.S. DATA STES'
+***********************************************************************
+*        OPEN ROUTINE FOR ISAM FILES                                  *
+***********************************************************************
+         SPACE 1
+         USING ISRNTRY,R6          ESTABLISH IST ADDRESSABILITY
+ISOPEN   SUBIN SAVE=ALL            PRESERVE ALL REGISTERS
+         LR    R5,R2               PRESERVE ADDRESS OF DCB SW
+         CBAL  R4,OPEN             OPEN ISAM D/S
+         TM    IOPSSW(R5),IOSWOPEN TEST IF OPEN SUCCESSFUL
+         BZ    ISOPENX             BYPASS REMAINDER IF NOT
+         L     R6,$ISRISR          RETRIEVE ADDRESS OF 1ST ISR
+ISOPEN1  LTRR  R6,R6               TEST FOR END OF CHAIN
+         BZ    ISOPENX             EXIT IF END OF CHAIN
+         CLI   ISRID,FLAGISR       VERIFY THAT THIS AN ISR
+         BNE   ISOPEN2             BR IF NOT CB20 TO GET NEXT C/B
+         CLC   ISRDCBSW+IOPSDDN(8),IOPSDDN(R5) IS THIS THE DAME DDNAME
+         BNE   ISOPEN2 BR IF NOT TO GET NEXT
+         OI    ISRDCBSW+IOPSSW,IOSWOPEN FLAG DCB AS OPEN
+         OC    ISRDCBSW+IOPSRECA(4),ISRDCBSW+IOPSRECA IS REC S/A ALLOCA
+         BNZ   ISOPEN3             BR IF ALLOCATED
+         L     R2,ISRDCBSW-IOPSDCB GET ADDRESS OF DCB
+         USING IHADCB,R2           ESRABLISH DCB ADDRESSABILITY
+         LH    R2,DCBLRECL         GET RECORD LENGTH
+         CBAL  R4,GETMAIN          GET CORE FOR RECORD SAVE AREA
+         ST    R1,ISRDCBSW+IOPSRECA PRESERVE STORAGE AREA ADDRESS
+ISOPEN3  L     R2,ISRDCBSW+IOPSDCB GET ADDRESS OF DCB
+         CLC   ISRKLEN,DCBKEYLE    COMPARE DCB KEYLEN WITH COMPURED
+         BE    ISOPEN2             BR IF EQUAL
+         ABEND 32                  DUMP IF NOT THE SAME
+         DROP  R2                  DROP DCB ADDRESSABILITY
+ISOPEN2  L     R6,ISRISR           GET ADDRESS OF NEXT ISR
+         B     ISOPEN1             LOOP BACK TO PROCESS
+ISOPENX SUBOUT RESTORE=ALL         RESTORE AND RETURN TO CALLER
+         DROP  R6                  DROP CB20 ADDRESSABILITY
+         TITLE 'PARROTM - CLOSE ROUTINE FOR I.S. DATA SETS'
+***********************************************************************
+*        CLOSE ROUTINE FOR ISAM FILES                                 *
+***********************************************************************
+         SPACE 1
+         USING ISRNTRY,R6          ESTABLISH ISR ADDRESSABILITY
+ISCLOSE  SUBIN SAVE=(R4,R5,R6)     PRESERVE RGISTERS
+         LR    R5,R2               PRESERVE ADDRESS OF DCB SW
+         L     R2,IOPSDCB(R2)      GET ADDRESS OF DCB
+         TM    IOPSSW(R5),IOSWOPEN TEST IF D/S IS OPEN
+         BZ    ISCLOSEX            BYPASS ROUTINE IF CLOSED
+         CLOSE ((R2))              CLOSE IS D/S (WITH NO FREEPOOL)
+         L     R6,$ISRISR          GET ADDRESS OF 1ST ISR
+ISCLOSE1 LTRR  R6,R6               TEST FOR END OF CHAIN
+         BZ    ISCLOSEX            EXIT IF END OF CHAIN
+         CLI   ISRID,FLAGISR       VERIFY THAT THIS A ISR
+         BNE   ISCLOSE2            BR IF NOT CB20 TO GET NEXT C/B
+         CLC   ISRDCBSW+IOPSDDN(8),IOPSDDN(R5) IS THIS THE SAME DDNAME
+         BNE   ISCLOSE2            BR IF NOT TO GET NEXT C/B
+         NI    ISRDCBSW+IOPSSW,IOSWCLOS INDICATE DATA SET IS CLOSED
+ISCLOSE2 L     R6,ISRISR           GET ADDRESS OF NEXT ISR
+         B     ISCLOSE1            LOOP BACK TO PROCESS
+ISCLOSEX SUBOUT RESTORE=(R4,R5,R6) RESTORE & RETURN TO CALLER
+         DROP  R6                  DROP CB20 ADDRESSABILITY
+         TITLE 'PARROTM - READ I.S. DATA SET RANDOMLY'
+***********************************************************************
+*        READ ISAM FILE RANDOMLY                                      *
+***********************************************************************
+         SPACE 1
+*        ON ENTRY, R8 CONTAINS THE ADDRESS OF THE CB20 DEFINING THE KEY
+*         AND THE ISAM FILE.  FIELD CB20XORY IS SET ( BY THIS ROUTINE
+*         AND THE SYNAD EXIT ) THUS :-
+*              W - ERROR OTHER THAN RECORD NOT FOUND
+*              X - RECORD FOUND
+*              Y - RECORD NOT FOUND
+         SPACE 1
+         USING ISRNTRY,R8          ESTAVLISH ISR ADDRESSABILITY
+ISRANDM  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS
+         IOM   ISRANDOM,ISRDCBSW,ISRTKEY READ RANDOM *ECORD
+         EJECT
+***********************************************************************
+*        READ ISAM FILE RANDOMLY ( CONT'D )                           *
+***********************************************************************
+         SPACE 1
+         CBAL  R4,VARMOVE          MOVE RECORD TO STORAGE AREA
+ISRANDMX CLI   ISRDCBSW+IOPSISI,C'X' SET COND CODE FOR USER
+        SUBOUT RESTORE=R4          RESTORE & RETURN TO CALLER
+         DROP  R8                  FROP CB20 ADDRESSABILITY
+         TITLE 'PARROTM - CONSTRUCT I.S.DCB''S DYNAMICALLY'
+***********************************************************************
+*        CONSTRUCT ISAM DCB'S FOR ISR'S                               *
+***********************************************************************
+         SPACE 1
+         USING ISRNTRY,R6          ESTABLISH ISR ADDRSSABILITY
+         USING IHADCB,R10          ESTABLISH DCB ADDRESSABILITY
+BLDISCB  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS
+         L     R6,$ISRISR          GET 1ST C/B IN CHAIN
+CCISDCB  LTRR  R6,R6               TEST FOR END OF CHAIN
+         BZ    CCLINKX2            EXIT IF END OF CHAIN
+         CLI   ISRID,FLAGISR       IS THIS AN ISR
+         BNE   CCISDCB6            BR IF NOT TO GET NEXT C/B
+         OC    ISRDCBSW+IOPSDCB+1(3),ISRDCBSW+IOPSDCB+1 DOES DCB EXIST
+         BNZ   CCISDCB6            BR IF YES TO GET NEXT C/B
+         LA    R2,DCBWKPT6-IHADCB+4 SET LENGTH OF IS DCB
+         CBAL  R4,GETMAIN          ACQUIRE CORE FOR DCB
+         STCM  R1,7,ISRDCBSW+IOPSDCB+1 PRESERVE DCB ADDR IN C/B
+         LR    R10,R1              ESTABLISH DCB ADDRESSABILITY
+         L     R8,ISRISR           USE R8 TO CHAIN FORWARD
+CCISDCB1 LTRR  R8,R8               TEST FOR END OF CHAIN
+         BZ    CCISDCB3            BR IF END OF CHAIN
+         CLI   ISRID-ISRNTRY(R8),FLAGISR IS THIS AN ISR
+         BNE   CCISDCB2            BR IF NOT TO GET NEXT
+         CLC   ISRDCBSW+IOPSDDN(8),ISRDCBSW+IOPSDDN-ISRNTRY(R8) SAME N?
+         BNE   CCISDCB2            BR IF NOT TO CHAIN FORWARD
+         MVC   ISRDCBSW+IOPSDCB+1-ISRNTRY(3,R8),ISRDCBSW+IOPSDCB+1
+CCISDCB2 L     R8,ISRISR-ISRNTRY(,R8) GET ADDR OF NEXT C/B
+         B     CCISDCB1            POOL BACK TO PROCESS
+CCISDCB3 MVC   DCBDDNAM,ISRDCBSW+IOPSDDN ADD DDNAME TO DCB
+         MVI   DCBDSORG,DCBDSGIS   FLAG AS ISAM DCB
+         MVI   DCBOFLGS,DCBOFUEX   FLAG AS WITHIN IOS
+         LA    R8,ISIOERR          GET ADDR OF SYNAD EXIT
+         ST    R8,DCBSYNAD          ... AND STOR IN DCB
+         MVI   DCBMACR,DCBMRRD+DCBMRDBF FLAG AS BISAM READ ...
+*                                   ... WITH DYNAMIC BUFFERING
+         LA    R8,1                PUT A(1) IN REG 8
+         SR    R9,R9               ZEROISE WORK REGISTER
+         LA    R7,DCBTABL1         POINT R7 AT TABL OF DISPLACEMENTS
+         EJECT
+**************************************<********************************
+*        CONSTRUCT ISAM DCB'S ( CONT'D )                              *
+**************************************<********************************
+         SPACE 1
+CCISDCB4 CLI   0(R7),X'FF'         TEST FOR END OF TABLE
+         BE    CCISDCB5            BR IF EOT
+         IC    R9,0(R7)            GET DISPLACEMENT WITHIN DCB
+         ST    R8,IHADCB(R9)       STORE A(1) IN DCB + XXX
+         LA    R7,1(,R7)           INCREMENT TO NEXT TABLE ENTRY
+         B     CCISDCB4            LOOP BACJ TO PROCESS
+CCISDCB5 LA    R2,EXITLISX         POINT R2 AT EXIT LIST
+         ST    R2,DCBEXLST         POINT DCB AT EXIT LIST
+         LA    R2,ISRDCBSW         POINT AT DCBSW FOR OPEN
+         CBAL  R4,ISOPEN           OPEN DCB & GET REC SAVE AREA
+CCISDCB6 L     R6,ISRISR           GET ADDRESS OF NEXT C/B
+         B     CCISDCB             LOOP BACK TO PROCESS
+         DROP  R6,R10              DROP ADDRESSABILITY
+         SPACE 1
+CCLINKX2 SUBOUT RESTORE=R4         RETSORE & RETRUN TO CALLER
+         TITLE 'PARROTM - SET UP MASTER INDICES IN CORE'
+***********************************************************************
+*        SET UP I.S. MASTER INDICES IN CORE                           *
+***********************************************************************
+         SPACE 1
+ISINDEX  SUBIN ,                   ENTER ROUTINE
+         USING IHADCB,R1           ESTABLISH DCB ADDRESSABILITY
+         LH    R4,DCBNCRHI         GET SIZE OF MASTER INDEX FROM LABEL
+         A     R4,$SIZEISX         ADD SIZE OF INDICES SO FAR
+         ST    R4,$SIZEISX         PRESERVE UPDATED INDEX SIZE
+         TM    SWINIT,MINTNOIX     ARE MASTER INDICES REQUIRED
+         BO    ISINDXX             BR IF INDEX SUPPRESSED
+         MVC   DCBSMSI,DCBNCRHI    SET SIZE OF INDEX WORK AREA
+         LR    R3,R1               PRESERVE DCB ADDRESS
+         LH    R0,DCBNCRHI         SET REQUIRED CORE SIZE FOR GETMAIN
+         LTR   R1,R0               IS INDEX SIZE ZERO
+         BZ    ISINDXX             BR IF INDEX OF ZERO SIZE
+       GETMAIN R,LV=(0)            ACQUIRE CORE FOR INDEX
+         STCM  R1,7,DCBMSHI-IHADCB+1(R3) PUT ADDRESS OF AREA IN DCB
+         LR    R1,R3               RESTORE DCB ADDRESS
+ISINDXX SUBOUT RETURN=(R14)        RETURN TO CO,PLETE OPEN
+         TITLE 'PARROTM - ISAM I/O ERROR ROUTINE'
+***********************************************************************
+*        I/O ERROR ROUTINE FOR RANDOM ISAM SEARCH                     *
+***********************************************************************
+         SPACE 1
+         USING ISRNTRY,R8          ESTABLISH ISR ADDRESSABLIITY
+         USING IHADCB,R1           ESTABLISH DCB ADDRESSABULITY
+ISIOERR  SUBIN ,                   ENTER SYNAD EXIT
+         MVI   ISRDCBSW+IOPSISI,C'Y' ASSUME RECORD NOT FOUND
+         TM    DCBEXCD1,DCBEXNKY   TEST IF RECORD NOT FOUND
+         BO    *+8                 BR IF RECOR  NOT FOUND
+         MVI   ISRDCBSW+IOPSISI,C'W' SHOW OTHER ERROR
+        SUBOUT RETURN=(R14)        RETURN TO I/O SUPERVISOR
+         DROP  R1,R8               DROP ADDRESSABILITY
+         TITLE 'PARROTM - DISPLACEMENT FOR ISAM DCB CONSTRUCTION'
+DCBTABL1 EQU   *                   TABLE OF IS DCB DISPLACEMENTS
+         DC    AL1(DCBBUFCB-IHADCB)
+         DC    AL1(DCBIOBAD-IHADCB)
+         DC    AL1(DCBESETL-IHADCB)
+         DC    AL1(DCBRELSE-IHADCB)
+         DC    AL1(DCBRELEX-IHADCB)
+         DC    AL1(DCBFREED-IHADCB)
+         DC    AL1(DCBWKPT1-IHADCB)
+         DC    AL1(DCBWKPT2-IHADCB)
+         DC    AL1(DCBWKPT3-IHADCB)
+         DC    AL1(DCBWKPT4-IHADCB)
+         DC    AL1(DCBWKPT5-IHADCB)
+         DC    AL1(DCBWKPT6-IHADCB)
+         DC    AL1(DCBMSWA-IHADCB)
+         DC    AL1(DCBMSHI-IHADCB)
+         DC    AL1(DCBSETL-IHADCB)
+         DC    AL1(DCBLRAN-IHADCB)
+         DC    AL1(DCBLWKN-IHADCB)
+         DC    AL1(DCBPUTX-IHADCB)
+         DC    X'FF'               END OF TABLE
+         SPACE 1
+EXITLISX DC    X'85',AL3(ISINDEX)  SET UP I.S. MASTER INDEX IN CORE
+         SPACE 5
+        SCSEND M                   TERMINATE CSECT PARROTM
+         END

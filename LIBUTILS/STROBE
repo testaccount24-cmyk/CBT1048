@@ -1,0 +1,1662 @@
+ /*                            S T R O B E                         */     000010
+ /*                                                                */     000020
+ /*  STROBE                                                        */     000030
+ /*  ------                                                        */     000040
+ /*                                                                */     000050
+ /*  THIS PROGRAM TAKES SNAPSHOTS OF SMF DATA, AND REPORTS WHAT    */     000060
+ /*  IS GOING ON AT ANY PARTICULAR TIME.                           */     000070
+ /*                                                                */     000080
+ /******************************************************************/     000090
+ /*                                                                */     000100
+ /*  FILES                                                         */     000110
+ /*  -----                                                         */     000120
+ /*                                                                */     000130
+ /*  SYSUT1 - THE INPUT SMF DATA FILE. FORMAT WILL BE DEFINED      */     000140
+ /*           IN THE SYSLIN CONTROL CARD SET. THIS FILE MUST BE    */     000150
+ /*           IN ASCENDING SEQUENCE OF START-TIME. MAXIMUM LOGICAL */     000160
+ /*           RECORD LENGTH IS 4096 BYTES.                         */     000170
+ /*                                                                */     000180
+ /*  PRINT  - THE REPORT FROM THE PROGRAM. WILL CONTAIN, ON EACH   */     000190
+ /*           LINE, THE TIME OF THE SNAPSHOT, AND THEN A LIST      */     000200
+ /*           OF THE THINGS HAPPENING AT THAT TIME. REQUIRED DCB   */     000210
+ /*           IS RECFM=FBA,BLKSIZE=133.                            */     000220
+ /*                                                                */     000230
+ /*  SYSLIN - THE CONTROL CARD SET, DEFINING THE FORMAT OF THE     */     000240
+ /*           SMF RECORDS TO BE PROCESSED.                         */     000250
+ /*           THIS FILE CONTAINS CARD IMAGES, WITH FREE-FORMAT     */     000260
+ /*           KEYWORD PARAMETERS ACROSS EACH CARD.                 */     000270
+ /*           THESE KEYWORD PARAMETERS MUST BE SEPARATED BY AT     */     000280
+ /*           LEAST ONE SPACE, AND MUST NOT THEMSELVES CONTAIN     */     000290
+ /*           SPACES, EXCEPT IN QUOTED LITERALS.                   */     000300
+ /*  M/O      THE AVAILABLE KEYWORDS ARE:                          */     000310
+ /*  O        RECORDID=(PPP,LL,'LIT')   RECORD SELECTION CRITERIA  */     000320
+ /*  O        TITLE='REPORT TITLE'      REPORT TITLE               */     000330
+ /*  M        STARTTIME=PPP             POSITION OF START TIME     */     000340
+ /*  O-OR-    ENDTIME=PPP               POSITION OF END TIME       */     000350
+ /*   -OR-O   DURATION=PPP              POSITION OF DURATION FIELD */     000360
+ /*  M        NAME=(PPP,LL)             POSN & LEN OF NAME FIELD   */     000370
+ /*  M        STARTDATE=PPP             POSITION OF START DATE     */     000380
+ /*  O        ENDDATE=PPP               POSITION OF END DATE       */     000390
+ /*  M        TIMEFORMAT=XXXXXX         FORMAT OF TIME FIELD       */     000400
+ /*  M        DATEFORMAT=XXXXXX         FORMAT OF DATE FIELD       */     000410
+ /*  O        EXIT=XXXXXXXX             NAME OF USER EXIT          */     000420
+ /*  O        MAXOFLOW=NN               MAXIMUM PERMITTED OVERFLOWS*/     000430
+ /*  O        COLUMNS=(XXXX,XXXX,.......,XXXX)                       */   000440
+ /*                                    PRE-SELECTED COLUMN NAMES;    */   000450
+ /*                                    ALL OTHERS GO TO OVERFLOW.    */   000460
+ /*                                                                */     000470
+ /*           PERMITTED ABBREVIATIONS FOR THESE KEYWORDS ARE:      */     000480
+ /*                                                                */     000490
+ /*           RECORDID=   :  ID=        TITLE=       :  TL=        */     000500
+ /*           STARTTIME=  :  ST=        ENDTIME=     :  ET=        */     000510
+ /*           DURATION=   :  DR=        NAME=        :  NM=        */     000520
+ /*           STARTDATE=  :  SD=        EXIT=        :  EX=        */     000530
+ /*           ENDDATE=    :  ED=        TIMEFORMAT=  :  TF=        */     000540
+ /*           DATEFORMAT= :  DF=        MAXOFL=      :  MO=        */     000550
+ /*           COLUMNS=    :  CL=                                     */   000560
+ /*                                                                */     000570
+ /*      CURRENTLY SUPPORTED DATE FORMATS ARE:                     */     000580
+ /*                                                                */     000590
+ /*      YYDDDP   - JULIAN DATE IN 3-BYTE PACKED DECIMAL FIELD     */     000600
+ /*      YYMMDD   - 6-BYTE DISPLAY NUMERIC FIELD                   */     000610
+ /*                                                                */     000620
+ /*                                                                */     000630
+ /*      CURRENTLY SUPPORTED TIME FORMATS ARE:                     */     000640
+ /*                                                                */     000650
+ /*      HUNSEC   - TIME IN HUNDREDTHS OF SECOND IN 4-BYTE BINARY  */     000660
+ /*      PAKMIN   - TIME IN HUNDREDTHS OF MINUTE IN 4-BYTE PACKED  */     000670
+ /*      HHMMPS   - START TIME IN 4-BYTE DISPLAY NUMERIC,          */     000680
+ /*                 DURATION IN 3-BYTE PACKED DECIMAL IN SECONDS   */     000690
+ /*                                                                */     000700
+1/*  SYSIN   - CONTROL CARD SET OF THE CRITERIA FOR THE TIMING     */     000710
+ /*            OF THE SNAPSHOTS. ONE OR MORE CARDS CONTAINING      */     000720
+ /*            KEYWORD PARAMETERS, EACH SEPARATED BY AT LEAST      */     000730
+ /*            ONE BLANK. OPTIONALLY THIS DATA SET MAY BE REPLACED */     000740
+ /*            BY A SINGLE EXECUTION-TIME PARAMETER CONTAINING     */     000750
+ /*            THE REQUIRED KEYWORDS. IF BOTH THE SYSIN DATA SET   */     000760
+ /*            AND THE EXECUTION TIME PARAMETER ARE ENTERED, THE   */     000770
+ /*            SYSIN FILE WILL BE IGNORED.                         */     000780
+ /*                                                                */     000790
+ /*            REQUIRED KEYWORDS ARE:                              */     000800
+ /*            SNAPSTART=YYDDDHHMM     /     SS=YYDDDHHMM          */     000810
+ /*            SNAPEND=YYDDDHHMM       /     SE=YYDDDHHMM          */     000820
+ /*            INTERVAL=(XX,NN)        /     IV=(XX,NN)            */     000830
+ /*            (IN THIS LAST ONE, XX IS INTERVAL TYPE MM, SS ETC)  */     000840
+ /*            OPTIONALLY, SS=SS MEANS START AT START OF FILE      */     000850
+ /*                        SE=SE MEANS END SNAPSHOT AT EOF.        */     000860
+ /*                                                                */     000870
+ /*            OPTIONAL KEYWORD:                                   */     000880
+ /*            BLANK=NO                /     BL=NO                 */     000890
+ /*            (WILL SUPPRESS PRINTING SNAPS WHERE NOTHING HAPPENS)*/     000900
+ /*                                                                */     000910
+ /******************************************************************/     000920
+ /*                                                                */     000930
+ /*  PSEUDO-CODE                                                   */     000940
+ /*  -----------                                                   */     000950
+ /*                                                                */     000960
+ /*      MAIN                                                      */     000970
+ /*      ----                                                      */     000980
+ /*                                                                */     000990
+ /*      UNPACK SYSLIN .......................ROUTINE $USLIN       */     001000
+ /*      GET PARAMETER                                             */     001010
+ /*      IF (PARAMETER-EXISTS)                                     */     001020
+ /*         THEN MOVE PARAMETER TO STRING                          */     001030
+ /*         ELSE LOAD SYSIN TO STRING ........ROUTINE $USYSN       */     001040
+ /*      ENDIF                                                     */     001050
+ /*      UNPACK STRING ........................ROUTINE $USTRNG     */     001060
+ /*      ALLOCATE PRINT & OVERFLOW ARRAYS                          */     001070
+ /*      PROCESS SYSUT1 ......................ROUTINE $PSUT1       */     001080
+ /*      ENDJOB                                                    */     001090
+ /*                                                                */     001100
+ /******************************************************************/     001110
+1/******************************************************************/     001120
+ /*                                                                */     001130
+ /*      $USLIN                                                    */     001140
+ /*      ------                                                    */     001150
+ /*                                                                */     001160
+ /*      SET DATASTRING NULL                                       */     001170
+ /*      READ SYSLIN RECORD                                        */     001180
+ /*      DO WHILE(MORE-RECORDS)                                    */     001190
+ /*         DATASTRING = DATASTRING || THIS-RECORD                 */     001200
+ /*         READ SYSLIN RECORD                                     */     001210
+ /*      ENDDO                                                     */     001220
+ /*      LOOK AT FIRST PARAMETER                                   */     001230
+ /*      DO WHILE(MORE PARAMETERS)                                 */     001240
+ /*         SCAN DATASTRING FOR PARAMETER OR ABBREVIATION          */     001250
+ /*         IF THERE                                               */     001260
+ /*            THEN MOVE DATA TO CONTROL BLOCK                     */     001270
+ /*                 IF KEYWORD IS ENDTIME OR DURATION              */     001280
+ /*                    THEN SET END/DUR SWITCH ON                  */     001290
+ /*                 ENDIF                                          */     001300
+ /*            ELSE IF KEYWORD IS OPTIONAL                         */     001310
+ /*                    THEN SET DEFAULT VALUES                     */     001320
+ /*                    ELSE PRINT ERROR MESSAGE                    */     001330
+ /*                         SET ERROR FLAG                         */     001340
+ /*                 ENDIF                                          */     001350
+ /*         ENDIF                                                  */     001360
+ /*         LOOK AT NEXT PARAMETER                                 */     001370
+ /*      ENDDO                                                     */     001380
+ /*      IF END/DUR SWITCH OFF                                     */     001390
+ /*         THEN PRINT ERROR MESSAGE                               */     001400
+ /*      ENDIF                                                     */     001410
+ /*      IF ERROR FLAG SET OR END/DUR SWITCH OFF                   */     001420
+ /*         THEN DUMP                                              */     001430
+ /*      ENDIF                                                     */     001440
+ /*                                                                */     001450
+1/*      USTRNG                                                    */     001460
+ /*      -----                                                     */     001470
+ /*                                                                */     001480
+ /*      SCAN FOR SNAPSTART                                        */     001490
+ /*      IF THERE                                                  */     001500
+ /*         THEN LOAD CONTROL BLOCKS                               */     001510
+ /*         ELSE PRINT ERROR MESSAGE                               */     001520
+ /*              SET ERROR FLAG                                    */     001530
+ /*      ENDIF                                                     */     001540
+ /*      SCAN FOR SNAPEND                                          */     001550
+ /*      IF THERE                                                  */     001560
+ /*         THEN LOAD CONTROL BLOCKS                               */     001570
+ /*         ELSE PRINT ERROR MESSAGE                               */     001580
+ /*              SET ERROR FLAG                                    */     001590
+ /*      ENDIF                                                     */     001600
+ /*      SCAN FOR INTERVAL                                         */     001610
+ /*      IF THERE                                                  */     001620
+ /*         THEN LOAD CONTROL BLOCKS                               */     001630
+ /*         ELSE PRINT ERROR MESSAGE                               */     001640
+ /*              SET ERROR FLAG                                    */     001650
+ /*      ENDIF                                                     */     001660
+ /*      IF ERROR FLAG SET                                         */     001670
+ /*         THEN DUMP                                              */     001680
+ /*      ENDIF                                                     */     001690
+ /*                                                                */     001700
+1/*      USYSN                                                     */     001710
+ /*      -----                                                     */     001720
+ /*                                                                */     001730
+ /*      SET DATASTRING NULL                                       */     001740
+ /*      READ SYSIN RECORD                                         */     001750
+ /*      DO WHILE(RECORD EXISTS)                                   */     001760
+ /*         DATASTRING || SYSIN RECORD                             */     001770
+ /*         READ SYSIN RECORD                                      */     001780
+ /*      ENDDO                                                     */     001790
+ /*                                                                */     001800
+ /*      PSUT1                                                     */     001810
+ /*      -----                                                     */     001820
+ /*                                                                */     001830
+ /*      READ SYSUT1 RECORD                                        */     001840
+ /*      IF SNAPSTART = 'SS'                                       */     001850
+ /*         THEN SET SNAPSTART = RECORD START TIME                 */     001860
+ /*      ENDIF                                                     */     001870
+ /*      SET NOWTIME = SNAPSTART                                   */     001880
+ /*      DO WHILE(RECORD EXISTS & NOWTIME <= SNAPEND)              */     001890
+ /*         IF RECORD-ID IS OK                                     */     001900
+ /*            THEN PROCESS RECORD ............. ROUTINE $PRECD    */     001910
+ /*         ENDIF                                                  */     001920
+ /*         READ SYSUT1 RECORD                                     */     001930
+ /*      ENDDO                                                     */     001940
+ /*      DO WHILE(NOWTIME <= SNAPEND)                              */     001950
+ /*         IF NAMES STORED                                        */     001960
+ /*            THEN PRINT STORE ..................ROUTINE $PSTOR   */     001970
+ /*         ENDIF                                                  */     001980
+ /*      ENDDO                                                     */     001990
+ /*                                                                */     002000
+ /*      PRECD                                                     */     002010
+ /*      -----                                                     */     002020
+ /*                                                                */     002030
+ /*      UNPACK DATES AND TIMES .................ROUTINE $UNPDT    */     002040
+ /*                                                                */     002050
+ /*      COMMENT: FIELDS RECSTART & RECEND NOW CONTAIN COMBINED    */     002060
+ /*               DATE || TIME FROM THE RECORD                     */     002070
+ /*                                                                */     002080
+ /*      DO WHILE(RECSTART > NOWTIME)                              */     002090
+ /*         PRINT STORE ......................ROUTINE $PSTOR       */     002100
+ /*      ENDDO                                                     */     002110
+ /*      IF COLUMNAR PRINT REQUIRED                                  */   002120
+ /*         THEN LOAD RECORD TO COLUMNS  .......... ROUTINE SLCOLS   */   002130
+ /*         ELSE LOAD RECORD TO STORE    .......... ROUTINE SLSTOR   */   002140
+ /*      ENDIF                                                       */   002150
+ /*                                                                */     002160
+1/*      UNPDT                                                     */     002170
+ /*      -----                                                     */     002180
+ /*                                                                */     002190
+ /*      THIS ROUTINE WILL CALL ONE OF SEVERAL PROCEDURES WHICH    */     002200
+ /*      WILL BE COMPILED INTERNAL INTO THE PROGRAM TO UNPACK      */     002210
+ /*      ALL THE VARIOUS POSSIBLE TIME AND DATE FORMATS FROM THE   */     002220
+ /*      RECORD. THE ROUTINE WILL BE A SERIES OF TESTS FOR THE     */     002230
+ /*      FORMAT SPECIFIED, AND WILL CALL THE APPROPRIATE PROC.     */     002240
+ /*      IF FOR ANY FUTURE APPLICATION OF THE PROGRAM, A DIFFERENT */     002250
+ /*      FORMAT OF EITHER DATA OR TIME FIELD IS ENCOUNTERED, THIS  */     002260
+ /*      SECTION WILL HAVE TO HAVE AN EXTRA 'IF' INSERTED, AND     */     002270
+ /*      AN EXTRA PROC WILL HAVE TO BE WRITTEN TO DO THE UNPACKING */     002280
+ /*      SEE COMMENTS IN THE SECTION ITSELF FOR FURTHER DETAILS.   */     002290
+ /*                                                                */     002300
+ /*      PSTOR                                                     */     002310
+ /*      -----                                                     */     002320
+ /*                                                                */     002330
+ /*      PRINT SNAPSHOT ......................ROUTINE $PSNAP       */     002340
+ /*      ADD INTERVAL TO NOWTIME .............ROUTINE $ADINV       */     002350
+ /*      GET OVERFLOW ITEM                                         */     002360
+ /*      DO WHILE(ITEM EXISTS)                                     */     002370
+ /*         IF RECEND < NOWTIME                                    */     002380
+ /*            THEN DELETE ITEM                                    */     002390
+ /*         ENDIF                                                  */     002400
+ /*         GET OVERFLOW ITEM                                      */     002410
+ /*      ENDDO                                                     */     002420
+ /*      GET STORE ITEM                                            */     002430
+ /*      DO WHILE(ITEM EXISTS)                                     */     002440
+ /*         IF RECEND < NOWTIME                                    */     002450
+ /*            THEN DELETE ITEM                                    */     002460
+ /*                 IF OVERFLOW EXISTS & COLUMNAR NOT REQUIRED       */   002470
+ /*                    THEN MOVE OVERFLOW TO STORE                 */     002480
+ /*                 ENDIF                                          */     002490
+ /*         ENDIF                                                  */     002500
+ /*         GET STORE ITEM                                         */     002510
+ /*      ENDDO                                                     */     002520
+ /*      IF STORE EMPTY AMD BLANK = NO                               */   002530
+ /*         THEN DO WHILE RECSTART > NOWTIME                         */   002540
+ /*                 ADD INTERVAL TO NOWTIME                          */   002550
+ /*              ENDDO                                               */   002560
+ /*      ENDIF                                                       */   002570
+ /*                                                                */     002580
+1/*      LSTOR                                                     */     002590
+ /*      -----                                                     */     002600
+ /*                                                                */     002610
+ /*      LOOK AT STORE SPACE                                       */     002620
+ /*      DO WHILE(SPACE OCCUPIED & MORE STORE SPACE)               */     002630
+ /*         LOOK AT NEXT STORE SPACE                               */     002640
+ /*      ENDDO                                                     */     002650
+ /*      IF MORE STORE SPACE                                       */     002660
+ /*         THEN LOAD ITEM                                         */     002670
+ /*         ELSE LOOK AT OVERFLOW SPACE                            */     002680
+ /*              DO WHILE(SPACE OCCUPIED & MORE OVERFLOWS)         */     002690
+ /*                 LOOK AT NEXT OVERFLOW SPACE                    */     002700
+ /*              ENDDO                                             */     002710
+ /*              IF MORE-OVERFLOWS                                 */     002720
+ /*                 THEN LOAD ITEM                                 */     002730
+ /*                 ELSE PRINT 'INSUFFICIENT OVERFLOW AREA'        */     002740
+ /*                      DUMP                                      */     002750
+ /*              ENDIF                                             */     002760
+ /*      ENDIF                                                     */     002770
+ /*                                                                */     002780
+ /*                                                                  */   002790
+ /*      LCOLS                                                       */   002800
+ /*      -----                                                       */   002810
+ /*                                                                  */   002820
+ /*      SCAN COLUMN HEADINGS FOR THIS ITEM                          */   002830
+ /*      IF ITEM-EXISTS                                              */   002840
+ /*         THEN LOAD ITEM                                           */   002850
+ /*         ELSE CHECK OVERFLOW (SEE IN LSTOR ABOVE)                 */   002860
+ /*      ENDIF                                                       */   002870
+ /*                                                                  */   002880
+ /**++**++**++**++**++**++**++**++**++**++**++**++**++**++**++**++**/     002890
+1STROBE: PROC(PARAM) OPTIONS(MAIN);                                       002900
+0/********************************************************************/   002910
+ /*                                                                  */   002920
+ /*      FILES: SYSUT1 = CMF DATA RECORDS                            */   002930
+ /*             SYSLIN = UNPACKING CRITERIA FOR SYSUT1               */   002940
+ /*             SYSIN  = TIMING CRITERIA FOR SNAPSHOTS               */   002950
+ /*             PRINT  = OUTPUT REPORT                               */   002960
+ /*                                                                  */   002970
+ /*            (PARAM) = OPTIONAL PARAMETER TO REPLACE SYSIN FILE    */   002980
+ /*                                                                  */   002990
+ /*      DECLARES ARE FOR: THE FILES THEMSELVES                      */   003000
+ /*                        THE RECORD AREAS (EXCEPT PRINT)           */   003010
+ /*                        END-OF-FILE FLAGS                         */   003020
+ /*                        AREA FOR USER EXIT NAME                   */   003030
+ /*                        POINTERS FOR USER EXIT & SYSUT1 RECORD    */   003040
+ /*                                                                  */   003050
+ /*      ENDFILE CONDITIONS FOR THE THREE INPUT FILES ARE SET.       */   003060
+ /*                                                                  */   003070
+ /********************************************************************/   003080
+-        DCL                                                              003090
+         SYSUT1 FILE RECORD SEQUENTIAL,                                   003100
+         SYSLIN FILE RECORD SEQUENTIAL,                                   003110
+         SYSIN  FILE RECORD SEQUENTIAL,                                   003120
+         PRINT  FILE RECORD SEQUENTIAL;                                   003130
+0        DCL                                                              003140
+         PARAM CHAR(4096) VARYING;                                        003150
+0        DCL                                                              003160
+         SYSLIN_RECORD CHAR(80);                                          003170
+0        DCL                                                              003180
+         SYSIN_RECORD CHAR(80);                                           003190
+0        DCL                                                              003200
+         SYSUT1_RECORD CHAR(4096) VARYING;                                003210
+0        DCL                                                              003220
+         EOF_SYSLIN CHAR(2) INIT('NO'),                                   003230
+         EOF_SYSUT1 CHAR(2) INIT('NO'),                                   003240
+         EOF_SYSIN  CHAR(2) INIT('NO');                                   003250
+         DCL                                                              003260
+         EXIT_NAME CHAR(8) INIT(' '),                                     003270
+         EXIT_PTR1 FIXED(15) BASED(EXIT_P1),                              003280
+         EXIT_PTR2 FIXED(15) BASED(EXIT_P2);                              003290
+         EXIT_P1 = ADDR(EXIT_NAME);                                       003300
+         EXIT_P2 = ADDR(SYSUT1_RECORD);                                   003310
+-        ON ENDFILE(SYSLIN) EOF_SYSLIN = 'YS';                            003320
+         ON ENDFILE(SYSUT1) EOF_SYSUT1 = 'YS';                            003330
+         ON ENDFILE(SYSIN)  EOF_SYSIN  = 'YS';                            003340
+1/********************************************************************/   003350
+ /*                                                                  */   003360
+ /*      THE TWO MAJOR ARRAYS FOR THE PROGRAM DATA, THE PRINT        */   003370
+ /*      ARRAY AND THE OVERFLOW ARRAY. AS EACH RECORD IS PROCESSED,  */   003380
+ /*      IT WILL BE LOADED INTO ONE OF THESE ARRAYS IF THE TIMES     */   003390
+ /*      (START AND END) STRADDLE THE 'CURRENT SNAPSHOT TIME'        */   003400
+ /*      HELD INTERNALLY.                                            */   003410
+ /*                                                                  */   003420
+ /*      ALSO A SWITCH THAT WILL BE SET BY SCANNING THE PRINT        */   003430
+ /*      ARRAY, TO TEST IF ALL THE NAMES HELD IN THE ARRAY ARE       */   003440
+ /*      BLANK. VALID SETTINGS ARE 'YES' AND 'NO '. THE SWITCH       */   003450
+ /*      IS SET AND TESTED AFTER END OF FILE IS REACHED ON SYSUT1,   */   003460
+ /*      TO CLEAR OUT RESIDUAL STORE ELEMENTS. ALL SETTINGS AND      */   003470
+ /*      TESTINGS ARE IN THE LAST DOZEN OR SO LINES OF $PSUT1.       */   003480
+ /*                                                                  */   003490
+ /*      ARRAY & INDICATOR USED FOR COLUMNAR PROCESSING.             */   003500
+ /*      ARRAY OF COLUMN NAMES, & A SWITCH ('YES' OR 'NO ') SET      */   003510
+ /*      DEPENDING ON THE ABSENCE OF THE SYSLIN KEYWORD.             */   003520
+ /*                                                                  */   003530
+ /********************************************************************/   003540
+-        DCL                                                              003550
+         1 PRINT_ARRAY BASED(PA_PTR),                                     003560
+           3 LEN_PRINT_ARRAY,                                             003570
+           3 ARRAY_PRINT(MAX_PRINT REFER(LEN_PRINT_ARRAY)),               003580
+             5 PRAR_NAME CHAR(44),                                        003590
+             5 PRAR_RECEND   FIXED(15,4);                                 003600
+-        DCL                                                              003610
+         1 OVERFLOW_ARRAY BASED(OF_PTR),                                  003620
+           3 LEN_OFLOW_ARRAY,                                             003630
+           3 ARRAY_OFLOW(MAX_OFLOW REFER(LEN_OFLOW_ARRAY)),               003640
+             5 OFAR_NAME CHAR(44),                                        003650
+             5 OFAR_RECEND   FIXED(15,4);                                 003660
+-        DCL                                                              003670
+         ALL_NAMES_BLANK CHAR(3) INIT('YES');                             003680
+-        DCL                                                              003690
+         1 COLUMNAR_ARRAY BASED(CL_PTR),                                  003700
+           3 LEN_COLMN_ARRAY,                                             003710
+           3 ARRAY_COLMN(MAX_COLMN REFER(LEN_COLMN_ARRAY)),               003720
+             5 COLN_NAME CHAR(44);                                        003730
+0        DCL                                                              003740
+         COLUMNAR CHAR(3) INIT('NO ');                                    003750
+1/********************************************************************/   003760
+ /*                                                                  */   003770
+ /*      VARIOUS FIELDS USED IN EDITING THE CONTROL PARAMETERS,      */   003780
+ /*      WHETHER FROM SYSIN, SYSLIN, OR PARAMETER.                   */   003790
+ /*      ALL THE RECORDS FROM EITHER FILE ARE STRUNG OUT IN ONE      */   003800
+ /*      CHARACTER STRING AND UNPACKED FROM THERE, ALTERNATING       */   003810
+ /*      THE KEYWORD FIELD BETWEEN DATA- AND EDITSTRING.             */   003820
+ /*                                                                  */   003830
+ /*      DURING UNPACKING THE KEYWORDS, AN ERROR FLAG IS USED        */   003840
+ /*      IF ANY MANDATORY KEYWORD IS MISSING, AND THE END-DUR FLAG   */   003850
+ /*      IS USED FOR THE CONDITION THAT EITHER THE 'ENDTIME' OR      */   003860
+ /*      THE 'DURATION' PARAMETER MUST BE PRESENT.                   */   003870
+ /*                                                                  */   003880
+ /*      THE CONTROL BLOCKS THEMSELVES ARE THEN DECLARED,            */   003890
+ /*      THOSE PREFIXED 'CTL_' ARE TO HOLD THE INFO UNPACKED         */   003900
+ /*      FROM THE SYSLIN DATA SET, THE OTHERS (SNAPSTART, SNAPEND    */   003910
+ /*      INTERVAL) FOR THE INFO FROM SYSIN/PARAMETER. IVTYP AND      */   003920
+ /*      IVVAL ARE INTERMEDIATE FIELD FOR UINPACKING THE INTERVAL    */   003930
+ /*      NOBLANK SET IF BLANK=NO PARAMETER FOUND                     */   003940
+ /*                                                                  */   003950
+ /********************************************************************/   003960
+-        DCL                                                              003970
+         EDITSTRING CHAR(4096) VARYING,                                   003980
+         DATASTRING CHAR(4096) VARYING;                                   003990
+0        DCL                                                              004000
+         ERROR_FLAG CHAR(1) INIT(' '),                                    004010
+         END_DUR_FLAG CHAR(2) INIT('NO');                                 004020
+0        DCL                                                              004030
+         CTL_IDP FIXED BIN(31) INIT(0),                                   004040
+         CTL_IDL FIXED BIN(31) INIT(0),                                   004050
+         CTL_IDX CHAR(80) VARYING,                                        004060
+         CTL_ST  FIXED BIN(31) INIT(0),                                   004070
+         CTL_ET  FIXED BIN(31) INIT(0),                                   004080
+         CTL_DR  FIXED BIN(31) INIT(0),                                   004090
+         CTL_NMP FIXED BIN(31) INIT(0),                                   004100
+         CTL_NML FIXED BIN(31) INIT(0),                                   004110
+         CTL_SD  FIXED BIN(31) INIT(0),                                   004120
+         CTL_ED  FIXED BIN(31) INIT(0),                                   004130
+         CTL_TF  CHAR(8),                                                 004140
+         CTL_DF  CHAR(8),                                                 004150
+         CTL_MO  FIXED BIN(31) INIT(20);                                  004160
+0        DCL                                                              004170
+         SNAPSTART FIXED(15,4),                                           004180
+         SNAPEND   FIXED(15,4),                                           004190
+         INTERVAL  FIXED(15,4),                                           004200
+         IVTYP     CHAR(2),                                               004210
+         IVVAL     FIXED(3),                                              004220
+         NOBLANK   CHAR(3);                                               004230
+1/********************************************************************/   004240
+ /*                                                                  */   004250
+ /*      MISCELLANEOUS SUBSCRIPTS I,J,K,L. THESE, IN ACCORDANCE      */   004260
+ /*      WITH THE PRINCIPLES OF STRUCTURED PROGRAMMING, WILL ONLY    */   004270
+ /*      BE USED LOCALLY, WILL NEVER BE PASSED BETWEEN PROCS AS      */   004280
+ /*      CONTROL INFORMATION, AND WILL ALWAYS BE STARTED ANEW WITH   */   004290
+ /*      EACH INVOCATION OF THE PROC IN WHICH THEY ARE USED.         */   004300
+ /*                                                                  */   004310
+ /*      THEN, OVERLAYED CONTROL FORMATS FOR USE IN UNPACKING        */   004320
+ /*      VARIOUS FIELD FORMATS FROM THE SYSUT1 FILE. IN EACH OF      */   004330
+ /*      THE THREE, A CHARACTER STRING IS OVERLAYED RESPECTIVELY     */   004340
+ /*      WITH A DISPLAY DECIMAL, A PACKED DECIMAL, & A BINARY FIELD. */   004350
+ /*      THE DISPLAY DECIMAL FIELD IS DUPLICATED FOR 4 OR 5 DECIMALS */   004360
+ /*                                                                  */   004370
+ /*      THEN, THE TIME-CONTROLS OF THE PROGRAM. RECSTART AND RECEND */   004380
+ /*      HOLD THE START AND END TIME OF THE SYSUT1 RECORD CURRENTLY  */   004390
+ /*      BEING PROCESSED (FORMATS YYDDDHHMMSS.SSSS, FIXED(15,4)),    */   004400
+ /*      AND NOWTIME HOLDS THE TIME (SAME FORMAT) OF THE CURRENT     */   004410
+ /*      SNAPSHOT.                                                   */   004420
+ /*                                                                  */   004430
+ /********************************************************************/   004440
+-        DCL                                                              004450
+         I FIXED BIN(31),                                                 004460
+         J FIXED BIN(31),                                                 004470
+         K FIXED BIN(31),                                                 004480
+         L FIXED BIN(31);                                                 004490
+0        DCL                                                              004500
+         AREC CHAR(15) ALIGNED,                                           004510
+         NREC PIC'9999999999V99999' DEF AREC,                             004520
+         NREX PIC'99999999999V9999' DEF AREC;                             004530
+0        DCL                                                              004540
+         APAK CHAR(8) ALIGNED,                                            004550
+         NPAK FIXED(15) DEF APAK;                                         004560
+0        DCL                                                              004570
+         ABIN CHAR(4) ALIGNED,                                            004580
+         NBIN FIXED BIN(31) DEF ABIN;                                     004590
+0        DCL                                                              004600
+         RECSTART FIXED(15,4) INIT(0),                                    004610
+         RECEND   FIXED(15,4) INIT(0),                                    004620
+         NOWTIME  FIXED(15,4) INIT(0);                                    004630
+1/********************************************************************/   004640
+ /*                                                                  */   004650
+ /*      HERE WE DECLARE THE EXTERNAL ROUTINE $ADINV. THIS ROUTINE   */   004660
+ /*      TAKES TWO FULL-WORD PACKED DECIMAL NUMBERS, THE FIRST       */   004670
+ /*      HOLDING A DATE, THE SECOND A TIME INTERVAL, BOTH IN THE     */   004680
+ /*      FORMAT YYDDDHHMMSS.SSSS, AND ADDS THE SECOND TO THE         */   004690
+ /*      FIRST, RATIONALISING THE RESULT TO THE REAL DATE/TIME.      */   004700
+ /*                                                                  */   004710
+ /*      SEE MODULE $ADINV - TSG LIBRARY.                            */   004720
+ /*                                                                  */   004730
+ /*      ALSO A FIXED DECIMAL ZERO FIELD FOR USE WHEN CALLING        */   004740
+ /*      $ADINV TO RATIONALISE A SET DATE/TIME.                      */   004750
+ /*                                                                  */   004760
+ /********************************************************************/   004770
+-        DCL                                                              004780
+         $ADINV ENTRY(FIXED DEC(15,4), FIXED DEC(15,4));                  004790
+-        DCL                                                              004800
+         ZERODEC FIXED(15,4) INIT(0);                                     004810
+1/********************************************************************/   004820
+ /*                                                                  */   004830
+ /*      REPORT AREAS - HEADING LINES, DETAIL LINE, PAGE COUNT, ETC. */   004840
+ /*                                                                  */   004850
+ /********************************************************************/   004860
+-        DCL                                                              004870
+         1 HEADA,                                                         004880
+           3 HA_FILA CHAR(20) INIT('1'),                                  004890
+           3 HA_TITL CHAR(80) INIT(' '),                                  004900
+           3 HA_DATE CHAR(9),                                             004910
+           3 HA_FILB CHAR(11) INIT('      PAGE '),                        004920
+           3 HA_PAGE PIC'ZZZ9',                                           004930
+           3 HA_FILC CHAR(9) INIT(' ');                                   004940
+-        DCL                                                              004950
+         1 HEADB,                                                         004960
+           3 HB_FILA CHAR(20) INIT('0YY.DDD HH.MM.SS '),                  004970
+           3 HB_FILB CHAR(103) INIT(' '),                                 004980
+           3 HB_FILC CHAR(10) INIT('OVERFLOW-*');                         004990
+-        DCL                                                              005000
+         1 LINEA,                                                         005010
+           3 LA_CBYT CHAR(1),                                             005020
+           3 LA_TIME PIC'99.999B99.99.99',                                005030
+           3 LA_FILA CHAR(4) INIT(' '),                                   005040
+           3 LA_SNAP CHAR(113);                                           005050
+-        DCL                                                              005060
+         PAGENO FIXED(5) INIT(0),                                         005070
+         LINECT FIXED(3) INIT(70);                                        005080
+-        DCL                                                              005090
+         1 UT458_AREA,                                                    005100
+           3 UT458_OPCODE CHAR(1),                                        005110
+           3 UT458_MMDDYY CHAR(6),                                        005120
+           3 UT458_DDMMYY CHAR(6),                                        005130
+           3 UT458_YYMMDD CHAR(6),                                        005140
+           3 UT458_DWWYY  CHAR(5),                                        005150
+           3 UT458_YYWWD  CHAR(5),                                        005160
+           3 UT458_YYDDD  PIC'99999',                                     005170
+           3 UT458_REPORT CHAR(9),                                        005180
+           3 UT458_FILLA  CHAR(42),                                       005190
+           3 UT458_RETCOD CHAR(1);                                        005200
+         DCL                                                              005210
+         UT458_NAME CHAR(8) INIT('UT458   ');                             005220
+         DCL                                                              005230
+         UT458_PTR1 FIXED(15) BASED(UT458_P1),                            005240
+         UT458_PTR2 FIXED(15) BASED(UT458_P2);                            005250
+         UT458_P1 = ADDR(UT458_NAME);                                     005260
+         UT458_P2 = ADDR(UT458_AREA);                                     005270
+         CALL DYNAML(UT458_PTR1);                                         005280
+         UT458_OPCODE = '0';                                              005290
+         CALL DYNAMO(UT458_PTR1,UT458_PTR2);                              005300
+         HA_DATE = UT458_REPORT;                                          005310
+1/*********************************************************************/  005320
+ /*                                                                   */  005330
+ /*          MM        MM     AAAAAAAA     IIII    NN     NN          */  005340
+ /*          MMM      MMM    AAAAAAAAAA    IIII    NNN    NN          */  005350
+ /*          MMMM    MMMM    AA      AA     II     NNNN   NN          */  005360
+ /*          MM MM  MM MM    AAAAAAAAAA     II     NN NN  NN          */  005370
+ /*          MM  MMMM  MM    AAAAAAAAAA     II     NN  NN NN          */  005380
+ /*          MM   MM   MM    AA      AA     II     NN   NNNN          */  005390
+ /*          MM        MM    AA      AA    IIII    NN    NNN          */  005400
+ /*          MM        MM    AA      AA    IIII    NN     NN          */  005410
+ /*                                                                   */  005420
+ /*********************************************************************/  005430
+ /*                                                                  */   005440
+ /*      MAIN-STREAM PROCESSING:                                     */   005450
+ /*                                                                  */   005460
+ /*            UNPACK THE SYSLIN DATA SET                            */   005470
+ /*            ACCESS THE PARAMETER                                  */   005480
+ /*            IF THE PARAMETER EXISTS, THEN UNPACK IT               */   005490
+ /*            OTHERWISE UNPACK THE SYSIN DATA SET                   */   005500
+ /*            ALLOCATE AND ZEROIFY THE PRINT AND OVERFLOW ARRAYS    */   005510
+ /*            PROCESS THE SYSUT1 FILE OF SMF DATA                   */   005520
+ /*                                                                  */   005530
+ /********************************************************************/   005540
+-        CALL $USLIN;                                                     005550
+-        L = LENGTH(PARAM);                                               005560
+         IF L ^= 0                                                        005570
+            THEN DATASTRING = PARAM;                                      005580
+            ELSE CALL $USYSN;                                             005590
+         CALL $USTRNG;                                                    005600
+-        MAX_PRINT = 113 / (CTL_NML + 2);                                 005610
+         MAX_OFLOW = CTL_MO;                                              005620
+0        ALLOCATE PRINT_ARRAY;                                            005630
+         ALLOCATE OVERFLOW_ARRAY;                                         005640
+0        PRAR_NAME = ' ';                                                 005650
+         PRAR_RECEND   = 0;                                               005660
+         OFAR_NAME = ' ';                                                 005670
+         OFAR_RECEND   = 0;                                               005680
+-        CALL $PSUT1;                                                     005690
+1/*********************************************************************/  005700
+ /*                                                                   */  005710
+ /*    UU      UU     SSSSSSSS     LL            IIII    NN     NN    */  005720
+ /*    UU      UU    SSSSSSSSSS    LL            IIII    NNN    NN    */  005730
+ /*    UU      UU    SS            LL             II     NNNN   NN    */  005740
+ /*    UU      UU    SSSSSSSSS     LL             II     NN NN  NN    */  005750
+ /*    UU      UU     SSSSSSSSS    LL             II     NN  NN NN    */  005760
+ /*    UU      UU            SS    LL             II     NN   NNNN    */  005770
+ /*    UUUUUUUUUU    SSSSSSSSSS    LLLLLLLLLL    IIII    NN    NNN    */  005780
+ /*     UUUUUUUU      SSSSSSSS     LLLLLLLLLL    IIII    NN     NN    */  005790
+ /*                                                                   */  005800
+ /*********************************************************************/  005810
+ /*                                                                  */   005820
+ /*      PROCEDURE $USLIN.                                           */   005830
+ /*                                                                  */   005840
+ /*           THIS PROCEDURE UNPACKS THE SYSLIN CONTROL CARD SET     */   005850
+ /*            INTO THE RELEVANT CONTROL BLOCKS. FIRSTLY, ALL        */   005860
+ /*            THE RECORDS FROM THE FILE ARE STRUNG OUT INTO ONE     */   005870
+ /*            LONG CHARACTER STRING, WHICH IS LATER ACCESSED        */   005880
+ /*            IN SEARCH OF EACH INDIVIDUAL KEYWORD PARAMETER.       */   005890
+ /*                                                                  */   005900
+ /********************************************************************/   005910
+-$USLIN: PROC;                                                            005920
+0        DATASTRING = '';                                                 005930
+0        READ FILE(SYSLIN) INTO(SYSLIN_RECORD);                           005940
+0        DO WHILE(EOF_SYSLIN = 'NO');                                     005950
+            DATASTRING = DATASTRING || SYSLIN_RECORD;                     005960
+            READ FILE(SYSLIN) INTO(SYSLIN_RECORD);                        005970
+         END;                                                             005980
+-/********************************************************************/   005990
+ /*                                                                  */   006000
+ /*      AT THIS POINT, THE CHARACTER STRING 'DATASTRING' CONTAINS   */   006010
+ /*      ALL THE RECORDS FROM SYSUT1, CONCATENATED.                  */   006020
+ /*      WE CAN NOW COMMENCE UNPACKING.                              */   006030
+ /*                                                                  */   006040
+ /********************************************************************/   006050
+1/********************************************************************/   006060
+ /*                                                                  */   006070
+ /*      SCAN FOR RECORDID; IF THERE, UNPACK POSITION, LENGTH AND    */   006080
+ /*      LITERAL TO THE CONTROL BLOCKS. IF NOT, SET THESE TO ZERO    */   006090
+ /*                                                                  */   006100
+ /********************************************************************/   006110
+-        I = INDEX(DATASTRING,'RECORDID=');                               006120
+         J = INDEX(DATASTRING,'ID=');                                     006130
+0        IF I = 0 & J = 0                                                 006140
+0        THEN DO;                                                         006150
+                 CTL_IDP = 0;                                             006160
+                 CTL_IDL = 0;                                             006170
+                 CTL_IDX = '';                                            006180
+              END;                                                        006190
+0        ELSE DO;                                                         006200
+                 IF I = 0                                                 006210
+                 THEN K = J + 4;                                          006220
+                 ELSE K = I + 10;                                         006230
+                 EDITSTRING = SUBSTR(DATASTRING,K,4097-K);                006240
+                 I = INDEX(EDITSTRING,',');                               006250
+                 NREC = 0;                                                006260
+                 SUBSTR(AREC,12-I,I-1) = SUBSTR(EDITSTRING,1,I-1);        006270
+                 CTL_IDP = NREC;                                          006280
+0                EDITSTRING = SUBSTR(EDITSTRING,I+1,4096-I);              006290
+                 I = INDEX(EDITSTRING,',');                               006300
+                 NREC = 0;                                                006310
+                 SUBSTR(AREC,12-I,I-1) = SUBSTR(EDITSTRING,1,I-1);        006320
+                 CTL_IDL = NREC;                                          006330
+0                EDITSTRING = SUBSTR(EDITSTRING,I+2,4095-I);              006340
+                 I = INDEX(EDITSTRING,'''');                              006350
+                 CTL_IDX = SUBSTR(EDITSTRING,1,I-1);                      006360
+              END;                                                        006370
+1/********************************************************************/   006380
+ /*                                                                  */   006390
+ /*      SCAN FOR THE REPORT TITLE, INSERTING IT INTO THE HEADING    */   006400
+ /*      LINE IF FOUND, BLANKING OUT IF NOT.                         */   006410
+ /*                                                                  */   006420
+ /********************************************************************/   006430
+-        I = INDEX(DATASTRING,'TITLE=');                                  006440
+         J = INDEX(DATASTRING,'TL=');                                     006450
+0        IF I = 0 & J = 0                                                 006460
+         THEN HA_TITL = ' ';                                              006470
+0        ELSE DO;                                                         006480
+                 IF I = 0                                                 006490
+                 THEN K = J + 4;                                          006500
+                 ELSE K = I + 7;                                          006510
+                 EDITSTRING = SUBSTR(DATASTRING,K,4097-K);                006520
+                 I = INDEX(EDITSTRING,'''');                              006530
+                 HA_TITL = SUBSTR(EDITSTRING,1,I-1);                      006540
+              END;                                                        006550
+-/********************************************************************/   006560
+ /*                                                                  */   006570
+ /*      SCAN FOR RECORD START TIME POSITION. LOAD CB IF THERE,      */   006580
+ /*      PRINT ERROR MESSAGE AND SET FLAG IF NOT                     */   006590
+ /*                                                                  */   006600
+ /********************************************************************/   006610
+-        I = INDEX(DATASTRING,'STARTTIME=');                              006620
+         J = INDEX(DATASTRING,'ST=');                                     006630
+0        IF I = 0 & J = 0                                                 006640
+0        THEN DO;                                                         006650
+                 PUT SKIP EDIT('NO START TIME PARAMETER FOUND')(A);       006660
+                 ERROR_FLAG = '*';                                        006670
+              END;                                                        006680
+0        ELSE DO;                                                         006690
+                 IF I = 0                                                 006700
+                 THEN K = J + 3;                                          006710
+                 ELSE K = I + 10;                                         006720
+                 EDITSTRING = SUBSTR(DATASTRING,K,4097-K);                006730
+                 I = INDEX(EDITSTRING,' ');                               006740
+                 NREC = 0;                                                006750
+                 SUBSTR(AREC,12-I,I-1) = SUBSTR(EDITSTRING,1,I-1);        006760
+                 CTL_ST = NREC;                                           006770
+              END;                                                        006780
+1/********************************************************************/   006790
+ /*                                                                  */   006800
+ /*      GET ENDTIME; IF NOT THERE, NO ERROR YET. IF THERE, SET      */   006810
+ /*      END-DUR FLAG FOR LATER TESTING THAT ONE OF THE TWO THERE    */   006820
+ /*                                                                  */   006830
+ /********************************************************************/   006840
+-        I = INDEX(DATASTRING,'ENDTIME=');                                006850
+         J = INDEX(DATASTRING,'ET=');                                     006860
+0        IF I = 0 & J = 0                                                 006870
+         THEN DO;                                                         006880
+              END;                                                        006890
+0        ELSE DO;                                                         006900
+                 END_DUR_FLAG = 'YS';                                     006910
+                 IF I = 0                                                 006920
+                 THEN K = J + 3;                                          006930
+                 ELSE K = I + 8;                                          006940
+                 EDITSTRING = SUBSTR(DATASTRING,K,4097-K);                006950
+                 I = INDEX(EDITSTRING,' ');                               006960
+                 NREC = 0;                                                006970
+                 SUBSTR(AREC,12-I,I-1) = SUBSTR(EDITSTRING,1,I-1);        006980
+                 CTL_ET = NREC;                                           006990
+              END;                                                        007000
+-/********************************************************************/   007010
+ /*                                                                  */   007020
+ /*    GET DURATION PARAMETER; SET END-DUR FLAG IF THERE (SEE ABOVE) */   007030
+ /*                                                                  */   007040
+ /********************************************************************/   007050
+-        I = INDEX(DATASTRING,'DURATION=');                               007060
+         J = INDEX(DATASTRING,'DR=');                                     007070
+0        IF I = 0 & J = 0                                                 007080
+         THEN DO;                                                         007090
+              END;                                                        007100
+0        ELSE DO;                                                         007110
+                 END_DUR_FLAG= 'YS';                                      007120
+                 IF I = 0                                                 007130
+                 THEN K = J + 3;                                          007140
+                 ELSE K = I + 9;                                          007150
+                 EDITSTRING = SUBSTR(DATASTRING,K,4097-K);                007160
+                 I = INDEX(EDITSTRING,' ');                               007170
+                 NREC = 0;                                                007180
+                 SUBSTR(AREC,12-I,I-1) = SUBSTR(EDITSTRING,1,I-1);        007190
+                 CTL_DR = NREC;                                           007200
+              END;                                                        007210
+1/********************************************************************/   007220
+ /*                                                                  */   007230
+ /*    UNPACK NAME POSITION AND LENGTH. SET ERROR FLAG IF NOT THERE  */   007240
+ /*                                                                  */   007250
+ /********************************************************************/   007260
+-        I = INDEX(DATASTRING,'NAME=');                                   007270
+         J = INDEX(DATASTRING,'NM=');                                     007280
+0        IF I = 0 & J = 0                                                 007290
+         THEN DO;                                                         007300
+                 PUT SKIP EDIT('NO NAME PARAMETER FOUND')(A);             007310
+                 ERROR_FLAG = '*';                                        007320
+              END;                                                        007330
+0        ELSE DO;                                                         007340
+                 IF I = 0                                                 007350
+                 THEN K = J + 4;                                          007360
+                 ELSE K = I + 6;                                          007370
+                 EDITSTRING = SUBSTR(DATASTRING,K,4097-K);                007380
+                 I = INDEX(EDITSTRING,',');                               007390
+                 NREC = 0;                                                007400
+                 SUBSTR(AREC,12-I,I-1) = SUBSTR(EDITSTRING,1,I-1);        007410
+                 CTL_NMP = NREC;                                          007420
+0                EDITSTRING = SUBSTR(EDITSTRING,I+1,4096-I);              007430
+                 I = INDEX(EDITSTRING,')');                               007440
+                 NREC = 0;                                                007450
+                 SUBSTR(AREC,12-I,I-1) = SUBSTR(EDITSTRING,1,I-1);        007460
+                 CTL_NML = NREC;                                          007470
+              END;                                                        007480
+1/********************************************************************/   007490
+ /*                                                                  */   007500
+ /*      UNPACK POSITION PARAMETERS OF START AND END DATE FIELDS     */   007510
+ /*      IF EITHER NOT FOUND, SET ERROR FLAG FOR LATER DUMPING       */   007520
+ /*                                                                  */   007530
+ /********************************************************************/   007540
+-        I = INDEX(DATASTRING,'STARTDATE=');                              007550
+         J = INDEX(DATASTRING,'SD=');                                     007560
+0        IF I = 0 & J = 0                                                 007570
+         THEN DO;                                                         007580
+                 PUT SKIP EDIT('START DATE PARAMETER NOT FOUND')(A);      007590
+                 ERROR_FLAG = '*';                                        007600
+              END;                                                        007610
+0        ELSE DO;                                                         007620
+                 IF I = 0                                                 007630
+                 THEN K = J + 3;                                          007640
+                 ELSE K = I + 10;                                         007650
+                 EDITSTRING = SUBSTR(DATASTRING,K,4097-K);                007660
+                 I = INDEX(EDITSTRING,' ');                               007670
+                 NREC = 0;                                                007680
+                 SUBSTR(AREC,12-I,I-1) = SUBSTR(EDITSTRING,1,I-1);        007690
+                 CTL_SD = NREC;                                           007700
+              END;                                                        007710
+-        I = INDEX(DATASTRING,'ENDDATE=');                                007720
+         J = INDEX(DATASTRING,'ED=');                                     007730
+0        IF I = 0 & J = 0                                                 007740
+         THEN DO;                                                         007750
+                 CTL_ED = CTL_SD;                                         007760
+              END;                                                        007770
+0        ELSE DO;                                                         007780
+                 IF I = 0                                                 007790
+                 THEN K = J + 3;                                          007800
+                 ELSE K = I + 8;                                          007810
+                 EDITSTRING = SUBSTR(DATASTRING,K,4097-K);                007820
+                 I = INDEX(EDITSTRING,' ');                               007830
+                 NREC = 0;                                                007840
+                 SUBSTR(AREC,12-I,I-1) = SUBSTR(EDITSTRING,1,I-1);        007850
+                 CTL_ED = NREC;                                           007860
+              END;                                                        007870
+1/********************************************************************/   007880
+ /*                                                                  */   007890
+ /*    UNPACK TIME AND DATE FORMATS FROM THE FILE. IF EITHER IS      */   007900
+ /*      MISSING, SET THE ERROR FLAG                                 */   007910
+ /*                                                                  */   007920
+ /********************************************************************/   007930
+-        I = INDEX(DATASTRING,'TIMEFORMAT=');                             007940
+         J = INDEX(DATASTRING,'TF=');                                     007950
+0        IF I = 0 & J = 0                                                 007960
+         THEN DO;                                                         007970
+                 PUT SKIP EDIT('TIME FORMAT PARAMETER NOT FOUND')(A);     007980
+                 ERROR_FLAG = '*';                                        007990
+              END;                                                        008000
+0        ELSE DO;                                                         008010
+                 IF I = 0                                                 008020
+                 THEN K = J + 3;                                          008030
+                 ELSE K = I + 11;                                         008040
+                 EDITSTRING = SUBSTR(DATASTRING,K,4097-K);                008050
+                 I = INDEX(EDITSTRING,' ');                               008060
+                 CTL_TF = SUBSTR(EDITSTRING,1,I-1);                       008070
+              END;                                                        008080
+-        I = INDEX(DATASTRING,'DATEFORMAT=');                             008090
+         J = INDEX(DATASTRING,'DF=');                                     008100
+0        IF I = 0 & J = 0                                                 008110
+         THEN DO;                                                         008120
+                 PUT SKIP EDIT('DATE FORMAT PARAMETER NOT FOUND')(A);     008130
+                 ERROR_FLAG = '*';                                        008140
+              END;                                                        008150
+0        ELSE DO;                                                         008160
+                 IF I = 0                                                 008170
+                 THEN K = J + 3;                                          008180
+                 ELSE K = I + 11;                                         008190
+                 EDITSTRING = SUBSTR(DATASTRING,K,4097-K);                008200
+                 I = INDEX(EDITSTRING,' ');                               008210
+                 CTL_DF = SUBSTR(EDITSTRING,1,I-1);                       008220
+              END;                                                        008230
+1        I = INDEX(DATASTRING,'EXIT=');                                   008240
+         J = INDEX(DATASTRING,'EX=');                                     008250
+         IF I = 0 & J = 0                                                 008260
+         THEN EXIT_NAME = ' ';                                            008270
+         ELSE DO;                                                         008280
+                 IF I = 0                                                 008290
+                 THEN K = J + 3;                                          008300
+                 ELSE K = I + 5;                                          008310
+                 EDITSTRING = SUBSTR(DATASTRING,K,4097-K);                008320
+                 I = INDEX(EDITSTRING,' ');                               008330
+                 EXIT_NAME = SUBSTR(EDITSTRING,1,I-1);                    008340
+                 CALL DYNAML(EXIT_PTR1);                                  008350
+              END;                                                        008360
+1/********************************************************************/   008370
+ /*                                                                  */   008380
+ /*      UNPACK OVERFLOW MAXIMUM; IF NOT PRESENT, DEFAULT TO 20.     */   008390
+ /*                                                                  */   008400
+ /********************************************************************/   008410
+-        I = INDEX(DATASTRING,'MAXOFLOW=');                               008420
+         J = INDEX(DATASTRING,'MO=');                                     008430
+0        IF I = 0 & J = 0                                                 008440
+0        THEN CTL_MO = 20;                                                008450
+0        ELSE DO;                                                         008460
+                 IF I = 0                                                 008470
+                 THEN K = J + 3;                                          008480
+                 ELSE K = I + 9;                                          008490
+                 EDITSTRING = SUBSTR(DATASTRING,K,4097-K);                008500
+                 I = INDEX(EDITSTRING,' ');                               008510
+                 NREC = 0;                                                008520
+                 SUBSTR(AREC,12-I,I-1) = SUBSTR(EDITSTRING,1,I-1);        008530
+                 CTL_MO = NREC;                                           008540
+              END;                                                        008550
+-/********************************************************************/   008560
+ /*                                                                  */   008570
+ /*      UNPACK COLUMN NAMES; IF NOT THERE, SET COLUMNAR SWITCH OFF  */   008580
+ /*                                                                  */   008590
+ /********************************************************************/   008600
+-        I = INDEX(DATASTRING,'COLUMNS=');                                008610
+         J = INDEX(DATASTRING,'CL=');                                     008620
+0        IF I = 0 & J = 0                                                 008630
+0        THEN COLUMNAR = 'NO ';                                           008640
+0        ELSE DO;                                                         008650
+                 COLUMNAR = 'YES';                                        008660
+                 IF I = 0                                                 008670
+                 THEN K = J + 4;                                          008680
+                 ELSE K = I + 9;                                          008690
+                 EDITSTRING = SUBSTR(DATASTRING,K,4097-K);                008700
+                 MAX_COLMN = 1;                                           008710
+                 I = INDEX(EDITSTRING,',');                               008720
+                 IF I = 0 THEN I = 4099;                                  008730
+                 J = INDEX(EDITSTRING,')');                               008740
+                 IF J = 0 THEN J = 4099;                                  008750
+                 DO WHILE(I<J);                                           008760
+                    MAX_COLMN = MAX_COLMN + 1;                            008770
+                    EDITSTRING = SUBSTR(EDITSTRING,I+1,4096-I);           008780
+                    I = INDEX(EDITSTRING,',');                            008790
+                    IF I = 0 THEN I = 4099;                               008800
+                 END;                                                     008810
+                 ALLOCATE COLUMNAR_ARRAY;                                 008820
+                 EDITSTRING = SUBSTR(DATASTRING,K,4097-K);                008830
+                 DO I = 1 TO (MAX_COLMN - 1);                             008840
+                    J = INDEX(EDITSTRING,',');                            008850
+                    COLN_NAME(I) = SUBSTR(EDITSTRING,1,J-1);              008860
+                    EDITSTRING = SUBSTR(EDITSTRING,J+1,4096-J);           008870
+                 END;                                                     008880
+                 I = INDEX(EDITSTRING,')');                               008890
+                 COLN_NAME(MAX_COLMN) = SUBSTR(EDITSTRING,1,I-1);         008900
+              END;                                                        008910
+-/********************************************************************/   008920
+ /*                                                                  */   008930
+ /*      IF END-DUR FLAG STILL SET AT 'NO', THEN NEITHER ENDTIME     */   008940
+ /*      NOR DURATION PARAMETER FOUND, SO PRINT ERROR & SET FLAG     */   008950
+ /*                                                                  */   008960
+ /********************************************************************/   008970
+-      IF END_DUR_FLAG = 'NO'                                             008980
+       THEN DO;                                                           008990
+               PUT SKIP EDIT('NEITHER ENDTIME NOR DURATION FOUND')(A);    009000
+               ERROR_FLAG = '*';                                          009010
+            END;                                                          009020
+-/********************************************************************/   009030
+ /*                                                                  */   009040
+ /*      FINALLY, IF THE ERROR FLAG IS SET, DUMP.                    */   009050
+ /*                                                                  */   009060
+ /*      THIS TERMINATES THE PROCEDURE $USLIN.                       */   009070
+ /*                                                                  */   009080
+ /********************************************************************/   009090
+-      IF ERROR_FLAG = '*'                                                009100
+       THEN STOP;                                                         009110
+-END; /* END OF PROCEDURE $USLIN */                                       009120
+1/*********************************************************************/  009130
+ /*                                                                   */  009140
+ /*  UU      UU  SSSSSSSS  TTTTTTTTTT RRRRRRRRR  NN     NN  GGGGGGGG  */  009150
+ /*  UU      UU SSSSSSSSSS TTTTTTTTTT RRRRRRRRRR NNN    NN GGGGGGGGGG */  009160
+ /*  UU      UU SS             TT     RR      RR NNNN   NN GG      GG */  009170
+ /*  UU      UU SSSSSSSSS      TT     RRRRRRRRRR NN NN  NN GG         */  009180
+ /*  UU      UU  SSSSSSSSS     TT     RRRRRRRRR  NN  NN NN GG   GGGGG */  009190
+ /*  UU      UU         SS     TT     RR    RR   NN   NNNN GG      GG */  009200
+ /*  UUUUUUUUUU SSSSSSSSSS     TT     RR     RR  NN    NNN GGGGGGGGGG */  009210
+ /*   UUUUUUUU   SSSSSSSS      TT     RR      RR NN     NN  GGGGGGGG  */  009220
+ /*                                                                   */  009230
+ /********************************************************************/   009240
+ /*                                                                  */   009250
+ /*      PROCEDURE $USTRNG: UNPACK CONTROL BLOCKS FROM EITHER        */   009260
+ /*      SYSIN OR PARAMETER; ONE OR THE OTHER WILL BE SET UP IN      */   009270
+ /*      DATASTRING.                                                 */   009280
+ /*                                                                  */   009290
+ /********************************************************************/   009300
+-$USTRNG: PROC;                                                           009310
+-/********************************************************************/   009320
+ /*                                                                  */   009330
+ /*      UNPACK THE SNAP START AND END TIMES, SETTING ERROR FLAG     */   009340
+ /*      IF EITHER IS MISSING. THE TIMES ARE UNPACKED INTO THE       */   009350
+ /*      FRONT END OF THE TIME FIELDS OF FORMAT YYDDDHHMMSS.SSS      */   009360
+ /*      IF START PARAMETER = SS, SNAP IS TO START WITH FIRST SMF    */   009370
+ /*      RECORD; SET PARAMETER TO ZERO TO SIGNIFY THIS.              */   009380
+ /*      IF END PARAMETER = SE, SNAP IS TO TERMINATE AT END OF FILE, */   009390
+ /*      SET PARAMETER HIGH TO FORCE THIS.                           */   009400
+ /*                                                                  */   009410
+ /********************************************************************/   009420
+-        I = INDEX(DATASTRING,'SNAPSTART=');                              009430
+         J = INDEX(DATASTRING,'SS=');                                     009440
+0        IF I = 0 & J = 0                                                 009450
+         THEN DO;                                                         009460
+                 PUT SKIP EDIT('NO SNAP START PARAMETER FOUND')(A);       009470
+                 ERROR_FLAG = '*';                                        009480
+              END;                                                        009490
+0        ELSE DO;                                                         009500
+                 IF I = 0                                                 009510
+                 THEN K = J + 3;                                          009520
+                 ELSE K = I + 10;                                         009530
+                 EDITSTRING = SUBSTR(DATASTRING,K,4097-K);                009540
+0                IF SUBSTR(EDITSTRING,1,2) = 'SS'                         009550
+                 THEN SNAPSTART = 0;                                      009560
+0                ELSE DO;                                                 009570
+                         I = INDEX(EDITSTRING,' ');                       009580
+                         NREC = 0;                                        009590
+                         SUBSTR(AREC,1,I-1) = SUBSTR(EDITSTRING,1,I-1);   009600
+                         SNAPSTART = NREX;                                009610
+                      END;                                                009620
+              END;                                                        009630
+1        I = INDEX(DATASTRING,'SNAPEND=');                                009640
+         J = INDEX(DATASTRING,'SE=');                                     009650
+0        IF I = 0 & J = 0                                                 009660
+         THEN DO;                                                         009670
+                 PUT SKIP EDIT('NO SNAP END PARAMETER FOUND')(A);         009680
+                 ERROR_FLAG = '*';                                        009690
+              END;                                                        009700
+0        ELSE DO;                                                         009710
+                 IF I = 0                                                 009720
+                 THEN K = J + 3;                                          009730
+                 ELSE K = I + 8;                                          009740
+                 EDITSTRING = SUBSTR(DATASTRING,K,4097-K);                009750
+0                IF SUBSTR(EDITSTRING,1,2) = 'SE'                         009760
+                 THEN SNAPEND = 99999999999.9999;                         009770
+0                ELSE DO;                                                 009780
+                         I = INDEX(EDITSTRING,' ');                       009790
+                         NREC = 0;                                        009800
+                         SUBSTR(AREC,1,I-1) = SUBSTR(EDITSTRING,1,I-1);   009810
+                         SNAPEND = NREX;                                  009820
+                      END;                                                009830
+              END;                                                        009840
+1/********************************************************************/   009850
+ /*                                                                  */   009860
+ /*      UNPACK THE TWO PORTIONS OF THE INTERVAL PARAMETER. LOAD     */   009870
+ /*      THE PARAMETER ACCORDINGLY AS TO WHETHER THE FIRST FIELD     */   009880
+ /*      SPECIFIES INTERVAL IS IN DAYS (DD), HOURS (HH),             */   009890
+ /*      MINUTES (MM) OR SECONDS (SS).                               */   009900
+ /*                                                                  */   009910
+ /********************************************************************/   009920
+-        I = INDEX(DATASTRING,'INTERVAL=');                               009930
+         J = INDEX(DATASTRING,'IV=');                                     009940
+0        IF I = 0 & J = 0                                                 009950
+         THEN DO;                                                         009960
+                 PUT SKIP EDIT('NO INTERVAL PARAMETER FOUND')(A);         009970
+                 ERROR_FLAG = '*';                                        009980
+              END;                                                        009990
+0        ELSE DO;                                                         010000
+                 IF I = 0                                                 010010
+                 THEN K = J + 4;                                          010020
+                 ELSE K = I + 10;                                         010030
+                 EDITSTRING = SUBSTR(DATASTRING,K,4097-K);                010040
+                 I = INDEX(EDITSTRING,',');                               010050
+                 IVTYP = SUBSTR(EDITSTRING,1,I-1);                        010060
+0                EDITSTRING = SUBSTR(EDITSTRING,I+1,4096-I);              010070
+                 I = INDEX(EDITSTRING,')');                               010080
+                 NREC = 0;                                                010090
+                 SUBSTR(AREC,12-I,I-1) = SUBSTR(EDITSTRING,1,I-1);        010100
+                 IVVAL = NREC;                                            010110
+0                IF IVTYP = 'DD'                                          010120
+                 THEN INTERVAL = IVVAL * 1000000;                         010130
+                 ELSE                                                     010140
+                 IF IVTYP = 'HH'                                          010150
+                 THEN INTERVAL = IVVAL * 10000;                           010160
+                 ELSE                                                     010170
+                 IF IVTYP = 'MM'                                          010180
+                 THEN INTERVAL = IVVAL * 100;                             010190
+                 ELSE                                                     010200
+                 IF IVTYP = 'SS'                                          010210
+                 THEN INTERVAL = IVVAL;                                   010220
+0                ELSE DO;                                                 010230
+                         PUT SKIP EDIT('INVALID INTERVAL TYPE')(A);       010240
+                         ERROR_FLAG = '*';                                010250
+                      END;                                                010260
+              END;                                                        010270
+         I = INDEX(DATASTRING,'BLANK=NO');                                010280
+         J = INDEX(DATASTRING,'BL=NO');                                   010290
+         IF I = 0 & J = 0                                                 010300
+         THEN NOBLANK = 'NO ';                                            010310
+         ELSE NOBLANK = 'YES';                                            010320
+1/********************************************************************/   010330
+ /*                                                                  */   010340
+ /*      FINALLY FOR UNPACKING THE PARAMETER, TEST IF THE ERROR      */   010350
+ /*      FLAG IS SET ON (I.E., IF ANY OF THE PARAMETERS WAS          */   010360
+ /*      MISSING). IF SO, DUMP.                                      */   010370
+ /*                                                                  */   010380
+ /*      THIS TERMINATES THE PROCESSING OF $USTRNG.                  */   010390
+ /*                                                                  */   010400
+ /********************************************************************/   010410
+-        IF ERROR_FLAG = '*'                                              010420
+         THEN STOP;                                                       010430
+-END; /* END OF PROCEDURE $USTRNG */                                      010440
+1/*********************************************************************/  010450
+ /*                                                                   */  010460
+ /*   UU      UU    SSSSSSSS    YY      YY    SSSSSSSS    NN     NN   */  010470
+ /*   UU      UU   SSSSSSSSSS    YY    YY    SSSSSSSSSS   NNN    NN   */  010480
+ /*   UU      UU   SS             YY  YY     SS           NNNN   NN   */  010490
+ /*   UU      UU   SSSSSSSSS       YYYY      SSSSSSSSS    NN NN  NN   */  010500
+ /*   UU      UU    SSSSSSSSS       YY        SSSSSSSSS   NN  NN NN   */  010510
+ /*   UU      UU           SS       YY               SS   NN   NNNN   */  010520
+ /*   UUUUUUUUUU   SSSSSSSSSS       YY       SSSSSSSSSS   NN    NNN   */  010530
+ /*    UUUUUUUU     SSSSSSSS        YY        SSSSSSSS    NN     NN   */  010540
+ /*                                                                   */  010550
+ /********************************************************************/   010560
+ /*                                                                  */   010570
+ /*      PROCEDURE $USYSN                                            */   010580
+ /*                                                                  */   010590
+ /*      THIS PROCEDURE READS THROUGH THE SYSIN DATA SET,            */   010600
+ /*      CONCATENATING THE RECORDS INTO ONE LONG CHARACTER           */   010610
+ /*      STRING, WHICH WILL THEN BE UNPACKED BY PROC $USTRNG.        */   010620
+ /*                                                                  */   010630
+ /********************************************************************/   010640
+-$USYSN: PROC;                                                            010650
+0        DATASTRING = '';                                                 010660
+         READ FILE(SYSIN) INTO(SYSIN_RECORD);                             010670
+0        DO WHILE(EOF_SYSIN = 'NO');                                      010680
+            DATASTRING = DATASTRING || SYSIN_RECORD;                      010690
+            READ FILE(SYSIN) INTO(SYSIN_RECORD);                          010700
+         END;                                                             010710
+-END; /* END OF PROCEDURE $USYSN */                                       010720
+1/*********************************************************************/  010730
+ /*                                                                   */  010740
+ /*      PPPPPPPPP     SSSSSSSS    UU      UU   TTTTTTTTTT    11      */  010750
+ /*      PPPPPPPPPP   SSSSSSSSSS   UU      UU   TTTTTTTTTT   111      */  010760
+ /*      PP      PP   SS           UU      UU       TT       111      */  010770
+ /*      PPPPPPPPPP   SSSSSSSSS    UU      UU       TT        11      */  010780
+ /*      PPPPPPPPP     SSSSSSSSS   UU      UU       TT        11      */  010790
+ /*      PP                   SS   UU      UU       TT        11      */  010800
+ /*      PP           SSSSSSSSSS   UUUUUUUUUU       TT       1111     */  010810
+ /*      PP            SSSSSSSS     UUUUUUUU        TT       1111     */  010820
+ /*                                                                   */  010830
+ /********************************************************************/   010840
+ /*                                                                  */   010850
+ /*      PROCEDURE $PSUT1: PROCESS THE SYSUT1 FILE OF SMF RECORDS    */   010860
+ /*                                                                  */   010870
+ /*      FIRST, SET CURRENT SNAPSHOT TIME TO PROGRAM SNAPSTART,      */   010880
+ /*      OR TO START TIME OF FIRST RECORD IF SS=SS WAS CODED.        */   010890
+ /*                                                                  */   010900
+ /*      THEN READ THROUGH THE FILE SELECTING RECORDS (IF SELECTION  */   010910
+ /*      CRITERIA WAS SPECIFIED), AND CALLING ROUTINE $PRECD TO      */   010920
+ /*      PROCESS THOSE RECORDS SELECTED.                             */   010930
+ /*                                                                  */   010940
+ /*      CONTINUE UNTIL EITHER END OF FILE IS REACHED, OR ALL        */   010950
+ /*      REQUIRED SNAPSHOTS HAVE BEEN PRINTED  (NOWTIME = SNAPEND)   */   010960
+ /*                                                                  */   010970
+ /*      IF END OF FILE REACHED, CONTINUE PRINTING STORED NAMES      */   010980
+ /*      UNTIL EITHER SNAP IS COMPLETE OR ALL NAMES HAVE EXPIRED.    */   010990
+ /*                                                                  */   011000
+ /********************************************************************/   011010
+-$PSUT1: PROC;                                                            011020
+         READ FILE(SYSUT1) INTO(SYSUT1_RECORD);                           011030
+         IF EOF_SYSUT1 = 'NO'                                             011040
+         THEN DO;                                                         011050
+                 IF EXIT_NAME ^= ' '                                      011060
+                 THEN CALL DYNAMO(EXIT_PTR1,EXIT_PTR2);                   011070
+                 IF SNAPSTART = 0                                         011080
+                 THEN DO;                                                 011090
+                         CALL $UNPDT;                                     011100
+                         NREX = RECSTART;                                 011110
+                         IF IVTYP = 'SS'                                  011120
+                         THEN SUBSTR(AREC,10,6) = '000000';               011130
+                         IF IVTYP = 'MM'                                  011140
+                         THEN SUBSTR(AREC,8,8) = '00000000';              011150
+                         IF IVTYP = 'HH'                                  011160
+                         THEN SUBSTR(AREC,6,10) = '0000000000';           011170
+                         IF IVTYP = 'DD'                                  011180
+                         THEN SUBSTR(AREC,3,13) = '0000000000000';        011190
+                         SNAPSTART = NREX;                                011200
+                      END;                                                011210
+                 NOWTIME = SNAPSTART;                                     011220
+              END;                                                        011230
+         DO WHILE(EOF_SYSUT1 = 'NO' & NOWTIME <= SNAPEND);                011240
+            IF CTL_IDP = 0                                                011250
+             | SUBSTR(SYSUT1_RECORD,CTL_IDP,CTL_IDL) = CTL_IDX            011260
+            THEN CALL $PRECD;                                             011270
+            READ FILE(SYSUT1) INTO(SYSUT1_RECORD);                        011280
+            IF EXIT_NAME ^= ' '                                           011290
+            THEN CALL DYNAMO(EXIT_PTR1,EXIT_PTR2);                        011300
+         END;                                                             011310
+         ALL_NAMES_BLANK = 'YES';                                         011320
+         DO I = 1 TO LEN_PRINT_ARRAY;                                     011330
+            IF PRAR_NAME(I) ^= ' '                                        011340
+            THEN ALL_NAMES_BLANK = 'NO ';                                 011350
+         END;                                                             011360
+         DO WHILE(NOWTIME <= SNAPEND & ALL_NAMES_BLANK = 'NO ');          011370
+            CALL $PSTOR;                                                  011380
+            ALL_NAMES_BLANK = 'YES';                                      011390
+            DO I = 1 TO LEN_PRINT_ARRAY;                                  011400
+               IF PRAR_NAME(I) ^= ' '                                     011410
+               THEN ALL_NAMES_BLANK = 'NO ';                              011420
+            END;                                                          011430
+         END;                                                             011440
+ END; /* END OF PROCEDURE $PSUT1 */                                       011450
+1/*********************************************************************/  011460
+ /*                                                                   */  011470
+ /*     PPPPPPPPP   RRRRRRRRR   EEEEEEEEEE   CCCCCCCC   DDDDDDDDD     */  011480
+ /*     PPPPPPPPPP  RRRRRRRRRR  EEEEEEEEEE  CCCCCCCCCC  DDDDDDDDDD    */  011490
+ /*     PP      PP  RR      RR  EE          CC      CC  DD      DD    */  011500
+ /*     PPPPPPPPPP  RRRRRRRRRR  EEEEEEE     CC          DD      DD    */  011510
+ /*     PPPPPPPPP   RRRRRRRRR   EEEEEEE     CC          DD      DD    */  011520
+ /*     PP          RR    RR    EE          CC      CC  DD      DD    */  011530
+ /*     PP          RR     RR   EEEEEEEEEE  CCCCCCCCCC  DDDDDDDDDD    */  011540
+ /*     PP          RR      RR  EEEEEEEEEE   CCCCCCCC   DDDDDDDDD     */  011550
+ /*                                                                   */  011560
+ /********************************************************************/   011570
+ /*                                                                  */   011580
+ /*      PROCEDURE $PRECD: PROCESS A SINGLE SELECTED SYSUT1 RECORD   */   011590
+ /*                                                                  */   011600
+ /*      FIRST UNPACK THE START AND END DATES AND TIMES FROM THE     */   011610
+ /*      RECORD, THEN PRINT ALL SNAPSHOTS (IF ANY) UP UNTIL THE      */   011620
+ /*      START TIME OF THE CURRENT RECORD.                           */   011630
+ /*                                                                  */   011640
+ /*      THEN LOAD THE RECORD TO STORE FOR PRINTING.                 */   011650
+ /*                                                                  */   011660
+ /********************************************************************/   011670
+-$PRECD: PROC;                                                            011680
+       CALL $UNPDT;                                                       011690
+ /*                                                                       011700
+       COMMENT: FIELDS RECSTART & RECEND NOW CONTAIN COMBINED             011710
+                DATE || TIME FROM THE RECORD                              011720
+ */                                                                       011730
+       DO WHILE(RECSTART > NOWTIME);                                      011740
+          CALL $PSTOR;                                                    011750
+       END;                                                               011760
+         IF COLUMNAR = 'YES'                                              011770
+         THEN CALL $LCOLS;                                                011780
+         ELSE CALL $LSTOR;                                                011790
+ END; /* END OF PROCEDURE $PRECD */                                       011800
+1/*********************************************************************/  011810
+ /*                                                                   */  011820
+ /*     UU      UU  NN     NN  PPPPPPPPP   DDDDDDDDD   TTTTTTTTTT     */  011830
+ /*     UU      UU  NNN    NN  PPPPPPPPPP  DDDDDDDDDD  TTTTTTTTTT     */  011840
+ /*     UU      UU  NNNN   NN  PP      PP  DD      DD      TT         */  011850
+ /*     UU      UU  NN NN  NN  PPPPPPPPPP  DD      DD      TT         */  011860
+ /*     UU      UU  NN  NN NN  PPPPPPPPP   DD      DD      TT         */  011870
+ /*     UU      UU  NN   NNNN  PP          DD      DD      TT         */  011880
+ /*     UUUUUUUUUU  NN    NNN  PP          DDDDDDDDDD      TT         */  011890
+ /*      UUUUUUUU   NN     NN  PP          DDDDDDDDD       TT         */  011900
+ /*                                                                   */  011910
+ /********************************************************************/   011920
+ /*                                                                  */   011930
+ /*      PROCEDURE $UNPDT: UNPACK DATES AND TIMES                    */   011940
+ /*                                                                  */   011950
+ /*      SIMPLY TEST FOR THE PRE-SELECTED FORMATS, AND CALL THE      */   011960
+ /*      APPROPRIATE ROUTINES. IF THE FORMAT IS UNKNOWN, DUMP.       */   011970
+ /*                                                                  */   011980
+ /*      IF CONTROL PARAMETER FOR ENDDATE WAS SAME AS THAT FOR       */   011990
+ /*      STARTDATE, CHECK THAT RESULTING END IS GREATER THAN         */   012000
+ /*      START; IF NOT, THE NAME RAN OVER MIDNIGHT, SO ADD 1 DAY     */   012010
+ /*      TO ENDTIME.                                                 */   012020
+ /*                                                                  */   012030
+ /*      CALL $ADINV TO RATIONALISE DATE/TIME, IN CASE JOB RAN       */   012040
+ /*      OVER MIDNIGHT, AND DURATION FIELD OR NO ENDATE SPECIFIED    */   012050
+ /*                                                                  */   012060
+ /********************************************************************/   012070
+-$UNPDT: PROC;                                                            012080
+         IF CTL_DF = 'YYDDDP  '                                           012090
+         THEN CALL $YYDDDP;                                               012100
+         ELSE                                                             012110
+         IF CTL_DF = 'YYMMDD'                                             012120
+         THEN CALL $YYMMDD;                                               012130
+ /********************************************************************/   012140
+ /*                                                                  */   012150
+ /*      ELSE                      EXTRA FORMATS FOR DATE            */   012160
+ /*      IF CTL_DF = 'XXXXXX  '    SHOULD BE ENTERED IN THIS         */   012170
+ /*      THEN CALL $XXXXXX;        TYPE OF NESTED TEST.              */   012180
+ /*      ELSE                      THE RELEVANT PROCEDURE TO UNPACK  */   012190
+ /*      IF CTL_DF = 'YYYYYY  '    THE DATE SHOULD PUT THE START     */   012200
+ /*      THEN CALL $YYYYYY;        AND END DATES INTO RECSTART &     */   012210
+ /*                                RECEND, FORMAT YYDDD000000.0000   */   012220
+ /*                                                                  */   012230
+ /********************************************************************/   012240
+         ELSE DO;                                                         012250
+                 PUT SKIP EDIT('DATE FORMAT ',CTL_DF,' NOT SUPPORTED')    012260
+                              (A(12),A(8),A(14));                         012270
+                 STOP;                                                    012280
+              END;                                                        012290
+         IF CTL_TF = 'HUNSEC  '                                           012300
+         THEN CALL $HUNSEC;                                               012310
+         ELSE                                                             012320
+         IF CTL_TF = 'PAKMIN  '                                           012330
+         THEN CALL $PAKMIN;                                               012340
+         ELSE                                                             012350
+         IF CTL_TF = 'HHMMPS  '                                           012360
+         THEN CALL $HHMMPS;                                               012370
+ /********************************************************************/   012380
+ /*                                                                  */   012390
+ /*      ELSE                      EXTRA FORMAT FOR TIME FIELDS      */   012400
+ /*      IF CTL_TF = 'AAAAAA  '    SHOULD BE ENTERED WITH THIS TYPE  */   012410
+ /*      THEN CALL $AAAAAA;        OF NESTED IF. THE PROC SHOULD     */   012420
+ /*      ELSE                      UNPACK THE START AND END TIMES    */   012430
+ /*      IF CTL_TF = 'BBBBBB  '    AND ADD THEM IN TO RECSTART,      */   012440
+ /*      THEN CALL $BBBBBB;        RECEND, TO COMPLETE THE FORMATS   */   012450
+ /*                                YYDDDHHMMSS.SSSS                  */   012460
+ /*                                                                  */   012470
+ /********************************************************************/   012480
+         ELSE DO;                                                         012490
+                 PUT SKIP EDIT('TIME FORMAT ',CTL_TF,' NOT SUPPORTED')    012500
+                              (A(12),A(8),A(14));                         012510
+                 STOP;                                                    012520
+              END;                                                        012530
+         IF CTL_SD = CTL_ED & RECEND < RECSTART                           012540
+         THEN RECEND = RECEND + 1000000;                                  012550
+         CALL $ADINV(RECSTART,ZERODEC);                                   012560
+         CALL $ADINV(RECEND,ZERODEC);                                     012570
+ END;  /*** END OF PROCEDURE $UNPDT ***/                                  012580
+1/********************************************************************/   012590
+ /*                                                                   */  012600
+ /* YY      YY YY      YY DDDDDDDDD  DDDDDDDDD  DDDDDDDDD  PPPPPPPPP  */  012610
+ /*  YY    YY   YY    YY  DDDDDDDDDD DDDDDDDDDD DDDDDDDDDD PPPPPPPPPP */  012620
+ /*   YY  YY     YY  YY   DD      DD DD      DD DD      DD PP      PP */  012630
+ /*    YYYY       YYYY    DD      DD DD      DD DD      DD PPPPPPPPPP */  012640
+ /*     YY         YY     DD      DD DD      DD DD      DD PPPPPPPPP  */  012650
+ /*     YY         YY     DD      DD DD      DD DD      DD PP         */  012660
+ /*     YY         YY     DDDDDDDDDD DDDDDDDDDD DDDDDDDDDD PP         */  012670
+ /*     YY         YY     DDDDDDDDD  DDDDDDDDD  DDDDDDDDD  PP         */  012680
+ /*                                                                   */  012690
+ /********************************************************************/   012700
+ /*                                                                  */   012710
+ /*      PROCEDURE $YYDDDP: DATES ARE JULIAN IN 3-BYTE PACKED FIELDS */   012720
+ /*                                                                  */   012730
+ /*      USE APAK/NPAK CHARACTER STRING TO PACKED DECIMAL CONVERSION */   012740
+ /*      FIELDS                                                      */   012750
+ /*                                                                  */   012760
+ /********************************************************************/   012770
+-$YYDDDP: PROC;                                                           012780
+         NPAK = 0;                                                        012790
+         SUBSTR(APAK,6,3) = SUBSTR(SYSUT1_RECORD,CTL_SD,3);               012800
+         RECSTART = NPAK * 1000000;                                       012810
+         NPAK = 0;                                                        012820
+         SUBSTR(APAK,6,3) = SUBSTR(SYSUT1_RECORD,CTL_ED,3);               012830
+         RECEND = NPAK * 1000000;                                         012840
+ END; /* END OF PROCEDURE $YYDDDP */                                      012850
+1/*********************************************************************/  012860
+ /*                                                                   */  012870
+ /*********************************************************************/  012880
+ $YYMMDD: PROC;                                                           012890
+         UT458_OPCODE = '3';                                              012900
+         UT458_YYMMDD = SUBSTR(SYSUT1_RECORD,CTL_SD,6);                   012910
+         CALL DYNAMO(UT458_PTR1,UT458_PTR2);                              012920
+         RECSTART = UT458_YYDDD * 1000000;                                012930
+         UT458_YYMMDD = SUBSTR(SYSUT1_RECORD,CTL_ED,6);                   012940
+         CALL DYNAMO(UT458_PTR1,UT458_PTR2);                              012950
+         RECEND = UT458_YYDDD * 1000000;                                  012960
+ END; /*** END OF PROC $YYMMDD ****/                                      012970
+1/*********************************************************************/  012980
+ /*                                                                   */  012990
+ /*  HH      HH UU      UU NN     NN  SSSSSSSS  EEEEEEEEEE  CCCCCCCC  */  013000
+ /*  HH      HH UU      UU NNN    NN SSSSSSSSSS EEEEEEEEEE CCCCCCCCCC */  013010
+ /*  HH      HH UU      UU NNNN   NN SS         EE         CC      CC */  013020
+ /*  HHHHHHHHHH UU      UU NN NN  NN SSSSSSSSS  EEEEEEE    CC         */  013030
+ /*  HHHHHHHHHH UU      UU NN  NN NN  SSSSSSSSS EEEEEEE    CC         */  013040
+ /*  HH      HH UU      UU NN   NNNN         SS EE         CC      CC */  013050
+ /*  HH      HH UUUUUUUUUU NN    NNN SSSSSSSSSS EEEEEEEEEE CCCCCCCCCC */  013060
+ /*  HH      HH  UUUUUUUU  NN     NN  SSSSSSSS  EEEEEEEEEE  CCCCCCCC  */  013070
+ /*                                                                   */  013080
+ /********************************************************************/   013090
+ /*                                                                  */   013100
+ /*      PROCEDURE $HUNSEC: TIMES ARE IN FULL-WORD BINARY IN         */   013110
+ /*      HUNDREDTHS OF A SECOND.                                     */   013120
+ /*                                                                  */   013130
+ /*      USE ABIN/NBIN FIELDS FOR CHARACTER TO BINARY CONVERSION.    */   013140
+ /*                                                                  */   013150
+ /*      FIRST EXTRACT HOURS, THEN MINUTES, THEN REMAINDER ARE       */   013160
+ /*      SECONDS.                                                    */   013170
+ /*                                                                  */   013180
+ /*      FOR ENDTIME, CHECK IF ENDTIME OR DURATION PARAMETER         */   013190
+ /*      WAS SPECIFIED, AND EITHER SELECT TIME OR ADD DURATION       */   013200
+ /*      FIELD TO STARTTIME.                                         */   013210
+ /*                                                                  */   013220
+ /*      INTERMEDIATE FIELD INTVAL IS DECLARED AND USED TO SPLIT     */   013230
+ /*      UP CALCULATIONS WHICH INTERMINGLE BINARY AND PACKED         */   013240
+ /*      FIELDS, AS THE PL/I OPTIMISING COMPILER TENDS TO GET        */   013250
+ /*      THESE SCREWED UP. (WHAT OTHER COMPILER COULD POSSIBLY       */   013260
+ /*      GIVE A DIVIDE EXCEPTION CALCULATING A = B + (C * D) ?????)  */   013270
+ /*                                                                  */   013280
+ /********************************************************************/   013290
+-$HUNSEC: PROC;                                                           013300
+         DCL                                                              013310
+         INTVAL FIXED(15,4);                                              013320
+-        ABIN  = SUBSTR(SYSUT1_RECORD,CTL_ST,4);                          013330
+         I = NBIN / 360000;                                               013340
+         INTVAL = I * 10000;                                              013350
+         RECSTART = RECSTART + INTVAL;                                    013360
+         NBIN = NBIN - (I * 360000);                                      013370
+         I = NBIN / 6000;                                                 013380
+         INTVAL = I * 100;                                                013390
+         RECSTART = RECSTART + INTVAL;                                    013400
+         NBIN = NBIN - (I * 6000);                                        013410
+         INTVAL = NBIN;                                                   013420
+         INTVAL = INTVAL / 100;                                           013430
+         RECSTART = RECSTART + INTVAL;                                    013440
+         IF CTL_ET = 0                                                    013450
+         THEN DO;                                                         013460
+                 ABIN = SUBSTR(SYSUT1_RECORD,CTL_ST,4);                   013470
+                 I = NBIN;                                                013480
+                 ABIN = SUBSTR(SYSUT1_RECORD,CTL_DR,4);                   013490
+                 NBIN = NBIN + I;                                         013500
+              END;                                                        013510
+         ELSE ABIN = SUBSTR(SYSUT1_RECORD,CTL_ET,4);                      013520
+         I = NBIN / 360000;                                               013530
+         INTVAL = I * 10000;                                              013540
+         RECEND = RECEND + INTVAL;                                        013550
+         NBIN = NBIN - (I * 360000);                                      013560
+         I = NBIN / 6000;                                                 013570
+         INTVAL = I * 100;                                                013580
+         RECEND = RECEND + INTVAL;                                        013590
+         NBIN = NBIN - (I * 6000);                                        013600
+         INTVAL = NBIN;                                                   013610
+         INTVAL = INTVAL / 100;                                           013620
+         RECEND = RECEND + INTVAL;                                        013630
+ END; /* END OF PROCEDURE $HUNSEC */                                      013640
+1/*********************************************************************/  013650
+ /*                                                                   */  013660
+ /*  PPPPPPPPP    AAAAAAAA   KK   KK   MM        MM  IIII  NN     NN  */  013670
+ /*  PPPPPPPPPP  AAAAAAAAAA  KK  KK    MMM      MMM   II   NNN    NN  */  013680
+ /*  PP      PP  AA      AA  KK KK     MMMM    MMMM   II   NNNN   NN  */  013690
+ /*  PPPPPPPPPP  AAAAAAAAAA  KKKK      MM MM  MM MM   II   NN NN  NN  */  013700
+ /*  PPPPPPPPP   AAAAAAAAAA  KKKKK     MM  MMMM  MM   II   NN  NN NN  */  013710
+ /*  PP          AA      AA  KK  KK    MM   MM   MM   II   NN   NNNN  */  013720
+ /*  PP          AA      AA  KK   KK   MM        MM   II   NN    NNN  */  013730
+ /*  PP          AA      AA  KK    KK  MM        MM  IIII  NN     NN  */  013740
+ /*                                                                   */  013750
+ /*********************************************************************/  013760
+ /*                                                                   */  013770
+ /*      PROCEDURE $PAKMIN; TIMES ARE IN HUNDREDTHS OF A MINUTE IN    */  013780
+ /*      A 4-BYTE PACKED DECIMAL FIELD.                               */  013790
+ /*                                                                   */  013800
+ /*      FIRST EXTRACT FROM RECORD VIA APAK/NPAK, THEN EXTRACT        */  013810
+ /*      HOURS, MINUTES, AND CONVERT DECIMAL MINUTES TO SECONDS.      */  013820
+ /*                                                                   */  013830
+ /*      REPEAT FOR EITHER DURATION OR ENDTIME, WHICHEVER WAS         */  013840
+ /*      SPECIFIED.                                                   */  013850
+ /*                                                                   */  013860
+ /*********************************************************************/  013870
+ $PAKMIN: PROC;                                                           013880
+         DCL                                                              013890
+         FIXEDDEC FIXED(15);                                              013900
+         NPAK = 0;                                                        013910
+         SUBSTR(APAK,5,4) = SUBSTR(SYSUT1_RECORD,CTL_ST,4);               013920
+         FIXEDDEC = NPAK / 6000;                                          013930
+         RECSTART = RECSTART + (FIXEDDEC * 10000);                        013940
+         NPAK = NPAK - (6000 * FIXEDDEC);                                 013950
+         FIXEDDEC = NPAK / 100;                                           013960
+         RECSTART = RECSTART + (FIXEDDEC * 100);                          013970
+         NPAK = NPAK - (100 * FIXEDDEC);                                  013980
+         RECSTART = RECSTART + (NPAK * 0.60);                             013990
+         NPAK = 0;                                                        014000
+         IF CTL_ET = 0                                                    014010
+         THEN DO;                                                         014020
+                 SUBSTR(APAK,5,4) = SUBSTR(SYSUT1_RECORD,CTL_ST,4);       014030
+                 FIXEDDEC = NPAK;                                         014040
+                 NPAK = 0;                                                014050
+                 SUBSTR(APAK,5,4) = SUBSTR(SYSUT1_RECORD,CTL_DR,4);       014060
+                 NPAK = NPAK + FIXEDDEC;                                  014070
+              END;                                                        014080
+         ELSE SUBSTR(APAK,5,4) = SUBSTR(SYSUT1_RECORD,CTL_ET,4);          014090
+         FIXEDDEC = NPAK / 6000;                                          014100
+         RECEND = RECEND + (FIXEDDEC * 10000);                            014110
+         NPAK = NPAK - (6000 * FIXEDDEC);                                 014120
+         FIXEDDEC = NPAK / 100;                                           014130
+         RECEND = RECEND + (100 * FIXEDDEC);                              014140
+         NPAK = NPAK - (100 * FIXEDDEC);                                  014150
+         RECEND = RECEND + (NPAK * 0.6);                                  014160
+ END;    /***** END OF PROCEDURE $PAKMIN *****/                           014170
+1/*********************************************************************/  014180
+ /*                                                                   */  014190
+ /*********************************************************************/  014200
+ $HHMMPS: PROC;                                                           014210
+         DCL                                                              014220
+         FIXED1 FIXED(15),                                                014230
+         FIXED2 FIXED(15,4);                                              014240
+         NREC = 0;                                                        014250
+         SUBSTR(AREC,7,4) = SUBSTR(SYSUT1_RECORD,CTL_ST,4);               014260
+         FIXED2 = NREC * 100;                                             014270
+         RECSTART = RECSTART + FIXED2;                                    014280
+         RECEND = RECSTART;                                               014290
+         NPAK = 0;                                                        014300
+         SUBSTR(APAK,6,3) = SUBSTR(SYSUT1_RECORD,CTL_DR,3);               014310
+         FIXED1 = NPAK / 3600;                                            014320
+         FIXED2 = FIXED1 * 10000;                                         014330
+         NPAK = NPAK - (FIXED1 * 3600);                                   014340
+         FIXED1 = NPAK / 60;                                              014350
+         FIXED2 = FIXED2 + (FIXED1 * 100);                                014360
+         NPAK = NPAK - (FIXED1 * 60);                                     014370
+         FIXED2 = FIXED2 + NPAK;                                          014380
+         CALL $ADINV(RECEND,FIXED2);                                      014390
+ END;  /***** END OF PROCEDURE $HHMMPS *****/                             014400
+1/*********************************************************************/  014410
+ /*                                                                   */  014420
+ /*     PPPPPPPPP    SSSSSSSS   TTTTTTTTTT   OOOOOOOO   RRRRRRRRR     */  014430
+ /*     PPPPPPPPPP  SSSSSSSSSS  TTTTTTTTTT  OOOOOOOOOO  RRRRRRRRRR    */  014440
+ /*     PP      PP  SS              TT      OO      OO  RR      RR    */  014450
+ /*     PPPPPPPPPP  SSSSSSSSS       TT      OO      OO  RRRRRRRRRR    */  014460
+ /*     PPPPPPPPP    SSSSSSSSS      TT      OO      OO  RRRRRRRRR     */  014470
+ /*     PP                  SS      TT      OO      OO  RR    RR      */  014480
+ /*     PP          SSSSSSSSSS      TT      OOOOOOOOOO  RR     RR     */  014490
+ /*     PP           SSSSSSSS       TT       OOOOOOOO   RR      RR    */  014500
+ /*                                                                   */  014510
+ /********************************************************************/   014520
+ /*                                                                  */   014530
+ /*      PROCEDURE $PSTOR: PRINT THE STORE.                          */   014540
+ /*                                                                  */   014550
+ /*      FIRSTLY PRINT THE SNAPSHOT, THEN INCREMENT THE INTERNAL     */   014560
+ /*      CLOCK (NOWTIME) TO THE TIME OF THE NEXT SNAPSHOT.           */   014570
+ /*                                                                  */   014580
+ /*      THEN SCAN THROUGH THE OVERFLOW ARRAY DELETING ITEMS THAT    */   014590
+ /*      WILL HAVE EXPIRED BY THEN.                                  */   014600
+ /*                                                                  */   014610
+ /*      FINALLY, SCAN THROUGH THE PRINT ARRAY, AGAIN DELETING       */   014620
+ /*      EXPIRED ITEMS; IN THIS CASE, HOWEVER, WHEN AN ITEM IS       */   014630
+ /*      DELETED, THE OVERFLOW ARRAY IS CHECKED FOR A REPLACEMENT    */   014640
+ /*      IF ONE EXISTS, IT IS LOADED INTO THE PRINT ARRAY.           */   014650
+ /*      (UNLESS COLUMNAR PRINTING REQD, WHEN THIS IS BYPASSED)      */   014660
+ /*                                                                  */   014670
+ /*      THEN (MOD ADDED 15 JUNE 1978)                               */   014680
+ /*      IF THE PRINT ARRAY IS EMPTY, AND BLANK = NO WAS SPECIFIED,  */   014690
+ /*      SET THE INTERNAL CLOCK TO THEN START TIME OF THE NEXT RECD  */   014700
+ /*                                                                  */   014710
+ /********************************************************************/   014720
+-$PSTOR: PROC;                                                            014730
+         CALL $PSNAP;                                                     014740
+         CALL $ADINV(NOWTIME,INTERVAL);                                   014750
+         DO I = 1 TO LEN_OFLOW_ARRAY;                                     014760
+            IF OFAR_RECEND(I) < NOWTIME                                   014770
+            THEN OFAR_NAME(I) = ' ';                                      014780
+         END;                                                             014790
+         DO I = 1 TO LEN_PRINT_ARRAY;                                     014800
+            IF PRAR_RECEND(I) < NOWTIME                                   014810
+            THEN DO;                                                      014820
+                    PRAR_NAME(I) = ' ';                                   014830
+                    J = 1;                                                014840
+                    DO WHILE(J <= LEN_OFLOW_ARRAY                         014850
+                           & OFAR_NAME(J) = ' ');                         014860
+                       J = J + 1;                                         014870
+                    END;                                                  014880
+                    IF J <= LEN_OFLOW_ARRAY & COLUMNAR = 'NO '            014890
+                    THEN DO;                                              014900
+                            PRAR_NAME(I) = OFAR_NAME(J);                  014910
+                            PRAR_RECEND(I) = OFAR_RECEND(J);              014920
+                            OFAR_NAME(J) = ' ';                           014930
+                         END;                                             014940
+                 END;                                                     014950
+         END;                                                             014960
+         J = 0;                                                           014970
+         DO I = 1 TO LEN_PRINT_ARRAY WHILE(J = 0);                        014980
+           IF PRAR_NAME(I) ^= ' '                                         014990
+            THEN J = 1;                                                   015000
+         END;                                                             015010
+         IF J = 0 & NOBLANK = 'YES'                                       015020
+         THEN DO;                                                         015030
+                 NREX = RECSTART;                                         015040
+                 IF IVTYP = 'SS' THEN SUBSTR(AREC,10,6) = '000000';       015050
+                 IF IVTYP = 'MM' THEN SUBSTR(AREC,8,8) = '00000000';      015060
+     IF IVTYP = 'HH' THEN SUBSTR(AREC,6,10) = '0000000000';               015070
+     IF IVTYP = 'DD' THEN SUBSTR(AREC,3,13) = '0000000000000';            015080
+                 NOWTIME = NREX;                                          015090
+                 DO WHILE(RECSTART > NOWTIME);                            015100
+                    CALL $ADINV(NOWTIME,INTERVAL);                        015110
+                 END;                                                     015120
+              END;                                                        015130
+ END; /* END OF PROCEDURE $PSTOR */                                       015140
+1/*********************************************************************/  015150
+ /*                                                                   */  015160
+ /*     LL           SSSSSSSS   TTTTTTTTTT   OOOOOOOO   RRRRRRRRR     */  015170
+ /*     LL          SSSSSSSSSS  TTTTTTTTTT  OOOOOOOOOO  RRRRRRRRRR    */  015180
+ /*     LL          SS              TT      OO      OO  RR      RR    */  015190
+ /*     LL          SSSSSSSSS       TT      OO      OO  RRRRRRRRRR    */  015200
+ /*     LL           SSSSSSSSS      TT      OO      OO  RRRRRRRRR     */  015210
+ /*     LL                  SS      TT      OO      OO  RR    RR      */  015220
+ /*     LLLLLLLLLL  SSSSSSSSSS      TT      OOOOOOOOOO  RR     RR     */  015230
+ /*     LLLLLLLLLL   SSSSSSSS       TT       OOOOOOOO   RR      RR    */  015240
+ /*                                                                   */  015250
+ /********************************************************************/   015260
+ /*                                                                  */   015270
+ /*      PROCEDURE $LSTOR: LOAD AN ITEM TO STORE.                    */   015280
+ /*                                                                  */   015290
+ /*      CHECK THROUGH THE PRINT ARRAY FOR THE FIRST VACANT SLOT     */   015300
+ /*      (NAME BLANK), AND LOAD CURRENT NAME TO IT. IF NO VACANT     */   015310
+ /*      SLOTS, CHECK THROUGH OVERFLOW; IF THIS IS ALSO FULL, DUMP.  */   015320
+ /*                                                                  */   015330
+ /********************************************************************/   015340
+-$LSTOR: PROC;                                                            015350
+         I = 1;                                                           015360
+         DO WHILE(I <= LEN_PRINT_ARRAY & PRAR_NAME(I) ^= ' ');            015370
+            I = I + 1;                                                    015380
+         END;                                                             015390
+         IF I <= LEN_PRINT_ARRAY                                          015400
+         THEN DO;                                                         015410
+                 PRAR_NAME(I) = SUBSTR(SYSUT1_RECORD,CTL_NMP,CTL_NML);    015420
+                 PRAR_RECEND(I) = RECEND;                                 015430
+              END;                                                        015440
+         ELSE DO;                                                         015450
+                 I = 1;                                                   015460
+                 DO WHILE(I <= LEN_OFLOW_ARRAY & OFAR_NAME(I) ^= ' ');    015470
+                    I = I + 1;                                            015480
+                 END;                                                     015490
+                 IF I <= LEN_OFLOW_ARRAY                                  015500
+                 THEN DO;                                                 015510
+                         OFAR_NAME(I) = SUBSTR(SYSUT1_RECORD,             015520
+                                               CTL_NMP,CTL_NML);          015530
+                         OFAR_RECEND(I) = RECEND;                         015540
+                      END;                                                015550
+                 ELSE DO;                                                 015560
+                         PUT SKIP EDIT('INSUFFICIENT OVERFLOW')(A);       015570
+                         STOP;                                            015580
+                      END;                                                015590
+              END;                                                        015600
+ END; /* END OF PROCEDURE $LSTOR */                                       015610
+1/*********************************************************************/  015620
+ /*                                                                   */  015630
+ /*     LL           CCCCCCCC    OOOOOOOO   LL           SSSSSSSS     */  015640
+ /*     LL          CCCCCCCCCC  OOOOOOOOOO  LL          SSSSSSSSSS    */  015650
+ /*     LL          CC          OO      OO  LL          SS            */  015660
+ /*     LL          CC          OO      OO  LL          SSSSSSSSS     */  015670
+ /*     LL          CC          OO      OO  LL           SSSSSSSSS    */  015680
+ /*     LL          CC          OO      OO  LL                  SS    */  015690
+ /*     LLLLLLLLLL  CCCCCCCCCC  OOOOOOOOOO  LLLLLLLLLL  SSSSSSSSSS    */  015700
+ /*     LLLLLLLLLL   CCCCCCCC    OOOOOOOO   LLLLLLLLLL   SSSSSSSS     */  015710
+ /*                                                                   */  015720
+ /*********************************************************************/  015730
+ /*                                                                   */  015740
+ /*     PROCEDURE $LCOLS: LOAD AN ITEM TO STORE IF COLUMNAR REQUIRED  */  015750
+ /*                                                                   */  015760
+ /*     CHECK THROUGH COLUMNAR ARRAY FOR THIS NAME.                   */  015770
+ /*     IF THERE, LOAD TO PRINT ARRAY, ELSE TO OVERFLOW.              */  015780
+ /*                                                                   */  015790
+ /*********************************************************************/  015800
+-$LCOLS: PROC;                                                            015810
+0        DO I = 1 TO LEN_COLMN_ARRAY                                      015820
+         WHILE(COLN_NAME(I) ^= SUBSTR(SYSUT1_RECORD,CTL_NMP,CTL_NML));    015830
+         END;                                                             015840
+         IF COLN_NAME(I) = SUBSTR(SYSUT1_RECORD,CTL_NMP,CTL_NML)          015850
+         THEN DO;                                                         015860
+                 PRAR_NAME(I) = COLN_NAME(I);                             015870
+                 PRAR_RECEND(I) = RECEND;                                 015880
+              END;                                                        015890
+         ELSE DO;                                                         015900
+                 I = 1;                                                   015910
+                 DO WHILE(I <= LEN_OFLOW_ARRAY & OFAR_NAME(I) ^= ' ');    015920
+                    I = I + 1;                                            015930
+                 END;                                                     015940
+                 IF I <= LEN_OFLOW_ARRAY                                  015950
+                 THEN DO;                                                 015960
+                         OFAR_NAME(I) = SUBSTR(SYSUT1_RECORD,             015970
+                                               CTL_NMP,CTL_NML);          015980
+                         OFAR_RECEND(I) = RECEND;                         015990
+                      END;                                                016000
+                 ELSE DO;                                                 016010
+                         PUT SKIP EDIT('INSUFFICIENT OVERFLOW')(A);       016020
+                         STOP;                                            016030
+                      END;                                                016040
+              END;                                                        016050
+ END; /* END OF PROCEDURE $LCOLS */                                       016060
+1/*********************************************************************/  016070
+ /*                                                                   */  016080
+ /*     PPPPPPPPP    SSSSSSSS   NN     NN   AAAAAAAA   PPPPPPPPP      */  016090
+ /*     PPPPPPPPPP  SSSSSSSSSS  NNN    NN  AAAAAAAAAA  PPPPPPPPPP     */  016100
+ /*     PP      PP  SS          NNNN   NN  AA      AA  PP      PP     */  016110
+ /*     PPPPPPPPPP  SSSSSSSSS   NN NN  NN  AAAAAAAAAA  PPPPPPPPPP     */  016120
+ /*     PPPPPPPPP    SSSSSSSSS  NN  NN NN  AAAAAAAAAA  PPPPPPPPP      */  016130
+ /*     PP                  SS  NN   NNNN  AA      AA  PP             */  016140
+ /*     PP          SSSSSSSSSS  NN    NNN  AA      AA  PP             */  016150
+ /*     PP           SSSSSSSS   NN     NN  AA      AA  PP             */  016160
+ /*                                                                   */  016170
+ /********************************************************************/   016180
+ /*                                                                  */   016190
+ /*      PROCEDURE $PSNAP: PRINT A SINGLE SNAPSHOT.                  */   016200
+ /*                                                                  */   016210
+ /*      TEST IF NEW PAGE NEEDED, IF SO PRINT HEADINGS.              */   016220
+ /*      SET CURRENT CLOCK TIME INTO LINE                            */   016230
+ /*      COMPLETE NAMES IN LINE FROM PRINT ARRAY                     */   016240
+ /*      IF ANY ELEMENTS IN OVERFLOW ARRAY, SET FLAG TO *.           */   016250
+ /*      WRITE LINE UNLESS BLANK AND BLANK=NO PARAMETER SET.         */   016260
+ /*                                                                  */   016270
+ /********************************************************************/   016280
+-$PSNAP: PROC;                                                            016290
+         IF LINECT > 59                                                   016300
+         THEN DO;                                                         016310
+                 PAGENO = PAGENO + 1;                                     016320
+                 HA_PAGE = PAGENO;                                        016330
+                 WRITE FILE(PRINT) FROM(HEADA);                           016340
+                 WRITE FILE(PRINT) FROM(HEADB);                           016350
+                 LA_CBYT = ' ';                                           016360
+                 LINECT = 0;                                              016370
+              END;                                                        016380
+         LA_TIME = NOWTIME;                                               016390
+         LA_SNAP = ' ';                                                   016400
+         DO I = 1 TO LEN_PRINT_ARRAY;                                     016410
+            SUBSTR(LA_SNAP,(I-1)*(CTL_NML+2)+1,CTL_NML+2)                 016420
+                                   = PRAR_NAME(I);                        016430
+         END;                                                             016440
+         DO I = 1 TO LEN_OFLOW_ARRAY;                                     016450
+            IF OFAR_NAME(I) ^= ' '                                        016460
+            THEN SUBSTR(LA_SNAP,113,1) = '*';                             016470
+         END;                                                             016480
+         IF NOBLANK = 'YES' & SUBSTR(LA_SNAP,1,112) = ' '                 016490
+         THEN DO;                                                         016500
+                 LA_CBYT = '0';                                           016510
+              END;                                                        016520
+         ELSE DO;                                                         016530
+                 WRITE FILE(PRINT) FROM(LINEA);                           016540
+                 IF LA_CBYT = ' '                                         016550
+                 THEN LINECT = LINECT + 1;                                016560
+                 ELSE LINECT = LINECT + 2;                                016570
+                 LA_CBYT = ' ';                                           016580
+              END;                                                        016590
+ END; /* END OF PROCEDURE $PSNAP */                                       016600
+                                                                          016610
+         END;      /********* END OF MAIN PROCEDURE STROBE *********/     016620

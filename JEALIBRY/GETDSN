@@ -1,0 +1,235 @@
+//JEAEDIT4 JOB (1140,5),'JEA SUPREDIT',CLASS=N,NOTIFY=JEA
+// EXEC LIBRARYN,FILE=MVS,BLKSIZE=6480
+//SYSIN DD DATA,DLM='??'
+-OPT NOLIST,EXEC
+-DLM GETDSN,MOP3
+-ADD GETDSN,MOP3
+-PGMR JEABBEY
+-DESC EXTRACT DATA SET NAME FROM USER
+***********************************************************************
+*        EXTRACT THE NAME OF THE DATA SET TO BE EDITED
+***********************************************************************
+         SPACE 2
+GETDSN   ZCSECT 12,GETMAIN=1,WKLEN=WRKLEN                            0
+         USING WRKAREA,REG13      ADDRESSABILITY FOR DSECT
+         LR    REG8,REG1           LOAD ADDRESS OF PARAMETER AREA
+         USING USERPARM,REG8       ADDRESSABILITY FOR IT
+         L     REG9,UPEDITWK       ADDRESS OF EDIT WORK AREA
+         USING WDSECT,REG9         ADDRESSABILITY FOR IT
+         EJECT
+***********************************************************************
+*        TEST AUTHORITY LEVEL AND ROUTE CONTROL
+***********************************************************************
+         SPACE 2
+***********************************************************************
+*        OUTPUT THE FIRST INVITATION TO DEFINE A DATA SET
+***********************************************************************
+         SPACE 2
+         XC    ERRFIELD,ERRFIELD   CLEAR THE ERROR MESSAGE AREA
+BADDSN   EQU   *
+RETRY    EQU   *
+         MVI   FUNCTION,C' '       CLEAR THE FUNCTION CODE
+         PUTSCRN SCREEN1,(EDITDSN,OSDSN,MEMBER,DISP,FUNCTION,ERRFIELD,HE
+               EX),MF=(E,CALLLIST) GENERATE LINKAGE TO 'SCREEN'
+         XC    ERRFIELD,ERRFIELD   CLEAR THE ERROR FIELD AGAIN
+         EJECT
+***********************************************************************
+*        ANALYSE THE RETURNED DATA
+***********************************************************************
+         SPACE 2
+         LA    REG15,4             PREPARE RETURN CODE
+         CLI   FUNCTION,C'X'       DOES HE WANT TO EXIT ?
+         BE    EXITEDIT            YES. GIVE EXIT REQD RETURN CODE
+         XR    REG15,REG15         OTHERWISE SET A GOOD COND CODE
+         CLC   DISP,=C'OLD'        DATA SET EXISTS ALREADY
+         BE    GETMEMB             YES. NO PROBLEMS
+         EJECT
+***********************************************************************
+*        ASK USER FOR ALLOCATION DETAILS
+***********************************************************************
+         SPACE 2
+         CALL  (15),(SPACE,DCB,VOL,UNIT),VL,MF=(E,CALLLIST)
+         ORG   *-2
+         LR    REG0,REG1           LOAD PASS LIST ADDRESS
+         LA    REG1,SCREEN2        SECOND SCREEN DEFINITION
+         LINK  SF=(E,SCREENSF)     CALL THE SERVICE ROUTINE
+         EJECT
+***********************************************************************
+*        ALLOCATE THE NEW FILE
+***********************************************************************
+         SPACE 2
+         MVC   ALLOCWRK(ALLOCLEN),ALLOCMSK   INITIALISE ALLOCATION WORK
+         MVC   ALLOCDSN,OSDSN      MOVE DATA SET NAME IN
+         MVC   ALLOCSPC,SPACE      MOVE SPACE PARAMETERS IN
+         MVC   ALLOCDCB,DCB        MOVE DCB PARAMETERS IN
+         MVC   ALLOCUNT,UNIT       MOVE IN UNIT TYPE
+         MVC   ALLOCVOL,VOL        MOVE IN VOLUME SERIAL
+         TR    ALLOCOPS(ALLOCEND-ALLOCOPS),ALLOCTAB    BLANKS TO ','S
+         MVI   ALLOCEND,C' '       ENSURE A BLANK EXISTS AT END
+         LINK  EP=UT501,PARAM=(ALLOCWRK,ALLCODE,RETCODE,A,B),VL=1,     X
+               MF=(E,UT501D)       ALLOCATE THE DATA SET
+         CLI   RETCODE,0           DID THAT WORK ?
+         BNE   ALLCFAIL            NO. GIVE SOME INDICATION
+         LINK  EP=UT501,PARAM=(ALLOCWRK,ALLCODE2,RETCODE,A,B),VL=1,    X
+               MF=(E,UT501D)       FREE THE DATA SET NOW
+         EJECT
+***********************************************************************
+*        BUILD A COMPOSITE DSNAME FOR EDIT TO USE
+***********************************************************************
+         SPACE 2
+GETMEMB  DS    0H
+         MVI   DSNAME,C' '         PREPARE TO CLEAR THE OLD DSNAME
+         MVC   DSNAME+1(L'DSNAME-1),DSNAME PROPAGATE THE BLANK
+         LA    REG1,OSDSN+L'OSDSN  ADDRESS OF END OF HIS DATA SET NAME
+         LA    REG15,OSDSN         ADDRESS OF START OF FIELD
+DSNLOOP  EQU   *
+         BCTR  REG1,0              SUBTRCAT TO GET BYTE BEFORE
+         CLI   0(REG1),C' '        STILL BLANK ?
+         BNE   GOPLAY              GOT LENGTH. GO AND PLAY
+         CR    REG1,REG15          GOT BACK TO START YET ?
+         BNH   BADDSN              YES. MUST BE A BLANK DSNAME
+         B     DSNLOOP             OTHERWISE KEEP GOING
+GOPLAY   EQU   *
+         SR    REG1,REG15          LENGTH OF DATA SET NAME
+         B     *+10                JUMP OVER THE MVC INST
+         MVC   DSNAME(0),OSDSN     MOVE RETURNED DSN TO WORK AREA
+         EX    REG1,*-6            EXECUTE THE MOVE
+         LA    REG1,DSNAME+1(REG1) ADDRESS OF NEXT BYTE
+         MVI   0(REG1),C' '        MAKE IT A BLANK
+         CLI   MEMBER,C' '         DOES A MEMBER NAME EXIST
+         BE    MEMBENDS            NO. LEAVE DATA SET NAME AS IS
+         MVI   0(REG1),C'('        OPEN MEMBER NAME BRACKETS
+         LA    REG15,MEMBER        ADDRESS OF STATR OF MEMBER NAME
+         LA    REG2,MEMBER+L'MEMBER ADDRESS OF END OF FIELD
+DSNLOOP2 EQU   *
+         BCTR  REG2,0              SUBTRACT 1 FOR NEXT BYTE DOWN
+         CLI   0(REG2),C' '        STILL BLANK
+         BE    DSNLOOP2            NO. KEEP GOING
+         SR    REG2,REG15          LENGTH OF MEMBER NAME
+         B     *+10                JUMP OVER THE MOVE
+         MVC   1(0,REG1),MEMBER    MOVE MEMBER NAME IN
+         EX    REG2,*-6            EXECUTE THE MOVE
+         LA    REG1,2(REG2,REG1)   LOAD ADDRESS OF END OS DSNAME
+         MVI   0(REG1),C')'        CLOSE THE BRACKETS
+         MVI   1(REG1),C' '        SET A BLANK AT END
+MEMBENDS EQU   *
+         XR    REG15,REG15         SET A RETURN CODE
+         EJECT
+***********************************************************************
+*        RETURN CONTROL TO EDIT
+***********************************************************************
+         SPACE 2
+EXITEDIT EQU   *
+         ZRETURN RC=(15)           RETURN TO EDIT
+         EJECT
+***********************************************************************
+*        ERROR ROUTINES
+***********************************************************************
+         SPACE 2
+ALLCFAIL DS    0H
+         MVC   ERRFIELD,ALLCERR    MOVE ERROR MESSAGE TO ERROR FIELD
+         B     RETRY               AND GO TRY A NEW DATA SET
+         EJECT
+***********************************************************************
+*        CONSTANTS NOT CHANGED BY THE PROGRAM
+***********************************************************************
+         SPACE 2
+SCREENSF LINK  EP=SCREEN,SF=L
+ALLOCMSK DC    AL2(ALLOCLEN+1)     ALLOCATE NEW DATA SET JCL BUILD AREA
+         DC    C'//SYSUT1 DD DSN='
+         DC    CL(L'OSDSN)' '             DATA SET NAME
+         DC    C',DISP=(NEW,CATLG),UNIT='
+         DC    CL(L'UNIT)' '              UNIT
+         DC    C',VOL=SER='
+         DC    CL(L'VOL)' '              VOLUME
+         DC    C',SPACE='
+         DC    CL(L'SPACE)' '             SPACE PARAMETER
+         DC    C','
+         DC    CL(L'DCB)' '             DCB PARAMETERS
+ALLOCLEN EQU   *-ALLOCMSK
+ALLOCTAB DC    256AL1(*-ALLOCTAB)  TRANSLATE TABLE
+         ORG   ALLOCTAB+C' '
+         DC    C','                CONVERT BLANKS TO COMMAS
+         ORG
+ALLCODE  DC    C'A'                ALLOCATION CODE
+ALLCODE2 DC    C'D'                DEALLOCATION CODE
+ALLCERR  DC    C'*** ALLOCATION FAILED ****'
+         EJECT
+***********************************************************************
+*        DSECTS
+***********************************************************************
+         SPACE 2
+WRKAREA DSECT ,                   LOCAL WORK AREA
+         DS    18A                 REGISTER SAVE AREA
+FUNCTION DS    C                   FUNCTION CODE RETURNED FROM USER
+ALLOCWRK DS    H                   ALLOCATE NEW DATA SET JCL BUILD AREA
+         DC    C'//SYSUT1 DD DSN='
+ALLOCOPS EQU   *
+ALLOCDSN DC    CL(L'OSDSN)' '             DATA SET NAME
+         DC    C',DISP=(NEW,CATLG),UNIT='
+ALLOCUNT DC    CL(L'UNIT)' '              UNIT
+         DC    C',VOL=SER='
+ALLOCVOL DC    CL(L'VOL)' '              VOLUME
+         DC    C',SPACE='
+ALLOCSPC DC    CL(L'SPACE)' '             SPACE PARAMETER
+         DC    C','
+ALLOCDCB DC    CL(L'DCB)' '             DCB PARAMETERS
+ALLOCEND DS    C                   END OF ALLOC AREA
+ERRFIELD DS    CL30                SPACE FOR ERROR MESSAGES
+WRKLEN  EQU   *-WRKAREA
+         SPACE 2
+         USERPARM
+         SPACE 2
+         EDITWK2
+         EJECT
+***********************************************************************
+*        SCREEN DEFINITION AREAS
+***********************************************************************
+         SPACE 2
+GETDSN   CSECT ,                      REVERT TO NORMAL CSECT
+SCREEN1  SCREEN CLEAR=YES,REPLY=YES
+         DATA  1,1,'MONSANTO ONLINE PROGRAM EDITOR'
+         DATA  1,40,'DATA SET SELECTION'
+         DATA  2,1,'---------------------------------------------------X
+               -------------------------'
+         DATA  4,5,'FILENAME ===>',BRIGHT=YES
+         DATA  4,*,(16,0),CHANGE=YES,BRIGHT=YES,PASS=YES,              X
+               INDEX=0,CURSOR=YES
+         DATA  6,1,'----------------------------------------------------
+               ----------------------------'
+         DATA  8,5,'O.S. DATA SET DEFINITION:'
+         DATA  10,10,'DSN      ===>'
+         DATA  S,*,(44,0),CHANGE=YES,BRIGHT=YES,PASS=YES,INDEX=1
+         DATA  *,10,'MEMBER   ===>'
+         DATA  S,*,(8,0),CHANGE=YES,BRIGHT=YES,PASS=YES,INDEX=2
+         DATA  S,*,'(OR BLANK FOR LIST OF MEMBERS)'
+         DATA  *,10,'DISP     ===>'
+         DATA  S,*,(3,0),CHANGE=YES,BRIGHT=YES,PASS=YES,INDEX=3
+         DATA  S,*,'(''NEW'' OR ''OLD'')'
+         DATA  *,10,'HEX ?    ===>'
+         DATA  S,*,HEX,CHANGE=YES,BRIGHT=YES,PASS=YES,INDEX=6
+         DATA  15,4,'OR ''X'' TO EXIT ===>'
+         DATA  S,*,(1,0),CHANGE=YES,PASS=YES,INDEX=4
+         DATA  24,5,ERRFIELD,BRIGHT=YES,PASS=YES,INDEX=5
+         SCEND
+SCREEN2  SCREEN CLEAR=NO,REPLY=YES
+         DATA  17,5,'NEW DATA SET PARAMETERS:'
+         DATA  19,10,'SPACE='
+         DATA  S,*,SPACE,CHANGE=YES,BRIGHT=YES,CURSOR=YES,PASS=YES,    X
+               INDEX=0
+         DATA  *,10,'DCB='
+         DATA  S,*,DCB,CHANGE=YES,BRIGHT=YES,PASS=YES,INDEX=1
+         DATA  *,10,'VOL=SER='
+         DATA  S,*,VOL,BRIGHT=YES,CHANGE=YES,PASS=YES,INDEX=2
+         DATA  *,10,'UNIT='
+         DATA  S,*,UNIT,BRIGHT=YES,CHANGE=YES,PASS=YES,INDEX=3
+         SCEND
+         END
+??
+// EXEC ASMFCL,L=H
+//SYSLIB DD DSN=JEA.MACLIB,DISP=SHR
+// DD    DSN=SYS2.MACLIB,DISP=SHR
+// DD DSN=SYS1.MACLIB,DISP=SHR
+//SYSIN DD DSN=&OSJOB,DISP=(OLD,DELETE)
+//LKED.SYSLMOD DD DSN=JEA.LOADLIB,DISP=SHR
+ NAME GETDSN(R)

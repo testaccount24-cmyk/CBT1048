@@ -1,0 +1,145 @@
+         TITLE 'PARROTK1 - INTERNAL MACROS'
+         MACRO
+         $CB   &PRINT=OFF          MACRO TO GENERATE DSECTS
+         PUSH  PRINT               PRESERVE PRINT OPTIONS
+         PRINT &PRINT              SET PRINT OPTIONS FOR DSECTS
+               EJECT
+         CBPREFIX ,                CONTROL BLOCK PREFIX
+               EJECT
+         CCB   ,                   CENTRAL CONTROL BLOCK
+               EJECT
+         CSECTID ,                 CSECT IDENTIFICATION PREFIX
+               EJECT
+         EQUATES ,                 GENERATE STANDARD EQUATES
+         POP   PRINT               RESTORE ORIGINAL PRINT OPTIONS
+         MEND
+         SPACE 5
+PARROTK1  CSECT
+         $CB   ,                   GENERATE DSECTS AND EQUATES
+         TITLE 'PARROTK1 - MISCELLANEOUS INITIALISATION ROUTINES'
+        SCSECT K1
+         ENTRY PARENDK1            END OF CSECT
+         ENTRY CONVIND             CONVERT INDICATOR TO INTERNAL FORM
+         TITLE 'PARROTK1 - CONVERT INDICATOR TO INTERNAL FORMAT'
+***********************************************************************
+*        CONVERT INDICATOR SPECIFICATION TO INTERNAL FORMAT           *
+***********************************************************************
+         SPACE 1
+*        THIS ROUTINE CONVERTS INDICATOR SPECIFICATIONS TO THE
+*         EQUIVALENT INTERNAL FORMAT.  IT CAN HANDLE INDICATORS IN
+*         THE RANGES :-
+*              00 - 99
+*              U1 - U8             USER INDICATORS
+*              H0 - H3             HALT INDICATORS
+         SPACE 1
+*        ON INPUT :-
+*         R15 - ADDRESS OF INDICATOR SPECIFICATION
+         SPACE 1
+*        ON OUTPUT :-
+*         R15 - DISPLACEMNT WITHIN $INDS OF APPROPRIATE BYTE
+*         R14 - BIT MASK WITHIN INDICATOR BYTE
+         SPACE 1
+*        UPON RETURN, THE COND CODE IS SET THUS :-
+*         BE  - INDICATOR SPECIFICATION CONVERTED
+*         BNE - INDICATOR SPECIFICATION IS INVALID
+         EJECT
+***********************************************************************
+*        CONVERT INDICATOR SPECIFICATION ( CONT'D )                   *
+***********************************************************************
+         SPACE 1
+CONVIND  SUBIN SAVE=R4             PRESERVE RETURN ADDRESS
+         CLI   0(R15),C'U'         IS IT A USER INDICATOR NO.
+         BNE   CONVIND1            BR IF NOT A USER INDICATOR
+         CBAL  R4,CONVINDU         CONVERT USER INDICATOR SPEC'N
+         BNE   CONVINDE            BR IF ANY ERROR ENCOUNTERED
+         B     CONVINDX            GO TO EXIT
+CONVIND1 CLI   0(R15),C'H'         IS IT A HALT INIDCATOR
+         BNE   CONVIND2            BR IF NOT A HALT INDICATOR
+         CBAL  R4,CONVINDH         CONVERT HALT INDICATOR SPEC'N
+         BNE   CONVINDE            BR IF ANY ERROR ENCOUNTERED
+         B     CONVINDX            GO TO EXIT
+CONVIND2 CBAL  R4,CONVINDN         ASSUME 00-99 AND TRY TO CONVERT
+         BE    CONVINDX            BR IF CONVERTED SUCCESSFULLY
+CONVINDE MVC   5(L'LINE01,R5),LINE01 SET UP ERROR MESSAGE
+         MVC   5+L'LINE01(2,R5),0(R15) ADD IND SPEC'N TO MESSAGE
+         CBAL  R4,PRINT            PRINT ERROR MESSAGE
+         CLI   *,Y                 SET COND CODE UNEQUAL AGAIN
+CONVINDX SUBOUT RESTORE=R4         RESTORE AND RETURN
+         EJECT
+***********************************************************************
+*        CONVERT USER INDICATOR SPECIFICATION                         *
+***********************************************************************
+         SPACE 1
+*        ON ENTRY, SPEC MUST BE OF FORM 'UX'
+         SPACE 1
+CONVINDU SUBIN ,                   ENTER ROUITNE
+         CLI   1(R15),C'1'         IS NO. BELOW '1'
+         BL    CONVIUY             BR IF LOW COS ERROR
+         CLI   1(R15),C'8'         IS NO. GREATER THAN '8'
+         BH    CONVIUY             BR IF HIGH - ALSO WRONG
+         MVC   $WRKAREA(1),1(R15)  SET IND NO. IN WORK AREA
+         LA    R15,$UINDS-$INDS    SET DISPLACEMENT IN REG 15
+         TR    $WRKAREA(1),IUTRTAB-C'1' CONVERT NO. TO BIT MASK
+         IC    R14,$WRKAREA        SET BIT MASK IN REG 14
+         B     CONVIUX             GO TO EXIT
+CONVIUY  CLI   *,Y                 SET ERROR FLAG
+         B     *+8                 BYPASS RESETTING COND CODE
+CONVIUX  CLI   *,X                 SET COND CODE SHOWING SUCCESS
+        SUBOUT ,                   RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        CONVERT HALT INDICATOR SPECIFICATION                         *
+***********************************************************************
+         SPACE 1
+*        ON ENTRY, SPEC MUST BE OF FORM 'HX'
+         SPACE 1
+CONVINDH SUBIN ,                   ENTER ROUITNE
+         CLI   1(R15),C'0'         IS NO. BELOW '1'
+         BL    CONVIHY             BR IF LOW COS ERROR
+         CLI   1(R15),C'3'         IS NO. GREATER THAN '8'
+         BH    CONVIHY             BR IF HIGH - ALSO WRONG
+         MVC   $WRKAREA(1),1(R15)  SET IND NO. IN WORK AREA
+         LA    R15,$HINDS-$INDS    SET DISPLACEMENT IN REG 15
+         TR    $WRKAREA(1),IHTRTAB-C'0' CONVERT NO. TO BIT MASK
+         IC    R14,$WRKAREA        SET BIT MASK IN REG 14
+         B     CONVIHX             GO TO EXIT
+CONVIHY  CLI   *,Y                 SET ERROR FLAG
+         B     *+8                 BYPASS RESETTING COND CODE
+CONVIHX  CLI   *,X                 SET COND CODE SHOWING SUCCESS
+        SUBOUT ,                   RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        CONVERT NUMERIC INIDCATOR SPECIFICATION                      *
+***********************************************************************
+         SPACE 1
+CONVINDN SUBIN SAVE=(R4,R15)       PRESERVE VITAL REGISTERS
+         LR    R14,R15             POINT R14 AT INDICATOR SPEC'N
+         LA    R15,1               SET R15 TO EXECUTABLE LENGTH
+         CBAL  R4,NUMERIC          VERIFY THAT NUMERIC ( 00-99 )
+         BNE   CONVINY             BR IF NOT NUMERIC
+         LR    R15,R1              SET BINARY VALUE IN REG15
+         SR    R14,R14             ZEROISE R14 FOR DIVIDE
+         D     R14,=F'8'           CONVERT TO DISPLACEMENT & REMAINDER
+         STC   R14,$WRKAREA        PRESERVE REMAINDER IN WORK AREA
+         TR    $WRKAREA(1),INTRTAB CONVERT REMAINDER TO BIT MASK
+         IC    R14,$WRKAREA        SET BIT MASK IN REG 14
+CONVINY  SUBLR R15                 REFRESH R15 FOR ERROR MESSAGE USE
+         CLI   *,Y                 SET COND CODE TO SHOW ERROR
+         B     *+8                 BYPASS RESETTING COND CODE
+CONVINX  CLI   *,X                 SET COND CODE TO SHOW CONVERSION
+        SUBOUT RESTORE=R4          RETSORE AND RETURN
+         TITLE 'PARROTK1 - EXECUTED INSTRUCTIONS'
+***********************************************************************
+*        PARROTK1 - EXECUTED INSTRUCTIONS
+***********************************************************************
+         SPACE 1
+         TITLE 'PARROTK1 - ERROR MESSAGES'
+LINE01   DC    C'PTK1-001-W  THE PRECEDING CONTROL CARD CONTAINS THE FO*
+               LLOWING UNRECOGNISABLE INDICATOR SPECIFICATION - '
+         TITLE 'PARROTK1 - MISCELLANEOUS CONSTANTS AND FIELDS'
+IUTRTAB  DC    X'8040201008040201' CONVERT USER IND TO BIT MASK
+IHTRTAB  DC    X'08040201'         CONVERT HALT IND TO BIT MASK
+INTRTAB  DC    X'8040201008040201' CONVERT NUMERIC IND TO BIT MASK
+         SPACE 1
+        SCSEND K1                  TERMINATE CSECT
+         END

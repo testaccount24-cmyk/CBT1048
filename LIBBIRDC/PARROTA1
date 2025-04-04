@@ -1,0 +1,362 @@
+         TITLE 'PARROTA1 - CONTROL CARD PROCESSING - PART 1'            A1000100
+         MACRO                                                          A1000200
+         $CB   &PRINT=OFF          MACRO TO GENERATE DSECTS             A1000300
+         PUSH  PRINT               PRESERVE PRINT OPTIONS               A1000400
+         PRINT &PRINT              SET PRINT OPTIONS FOR DSECTS         A1000500
+               EJECT                                                    A1000600
+         CBPREFIX ,                CONTROL BLOCK PREFIX                 A1000700
+               EJECT                                                    A1000800
+         CCB   ,                   CENTRAL CONTROL BLOCK                A1000900
+               EJECT                                                    A1001000
+         CSECTID ,                 CSECT IDENTIFICATION PREFIX          A1001100
+               EJECT                                                    A1001200
+         EQUATES ,                 GENERATE STANDARD EQUATES            A1001300
+               EJECT                                                    A1001400
+         GR90  ,                   GR90 CONTROL CARD                    A1001500
+               EJECT                                                    A1001600
+         GR91  ,                   GR91 CONTROL CARD                    A1001700
+               EJECT                                                    A1001800
+         GR92  ,                   GR92 CONTROL CARD                    A1001900
+               EJECT                                                    A1002000
+         GR93  ,                   GR93 CONTROL CARD                    A1002100
+               EJECT                                                    A1002200
+         OCB   ,                   OUTPUT CONTROL BLOCK                 A1002300
+               EJECT                                                    A1002400
+         PARROTT ,                 TABLE CSECT                          A1002500
+               EJECT                                                    A1002600
+         SPD   ,                   STORAGE POOL DEFINITION              A1002700
+         POP   PRINT               RESTORE ORIGINAL PRINT OPTIONS       A1002800
+         MEND                                                           A1002900
+         SPACE 5                                                        A1003000
+         MACRO                                                          A1003100
+&NAME    CCSEL &CID                                                     A1003200
+.*                                                                      A1003300
+.*       TEST CARD TYPE, AND GO TO APPROPRIATE PROCESSING ROUTINE       A1003400
+.*                                                                      A1003500
+         CLC   0(4,R6),=C'&CID'    HAVE WE A MATCH                      A1003600
+         BNE   CCSL&SYSNDX         BR IF NO MATCH                       A1003700
+         CBAL  R4,CC&CID           GO PROCESS CONTROL CARD              A1003800
+         B     CCSELX              GO TO RTN EXIT                       A1003900
+CCSL&SYSNDX EQU *                  CONTINUE PROCESSING                  A1004000
+         MEND                                                           A1004100
+         EJECT                                                          A1004200
+PARROTA1  CSECT                                                         A1004300
+         $CB   ,                   GENERATE DSECTS AND EQUATES          A1004400
+         EJECT                                                          A1004500
+     SCSECT A1                                                          A1004600
+         USING PARROTA1,R12         ESTABLISH PARROTA1 ADDRESSABILITY   A1004700
+         USING CCBNTRY,R13         ESTABLISH CCB ADDRESSABILITY         A1004800
+         SPACE 1                                                        A1004900
+         ENTRY PARENDA1            END IF CSECT                         A1005000
+         ENTRY READCC              READ & PROCESS SYSIN CONTROL CARDS   A1005100
+         EJECT                                                          A1005200
+*********************************************************************** A1005300
+*        READ CONTROL CARDS - MAIN-LINE                               * A1005400
+*********************************************************************** A1005500
+         SPACE 1                                                        A1005600
+READCC   SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              A1005700
+         CBAL  R4,CCREADI          PERFORM NECESSARY INITIALISATION     A1005800
+         CBAL  R4,CCREAD           READ AND ANALYSE CONTROL CARDS       A1005900
+         TM    SWPARM,MPRMTEST     WAS PARM=TEST SPECIFIED              A1006000
+         BO    READCCX             IGNORE ANY E-LEVEL ERRORS IF YES     A1006100
+         TM    SWERROR,MERRCCER    WERE ANY 'E' LEVEL ERRORS FOUND      A1006200
+         BZ    READCCX             GO TO EXIT IF NO 'E' ERRORS          A1006300
+         ABEND 8                   ABEND TO HIGHLIGHT ERRORS            A1006400
+READCCX SUBOUT RESTORE=R4          RETURN TO CALLER                     A1006500
+         TITLE 'PARROTA1 - PREPARE TO READ CONTROL CARDS'               A1006600
+*********************************************************************** A1006700
+*        PREPARE TO READ CONTROL CARDS                                * A1006800
+*********************************************************************** A1006900
+         SPACE 1                                                        A1007000
+CCREADI  SUBIN SAVE=R4             PRESERVA RETURN ADDRESS              A1007100
+         CBAL  R4,COREGET          ACQUIRE CORE FOR CONTROL BLOCKS      A1007200
+         CBAL  R4,PRNTOCB          CREATE OCB FOR DD STATEMENT 'PRINT'  A1007300
+         OI    SWINIT,MINTCC       INDICATE PROCESSING CONTROL CARDS    A1007400
+         AP    SYSPRINT+IOPSRCNT(4),$PGELMIT FORCE LCNT TO PAGE LIMIT   A1007500
+         CBAL  R4,PRINT            PRINT HEADINGS                       A1007600
+         IOM   OPEN,SYSIN          OPEN CONTROL CARD DATA SET           A1007700
+        SUBOUT RESTORE=R4          RETURN TO CALLER                     A1007800
+         EJECT                                                          A1007900
+*********************************************************************** A1008000
+*        ACQUIRE STORAGE POOL FOR SUB-ALLOCATION                      * A1008100
+*********************************************************************** A1008200
+         SPACE 1                                                        A1008300
+COREGET  SUBIN ,                   ENTER ROUTINE                        A1008400
+         L     R0,$GETCORE+4       RETRIEVE LENGTH OF C/B STORAGE POOL  A1008500
+         OC    $GETCORE+4(4),$GETCORE+4 TEST IF SIZE IS ZERO            A1008600
+         BZ    COREGETX            EXIT IF SIZE IS ZERO                 A1008700
+       GETMAIN R,LV=(0)            ACQUIRE STORAGE POOL                 A1008800
+         ST    R1,$GETCORE         STORE ADDRESS OF STORAGE POOL        A1008900
+         OI    $GETCORE,MSPDUSE    FLAG POOL AVAILABLE FOR USE          A1009000
+COREGETX SUBOUT ,                  RETURN TO MIAN-LINE                  A1009100
+         TITLE 'PARROTA1 - CONSTRUCT OCB FOR ''PRINT'''                 A1009200
+*********************************************************************** A1009300
+*        CONSTRUCT OCB FOR 'PRINT' DD STATEMENT                       * A1009400
+*********************************************************************** A1009500
+         SPACE 1                                                        A1009600
+*        THE USER MAY SPECIFY ADDITIONAL OUTPUT DD STATEMENTS ( DEFINED A1009700
+*         WITH GR00 CONTROL CARDS ), AND PROCESSING OF THESE STATEMENTS A1009800
+*         IS CONTROLLED BY AN OCB.  IN ORDER TO OBVIATE THE NECESSITY   A1009900
+*         OF PROCESSING 'PRINT' ANY DIFFERENTLY TO THE OPTIONAL OUTPUT  A1010000
+*         DATA SETS, WE CONSTRUCT AN OCB FOR 'PRINT' ALSO, SO THAT      A1010100
+*         OUTPUT PROCESSING OF FIELDS IN LCD'S ( DEFINED BY GR10/11/12) A1010200
+*         CONTROL CARDS IS THE SAME FOR ALL OUTPUT DATA SETS.           A1010300
+         SPACE 1                                                        A1010400
+         USING OCBNTRY,R8          ESTABLISH OCB ADDRESSABILITY         A1010500
+PRNTOCB SUBIN SAVE=R4              PRESERVE RETURN ADDRESS              A1010600
+         LA    R2,OCBLGTH          SET LENGTH OF OCB IN REG 2           A1010700
+         GETCB OCB                 ACQUIRE CORE FOR OCB AND CHAIN       A1010800
+         LA    R1,PRINTDS          GET ADDRESS OF PRINT'S IOSW          A1010900
+         ST    R1,OCBIOSW          PRESERVE IOSW ADDRESS IN OCB         A1011000
+         OI    OCBSW,MOCBREPT      FLAG THAT THIS IS A REPORT DATA SET  A1011100
+         MVC   OCBLOGO,=CL8'PARROT' SET DEFAULT LOGO OF PARROT          A1011200
+         MVC   OCBLABL,$SPACES     SET LABEL FIELD TO SPACES            A1011300
+         ZAP   OCBPCNT,$ZERO       ZEROISE PAGE COUNT                   A1011400
+         ZAP   OCBLCNT,$ZERO       ZEROISE LINE-COUNT STORE             A1011500
+         MVC   OCBRID,$SPACES      BLANK OUT OPTIONAL REPORT ID         A1011600
+         MVI   OCBPCC,SPCE1AFT     SET DEFAULT LINE SPACING               011700
+         CHNCB OCB,HDG             SET POINTER TO FACILITATE CHAINING   A1011800
+        SUBOUT RESTORE=R4          RESTORE AND RETURN TO CALLER         A1011900
+         DROP  R8                  DROP OCB ADDRESSABILITY              A1012000
+         TITLE 'PARROTA1 - READ CONTROL CARDS FROM SYSIN'               A1012100
+*********************************************************************** A1012200
+*        READ CONTROL CARDS AND SELECT PROCESSING ROUTINE             * A1012300
+*********************************************************************** A1012400
+         SPACE 1                                                        A1012500
+CCREAD   SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              A1012600
+CCREAD1  CBAL  R4,READIN           GET CONTROL CARD AND PRINT IT        A1012700
+         BNE   CCEOD               EXIT IF EOD ON SYSIN                 A1012800
+         SPACE 1                                                        A1012900
+         CBAL  R4,CCSELECT         SELECT PROCESSING ROUTINE            A1013000
+         B     CCREAD1             GO GET NEXT CONTROL CARD             A1013100
+         SPACE 1                                                        A1013200
+CCEOD    NI    SWINIT,FF-MINTCC    INDICATE NO LONGER PROCESSING C/C    A1013300
+         IOM   CLOSE,SYSIN         CLOSE SYSIN0 DATA SET                A1013400
+         CBAL  R4,PRINT            PRINT A BLANK LINE                   A1013500
+         MVI   0(R5),SPCE2AFT      ESTABLISH DOUBLE SPACE               A1013600
+         MVC   10(27,R5),=C'END OF PARROT CONTROL CARDS' SET UP MESSAGE A1013700
+         COUNT SYSPRINT,1          ADJUST LINE COUNT                    A1013800
+         CBAL  R4,PRINT            PRINT MESSAGE                        A1013900
+        SUBOUT RESTORE=R4          RESTORE AND RETURN                   A1014000
+         TITLE 'PARROTA1 - SELECT CONTROL CARD PROCESSING ROUTINE'      A1014100
+*********************************************************************** A1014200
+*        SELECT PROCESSING ROUTINE FOR CONTROL CARD                   * A1014300
+*********************************************************************** A1014400
+         SPACE 1                                                        A1014500
+CCSELECT SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              A1014600
+         SPACE 1                                                        A1014700
+         CCSEL GR00                PROCESS GR00 CONTROL CARDS           A1014800
+         SPACE 1                                                        A1014900
+         CCSEL GR01                PROCESS GR01 CONTROL CARDS           A1015000
+         SPACE 1                                                        A1015100
+         CCSEL GR02                PROCESS GR02 CONTROL CARDS           A1015200
+         SPACE 1                                                        A1015300
+         CCSEL GR03                PROCESS GR03 CONTROL CARDS           A1015400
+         EJECT                                                          A1015500
+*********************************************************************** A1015600
+*        SELECT PROCESSING ROUTINE FOR CONTROL CARD ( CONT'D )        * A1015700
+*********************************************************************** A1015800
+         SPACE 1                                                        A1015900
+         CCSEL GR04                PROCESS GR04 CONTROL CARDS           A1016000
+         SPACE 1                                                        A1016100
+         CCSEL GR05                PROCESS GR05 CONTROL CARDS           A1016200
+         SPACE 1                                                        A1016300
+         CCSEL GR06                PROCESS GR06 CONTROL CARDS           A1016400
+         EJECT                                                          A1016500
+*********************************************************************** A1016600
+*        SELECT PROCESSING ROUTINE FOR CONTROL CARD ( CONT'D )        * A1016700
+*********************************************************************** A1016800
+         SPACE 1                                                        A1016900
+         CCSEL GR07                PROCESS GR07 CONTROL CARDS           A1017000
+         SPACE 1                                                        A1017100
+         CCSEL GR08                PROCESS GR08 CONTROL CARDS           A1017200
+         SPACE 1                                                        A1017300
+         CCSEL GR09                PROCESS GR09 CONTROL CARDS           A1017400
+         EJECT                                                          A1017500
+*********************************************************************** A1017600
+*        SELECT PROCESSING ROUTINE FOR CONTROL CARD ( CONT'D )        * A1017700
+*********************************************************************** A1017800
+         SPACE 1                                                        A1017900
+         CCSEL GR10                PROCESS GR10 CONTROL CARDS           A1018000
+         SPACE 1                                                        A1018100
+         CCSEL GR11                PROCESS GR11 CONTROL CARDS           A1018200
+         SPACE 1                                                        A1018300
+         CCSEL GR12                PROCESS GR12 CONTROL CARDS           A1018400
+         SPACE 1                                                        A1018500
+         CCSEL GR13                PROCESS GR13 CONTROL CARDS           A1018600
+         EJECT                                                          A1018700
+*********************************************************************** A1018800
+*        SELECT PROCESSING ROUTINE FOR CONTROL CARD ( CONT'D )        * A1018900
+*********************************************************************** A1019000
+         SPACE 1                                                        A1019100
+         CCSEL GR90                PROCESS GR90 CONTROL CARDS           A1019200
+         SPACE 1                                                        A1019300
+         CCSEL GR91                PROCESS GR91 CONTROL CARDS           A1019400
+         SPACE 1                                                        A1019500
+         CCSEL GR92                PROCESS GR92 CONTROL CARDS           A1019600
+         SPACE 1                                                        A1019700
+         CCSEL GR93                PROCESS GR93 CONTROL CARDS           A1019800
+         SPACE 1                                                        A1019900
+         LINE  LINE01              PRINT ERROR MESSAGE ( UNKNOWN CARD ) A1020000
+CCSELX  SUBOUT RESTORE=R4          RESTORE AND RETURN TO CALLER         A1020100
+         TITLE 'PARROTA1 - PROCESS GR90 CONTROL CARDS'                  A1020200
+*********************************************************************** A1020300
+*        PROCESS GR90 CONTROL CARDS                                   * A1020400
+*********************************************************************** A1020500
+         SPACE 1                                                        A1020600
+*        GR90 CONTROL CARDS CONTAIN A LITERAL VALUE WHICH IS COMPARED,  A1020700
+*         ON A PARTIAL KEY MATCH, WITH THE VALUE SUPPLIED VIA THE       A1020800
+*         'GR90' PARM VALUE.  IF THE NON-BLANK PARTS OF THE 'KEY' IN    A1020900
+*         THE GR90 CONTROL CARD ARE IDENTICAL TO THE CORRESPONDING      A1021000
+*         PARTS OF THE GR90 PARM VALUE, THEN ALL CONTROL CARDS UP TO    A1021100
+*         THE NEXT GR91 CARD WILL BE TREATED AS CONTROL CARDS, BUT IF   A1021200
+*         THE 'KEYS' ARE NOT IDENTICAL, THEN ALL CONTROL CARDS UP TO    A1021300
+*         THE NEXT GR91 CONTROL CARD WILL BE TREATED AS COMMENTS.       A1021400
+         SPACE 1                                                        A1021500
+         USING GR90CARD,R6         ESTABLISH GR90 ADDRESSABILITY        A1021600
+CCGR90   SUBIN SAVE=(R4,R6)        PRESERVE REGISTERS                   A1021700
+         LA    R15,39              SET EXECUTABLE LENGTH OF IND STRING  A1021800
+         LA    R14,GR90INDS        POINT AT C/C VALUE ('MASTER KEY')    A1021900
+         LA    R6,$GR90IND         POINT AT PARM VALUE ('FIELD TO TEST' A1022000
+         ICM   R6,8,=AL1(EQ)       SET TEST TYPE TO 'EQUAL'             A1022100
+         CBAL  R4,PARTKEY          TEST IF PARTIAL KEYS MATCH           A1022200
+         BE    *+8                 BR IF KEYS ARE EQUAL                 A1022300
+         OI    SWPARM2,MPRMGR90    SET TO IGNORE FOLLOWING CONTROL CARD A1022400
+         SUBLR R6                  REFRESH GR90 ADDRESS                 A1022500
+         CLC   GR90UNU1,$SPACES    ARE UNUSED COLUMNS BLANK             A1022600
+         BNE   CCGR9001            BR IF NOT TO TELL OF ERROR           A1022700
+        TBLANK GR90UNU2            ARE OTHER UNUSED COLUMNS ALSO BLANK  A1022800
+         BE    CCGR90X             GO TO EXIT IF YES                    A1022900
+         CLI   GR90UNU2,C'*'       IS THE NON-BLANK A COMMENT           A1023000
+         BE    GR90UNU2            GO TO EXIT IF COMMANT                A1023100
+CCGR9001 LINE  LINE02              TELL OF MISPLACED DATA               A1023200
+CCGR90X SUBOUT RESTORE=(R4,R6)     RESTORE AND RETURN TO CALLER         A1023300
+         DROP  R6                  DROP GR90 ADDRESSABILITY             A1023400
+         TITLE 'PARROTA1 - PROCESS GR91 CONTROL CARDS'                  A1023500
+*********************************************************************** A1023600
+*        PROCESS GR91 CONTROL CARDS                                   * A1023700
+*********************************************************************** A1023800
+         SPACE 1                                                        A1023900
+*        GR91 CONTROL CARDS DELIMIT A BLOCK OF CONTROL CARDS THAT ARE   A1024000
+*         TO BE CONDITIONALLY EXCLUDED ON THE BASIS OF VALUES IN THE    A1024100
+*         GR90 CONTROL CARDS AND THE GR90 PARM VALUE.                   A1024200
+         SPACE 1                                                        A1024300
+         USING GR91CARD,R6         ESTABLISH GR91 ADDRESSABILITY        A1024400
+CCGR91   SUBIN ,                   ENTER ROUTINE                        A1024500
+         NI    SWPARM2,FF-MPRMGR90 SET OF THE EXCLUSION SWITCH          A1024600
+        SUBOUT ,                   RETURN TO CALLER                     A1024700
+         DROP  R6                  DROP GR91 ADDRESSABILITY             A1024800
+         TITLE 'PARROTA1 - PROCESS GR92 CONTROL CARDS'                  A1024900
+*********************************************************************** A1025000
+*        PROCESS GR92 CONTROL CARDS                                   * A1025100
+*********************************************************************** A1025200
+         SPACE 1                                                        A1025300
+*        GR92 CONTROL CARDS SPECIFY THE NAME OF A MEMBER ON 'SYSLIB'    A1025400
+         SPACE 1                                                        A1025500
+         USING GR92CARD,R6         ESTABLISH GR92 ADDRESSABILITY        A1025600
+CCGR92   SUBIN SAVE=R4             PRESERVE RETURN ADDRESS              A1025700
+         TBLANK GR92UNUS           ARE UNUSED COLUMNS BLANK             A1025800
+         BE    CCGR9201            BR IF BLANK                          A1025900
+         LINE  LINE03              WARN OF POTENTIALLY MISPLACED DATA   A1026000
+CCGR9201 TM    SWINIT,MINTGR92     ARE WE CURRENTLY PROCESSING MEMBER   A1026100
+         BZ    CCGR9202            BR IF NOT PROCESSING A MEMBER        A1026200
+         LINE  LINE04              TELL THAT GR92'S MAY NOT BE NESTED   A1026300
+         B     CCGR92X             GO TO EXIT                           A1026400
+CCGR9202 TM    SYSLIB+IOPSSW,IOSWPRES IS THERE A //SYSLIB CARD          A1026500
+         BO    CCGR9203            BR IF THERE IS A //SYSLIB            A1026600
+         LINE  LINE05              WARN THAT NO //SYSLIB CARD PRESENT   A1026700
+         B     CCGR92X             GO TO ROUTINE EXIT                   A1026800
+         EJECT                                                          A1026900
+*********************************************************************** A1027000
+*        PROCESS GR92 CONTROL CARDS ( CONT'D )                        * A1027100
+*********************************************************************** A1027200
+         SPACE 1                                                        A1027300
+CCGR9203 L     R1,=V(MEMBNAME)     GET ADDRESS OF MEMBER NAME W/A       A1027400
+         MVC   0(8,R1),GR92NAME    SET MEMBER NAME IN WORK AREA         A1027500
+         LR    R0,R1               LOAD PARAMETER REGISTER FOR FIND     A1027600
+         L     R1,SYSLIB+IOPSDCB   SET //SYSLIB DCB ADDRESS IN REG 15   A1027700
+         FIND  (1),(0),D           DETERMINE IF MEMBER EXISTS           A1027800
+         LTR   R15,R15             TEST RETURN CODE TO SEE IF THERE     A1027900
+         BZ    CCGR9204            BR IF MEMBER NAME FOUND              A1028000
+         LINE  LINE06              TELL THAT MEMBER NOT FOUND           A1028100
+         B     CCGR92X             GO TO ROUTINE EXIT                   A1028200
+CCGR9204 OI    SWINIT,MINTGR92     FLAG THAT WE ARE PROCESING A MEMBER  A1028300
+         LINE  LINE07              APOLOGISE FOR LACK OF SUPPORT        A1028400
+CCGR92X SUBOUT RESTORE=R4          RESTORE AND RETURN TO ACLLER         A1028500
+         DROP  R6                  DROP GR92 ADDRESSABILITY             A1028600
+         TITLE 'PARROTA1 - PROCESS GR93 CONTROL CARDS'                  A1028700
+*********************************************************************** A1028800
+*        PROCESS GR93 CONTROL CARDS                                   * A1028900
+*********************************************************************** A1029000
+         SPACE 1                                                        A1029100
+*        GR93 CARDS MAY BE USED TO SPECIFY PARM VALUES                  A1029200
+         SPACE 1                                                        A1029300
+         USING PARROTT,R9          ESTABLISH TABLE ADDRESSABILITY       A1029400
+         USING GR93CARD,R6         ESTABLISH GR93 ADDRESSABILITY        A1029500
+CCGR93   SUBIN SAVE=R4             PRESERVE RETRUN ADDRESS              A1029600
+         MVI   GR93DELM,C' '       ENSURE THAT DELIMITER IS PRESENT     A1029700
+         TBLANK GR93PARM           TEST IF ANY PARM IS SUPPLIED         A1029800
+         BE    CCGR93X             EXIT IF THE CARD IS BLANK            A1029900
+         L     R9,$VPARTT          GET ADDRESS OF CSECT OF TABLES       A1030000
+         TRT   GR93PARM,NONBLTAB   LOCATE THE FIRST NON-BLANK           A1030100
+         LR    R14,R1              SET ADDRESS OF START OF PARM IN R14  A1030200
+         LA    R15,L'GR93PARM      SET R15 TO MAX LENGTH OF PARM STRING A1030300
+         MVI   STRTAB,X'00'        SET TRANSLATE ....                   A1030400
+         MVC   STRTAB+1(L'STRTAB-1),STRTAB .... TABLE TO LOW VALUES     A1030500
+         SR    R1,R1               ZEROISE WORK REGISTER                A1030600
+         IC    R1,=C','            SET ',' IN REG 1                     A1030700
+         STC   R1,STRTAB(R1)       SET TABLE TO DETECT ','              A1030800
+         IC    R1,=C' '            SET ' ' IN REG 1                     A1030900
+         STC   R1,STRTAB(R1)       SET TABLE TO DETECT ' '              A1031000
+         EJECT                                                          A1031100
+*********************************************************************** A1031200
+*        PROCESS GR93 CONTROL CARDS ( CONT'D )                        * A1031300
+*********************************************************************** A1031400
+         SPACE 1                                                        A1031500
+CCGR9301 L     R9,$VPARTT          REFRESH ADDRESS OF TABLE CSECT       A1031600
+         EX    R15,FINDELIM        LOCATE THE NEXT DELIMITER            A1031700
+         LR    R2,R14              POINT R2 AT START OF NEXT SUBFIELD   A1031800
+         LR    R3,R1               SET ADDRESS OF DELIMITER IN REG 3    A1031900
+         SR    R3,R14              DETERMINE LENGTH OF PARM STRING      A1032000
+         BCTR  R3,0                DECREMENT FOR EXECUTE                A1032100
+         LTR   R3,R3               ENSURE NOT NEGATIVE (IMPLIES ',,')   A1032200
+         BM    *+8                 BYPASS MOVE IF NEGATIVE              A1032300
+         EX    R3,PARMMVC          MOVE PARM TO WORK AREA               A1032400
+         LA    R3,1(,R3)           RESET TRUE LENGTH OF PARM SUBFIELD   A1032500
+         LTR   R3,R3               TEST FOR LENGTH OF ZERO ( ',,' )     A1032600
+         BZ    CCGR9302            BYPASS PARM PROCESSING ROUTINE IF 0  A1032700
+         CBAL  R4,PARMRTN          PROCESS PARM SUBFIELD                A1032800
+CCGR9302 LA    R14,1(R3,R14)       POINT R14 AT START OF NEXT SUBFIELD  A1032900
+         SR    R15,R3              DECREMENT R15 TO ...                 A1033000
+         BCTR  R15,0                ... LENGTH OF REMAINDER             A1033100
+         CLI   0(R14),C' '         HAVE WE REACHED END OF STRING        A1033200
+         BNE   CCGR9301            LOOP BACK IF NOT TO PROCESS NEXT     A1033300
+CCGR93X SUBOUT RESTORE=R4          RESTORE AND RETURN TO CALLER         A1033400
+         DROP  R6                  DROP GR93 ADDRESSABILITY             A1033500
+         DROP  R9                  DROP TABLE CSECT ADDRESSABILITY      A1033600
+         TITLE 'PARROTA1 - EXECUTABLE INSTRUCTIONS'                     A1033700
+*********************************************************************** A1033800
+*        EXECUTABLE INSTRUCTIONS                                      * A1033900
+*********************************************************************** A1034000
+         SPACE 1                                                        A1034100
+         USING PARROTT,R9          ESTABLISH TABLE ADDRESSABILITY       A1034200
+FINDELIM TRT   0(0,R14),STRTAB     LOCATE DELIMITER IN PARM STRING      A1034300
+         DROP  R9                  DROP TABLE ADDRESSABILITY            A1034400
+PARMMVC  MVC   $WRKAREA(0),0(R2)   MOVE PARM SUBFIELD TO WORK AREA      A1034500
+         TITLE 'PARROTA1 - MISCELLANEOUS CONSTANTS AND FIELDS'          A1034600
+LINE01   DC    C'PTA1-001-W  UNRECOGNISABLE CONTROL CARD - IGNORED'     A1034700
+LINE02   DC    C'PTA1-002-W  COLUMNS 5-10 AND 51-80 OF GR90 CARDS ARE U*A1034800
+               NASSIGNED AND SHOULD BE BLANK: POTENTIALLY MISPLACED DAT*A1034900
+               A'                                                       A1035000
+LINE03   DC    C'PTA1-003-W  COLUMNS 13-80 OF A GR92 SHOULD BE BLANK: POA1035100
+               OTENTIALLY MISPLACED DATA'                               A1035200
+LINE04   DC    C'PTA1-004-E  GR92''S MAY NOT BE NESTED: CARD IGNORED'   A1035300
+LINE05   DC    C'PTA1-005-E  NO ''//SYSLIB'' CARD PRESENT: SPECIFIED MEMA1035400
+               MBER CANNOT BE RETRIEVED'                                A1035500
+LINE06   DC    C'PTA1-006-E  SPECIFIED MEMBER NAME DOES NOT EXIST ON SYSA1035600
+               SLIB DATA SET'                                           A1035700
+LINE07   DC    C'PTA1-007-I  NO ERRORS IN YOUR CONTROL CARD, BUT I AM A*A1035800
+               AFRAID THAT SYSLIB PROCESSING IS NOT YES SUPPORTED'      A1035900
+         SPACE 5                                                        A1036000
+        SCSEND A1                  TERMINATE CSET PARROTA1              A1036100
+         END                                                            A1036200

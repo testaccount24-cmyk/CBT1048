@@ -1,0 +1,692 @@
+         MACRO
+         DBDLRECL &N
+         GBLA  &S,&ORG,&RAPS,&RTKEY,&FRS(10),&SF1(255)         @BA24677
+         GBLA  &REC(10),&BLK(10),&OREC(10),&OBLK(10)
+         GBLA  &TRK(10),&TRK1(10),&THRD(10),&CYL(10)
+         GBLA  &DSL(10),&DAE(10)                               @BA22673
+         GBLA  &SB(255),&SFQ(255),&SLDP(255),&FB1(1000)
+         GBLB  &GB1(16),&GB2(16),&GB3(16),&GB4(16)             @BA40823
+         GBLC  &SN(500),&DEV(10),&DS1(10),&DS2(10),&OVF(10)
+         LCLA  &LRL,&BLKSIZ,&QUO,&REM,&RKEY
+         LCLA  &PRIME,&CYLIND,&A(20)
+         LCLB  &B(16)
+         LCLC  &C
+.**********************************************************************
+.**                                                                  **
+.**                    APARLOG REL 1.1.1                             **
+.**                                                                  **
+.**      PP38223  CORRECTS THE WRONG DBDLRECL CALCULATION WITH A     **
+.**               SIZE VALUE SPECIFIED ON THE DATASET STATEMENT      **
+.**                                                                  **
+.**********************************************************************
+         AIF  (&ORG NE 5 AND &ORG NE 6 AND &ORG NE 13 AND &ORG NE 14).D
+.*
+.* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+.*                                                                   *
+.*       BLOCK/CI SIZE ROUTINE FOR HD ORGANIZATIONS                  *
+.*                                                                   *
+.* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+.*
+.*       AS FOLLOWS:
+.*       1. GB2(N) IS SET ON IF USER SPECIFIED ACTUAL SIZE
+.*          VIA SIZE= KEYWORD OF DATASET MACRO-INSTRUCTION.
+.*       2. GB1(15) IS SET ON IF USER DID NOT SPECIFY
+.*          RELATIVE BLOCK NUMBER (RBN) VIA RMNAME=
+.*          KEYWORD OF DBD MACRO-INSTRUCTION STATEMENT.
+.*
+.*       CALCULATED OR USER SPECIFIED SIZE VALUE MUST -
+.*             IF RBN WAS NOT SPECIFIED:
+.*               SIZE MUST BE GREATER THAN OR EQUAL TO
+.*               THE SIZE OF THE MAXIMUM SEGMENT PLUS
+.*               FOUR BYTES FOR EACH ROOT ANCHOR POINT
+.*               PLUS FOUR BYTES FOR A FREE SPACE ELEMENT
+.*               PLUS SEVEN BYTES OF VSAM OVERHEAD.
+.*             IF RBN WAS SPECIFIED:
+.*               A. SIZE MUST BE GREATER THAN OR EQUAL TO
+.*                  FOUR BYTES FOR EACH ROOT ANCHOR POINT PLUS
+.*                  FOUR BYTES FOR A FREE SPACE ELEMENT PLUS
+.*                  TWO BYTES FOR A BIT MAP IN EACH BLOCK OF
+.*                  ROOT ANCHOR POINTS PLUS SEVEN BYTES OF
+.*                  VSAM OVERHEAD.
+.*               B. SIZE MUST BE GREATER THAN OR EQUAL TO
+.*                  THE SIZE OF THE MAXIMUM SEGMENT PLUS FOUR
+.*                  BYTES FOR A FREE SPACE ELEMENT PLUS SEVEN
+.*                  BYTES OF VSAM OVERHEAD.
+.*
+&A(1)    SETA  4
+         AIF   ((((&SF1(1)-&SF1(1)/65536*65536)/256-(&SF1(1)-&SF1(1)/65*
+               536*65536)/256/64*64)/32 EQ 1 AND (&ORG EQ 6 OR &ORG EQ *
+               14)) OR &N NE 1).A  HIDAM AND TWIN BKW.
+&A(1)    SETA  &A(1)+&RAPS*4
+.A       ANOP
+&BLKSIZ  SETA  &BLK(&N)*&REC(&N)+&A(1)-&A(1)*&GB2(&N)
+         AIF   (&ORG EQ 5 OR &ORG EQ 6).B
+&BLKSIZ  SETA  &BLKSIZ+7-7*&GB2(&N)
+         AIF   (&BLKSIZ LE 8192).A1                            @BA23432
+&BLKSIZ  SETA  (&BLKSIZ+2047)/2048*2048 ROUND TO 8K MULTIPLE   @BA23432
+         AGO   .A2                                             @BA23432
+.A1      ANOP
+&BLKSIZ  SETA  (&BLKSIZ+511)/512*512
+.A2      ANOP
+&A(1)    SETA  &A(1)+7
+         AIF   (&GB1(15) AND &BLK(&N) NE 0 AND &BLKSIZ GE &DSL(&N)/6553,
+               6+&A(1) AND &BLKSIZ LE 30720).DA
+         AIF   (NOT &GB1(15) AND &BLK(&N) NE 0 AND &BLKSIZ GE &DSL(&N)/,
+               65536+11 AND &BLKSIZ GE (&RAPS+1)*4+9).DA
+&BLKSIZ  SETA  2048
+         AIF   (&GB1(15) AND &BLKSIZ GE &DSL(&N)/65536+&A(1)).DA
+         AIF   (NOT &GB1(15) AND &BLKSIZ GE &DSL(&N)/65536+11 AND &BLKS,
+               IZ GE (&RAPS+1)*4+9).DA
+&BLKSIZ  SETA  (&DSL(&N)/65536+&A(1)+511)/512*512
+         AIF   (&BLKSIZ LE 8192).A3     BLOCKSIZE LESS THEN 8K @BA23432
+&BLKSIZ SETA (&BLKSIZ+2047)/2048*2048   ROUND TO 8K            @BA23432
+.A3      ANOP
+         AIF   (&BLKSIZ LE 30720).DA                           @BA23432
+         SPACE
+         MNOTE 4,'DGEN210 - ONE OR MORE SEGMENTS IN THE ABOVE  '
+         MNOTE *,'          DATASET GROUP WILL NOT FIT IN THE  '
+         MNOTE *,'          MAXIMUM ALLOWABLE CI SIZE - 30720  '
+         SPACE
+&BLKSIZ  SETA  30720                                           @BA23432
+         AGO   .DA
+.B       AIF   (&BLK(&N) NE 0).C
+&BLKSIZ  SETA  1690
+.C       AIF   (&GB1(15) AND &BLKSIZ GE &DSL(&N)/65536+&A(1)).DB
+         AIF   (NOT &GB1(15) AND &BLKSIZ GE &DSL(&N)/65536+4 AND &BLKSI,
+               Z GE (&RAPS+1)*4+2).DB
+&BLKSIZ  SETA  &THRD(&N)-&THRD(&N)/65536*65536
+         AIF   (&GB1(15) AND &BLKSIZ GE &DSL(&N)/65536+&A(1)).DB
+         AIF   (NOT &GB1(15) AND &BLKSIZ GE &DSL(&N)/65536+4 AND &BLKSI,
+               Z GE (&RAPS+1)*4+2).DB
+&BLKSIZ  SETA  &THRD(&N)/65536
+         AIF   (&GB1(15) AND &BLKSIZ GE &DSL(&N)/65536+&A(1)).DB
+         AIF   (NOT &GB1(15) AND &BLKSIZ GE &DSL(&N)/65536+4 AND &BLKSI,
+               Z GE (&RAPS+1)*4+2).DB
+&BLKSIZ  SETA  &TRK(&N)-&TRK(&N)/65536*65536
+         AIF   (&GB1(15) AND &BLKSIZ GE &DSL(&N)/65536+&A(1)).DB
+         AIF   (NOT &GB1(15) AND &BLKSIZ GE &DSL(&N)/65536+4 AND &BLKSI,
+               Z GE (&RAPS+1)*4+2).DB
+&BLKSIZ  SETA  &TRK(&N)/65536
+         AGO   .DB
+.*
+.* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+.*                                                                   *
+.*       LRECL SPECIFICATION CHECKING FOR HSAM, HISAM, AND INDEX.    *
+.*       BLOCKSIZE CALCULATION ROUTINE FOR HSAM.                     *
+.*       BLOCKSIZE SPECIFICATION CHECKING FOR HISAM AND INDEX        *
+.*                                                                   *
+.* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+.*
+.D       AIF   (&REC(&N) EQ 0).L
+&LRL     SETA  &REC(&N)
+         AIF   (&ORG NE 3).E
+&SB(1)   SETA  &SB(1)-&SB(1)/65536*65536
+         AIF   (&LRL GE &SB(1)).E
+         SEGPTRS 1                 CHECK ROOT SEGMENT SIZE
+.E       AIF   (&BLK(&N) NE 0 OR &ORG EQ 3 OR &ORG EQ 4 OR &ORG GT 8).F
+&BLK(&N) SETA  1
+.F       AIF   (&ORG GT 8).CA
+&BLKSIZ  SETA  &BLK(&N)       WAS BLOCK SIZE SPECIFIED ?
+         AIF   (&GB2(&N)).F1  USER DID SPECIFY BLOCK SIZE |
+&BLKSIZ  SETA  &BLK(&N)*&LRL       BLOCK SIZE
+.F1      ANOP
+&A(1)    SETA  &TRK(&N)/65536      TRACK CAPACITY
+&A(2)    SETA  &A(1)/&BLKSIZ       BLOCKS PER TRACK
+         AIF   ((&A(2) NE 0 AND NOT &GB2(&N) AND &BLK(&N) EQ 0) OR     *
+               (&BLKSIZ LT (&THRD(&N)-&THRD(&N)/65536*65536))).G
+&A(2)    SETA  3              SET FOR 1/3 TRACT BLOCKING       @BA38223
+         AIF   (&BLKSIZ LE (&THRD(&N)/65536)).G IS IT THIRD TRA@BA38223
+&A(2)    SETA  2              SET FOR HALF TRACK BLOCKING      @BA38223
+         AIF   (&BLKSIZ LE (&TRK(&N)-&TRK(&N)/65536*65536)).G  @BA38223
+&A(2)    SETA  1                        FULL TRACK BLOCKING    @BA38223
+         AIF   (&BLKSIZ LE (&TRK(&N)/65536)).G   GOOD TRACK VAL@BA38223
+&A(2)    SETA  &A(1)/&BLKSIZ  RESET A2 TO ORIGINAL VALUE       @BA38223
+         AIF   (&A(2) NE 0).G FULL TRACK                       @BA38223
+         AIF   ('&DEV(&N)' EQ 'TAPE' OR '&DEV(&N)' EQ '2400' OR '&DEV(&,
+               N)' EQ '3400').G
+         SPACE
+         MNOTE 4,'DGEN200 - BLOCK SIZE EXCEEDS TRACK LENGTH - &A(1) '
+         SPACE
+&BLK(&N) SETA  &A(1)/&LRL
+         AGO   .F
+.G       ANOP
+&A(2)    SETA  &A(2)*&BLKSIZ/&LRL
+&A(3)    SETA  &BLKSIZ
+         AIF   (&ORG NE 3 AND &ORG NE 4).BD
+         AIF   (&BLK(&N) EQ 0 AND &ORG EQ 3).H
+         SEGPTRS 1                 CHECK ROOT SEGMENT SIZE
+         AIF   (&BLK(&N) EQ 0).H
+         AGO   .K
+.H       AIF   (&LRL LE &TRK(&N)-&TRK(&N)/65536*65536).J
+         AIF   (&DSL(&N)/65536 LE &TRK(&N)-&TRK(&N)/65536*65536).I
+&BLKSIZ  SETA  &TRK(&N)/65536
+         AGO   .K
+.I       ANOP
+&LRL     SETA  &TRK(&N)-&TRK(&N)/65536*65536
+.J       ANOP
+&BLKSIZ  SETA  (&TRK(&N)-&TRK(&N)/65536*65536)/&LRL
+&BLKSIZ  SETA  &BLKSIZ*&LRL
+.K       ANOP
+&LRL     SETA  &BLKSIZ
+         AGO   .DB
+.*
+.* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+.*                                                                   *
+.*       GENERAL LOGICAL RECORD LENGTH CALCULATION ROUTINE           *
+.*       FOR HSAM, HISAM, AND INDEX DATABASE ORGANIZATIONS           *
+.*                                                                   *
+.* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+.*
+.L       ANOP
+&A(4)    SETA  1
+         AIF   (&ORG EQ 3 OR &ORG EQ 4 OR &N EQ 1).M
+&RKEY    SETA  &RTKEY
+.M       AIF   ((&SLDP(&A(4))-&SLDP(&A(4))/4096*4096)/32 EQ &N).N
+&A(4)    SETA  &A(4)+1
+         AIF   (&A(4) LE &S).M
+         AGO   .DB
+.N       AIF   (&SLDP(&A(4))/1048576 NE 0).O
+&A(1)    SETA  &SB(&A(4))/65536+(&SB(&A(4))-&SB(&A(4))/65536*65536)
+&LRL     SETA  &A(1)
+&LRL     SETA  &LRL*100
+         AGO   .P
+.O       ANOP
+&A(1)    SETA  &SB(&A(4))/65536+(&SB(&A(4))-&SB(&A(4))/65536*65536)
+&LRL     SETA  &A(1)*&SFQ(&A(4))
+&A(5)    SETA  &SFQ(&A(4))
+         AIF   (&LRL GE &A(1)*100).P
+&LRL     SETA  &A(1)*100
+.P       AIF   (&LRL GT 0).Q       IF OVERFLOW OCCURS
+         AIF   (&ORG GT 8).E       (EXCEPT FOR VSAM)
+&LRL     SETA  &TRK(&N)/65536      SET LRL EQUAL TRACK
+&LRL     SETA  &LRL*100            LENGTH TIMES 100.
+         AIF   (&ORG EQ 3 OR &ORG EQ 4).Q
+&LRL     SETA  (&TRK(&N)/65536-&RKEY-&RTKEY)*100  MINUS KEY LENGTHS
+.Q       ANOP
+&A(4)    SETA  &A(4)+1
+         AIF   (&A(4) GT &S OR &ORG EQ 12 OR &ORG EQ 15).U
+&A(1)    SETA  &SB(&A(4))/65536+(&SB(&A(4))-&SB(&A(4))/65536*65536)
+         AIF   ((&SLDP(&A(4))-&SLDP(&A(4))/4096*4096)/32 NE &N).P
+         AIF   (&SLDP(&A(4))/1048576 EQ 0).R
+         AIF   (&SLDP(&A(4))-&SLDP(&A(4))/32*32 NE 2 ).T       @BA22673
+.R       ANOP
+&LRL     SETA  &LRL+&A(1)*&SFQ(&A(4))
+         AIF   (&A(5) GE &SFQ(&A(4)) OR &A(5) GE 100).S
+&A(5)    SETA  &SFQ(&A(4))
+.S       AIF   (&LRL GE &A(1)*100).P
+&LRL     SETA  &LRL+&A(1)*100
+         AGO   .P
+.T       ANOP
+&A(6)    SETA  &SLDP(&A(4))/1048576
+&LRL     SETA  &LRL+(&A(1)*&SFQ(&A(4))*&SFQ(&A(6)))/100
+&SFQ(&A(4)) SETA (&SFQ(&A(4))*&SFQ(&A(6)))/100
+         AIF   (&LRL GE &A(1)*100).P
+&LRL     SETA  &LRL+&A(1)*100
+         AGO   .P
+.U       ANOP
+&LRL     SETA  &LRL/100
+         AIF   (&ORG GT 8).E
+.*
+.* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+.*                                                                   *
+.*       NON-VSAM ADDITION OF OVERHEAD BYTES TO AND FINAL            *
+.*       CHECKING OF LOGICAL RECORD LENGTH CALCULATED.               *
+.*                                                                   *
+.* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+.*
+         AIF   (&ORG NE 3).V
+&SB(1)   SETA  &SB(1)-&SB(1)/65536*65536
+         AIF   (&BLK(&N) EQ 0).H
+         AGO   .F
+.V       AIF   (&ORG EQ 4).BB
+&LRL     SETA  &LRL+3+4            3 FOR ROOT, 4 FOR POINTER
+         AIF   (&S NE 1).W         ROOT ONLY DATABASE ?
+&LRL     SETA  &LRL-4
+.W       AIF   (&N EQ 1).X
+&LRL     SETA  &LRL+&RKEY
+.X       AIF   (&LRL LE &TRK(&N)-&TRK(&N)/65536*65536-&RTKEY).BB
+         AIF   (&S NE 1).Y
+         AIF   (&DSL(&N)/65536 LE &TRK(&N)-&TRK(&N)/65536*65536-&RTKEY-,
+               &RKEY-3).AA
+         AGO   .Z
+.Y       AIF   (&DSL(&N)/65536 LE &TRK(&N)-&TRK(&N)/65536*65536-&RTKEY-,
+               &RKEY-7).AA
+.Z       ANOP
+&LRL     SETA  &TRK(&N)/65536-&RTKEY
+         AIF   (&BLK(&N) NE 0).F   IF LARGEST SEGMENT IS GREATER
+&BLKSIZ  SETA  &LRL                THAN 1/2 TRACK, LRECL IS MADE
+&BLK(&N) SETA  1                   A FULL TRACK.
+&A(2)    SETA  1
+         AGO   .BD
+.AA      ANOP
+&LRL     SETA  &TRK(&N)-&TRK(&N)/65536*65536-&RTKEY   LRECL = 1/2 TRACK
+&BLK(&N) SETA  1
+.BB      AIF   (&BLK(&N) NE 0).F
+         AIF   (&ORG NE 4).BC
+         SEGPTRS 1                 CHECK ROOT SEGMENT SIZE
+.BC      AIF   (&ORG EQ 3 OR &ORG EQ 4).H
+.*
+.* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+.*                                                                   *
+.*       NON-VSAM HISAM AND INDEX BLOCKSIZE CALCULATION ROUTINE      *
+.*                                                                   *
+.* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+.*
+.BD      ANOP
+&A(7)    SETA  (&DAE(&N)/65536*(&RTKEY+&LRL))/(&DAE(&N)-(&DAE(&N)/65536,
+               *65536))+(&CYL(&N)-(&CYL(&N)/4096*4096))
+&A(8) SETA &LRL+&RTKEY+((&CYL(&N)-(&CYL(&N)/65536/256*65536*256))/4096)
+&A(9)    SETA  &TRK1(&N)                                           F413
+&A(10)   SETA  (&A(9)-&A(8))/&A(7)+1
+         AIF   (&BLK(&N) NE 0).BF
+&A(11)   SETA  ((&TRK(&N)-&TRK(&N)/65536*65536-&RTKEY)/&LRL)*2
+&A(12)   SETA  ((&THRD(&N)/65536-&RTKEY)/&LRL)*3
+&A(13)   SETA  ((&THRD(&N)-&THRD(&N)/65536*65536-&RTKEY)/&LRL)*4
+&B(1)    SETB  (&A(11) GE &A(12))  11 GT 12
+&B(2)    SETB  (&A(12) GE &A(11))  12 GT 11
+&B(3)    SETB  (&A(11) GE &A(13))  11 GT 13
+&B(4)    SETB  (&A(13) GE &A(11))  13 GT 11
+&B(5)    SETB  (&A(12) GE &A(13))  12 GT 13
+&B(6)    SETB  (&A(13) GE &A(12))  13 GT 12
+&B(9)    SETB  (&B(4) AND &B(6))   13 GT 11 AND 13 GT 12
+         AIF   (&B(9)).BE
+&B(8)    SETB  (&B(2) AND &B(5))
+         AIF   (&B(8)).BE
+&B(7)    SETB  1
+.BE      ANOP
+&A(2)    SETA  (&A(11)*&B(7))+(&A(12)*&B(8))+(&A(13)*&B(9))
+&A(14)   SETA  &TRK(&N)-&TRK(&N)/65536*65536
+&A(15)   SETA  &THRD(&N)/65536
+&A(16)   SETA  &THRD(&N)-&THRD(&N)/65536*65536
+&A(3)    SETA  (&A(14)*&B(7))+(&A(15)*&B(8))+(&A(16)*&B(9))
+&QUO     SETA  (&A(3)-&RTKEY)/&LRL
+&REM     SETA  (&A(3)-&RTKEY)-&QUO*&LRL
+&LRL     SETA  &LRL+&REM/&QUO
+&BLKSIZ  SETA  &LRL*&QUO           BLKSIZE RECOMPUTED
+.BF      ANOP
+&A(17)   SETA  1
+.BF1     ANOP
+&A(10)   SETA  &A(10)*&A(17)
+&A(3)    SETA  (&CYL(&N)/65536/256-&A(17))*2
+         AIF   (&A(10) GT &A(3)).BG
+&A(17)   SETA  &A(17)+1
+         AIF   (&A(17) LT 10).BF1
+         MNOTE 8,' INTERNAL DBDGEN ERROR, DBD NOT USABLE, SUBMIT APAR.'
+         DC    AL2(&LRL,&BLKSIZ)   LRECL, BLKSIZE
+         MEXIT
+.BG      ANOP
+&A(10)   SETA  &A(10)/&A(17)
+&A(18)   SETA  &A(2)*(&CYL(&N)/65536/256-&A(17))  BLOCKS PER CYLINDER
+         AIF   (&N EQ 1).BI
+&A(4)    SETA  0
+.BH      ANOP
+&A(4)    SETA  &A(4)+1
+         AIF   ((&SLDP(&A(4))-&SLDP(&A(4))/4096*4096)/32 NE &N).BH
+&PRIME   SETA  &A(5)*&SFQ(&SLDP(&A(4))/1048576)/10000/&A(18)+1
+         AGO   .BJ
+.BI      ANOP
+&PRIME   SETA  &SFQ(1)/100/&A(18)+1     CYLINDER ALLOCATION PRIME
+.BJ      ANOP
+&CYLIND  SETA  (&PRIME/(&CYL(&N)/65536/256))/&A(10)+1
+         AGO   .DB
+.*
+.* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+.*                                                                   *
+.*       VSAM HISAM AND INDEX ORGANIZATIONS                          *
+.*       EXTENDED LRECL AND CONTROL INTERVAL SIZE                    *
+.*       CHECKING AND CALCULATION ROUTINES                           *
+.*                                                                   *
+.* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+.*
+.*       USER SPECIFIED LOGICAL RECORD LENGTH
+.*       SHOULD NOT BE MODIFIED WITHOUT THE
+.*       GENERATION OF AN ERROR MESSAGE.
+.*
+.*       USER SPECIFIED BLOCKING FACTOR OR CI SIZE
+.*       IS NOT MODIFIED WITHOUT THE GENERATION OF
+.*       AN ERROR MESSAGE, HOWEVER, RESULTANT CI
+.*       SIZE IS UNCONDITIONALLY ROUNDED TO
+.*       NEXT 512K MULTIPLE (IF APPLICABLE).
+.*
+.*       DBDGEN LOGICAL RECORD LENGTH CALCULATION
+.*       IS AS FOLLOWS :
+.*          A. VALUE RECEIVED FROM GENERAL LOGICAL
+.*             RECORD LENGTH CALCULATION ROUTINE
+.*             IS MODIFIED TO INCLUDE APPLICABLE
+.*             OVERHEAD BYTES (ROOT KEY SIZE PLUS
+.*             OVERFLOW POINTER).
+.*          B. IF VSAM BLOCKING FACTOR OR CI SIZE WAS
+.*             NOT SPECIFIED, LOGICAL RECORD LENGTH IS
+.*             FURTHER MODIFIED (INCREASED) TO PROVIDE
+.*             THE IDEAL LOGICAL RECORD LENGTH FOR
+.*             THE CHOSEN CONTROL INTERVAL SIZE.
+.*             (IF GB2(N) ON, CI SIZE WAS SPECIFIED)
+.*
+.*       DBDGEN CONTROL INTERVAL SIZE CALCULATION
+.*       IS PERFORMED WHEN NO USER BLOCKING FACTOR
+.*       IS SPECIFIED, AS FOLLOWS:
+.*
+.*       IF LRL LT OR EQ           CI SIZE
+.*             25                    512
+.*             50                   1024
+.*            101                   2048
+.*
+.*       ADDITIONALLY, IF DEVICE SPECIFIED VIA
+.*       DEVICE= KEYWORD OF DATASET STATEMENT
+.*       WAS NOT A 2314 AND LOGICAL RECORD
+.*       LENGTH LESS THAN OR EQUAL TO 1362 THEN
+.*       CONTROL INTERVAL SIZE IS 4096.
+.*
+.*                     IF DEVICE SPECIFIED VIA
+.*       DEVICE= KEYWORD OF DATASET STATEMENT
+.*       WAS 2314 AND LOGICAL RECORD LENGTH
+.*       LESS THAN OR EQUAL TO 1019 THEN
+.*       CONTROL INTERVAL SIZE IS 2048.
+.*
+.*       IF NONE OF THE PRECEDING CONDITIONS
+.*       ARE MET, CONTROL INTERVAL SIZE IS
+.*       SET TO THE NEXT 512K MULTIPLE OF
+.*       THE LOGICAL RECORD LENGTH PLUS
+.*       SEVEN BYTES OF VSAM OVERHEAD.
+.*
+.*
+.CA      ANOP
+&A(1)    SETA  0
+         AIF   (&REC(&N) NE 0).CD
+         AIF   (&LRL NE 0).CB DID LRECL CALCULATION ROUTINE FAIL ?
+&LRL     SETA  &DSL(&N)/65536 SET LRL = LARGEST SEGMENT IN DATASET
+.CB      AIF   (&ORG EQ 11 OR &ORG EQ 12).CC  SHISAM OR INDEX (S DSG) ?
+&A(1)    SETA  4    ADD ROOT OVERFLOW/DEPENDENT OVERFLOW (INDEX/HISAM)
+.CC      ANOP
+&LRL     SETA  &LRL+&RKEY+&A(1)
+         AIF   (((&ORG EQ 12 OR &ORG EQ 15) AND &LRL LE 30720-7 AND &DS,
+               L(&N)/65536+&RKEY+&A(1) LE 30720-7) OR (&LRL LE 30720-8 ,
+               AND &DSL(&N)/65536+&RKEY+&A(1) LE 30720-8)).CD
+&LRL     SETA  30720-7        SET LRL TO MAXIMUM POSSIBLE |    @BA23432
+         AIF   (&ORG EQ 12 OR &ORG EQ 15).CD
+&LRL     SETA  30720-8        RESET LRL TO MAXIMUM POSSIBLE |  @BA23432
+.CD      AIF   (&ORG NE 12 AND &ORG NE 15).CD1
+&LRL     SETA  &LRL-1
+.CD1     AIF   (&LRL-(&LRL+1)/2*2 EQ 0).CE
+&LRL     SETA  (&LRL+1)/2*2   INSURE LRECL IS A MULTIPLE OF TWO
+         AIF   (&REC(&N) EQ 0).CE  DID USER SPECIFY LRECL ?
+         AIF   ((&ORG EQ 12 OR &ORG EQ 15) AND &REC(&N)-(&REC(&N)+1)/2*,
+               2 EQ 0).CE
+         AIF   (&REC(&N) NE 30720-7).CD2                       @BA23432
+&LRL     SETA  30720-8                                         @BA23432
+.CD2     SPACE
+         MNOTE 4,'DGEN220 - SPECIFIED KSDS LOGICAL RECORD LENGTH '
+         MNOTE *,'          RESET TO MULTIPLE OF 2 ... &LRL      '
+         SPACE
+.CE      AIF   (&DSL(&N)/65536+&RKEY+&A(1) LE &LRL OR (&DSL(&N)/65536 L,
+               E &LRL+1 AND (&ORG EQ 12 OR &ORG EQ 15))).CG
+         SPACE
+         MNOTE 4,'DGEN230 - ONE OR MORE SEGMENTS IN THE ABOVE  '
+         MNOTE *,'          DATASET GROUP WILL NOT FIT IN THE  '
+         MNOTE *,'          KSDS LOGICAL RECORD LENGTH ... &LRL '
+         AIF   (&REC(&N) EQ 0).CG   DID USER SPECIFY LRECL
+&LRL     SETA  30720-8            SET USER LRECL TO MAXIMUM POS@BA23432
+         AIF   ((&DSL(&N)/65536+&RKEY+&A(1)+1)/2*2 GT 30720-8).CF
+&LRL     SETA  (&DSL(&N)/65536+&RKEY+&A(1)+1)/2*2
+.CF      MNOTE *,'          LRECL RESET TO &LRL  '
+.CG      AIF   (&BLK(&N) NE 0).CH
+&BLKSIZ  SETA  512
+         AIF   (&LRL LE 25).CL
+&BLKSIZ  SETA  1024
+         AIF   (&LRL LE 50).CL
+&BLKSIZ  SETA  2048
+         AIF   (&LRL LE 101).CL
+         AIF   ('&DEV(&N)' EQ '2314' AND &LRL LE 1019).CL
+&BLKSIZ  SETA  4096
+         AIF   ('&DEV(&N)' NE '2314' AND &LRL LE 1362).CL
+&BLK(&N) SETA  1
+.CH      AIF   (NOT &GB2(&N)).CH1
+&BLKSIZ  SETA  &BLK(&N)
+         AIF   (&BLKSIZ-7 GE &LRL).CL
+         MNOTE 4,'DGEN245 - SPECIFIED CI SIZE IS LESS THAN CALCULATED '
+         MNOTE *,'          OR SPECIFIED LOGICAL RECORD LENGTH - &LRL '
+         AIF   (&BLKSIZ LE 8192).CHR                           @BA23432
+&BLKSIZ  SETA  (&BLKSIZ+2047)/2048*2048                        @BA23432
+         AGO   .CHR1                                           @BA23432
+.CHR     ANOP
+&BLKSIZ  SETA  (&LRL+7+511)/512*512
+.CHR1    MNOTE *,'          CI SIZE IS RESET TO -    &BLKSIZ   '
+         AGO   .CL
+.CH1     AIF   (&BLK(&N) EQ 1).CJ
+&A(1)    SETA  &BLK(&N)
+         AIF   (&BLK(&N)*&LRL LE 30720-10).CJ                  @BA23432
+         SPACE
+         MNOTE 4,'DGEN240 - SPECIFIED BLOCKING FACTOR CAUSES MAXIMUM '
+         MNOTE *,'          ALLOWABLE CI SIZE (30720) TO BE EXCEEDED. '
+&BLK(&N) SETA  1
+         AIF   ((30720-7)/&LRL EQ 1).CI                        @BA23432
+&BLK(&N) SETA  (30720-10)/&LRL                                 @BA23432
+.CI      MNOTE *,'          BLOCKING FACTOR SPECIFIED - &A(1) '
+         MNOTE *,'          RESET TO BLOCKING FACTOR  - &BLK(&N) '
+         SPACE
+.CJ      ANOP
+&A(1)    SETA  7
+         AIF   (&BLK(&N) EQ 1).CK
+&A(1)    SETA  10
+.CK      AIF   (&BLKSIZ LE 8192).CK1                           @BA23432
+&BLKSIZ  SETA  (&BLKSIZ+2047)/2048*2048                        @BA23432
+         AGO   .DB                                             @BA23432
+.CK1     ANOP
+&BLKSIZ  SETA  (&BLK(&N)*&LRL+&A(1)+511)/512*512  INSURE 512 MULTIPLE
+         AGO   .DB
+.CL      AIF   (&REC(&N) NE 0 OR &ORG EQ 11).DB                @BA33273
+&A(2)    SETA  (&BLKSIZ-10)/&LRL        LRLS PER CI
+&A(3)    SETA  (&BLKSIZ-10)-&A(2)*&LRL  REMAINING BYTES PER CI
+&A(3)    SETA  &A(3)/&A(2)              REMAINING BYTES PER LRL
+         AIF   (&LRL+&A(3) EQ (&LRL+&A(3)+1)/2*2 OR &A(3) EQ 0).CM
+&A(3)    SETA  &A(3)-1                  INSURE MULTIPLE OF TWO FOR LRL
+.CM      ANOP
+&LRL     SETA  &LRL+&A(3)               INCREMENT TO IDEAL LRL FOR CI
+         AGO   .DB
+.DA      ANOP
+&LRL     SETA  &BLKSIZ-7      SET HD ORGANIZATION LRECL
+.DB      DC    AL2(&LRL,&BLKSIZ)   PRIME LRECL AND BLKSIZE
+.*
+.*       FREE SPACE PERCENTAGE CHECKING ROUTINE
+.*
+&A(1)    SETA  0
+.EA      ANOP
+&A(1)    SETA  &A(1)+1
+         AIF   (&A(1) GT &S).EB
+         AIF   ((&SLDP(&A(1))-&SLDP(&A(1))/4096*4096)/32 NE &N).EA
+&A(2)    SETA  &FRS(&N)-&FRS(&N)/256*256
+&A(3)    SETA  &SB(&A(1))/65536+(&SB(&A(1))-&SB(&A(1))/65536*65536)
+&A(3)    SETA  (&A(3)*100)/&BLKSIZ
+         AIF   (&A(2) LE 100-&A(3)).EA
+         MNOTE *,'DGEN170 - SEGMENT (&SN(&A(1)).) LENGTH PLUS PREFIX '
+         MNOTE *,'          EXCEEDS BLOCK SIZE MINUS FREE SPACE '
+         MNOTE *,'          PERCENTAGE REQUESTED.  SEGMENT WILL BE '
+         MNOTE *,'          STORED AS ONLY SEGMENT IN A BLOCK. '
+.*
+.*       SPECIFICATION CHECKING OR CALCULATION OF ISAM,
+.*       OSAM, AND VSAM LOGICAL RECORD LENGTH AND BLOCKSIZE.
+.*
+.EB      ANOP
+&A(2)    SETA  &BLKSIZ             BLOCKSIZE
+&A(3)    SETA  &LRL                LRECL
+&A(4)    SETA  0
+&A(5)    SETA  0
+&C       SETC  '&DS2(&N).        '(1,8)
+         AIF   (&ORG EQ 5 OR &ORG EQ 6 OR &ORG EQ 13 OR &ORG EQ 14).EH
+&A(2)    SETA  0
+&A(3)    SETA  0
+         AIF   (&ORG EQ 11 OR &ORG EQ 12).EH
+&A(2)    SETA  &OREC(&N)
+&A(3)    SETA  &OREC(&N)
+         AIF   (&OREC(&N) NE 0 AND &OBLK(&N) EQ 0 AND                  *
+               (&ORG EQ 3 OR &ORG EQ 4)).EH
+         AIF   (&OREC(&N) NE 0 AND (&ORG EQ 3 OR &ORG EQ 4)).EB1
+&A(2)    SETA  &LRL
+&A(3)    SETA  &LRL
+.EB1     AIF   (&OBLK(&N) EQ 0 AND (&ORG EQ 3 OR &ORG EQ 4)).EH
+&A(2)    SETA  &A(2)*&OBLK(&N)
+&A(3)    SETA  &A(3)*&OBLK(&N)
+         AIF   (&ORG EQ 3 OR &ORG EQ 4).EH
+&A(2)    SETA  &BLKSIZ             BLOCKSIZE
+&A(3)    SETA  &BLKSIZ             HSAM LRECL
+         AIF   (&ORG EQ 3 OR &ORG EQ 4).EH
+&A(2)    SETA  &BLKSIZ
+&A(3)    SETA  &LRL                LRECL
+&C       SETC  '&OVF(&N).        '(1,8)
+         AIF   (&OBLK(&N) EQ 0).EC
+&A(4)    SETA  &OBLK(&N)           HISAM OR INDEX BLOCKSIZE
+&A(5)    SETA  &LRL                HISAM OR INDEX LRECL
+         AIF   (&GB3(&N)).EC
+&A(4)    SETA  &OBLK(&N)*&LRL      HISAM OR INDEX BLOCKSIZE
+.EC      AIF   (&OREC(&N) EQ 0).EC1
+&A(5)    SETA  &OREC(&N)           HISAM OR INDEX LRECL
+         AIF   (&GB3(&N)).EC1
+&A(4)    SETA  &OREC(&N)           HISAM OR INDEX BLOCKSIZE
+         AIF   (&OBLK(&N) EQ 0).EC1
+&A(4)    SETA  &OBLK(&N)*&OREC(&N) HISAM OR INDEX BLOCKSIZE
+.EC1     AIF   (&A(4) EQ 0 AND &A(5) EQ 0).EH
+&A(2)    SETA  &A(4)               BLOCKSIZE
+&A(3)    SETA  &A(5)               LRECL
+         AIF   (&ORG GT 8).EF
+         AIF   (&A(2) LE &TRK(&N)/65536).EH
+         AIF   (&ORG LE 2 OR &ORG EQ 7).ED
+&A(2)    SETA  &TRK(&N)/65536
+         AGO   .EE
+.ED      AIF   (&A(2) LE &TRK1(&N)).EH
+&A(2)    SETA  &TRK1(&N)
+.EE      SPACE
+         MNOTE 4,'DGEN200 - BLOCK SIZE EXCEEDS TRACK LENGTH - &A(2)..'
+         SPACE
+         AGO   .EH
+.EF      AIF   (&A(3)-(&A(3)+1)/2*2 EQ 0).EG
+&A(3)    SETA  (&A(3)+1)/2*2
+         SPACE
+         MNOTE 4,'DGEN250 - SPECIFIED ESDS LRECL - &OREC(&N) '
+         MNOTE *,'          RESET TO MULTIPLE OF 2 - &A(3) '
+         SPACE
+.EG      AIF   (NOT &GB3(&N)).EG0
+         AIF   (&A(2) LT &A(3)+7).EG3                          @BA23432
+         AGO   .EH
+.EG0     ANOP
+&B(1)    SETB  (&A(2)/&A(3) LE 1)
+         AIF   (&A(2) LE 8192).EG1      BLOCKSIZE LESS THEN 8K @BA23432
+&A(2)    SETA  (&A(2)+2047)/2048*2048   ROUND TO 8K            @BA23432
+         AGO   .EG2                                            @BA23432
+.EG1     ANOP
+&A(2)    SETA  ((&A(2)+10-(3*&B(1)))+511)/512*512
+.EG2     AIF   (&A(2) LE 30720).EH                             @BA23432
+         SPACE
+.EG3     MNOTE 4,'DGEN260 - ESDS LRECL AND/OR CISIZE INVALID.'
+         MNOTE *,'          LRECL AND CISIZE RESET TO PRIME VALUES.'
+         SPACE
+&A(2)    SETA  &BLKSIZ
+&A(3)    SETA  &LRL
+.EH      DC    AL2(&A(3),&A(2))    OSAM/VSAM LRECL AND BLOCKSIZE
+         AIF   (&LRL EQ 0 OR &A(3) EQ 0 OR &A(3) GE &LRL).EI
+         MNOTE 8,'DMAN400 - OSAM/VSAM RECORD CANNOT BE LESS THAN PRIME ,
+               RECORD. '
+&GB1(16) SETB  1
+.EI      DC    CL8'&C'             SECONDARY DDNAME
+         AIF   (&ORG LE 2 OR &ORG EQ 7).FA
+         AIF   (&ORG LT 9).FF
+         EJECT
+         MNOTE *,'* * * * * * * * * * * * * * * * * * * * * * * * * * '
+         MNOTE *,'*'
+         MNOTE *,'   RECOMMENDED VSAM DEFINE CLUSTER PARAMETERS '
+         MNOTE *,'*'
+         MNOTE *,'* * * * * * * * * * * * * * * * * * * * * * * * * * '
+&C       SETC  '&DS1(&N)'
+&A(4)    SETA  &LRL
+&A(5)    SETA  &BLKSIZ
+         AIF   (&ORG EQ 13 OR &ORG EQ 14).EJ
+.*
+.*       X = OVERFLOW POINTER LENGTH (4 BYTES)
+.*       Y = START POSITION OF KEY IN ROOT SEGMENT
+.*       Z = SEGMENT PREFIX LENGTH
+.*
+.*  HISAM,VSAM SINGLE DATASET GROUP
+.*       OFFSET TO KEY FIELD IN LOGICAL RECORD LENGTH = X + Y + Z
+.*
+.*  HISAM,VSAM MULTIPLE DATASET GROUPS
+.*       FIRST DATASET GROUP
+.*       OFFSET TO KEY FIELD IN LOGICAL RECORD LENGTH = X + Y + Z
+.*       SECOND AND SUBSEQUENT DATASET GROUPS
+.*       OFFSET TO KEY FIELD IN LOGICAL RECORD LENGTH = X
+.*
+.*  SHISAM
+.*       OFFSET TO KEY FIELD IN LOGICAL RECORD LENGTH = Y
+.*
+.*  INDEX,VSAM SINGLE DATASET
+.*       OFFSET TO KEY FIELD IN LOGICAL RECORD LENGTH = Y + Z - 1
+.*
+.*  INDEX,VSAM
+.*       OFFSET TO KEY FIELD IN LOGICAL RECORD LENGTH = X + Y + Z - 1
+.*
+&A(6)    SETA  4+&FB1(1)/65536+&SB(1)/65536+2*&GB4(11)         @BA40823
+         AIF   (&ORG EQ 9 OR (&ORG EQ 10 AND &N EQ 1)).EI1
+&A(6)    SETA  4
+         AIF   (&ORG EQ 10).EI1
+&A(6)    SETA  &FB1(1)/65536
+         AIF   (&ORG EQ 11).EI1
+&A(6)    SETA  &FB1(1)/65536+&SB(1)/65536-1+5*&GB1(4)          @BA38223
+         AIF   (&ORG EQ 12).EI1
+&A(6)    SETA  4+&FB1(1)/65536+&SB(1)/65536-1+5*&GB1(4)+2*&GB4(11)   @
+.EI1     SPACE 4
+         MNOTE *,'* * * * * * * * * * * * * * * * * * * * * * * * * * '
+         MNOTE *,'*'
+         MNOTE *,'*                       *NOTE1 '
+         MNOTE *,'*  DEFINE CLUSTER (NAME(&C) -   '
+         MNOTE *,'*         INDEXED KEYS (&RTKEY,&A(6)) -  '
+         MNOTE *,'*         RECORDSIZE (&A(4),&A(4))) -     '
+         MNOTE *,'*         DATA (CONTROLINTERVALSIZE (&A(5)))   '
+         MNOTE *,'*'
+         MNOTE *,'* *NOTE1 - SHOULD SPECIFY DSNAME FOR DD &C '
+         MNOTE *,'*'
+         MNOTE *,'* * * * * * * * * * * * * * * * * * * * * * * * * * '
+         AIF   (&ORG EQ 11 OR &ORG EQ 12).EK
+&C       SETC  '&OVF(&N)'
+&A(4)    SETA  &A(3)
+&A(5)    SETA  &A(2)
+.EJ      SPACE 2
+         MNOTE *,'* * * * * * * * * * * * * * * * * * * * * * * * * * '
+         MNOTE *,'*'
+         MNOTE *,'*                       *NOTE2 '
+         MNOTE *,'*  DEFINE CLUSTER (NAME(&C) NONINDEXED - '
+         MNOTE *,'*         RECORDSIZE (&A(4),&A(4)) -  '
+         MNOTE *,'*         CONTROLINTERVALSIZE (&A(5))) '
+         MNOTE *,'*'
+         MNOTE *,'* *NOTE2 - SHOULD SPECIFY DSNAME FOR DD &C '
+         MNOTE *,'*'
+         MNOTE *,'* * * * * * * * * * * * * * * * * * * * * * * * * * '
+.EK      SPACE 2
+         MEXIT
+.FA      MNOTE *,'****************************************************'
+         MNOTE *,'****************************************************'
+         MNOTE *,'**** ALLOCATION PRIME  ------ ''&PRIME'' --- CYLS.'
+         MNOTE *,'**** ALLOCATION CYLIND ------ ''&CYLIND'' --- CYLS.'
+         MNOTE *,'****************************************************'
+         MNOTE *,'****************************************************'
+         AIF   (&N GT 1).FC
+&C       SETC  'PRIME'
+&A(1)    SETA  &SB(1)/65536+(&SB(1)-&SB(1)/65536*65536) ROOT SIZE
+&A(1)    SETA  &A(1)+7             ADD OVERHEAD BYTES
+         AIF   (&S NE 1 AND &GB1(10)).FB  ROOT ONLY DATABASE ?
+&A(1)    SETA  &A(1)-4             IF SO; REMOVE SECOND POINTER
+.FB      AIF   (&A(1) GT &LRL).FE  WILL ROOT FIT IN PRIME ?
+         AIF   (&S EQ 1 OR NOT &GB1(10)).FF
+.FC      ANOP
+&A(1)    SETA  7
+&C       SETC  'OSAM'
+         AIF   (&N EQ 1).FD
+&A(1)    SETA  &A(1)+&RKEY
+&C       SETC  'PRIME'
+         AIF   (&DSL(&N)/65536+&A(1) GT &LRL).FE
+&C       SETC  'OSAM'
+.FD      AIF   (&DSL(&N)/65536+&A(1) LE &A(3)).FF
+.FE      SPACE
+         MNOTE 4,'DGEN190 - ONE OR MORE SEGMENTS IN THE ABOVE'
+         MNOTE *,'          DATASET GROUP WILL NOT FIT IN THE'
+         MNOTE *,'          SPECIFIED &C RECORD SIZE. '
+         SPACE
+.FF      MEXIT
+         MEND

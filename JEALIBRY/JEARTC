@@ -1,0 +1,741 @@
+         TITLE 'RTC - RESPONSE THROUGHPUT CONTROL'
+***********************************************************************
+*                                                                     *
+*                           J E A R T C                               *
+*                                                                     *
+*            THIS ROUTINE OPERATES AS AN ATTACHED SUBTASKS OF THE     *
+*        SYSTEM TO MONITOR AND CONTROL THE PERFORMANCE OF WORK        *
+*        PROCESSED BY THE SYSTEM.                                     *
+*            THE ROUTINE OPERATES BY SETTING JOBS NON-DISPATCHABLE    *
+*        FOR A SPECIFIC PERCENTAGE OF THE TIME THEY SPEND EXECUTING   *
+*        IN SUCH A WAY THAT THE EFFECTIVE CAPACITY OF THE MACHINE     *
+*        IS FIXED AT SOME PREDETERMINED LEVEL. THIS LEVEL CAN         *
+*        BE SPECIFIED AND ALTERED BY THE OPERATOR FOR THE SYSTEM AS   *
+*        A WHOLE AND FOR SPECIFIC JOBS.                               *
+*            THE MODULE OPERATES IN PROTECT KEY ZERO AND SUPERVISOR   *
+*        MODE, IS NON-CANCELLABLE, AND NON-SWAPPABLE.                 *
+*                                                                     *
+*        REGISTER USAGE:                                              *
+*        REG0  PARAMETER REGISTER AND WORK REGISTER                   *
+*        REG1  PARAMETER REGISTER AND WORK REGISTER                   *
+*        REG2  WORK REGISTER                                          *
+*        REG3  ADDRESS OF RTCAREA IN THE SQA                          *
+*        REG4  ADDRESS OF COMMUNICATIONS AREA                         *
+*        REG5  ADDRESS OF CURRENT ASCB BEING PROCESSED                *
+*        REG6  WORK REGISTER                                          *
+*        REG7  ADDRESS OF CURRENT TQE ENTRY                           *
+*        REG8  WORK REGISTER                                          *
+*        REG9  WORK REGISTER                                          *
+*        REG10 BASE ADDRESS REGISTER                                  *
+*        REG11 LINKAGE REGISTER BETWEEN ROUTINES                      *
+*        REG12 ADDRESS OF CURRENT ENTRY IN RTC TABLE                  *
+*        REG13 ADDRESS OF PROGRAM REGISTER SAVE AREA                  *
+*        REG14 PROGRAM LINK REGISTER AND WORK REGISTER                *
+*        REG15 PROGRAM LINK REGISTER AND WORK REGISTER                *
+*                                                                     *
+*                                                                     *
+*        SPECIAL NOTES:                                               *
+*                                                                     *
+*        THIS PROGRAM DOES SOME RATHER UNUSUAL THINGS. IE:            *
+*        1)    ENTRY IS MADE TO THE TIMER SERVICE ROUTINE 'SETDIE'    *
+*              TO SCHEDULE A 'TQE' DIRECTLY ONTO THE TIMER QUEUE.     *
+*              THIS ROUTINE IS BRANCH ENTERED AND IT IS FOR THIS      *
+*              REASON WE MUST BE IN PK 0.                             *
+*        2)    THE TQE MENTIONED ABOVE ADDRESSES A ROUTINE WHICH      *
+*              WILL BE ENTERED DIRECTLY FROM THE TIMER SLIH WHEN      *
+*              AN INTERVAL ELAPSES TO RESTART SUSPENDED JOBS. THIS    *
+*              ROUTINE RUNS DISABLED SO MUST BE FIXED IN CORE.        *
+*        3)    BECAUSE OF THE ABOVE, THE CODE FOR THE TIMER EXIT      *
+*              IS COPIED TO A GETMAINED AREA FIXED IN THE SQA         *
+*              ALONGSIDE THE WORK AREAS AND TQE POOL. THE SQA IS      *
+*              USED BECAUSE THE ROUTINE MUST BE ADDRESSABLE FROM      *
+*              ALL ADDRESS SPACES IN THE SYSTEM.                      *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        DSECTS USED IN THIS PROGRAM                                  *
+***********************************************************************
+         SPACE 2
+RTCAREA  DSECT ,                   RTC AREA IN SQA
+RTCEXIT  DS    CL(DIELENTH)        DIE EXIT CODE.
+         SPACE 2
+RTCSTACK DS    F                   ADDRESS OF TOP TQE ON STACK
+         DS    0D                  GET DBLWORD ALIGNMENT
+RTCTQE   DS    20CL128             POOL OF TQE'S FOR DIE ROUTINE
+RTCLAST  EQU   *                   END OF TQE POOL
+         SPACE 2
+RTCASIDS DS    0F                  START AF ADDRESS SPACE AREAS
+RTCASENT DS    0F                  START OF MAP OF A SINGLE ENTRY
+RTCJOBNM DS    CL8                 CURRENT NAME OF JOB
+RTCRATE  DS    F                   PCTAGE PERFORMANCE IF SPECIAL
+RTCFLAG  DS    X                   FLAG FOR JOB'S PROCESSING
+RTCCNTRL EQU   X'80'               OPERATOR ENTERED A CONTROL OPERATION
+RTCSPECL EQU   X'40'               USER DOES HAVE HIS OWN PERFORMANCE
+RTCPERM  EQU   X'20'               ASID USED TO SET PERFORMANCE
+RTCFREE  DS    X                   UNUSED
+RTCASIDX DS    H                   ADDRESS SPACE ID THIS ENTRY
+RTCASLEN EQU   *-RTCASENT          LENGTH OF AN ENTRY
+         DS    25CL(RTCASLEN)      STORAGE FOR 25 ADDRESS SPACES
+RTCASEND EQU   *                   END OF ADDRESS SPACE TABLE
+         SPACE 2
+RTCEND   EQU   *                   END OF SQA WORK AREA
+         DS    0D
+RTCLENTH EQU   *-RTCAREA           LENGTH OF RTC AREA
+         SPACE 2
+         IHATQE
+         SPACE 2
+         PRINT NOGEN
+         IHAPSA
+         SPACE 2
+         CVT
+         SPACE 2
+         IHAASCB
+         SPACE 2
+         IEAVVTPC
+         SPACE 2
+CSCB     DSECT
+         IEECHAIN
+         PRINT GEN
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING                                   *
+***********************************************************************
+         SPACE 2
+JEARTC   ZCSECT 10,GETMAIN=1
+         MODESET MODE=SUP,KEY=ZERO
+         EJECT
+***********************************************************************
+*        GETMAIN AND INITIALISE THE SQA AREA                          *
+***********************************************************************
+         SPACE 2
+         GETMAIN R,LV=RTCLENTH,SP=245 CORE FOR TQE POOL
+         LR    REG3,REG1           LOAD BASE ADDRESS OF THAT AREA
+         USING RTCAREA,REG3        ADDRESSABILITY FOR IT
+         LR    REG0,REG3           LOAD MVCL REGISTER 1
+         LA    REG1,RTCLENTH       LOAD LENGTH OF AREA TO CLEAR
+         XR    REG14,REG14         CLEAR SECOND ADDRESS REGISTER
+         XR    REG15,REG15         CLEAR SECOND LENGTH REGISTER
+         ICM   REG15,8,=X'00'      LOAD PADDING (CLEAR) CHARACTER
+         MVCL  REG0,REG14          CLEAR THE GETMAINED AREA
+         LA    REG1,RTCTQE         LOAD ADDRESS OF FIRST TQE
+         ST    REG1,RTCSTACK       STORE AS TOP OF CHAIN
+         LA    REG0,RTCLAST        LOAD END OF POOL ADDRESS
+INITLOOP LA    REG14,L'RTCTQE(REG1) LOAD ADDRESS OF NEXT TQE
+         CR    REG14,REG0          END OF TQE AREA ?
+         BNL   SETEND              YES STORE LAST POINTER
+         ST    REG14,0(REG1)       STORE NEXT ENTRY POINTER
+         LR    REG1,REG14          UPDATE ENTRY ADDRESS
+         B     INITLOOP            PROCESS WHOLE POOL
+SETEND   EQU   *
+         MVC   RTCEXIT,DIEEXIT     MOVE DIE EXIT CODE TO SQA
+         EJECT
+***********************************************************************
+*        FINAL INITIALISATION BEFORE CONTINUING                       *
+***********************************************************************
+         SPACE 2
+         LA    REG12,PRGMEND       LOAD ADDRESS OF THE END OF MY CODE
+         MVI   PGFIXECB,0          RESET THE ECB
+         PGFIX R,A=(10),EA=(12),LONG=Y,ECB=PGFIXECB
+         LTR   REG15,REG15         TEST THE RETURN CODE
+         BZ    NOPGWT2             OK. PAGES ARE FIXED
+         WAIT  ECB=PGFIXECB        WAIT FOR FIXING
+NOPGWT2  DS    0H
+         EJECT
+***********************************************************************
+*        SET UP OPERATOR COMMUNICATIONS AND ATSK STATUS               *
+***********************************************************************
+         SPACE 2
+         EXTRACT CMNDAREA,FIELDS=COMM LOCATE MODIFY ECB AND CIB
+         L     REG1,CMNDAREA       LOAD ADDRESS OF COMMUNICATIONS AREA
+         L     REG15,4(REG1)       LOAD ADDRESS OF START CIB
+         MVC   UCMID,12(REG15)     SET UP ID OF STARTING CONSOLE
+         LA    REG15,CHECBP-CHPTR  LOAD OFFSET OF COMM AREA IN CSCB
+         SR    REG1,REG15          LOAD START ADDRESS OF CSCB
+         USING CSCB,REG1           ADDRESSABILITY FOR CSCB
+         NI    CHACT,255-CHSWAP-CHCL SET NON-SWAP AND NON-CANCEL
+         BAL   REG11,GETRATE       GO PROCESS THE CIB
+         BAL   REG11,INITPRMS      GO INITIALISE WORK AREAS
+         L     REG4,CMNDAREA       LOAD ADDRESS OF COMMUNICATION AREA
+         LA    REG12,4(REG4)       LOAD ADDRESS OF POINTER
+         QEDIT ORIGIN=(12)         FREE START CIB
+         QEDIT ORIGIN=(12),CIBCTR=15 SET MAXIMUM COUNT FOR CIB'S
+         MVC   WAITLIST,0(REG4)    MOVE ECB ADDRESS TO WORK AREA
+         EJECT
+***********************************************************************
+*        LOCATE AND PROCESS EACH ELIGIBLE ADDRESS SPACE               *
+***********************************************************************
+         SPACE 2
+MAINLOOP DS    0H
+         SETLOCK OBTAIN,TYPE=DISP,MODE=UNCOND,REGS=USE,                X
+               RELATED=('ENSURE ASCB CHAIN DOESNT CHANGE')
+         L     REG1,16             LOAD ADDRESS OF CVT
+         USING CVTMAP,REG1         ADDRESSABILITY FOR IT
+         L     REG5,CVTASCBH       LOAD ADDRESS OF TOP ASCB
+         USING ASCB,REG5           ADDRESSABILITY OF ASCB
+         B     *+8                 STEP OVER FIRST LOAD OF LOOP
+ASCBLOOP L     REG5,ASCBFWDP       LOAD ADDRESS OF FIRST/NEXT ASCB
+         LTR   REG5,REG5           ANY MORE ASCB'S PRESENT ?
+         BZ    ASCBENDS            NO. EXIT FROM THIS LOOP
+         NC    ASCBJBNI,ASCBJBNI   JOBNAME FIELD EXISTS ?
+         BZ    ASCBLOOP            NO. NOT A VALID JOB
+         LH    REG15,ASCBASID      LOAD ADDRESS SPACE ID
+         SLL   REG15,4             MULTIPLY BY SIXTEEN
+         LA    REG12,RTCASIDS(REG15) INDEX TO CORRECT ENTRY
+         USING RTCASENT,REG12      ADDRESSABILITY FOR IT
+         BAL   REG11,GOTAASCB      GO PROCESS IT
+         B     ASCBLOOP            GO FETCH NEXT ASCB
+ASCBENDS DS    0H                  END OF ASCB PROCESSING LOOP
+         SETLOCK RELEASE,TYPE=DISP,REGS=USE,                           X
+               RELATED=('FREE LOCK AFTER SCAN OF ASCB CHAIN')
+         EJECT
+***********************************************************************
+*        WAIT FOR A SPECIFIED INTERVAL                                *
+***********************************************************************
+         SPACE 2
+STIMER   MVI   STIMECB,0           RESET STIMER ECB
+         STIMER REAL,STIMEXIT,BINTVL=WAITTIME WAIT FOR NEXT SCAN
+STIMWAIT WAIT  1,ECBLIST=WAITLIST  WAIT FOR STIMER OR MODIFY
+         TM    STIMECB,X'40'       NORMAL ELAPSED INTERVAL ?
+         BO    MAINLOOP            YES. GO PROCESS IT
+         EJECT
+***********************************************************************
+*        CHECK FOR INPUT COMMANDS TO THIS ROUTINE                     *
+***********************************************************************
+         SPACE 2
+         DROP  REG12               RELEASE OLD ADDRESSABILITY
+         LA    REG12,RTCASIDS      LOAD ADDRESS OF MY ASID AREA
+         USING RTCASENT,REG12      ADDRESSABILITY FOR IT
+         L     REG4,CMNDAREA       LOAD ADDRESS OF COMMUNICATIONS AREA
+         L     REG6,0(REG4)        LOAD ADDRESS OF STOP/MODIFY ECB
+         TM    0(REG6),X'40'       ECB HAS BEEN POSTED ?
+         BZ    STIMWAIT            NO. SURPRISINGLY - GO REISSUE WAIT
+         L     REG8,4(REG4)        LOAD ADDRESS OF CIB
+         CLI   4(REG8),X'40'       STOP COMMAND BEEN ISSUED ?
+         BE    STOPRTC             YES. GO TERMINATE THE ROUTINE
+         BAL   REG11,GETRATE       GO PROCESS THE COMMAND INPUT BUFFER
+         BAL   REG11,ACTIONIT      GO ACTION THE INPUT PARAMETERS
+         L     REG4,CMNDAREA       LOAD ADDRESS OF CMNICATIONS AREA
+         LA    REG4,4(REG4)        ADDRESS OF CIB CHAIN ORIGIN
+         QEDIT ORIGIN=(4)          FREE UP THE CHAIN
+         B     STIMWAIT            RETURN TO WAIT LOOP
+         EJECT
+***********************************************************************
+*        TERMINATE THE ROUTINE AND FREE WORK AREAS                    *
+***********************************************************************
+         SPACE 2
+STOPRTC  DS    0H
+         WAIT  ECB=STIMECB         WAIT FOR ALL DIE'S TO FINISH
+STOPRTC2 FREEMAIN R,LV=RTCLENTH,A=(3),SP=245 FREE THE CORE USED
+         WTO   '**** RTC TERMINATED ****'
+         ZRETURN RC=0              RETURN CONTROL TO SYSTEM
+         EJECT
+***********************************************************************
+*        SET UP PARAMETERS FROM THE START COMMAND                     *
+***********************************************************************
+         SPACE 2
+INITPRMS DS    0H
+         ST    REG11,INITRG11      SAVE LINK REGISTER
+         TM    WORKFLAG,WKINVLID   ANY OF HIS PARM INVALID
+         BO    IGNOREM             YES. TELL HIM I'VE IGNORED THEM
+         TM    WORKFLAG,WKJOBNAM+WKASID IS HE BEING STUPID
+         BNZ   FAILSTRT            YES. REFUSE TO BE NICE TO HIM
+         TM    WORKFLAG,WKINTRVL   STARTING INTERVAL ?
+         BZ    NOSINTVL            NO. TRY NEXT TEST
+         MVC   WAITTIME,WORKTIME   INITIALISE THE INTERVAL
+NOSINTVL TM    WORKFLAG,WKPERFRM   SPECIFIC PERFORMANCE RATE
+         BZ    NOSRATE             NO. TRY NEXT TEST
+         MVC   SYSRATE,WORKRATE    SET UP THE NEW RATE
+NOSRATE  EQU   *
+         BAL   REG11,PUTRATES      GO TELL HIM HIS PARAMETERS
+         L     REG11,INITRG11      RELOAD LINK REGISTER
+         BR    REG11               RETURN TO CALLER
+IGNOREM  EQU   *
+         WTO   'JEARTC - YOUR START PARAMETER(S) ARE INVALID. DEFAULT OP
+               PTIONS ASSUMED'
+         L     REG11,INITRG11      RELOAD LINK REGISTER
+         BR    REG11               RETURN TO CALLER
+FAILSTRT EQU   *
+         WTO   'JEARTC - ILLEGAL PARAMETERS ''JOBNAME='' OR ''ASID='' CO
+               ODED ON START. INITIATION FAILED'
+         B     STOPRTC2            GO TERMINATE THE ROUTINE
+         EJECT
+***********************************************************************
+*        INFORM OPERATOR OF THE PARAMETERS HE IS USING                *
+***********************************************************************
+         SPACE 2
+PUTRATES DS    0H
+         L     REG15,SYSRATE       LOAD THE SYSTEM PERFORMANCE RATE
+         CVD   REG15,DBLWORD       CONVERT TO DECIMAL
+         MVC   WTORATE,RATEMASK    MOVE IN EDIT MASK
+         ED    WTORATE,DBLWORD+6   EDIT RATE TO OUTPUT
+         L     REG15,WAITTIME      LOAD THE TIME BETWEEN STOPS
+         CVD   REG15,DBLWORD       CONVERT TO DECIMAL
+         MVC   WTOTIME,TIMEMASK    MOVE EDIT MASK
+         ED    WTOTIME,DBLWORD+5   EDIT TIME INTERVAL TO OUTPUT
+         XR    REG0,REG0           CLEAR THE CONSOLE ID REGISTER
+         IC    REG0,UCMID          LOAD ID OF RECEIVING CONSOLE
+         WTO   MF=(E,RATESWTO)     OUTPUT THE DETAILS
+         LA    REG12,RTCASIDS      LOAD START OF ADDRESS SPACE ENTRIES
+         USING RTCASENT,REG12      ADDRESSABILITY FOR THE ENRTY
+         LA    REG8,RTCASLEN       LOAD THE LENGTH OF AN ENTRY
+         LA    REG9,RTCASEND-1     LOAD ADDRESS OF END OF ENTRIES
+PUTLOOP  L     REG1,RTCRATE        LOAD HIS RATE
+         TM    RTCFLAG,RTCSPECL    SPECIAL RATE ENTERED FOR HIM ?
+         BZ    NOSPRATE            NO. BYPASS PROCESSING FOR HIM
+         MVC   WTOJOBNM,RTCJOBNM   MOVE JOBNAME TO MESSAGE AREA
+         CVD   REG1,DBLWORD        CONVERT TO DECIMAL
+         MVC   WTORATE2,RATEMASK   PREPARE EDIT MASK
+         ED    WTORATE2,DBLWORD+6  EDIT HIS RATE TO MESSAGE
+         XR    REG0,REG0           CLEAR CONSOLE ID REGISTER
+         IC    REG0,UCMID          LOAD ADDRESS OF RECEIVING CONSOLE
+         WTO   MF=(E,RATEWTO2)     OUTPUT INDIVIDUAL DETAILS
+NOSPRATE BXLE  REG12,REG8,PUTLOOP  PROCESS EACH ENTRY
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        AN ELIGIBLE ASCB IS FOUND                                    *
+***********************************************************************
+         SPACE 2
+GOTAASCB DS    0H
+         USING ASCB,REG5           LET'S HAVE SOME ADDRESSABILITY
+         ST    REG11,GOTREG11      SAVE LINK REGISTER
+         BAL   REG11,CHECKJOB      GO TEST FOR NEW JOB STARTED
+         BAL   REG11,GETINTVL      GO CALCULATE HIS WAIT INTERVAL
+         NC    INTERVAL,INTERVAL   TEST LENGTH OF THE INTERVAL
+         BZ    GOTAEXIT            NULL BYPASS DIE ROUTINE
+         BAL   REG11,SETDIE        GO SET UP HIS TIMER EXIT
+GOTAEXIT L     REG11,GOTREG11      RELOAD LINK REGISTER
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        'TURN OFF' THE ADDRESS SPACE AND SET UP A DIE EXIT           *
+***********************************************************************
+         SPACE 2
+SETDIE   DS    0H
+         L     REG7,RTCSTACK       LOAD ADDRESS OF A FREE TQE
+         L     REG15,0(REG7)       LOAD ADDRESS OF NEXT TQE
+         CS    REG7,REG15,RTCSTACK ATTEMPT TO UPDATE THE STACK
+         BNE   *-8                 FAILED. TRY AGAIN
+         USING TQE,REG7            ADDRESSABILITY FOR TQE ENTRY
+         XC    0(L'RTCTQE,REG7),0(REG7) CLEAR THE ENTIRE TQE
+         MVC   TQEAID,ASCBASID     SET UP ADDRESS SPACE ID
+         LA    REG15,RTCEXIT       LOAD ADDRESS OF THE EXIT ROUTINE
+         ST    REG15,TQEEXIT       STORE ADDRESS IN TQE
+         MVC   TQEVAL,INTERVAL     SET UP INTERVAL REQUIRED
+         OI    ASCBDSP1,ASCBFAIL   STOP PROCESSING IN THE ADDRESS
+         LR    REG1,REG7           LOAD ADDRESS OF TQE IN PARM REGISTER
+         L     REG15,16            LOAD ADDRESS OF CVT
+         USING CVTMAP,REG15        ADDRESSABILITY FOR IT
+         L     REG15,CVTTPC        LOAD ADDRESS OF TIMER WORK AREA
+         USING TPC,REG15           ADDRESSABILITY FOR IT
+         L     REG15,TPCSDIE       LOAD ADDRESS OF SETDIE ROUTINE
+         STM   REG11,REG13,DIESAVE SAVE MY REGISTERS
+         BALR  REG14,REG15         ENTER THE ROUTINE TO SET DIE EXIT
+         LM    REG11,REG13,DIESAVE RESTORE MY REGISTERS
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        CALCULATE THE REQUIRED WAIT INTERVAL IN TOD CLOCK UNITS      *
+***********************************************************************
+         SPACE 2
+GETINTVL DS    0H
+         TM    RTCFLAG,RTCSPECL    OPERATOR HAS ENTERED DATA FOR THIS
+         BO    SPECIAL             YES. HE HAS HIS OWN PERFOMANCE
+         MVC   RTCRATE,SYSRATE     MOVE DEFAULT SYSTEM RATE TO HIS AREA
+SPECIAL  XR    REG14,REG14         CLEAR WORK REGISTER
+         L     REG15,WAITTIME      LOAD TIME BETWEEN 'STOPS' IN 1/100TH
+         M     REG14,DFACTOR       CNVRT TO MICROSEC AND DIVIDE BY 100
+         L     REG1,MAXRATE        LOAD MAXIMUM POSSIBLE PERFORMANCE
+         S     REG1,RTCRATE        SUBTRACT HIS EXPECTED RATE
+         MR    REG14,REG1          MULTIPLY BY (100%-EXPECTED%)
+         SLDL  REG14,12            SHIFT LOW ORDER BIT TO BIT 51
+         STM   REG14,REG15,INTERVAL STORE OUT TO WORK AREA
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        TEST FOR INPUT DATA FROM OPERATOR AND VALIDATE IT            *
+***********************************************************************
+         SPACE 2
+GETRATE  DS    0H
+         ST    REG11,RATERG11      SAVE LINK REGISTER
+         MVI   WORKFLAG,0          INITIALISE THE PARAMETER FLAG
+         L     REG4,CMNDAREA       ADDRESS OF CMMNICATIONS AREA
+         L     REG8,4(REG4)        LOAD ADDRESS OF CIB
+         MVC   UCMID,12(REG8)      SAVE THE CONSOLE ID
+         LA    REG14,16(REG8)      LOAD START ADDRESS OF BUFFER
+         LH    REG15,14(REG8)      LOAD LENGTH OF DATA
+         LTR   REG15,REG15         ANYTHING THERE AT ALL
+         BZ    RATEEXIT            NO. TERMINATE IMMEDIATELY
+         PRINT NOGEN
+         SCAN  DATA=(REG14),LENGTH=(REG15),DELIM=('=','%',','),        X
+               END=(' '),RETAREA=SCANBLKS
+         PRINT GEN
+         EJECT
+***********************************************************************
+*        ANALYZE HIS INPUT PARAMETERS AND REPORT                      *
+***********************************************************************
+         SPACE 2
+         L     REG2,SCANBLKS       LOAD ADDRESS OF FIRST PART
+         LTR   REG2,REG2           NOTHING BUT DELIMITERS ?
+         BZ    ERROR1              YES. BETTER TELL HIM ABOUT IT
+PARMLOOP XR    REG15,REG15         CLEAR WORK REGISTER
+         IC    REG15,4(REG2)       LOAD LENGTH OF KEYWORD
+         L     REG14,4(REG2)       LOAD ADDRESS OF KEYWORD
+         BAL   REG11,TESTKEY       GO CHECK VALIDITY
+         BALR  REG11,REG1          GO PROCESS THE KEYWORD
+         L     REG2,0(REG2)        LOAD ADDRESS OF NEXT ENTRY
+         LTR   REG2,REG2           TEST FOR MORE DATA IN PARM FIELD
+         BNZ   PARMLOOP            MORE. SO GO PROCESS IT.
+RATEEXIT L     REG11,RATERG11      RELOAD LINK REGISTER
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        TEST FOR CORRECT RTCAREA TO UPDATE                           *
+***********************************************************************
+         SPACE 2
+ACTIONIT DS    0H
+         TM    WORKFLAG,WKINVLID   OPERAND(S) INVALID IN INPUT
+         BO    ACTNEXIT            YES. DO NO PROCESSING
+         TM    WORKFLAG,WKINTRVL   NEW INTERVAL ENTERED ?
+         BZ    NOTINTVL            NO. TRY NEXT TEST
+         MVC   WAITTIME,WORKTIME   RESET MY INTERVAL TIME
+NOTINTVL TM    WORKFLAG,WKJOBNAM+WKASID SPECIAL RATE IS REQUESTED
+         BZ    NOTSPECL            NO. TRY NEXT TEST
+         TM    WORKFLAG,WKPERFRM   IS HE SETTING OR RESETTING PERFORM
+         BZ    PFRESET             RESET. GO CLEAR THE RTC AREA ENTRY
+         L     REG12,WORKRTC       LOAD SAVED ADDRESS OF HIS RTC AREA
+         USING RTCASENT,REG12      ADDRESSABILITY FOR HIS AREA
+         MVC   RTCRATE,WORKRATE    MOVE IN THE ENTERED PERFORMANCE
+         OI    RTCFLAG,RTCSPECL    TURN ON HIS PERFORMANCE FLAG
+         TM    WORKFLAG,WKASID     ADDRESS SPACE ID USED HERE ?
+         BZ    PRFMENDS            NO. ALL COMPLETE FOR JOB NAME
+         OI    RTCFLAG,RTCPERM     SHOW THAT SETTING IS PERMANENT
+         B     PRFMENDS            BYPASS REST OF PERFORMANCE PROCSSING
+PFRESET  L     REG12,WORKRTC       LOAD SAVED ADDRESS OF RTC AREA
+         USING RTCASENT,REG12      ADDRESSABILITY FOR IT
+         NI    RTCFLAG,255-RTCSPECL-RTCPERM RESET HIS FLAG
+         XC    RTCRATE,RTCRATE     CLEAR HIS PERSONAL PERFORMANCE
+         B     PRFMENDS            RETURN TO NEXT TEST
+NOTSPECL TM    WORKFLAG,WKPERFRM   NEW PERFORMANCE ENTERED ?
+         BZ    PRFMENDS            NO. TRY NEXT TEST
+         MVC   SYSRATE,WORKRATE    UPDATE THE SYSTEM PERFORMANCE
+PRFMENDS EQU   *
+         XR    REG0,REG0           CLEAR CONSOLE ID REGISTER
+         IC    REG0,UCMID          LOAD ID OF RECEIVING CONSOLE
+         WTO   'JEARTC - PARMETERS ACCEPTED AND ACTIONED',             X
+               MCSFLAG=(REG0)
+ACTNEXIT BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        PROCESS THE ASID KEYWORD                                     *
+***********************************************************************
+         SPACE 2
+ASIDKEY  DS    0H
+         ST    REG11,ASIREG11      SAVE LINK REGISTER
+         BAL   REG11,NUMBERS       GO EXTRACT AND CONVERT NUMBER
+         CH    REG1,MAXASIDS       COMPARE WITH UPPER LIMIT
+         BH    ERROR7              NOT A VALID ADDRESS SPACE ID
+         LTR   REG1,REG1           IS IT ZERO ?
+         BZ    ERROR7              SURE IS. ERROR
+         DROP  REG12               RELEASE OLD ADDRESSABILITY
+         LA    REG12,RTCASIDS      START ADDRESS OF ASID AREAS
+         USING RTCASIDS,REG12      ESTABLISH NEW ADDRESSABILITY
+         SLL   REG1,4              MULTIPLY ASID BY SIXTEEN
+         LA    REG12,RTCASIDS(REG1) LOAD ADDRESS OF THE ENTRY SPECIFIED
+         NC    RTCJOBNM,RTCJOBNM   TEST FOR A VALID JOBNAME
+         BZ    ERROR9              NONE. NOT A VALID ENTRY
+         ST    REG12,WORKRTC       SAVE ADDRESS OF THE ENTRY
+         OI    WORKFLAG,WKASID     INDICATE THAT ASID ENTERED
+         DROP  REG12               RELEASE ADDRESSABILITY FOR HIS AREA
+         L     REG11,ASIREG11      RELOAD LINK REGISTER
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        THE OPERATOR HAS ENTERED A JOB NAME                          *
+***********************************************************************
+         SPACE 2
+JOBKEY   DS    0H
+         L     REG2,0(REG2)        LOAD ADDRESS NEXT SCAN BLOCK
+         LTR   REG2,REG2           CODED ?
+         BZ    ERROR3              GONE MISSING
+         XR    REG15,REG15         CLEAR WORK REGISTER
+         IC    REG15,4(REG2)       LOAD LENGTH OF DATA
+         CH    REG15,=H'8'         IF IT'S MORE THAN 8 I DONT WANT IT
+         BH    ERROR8              SORRY SQUIRE !!!!!
+         L     REG14,4(REG2)       LOAD ADDRESS OF DATA
+         ICM   REG15,8,=C' '       LOAD UP A PADDING CHARACTER
+         LA    REG0,WORKJOBN       LOAD ADDRESS OF RECEIVING FIELD
+         LA    REG1,L'WORKJOBN     LOAD LENGTH OF IT
+         MVCL  REG0,REG14          MOVE THE JOBNAME TO WORK AREA
+         LA    REG1,RTCASIDS       START ADDRESS OF ENTRIES
+         LA    REG14,RTCASLEN      LOAD THE LENGTH OF AN ENTRY
+         LA    REG15,RTCASEND-1    END ADDRESS REGISTER
+         USING RTCASENT,REG1       ADDRESSABILITY FOR WORK AREA
+JOBLOOP  CLC   WORKJOBN,RTCJOBNM   CORRECT JOBNAME ?
+         BE    JOBGOTIT            YES. WELL DONE OPERATOR !
+         BXLE  REG1,REG14,JOBLOOP  NEVER MIND. TRY AGAIN
+         B     ERROR9              INVALID JOB NAME
+JOBGOTIT ST    REG1,WORKRTC        SAVE ITS ADDRESS IN WORK AREA
+         DROP  REG1                RELEASE THIS ADDRESSABILITY
+         OI    WORKFLAG,WKJOBNAM   SIGNAL THAT JOBNAME ENTERED
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        THE OPERATOR WISHES TO CHANGE THE 'STOP' INTERVAL            *
+***********************************************************************
+         SPACE 2
+INTVLKEY DS    0H
+         ST    REG11,INTVRG11      SAVE LINK REGISTER
+         BAL   REG11,NUMBERS       GO EXTRACT SOME DIGITS
+         C     REG1,MINSTOP        LESS THAN MY MINIMUM ?
+         BL    ERROR10             YES. FORGET IT
+         C     REG1,MAXSTOP        GREATER THAN MY MAXIMUM ?
+         BH    ERROR10             YES. GO TELL HIM
+         ST    REG1,WORKTIME       UPDATE THE TIME IN WORK AREA
+         OI    WORKFLAG,WKINTRVL   TELL HIM THAT ALL IS DONE
+         L     REG11,INTVRG11      RELOAD LINK REGISTER
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        CHECK THE VALIDITY OF KEYWORDS IN THE PARM FIELD             *
+***********************************************************************
+         SPACE 2
+TESTKEY  DS    0H
+         LA    REG0,WORKKEY        START ADDRESS OF KEYWORD WORK AREA
+         LA    REG1,L'WORKKEY      LENGTH OF WORK AREA
+         ICM   REG15,8,=C' '       LOAD PADDING CHARACTER FOR MOVE
+         MVCL  REG0,REG14          MOVE PADDED KEY WORD TO WORK AREA
+         LA    REG1,PARMTABL       LOAD START ADDRESS OF KEYWORD TABLE
+         LA    REG14,PARMLEN       LENGTH OF A PARMTAB ENTRY
+         LA    REG15,PARMEND-1     END ADDRESS FOR BXLE LOOP
+KEYLOOP  CLC   WORKKEY,0(REG1)     VALID KEYWORD FOUND ?
+         BE    GOTAKEY             YES. GO LOAD ADDRESS OF PROCESSOR
+         BXLE  REG1,REG14,KEYLOOP  NO.  TRY NEXT ENTRY IN TABLE
+         B     ERROR2              TROUBLE. KEYWORD NOT FOUND
+GOTAKEY  L     REG1,L'KEYNAME(REG1) LOAD ADDRESS OF PROCESSOR
+         BR    REG11               RETURN TO CALLER
+         SPACE 2
+PARMTABL DS    0F                  PARM FIELD KEYWORD TABLE
+KEYNAME  DC    CL8'RATE'           FIRST KEYWORD
+         DC    AL4(PERFMKEY)       ADDRESS OF PROCESSOR
+PARMLEN  EQU   *-PARMTABL          LENGTH OF AN ENTRY
+         DC    CL8'ASID'           SECOND KEYWORD
+         DC    AL4(ASIDKEY)        ADDRESS OF ITS PROCESSOR
+         DC    CL8'JOB'            OPTIONAL KEYWORD
+         DC    AL4(JOBKEY)         ADDRESS OF PROCESSOR
+         DC    CL8'INTERVL'        TIME BETWEEN 'STOPS'
+         DC    AL4(INTVLKEY)       ADDRESS OF PROCESSOR ROUTINE
+         DC    CL8'STATUS'         REQUEST FOR STATUS OF JOBS
+         DC    AL4(PUTRATES)       ADDRESS OF PROCESSOR
+PARMEND  EQU   *                   END OF PARM KEYWORD TABLE
+         EJECT
+***********************************************************************
+*        GENERAL NUMERIC CONVERSION AND TEST                          *
+***********************************************************************
+         SPACE 2
+NUMBERS  DS    0H
+         L     REG2,0(REG2)        TEST FOR FOLLOWING OPERAND
+         LTR   REG2,REG2           TEST IT
+         BZ    ERROR3              NO ADDRESS SPACE ID
+         XR    REG14,REG14         CLEAR WORK REGISTER
+         IC    REG14,4(REG2)       LOAD LENGTH
+         L     REG15,4(REG2)       LOAD ADDRESS OF IT
+         LR    REG0,REG2           SAVE ADDRESS OF SCAN CHAIN
+         BCT   REG14,OVERINST      SUBTRACT 1 FROM THE LENGTH
+TRTINST  TRT   0(0,REG15),NUMTABLE  EXECUTED NUMERIC TEST
+PACKINST PACK  DBLWORD,0(0,REG15)  EXECUTED PACK
+OVERINST EX    REG14,TRTINST       TEST FOR VALID NUMERIC
+         LR    REG2,REG0           RESTORE ADDRESS OF SCAN CHAIN
+         BNZ   ERROR4              NOT A VALID FIELD
+         EX    REG14,PACKINST      PACK THE VALUE
+         CVB   REG1,DBLWORD        CONVERT IT TO BINARY
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        ANALYSE AND PROCESS THE PERFORMANCE KEYWORD                  *
+***********************************************************************
+         SPACE 2
+PERFMKEY DS    0H
+         ST    REG11,PERFRG11      SAVE LINK REGISTER
+         BAL   REG11,NUMBERS       GO EXTRACT NUMERIC DATA
+         LTR   REG1,REG1           ZERO SPECIFIED ?
+         BZ    ERROR5              YES. GOTCHA. CANT DO THAT SUNSHINE
+         C     REG1,MAXRATE        TEST FOR 100% OR MORE ENTERED
+         BH    ERROR6              HE HAS GOT TO BE AN OPTIMIST
+         ST    REG1,WORKRATE       SET HIS PERSONAL PERFORMANCE RATE
+         OI    WORKFLAG,WKPERFRM   INDICATE THAT A NEW RATE ENTERED
+         L     REG11,PERFRG11      RELOAD LINK REGISTER
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        AN INPUT MODIFY COMMAND IS INVALID                           *
+***********************************************************************
+         SPACE 2
+ERROR1   DS    0F                  NO PARAMETERS SPECIFIED
+         BAL   REG1,ERRORCIB       LOAD ADDRESS OF PARM LIST
+         WTO   'JEARTC - NO PARAMETERS SPECIFIED',MF=L,                X
+               MCSFLAG=(REG0)
+ERROR2   DS    0F                  INVALID KEYWORD
+         BAL   REG1,ERRORCIB       LOAD ADDRESS OF PARM LIST
+         WTO   'JEARTC - KEYWORD IS INVALID',MF=L,                     X
+               MCSFLAG=(REG0)
+ERROR3   DS    0F                  NO PERCENTAGE SPECIFIED
+         BAL   REG1,ERRORCIB       LOAD ADDRESS OF PARM LIST
+         WTO   'JEATRC - OPERAND FIELD OF KEYWORD MISSING',MF=L,       X
+               MCSFLAG=(REG0)
+ERROR4   DS    0F                  OPERAND SPECIFIED IS NON-NUMERIC
+         BAL   REG1,ERRORCIB       LOAD ADDRESS OF PARM LIST
+         WTO   'JEARTC - NON-NUMERIC OR INVALID OPERAND',MF=L,         X
+               MCSFLAG=(REG0)
+ERROR5   DS    0F                  ZERO PERFORMANCE SPECIFIED
+         BAL   REG1,ERRORCIB       LOAD ADDRESS OF PARM LIST
+         WTO   'JEARTC - ZERO PERFORMANCE IS NOT VALID',MF=L,          X
+               MCSFLAG=(REG0)
+ERROR6   DS    0F                  MORE THAN 100 % SPECIFIED
+         BAL   REG1,ERRORCIB       LOAD ADDRESS OF PARM LIST
+         WTO   'JEARTC - YOU HAVE GOT TO BE AN OPTIMIST',MF=L,         X
+               MCSFLAG=(REG0)
+ERROR7   DS    0F                  ADDRESS SPACE ID INVALID
+         BAL   REG1,ERRORCIB       LOAD ADDRESS OF PARM LIST
+         WTO   'JEARTC - ADDRESS SPACE ID IS INVALID',MF=L,            X
+               MCSFLAG=(REG0)
+ERROR8   DS    0F                  JOB NAME IS INVALID
+         BAL   REG1,ERRORCIB       LOAD PARAMETER REGISTER
+         WTO   'JEARTC - JOBNAME ENTERED IS INVALID',MF=L,             X
+               MCSFLAG=(REG0)
+ERROR9   DS    0F                  JOB IS NOT ELIGIBLE
+         BAL   REG1,ERRORCIB       LOAD PARAMETER REGISTER
+         WTO   'JEARTC - JOB IS NOT ELIGIBLE FOR PERFORMANCE OPTION',  X
+               MF=L,MCSFLAG=(REG0)
+ERROR10  DS    0F                  TIME INTERVAL IS INVALID
+         BAL   REG1,ERRORCIB       LOAD PARAMETERE REGISTER
+         WTO   'JEARTC - TIME INTERVAL REQUESTED IS UNREALISTIC',MF=L, X
+               MCSFLAG=(REG0)
+ERRORCIB DS    0F
+         XR    REG0,REG0           CLEAR MCS FLAGS AND ID
+         IC    REG0,UCMID          LOAD ID OF RECEIVING CONSOLE
+         WTO   MF=(E,(1))          WRITE OUT THE ERROR MESSAGE
+         OI    WORKFLAG,WKINVLID   SIGNAL INVALID PARAMETERS
+         L     REG11,RATERG11      RELOAD PRIMARY LINK REGISTER
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        CHECK TO SEE IF THE JOBNAME HAS CHANGED                      *
+***********************************************************************
+         SPACE 2
+CHECKJOB DS    0H
+         USING ASCB,REG5           ADDRESSABILITY FOR ASCB
+         USING RTCASENT,REG12      ADDRESSABILITY FOR WORK AREA
+         L     REG1,ASCBJBNI       LOAD ADDRESS OF JOB NAME INDICATOR
+         CLC   RTCJOBNM,0(REG1)    COMPARE WITH PREVIOUS ENTRY
+         BE    0(REG11)            SAME JOB. LEAVE IT ALONE
+         MVC   RTCJOBNM,0(REG1)    STORE THE JOB NAME IN PARM AREA
+         MVC   RTCASIDX,ASCBASID   SET UP ADDRESS SPACE ID ALSO
+         TM    RTCFLAG,RTCPERM     HIS PERFORMANCE SET PERMANENTLY ?
+         BO    0(REG11)            YES. RETURN TO CALLER
+         XC    RTCFLAG,RTCFLAG     CLEAR THE PROCESSING FLAG
+         XC    RTCRATE,RTCRATE     CLEAR HIS PROCESSING RATE
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        STIMER EXIT TO POST WAIT ECB                                 *
+***********************************************************************
+         SPACE 2
+STIMEXIT DS    0H
+         PUSH  USING               SAVE ADDRESSABILITY
+         USING *,REG10             SET TEMPORARY ADDRESSABILITY
+         LR    REG10,REG15         SET UP THAT BASE REGISTER
+         POST  STIMECB             POST THE WAIT ECB
+         BR    REG14               RETURN TO CALLER
+         POP   USING
+         EJECT
+***********************************************************************
+*        CONSTANTS AND WORK AREAS                                     *
+***********************************************************************
+         SPACE 2
+INTERVAL DS    D                   SAVE AREA FOR CALCULATED INTERVAL
+DBLWORD  DS    D                   WORK AREA FOR GETPARM
+WORKKEY  DS    D                   WORK AREA FOR CIB PROCESSING
+PGFIXECB DC    A(0)                ECB FOR PAGE FIX ROUTINE
+STIMECB  DC    A(0)                STIMER WAIT ECB
+WAITLIST DC    A(0)                ADDRESS OF MODIFY ECB
+         DC    X'80'               END OF LIST FLAG
+         DC    AL3(STIMECB)        STIMER ECB
+CMNDAREA DS    F                   ADDRESS OF MODIFY COMMUNICATNS AREA
+WAITTIME DC    F'25'               1/4 SECOND WAIT BETWEEN STOPS
+SYSRATE  DC    F'50'               PERCENTAGE PERFORMANCE REQUIRED
+WORKRATE DS    F                   WORK AREA FOR CIB PROCESSING
+WORKTIME DS    F                   WORK AREA FOR CIB PROCESSING
+WORKRTC  DS    F                   WORK AREA FOR CIB PROCESSING
+WORKJOBN DS    CL8                 WORK AREA FOR JOBNAME KEYWORD
+WORKFLAG DC    2X'0'               PROCESSING FLAGS FOR PARAMETERS
+WKINVLID EQU   X'80'               PARAMETERS ENTERED ARE INVALID
+WKPERFRM EQU   X'40'               PERFORMANCE DATA ENTERED
+WKJOBNAM EQU   X'20'               JOB PARAMETER ENTERED
+WKASID   EQU   X'10'               ASID PARAMETER ENTERED
+WKINTRVL EQU   X'08'               NEW INTERVAL PERIOD ENTERED
+UCMID    DC    X'00'               ID OF CONSOLE TALKING TO ME
+MAXRATE  DC    F'100'              HIGHEST POSSIBLE PERFORMANCE LEVEL
+MINSTOP  DC    F'5'                MINIMUM INTERVAL BETWEEN STOPS
+MAXSTOP  DC    F'3000'             MAXIMUM BETWEEN STOPS
+DFACTOR  DC    F'100'              MULTIPLY BY 10000 AND DIVIDE BY 100
+GOTREG11 DS    F                   SAVE AREA FOR LINK REGISTER
+ASIREG11 DS    F                   SAVE AREA FOR LINK REGISTER
+RATERG11 DS    F                   SAVE AREA FOR LINK REGISTER
+INITRG11 DS    F                   SAVE AREA FOR LINK REGISTER
+INTVRG11 DS    F                   SAVE AREA FOR LINK REGISTERS
+PERFRG11 DS    F                   SAVE AREA FOR LINK REGISTER
+DIESAVE  DS    3F                  SAVE AREA FOR REGISTERS TO SETDIE
+SCANBLKS DS    20F                 WORK AREA FOR SCAN MACRO
+MAXASIDS DC    H'25'               MAXIMUM ADDRESS SPACE ID
+RATESWTO WTO   'JEARTC - INTIIALISED AT 100% PERFORMANCE AND 30.00  SECO
+               ONDS INTERVAL',MF=L,MCSFLAG=(REG0)
+         ORG   RATESWTO+4          GO BACK TO START
+         DC    C'JEARTC - INITIALISED AT' FIRST PART
+WTORATE  DS    CL4                 PERFORMANCE RATE
+         DC    C'% PERFORMANCE AND'
+WTOTIME  DS    CL7                 INTERVAL LENGTH
+         DC    C' SECONDS INTERVAL' FINAL PART
+         ORG   ,                   RESET
+RATEWTO2 WTO   '''JOBNAMES'' HAS PERFORMANCE '' 100%'' IN EFFECT',     X
+               MCSFLAG=(REG0),MF=L
+         ORG   RATEWTO2+4          GO BACK TO START OF TEXT
+         DC    C''''               PART1
+WTOJOBNM DC    CL8' '              NAME OF THE JOB
+         DC    C''' HAS PERFORMANCE '''      MIDDLE PART
+WTORATE2 DC    CL4' '              RATE FOR THIS JOB
+         DC    C'%'' IN EFFECT'     LAST PART
+         ORG   ,                   RESET TO END OF WTO
+RATEMASK DC    X'40212020'         EDIT MASK FOR PERFORMANCE RATE
+TIMEMASK DC    X'402021204B2020'
+NUMTABLE DC    256X'FF'            SET WHOLE TABLE TO INVALID
+         ORG   NUMTABLE+C'0'       POINT TO START OF VALID ENTRIES
+         DC    10X'00'             SET UP THE VALID NUMERIC ENTRIES
+         ORG   ,                   RESET LOCATION COUNTER
+         LTORG
+         EJECT
+***********************************************************************
+*        ORIGINAL COPY OF DIE ROUTINE COPIED TO SQA                   *
+***********************************************************************
+         SPACE 2
+DIEEXIT  DS    0H
+         PUSH  USING
+         USING *,REG10             ADDRESSABILITY FOR DIE EXIT
+         USING RTCAREA,REG3        ADDRESSABILITY FOR WORK AREA
+         USING RTCTQE,REG7         ADDRESSABILITY FOR MY TQE
+         USING ASCB,REG5           ADDRESSABILITY FOR MY ASCB
+         LR    REG10,REG15         SET UP A BASE REGISTER
+         NI    ASCBDSP1,255-ASCBFAIL RESET THAT FLAG I PUT ON
+         L     REG1,RTCSTACK       LOAD TOP OF STACK
+         ST    REG1,0(REG7)        UPDATE MY CHAIN POINTER
+         CS    REG1,REG7,RTCSTACK  ATTEMPT TO RETURN TQE TO STACK
+         BNE   *-8                 FAILED. TRY AGAIN
+         BR    REG14               RETURN TO TIMER SLIH
+DIEEND   DS    0H
+DIELENTH EQU   DIEEND-DIEEXIT      LENGTH OF THIS EXIT ROUTINE
+         POP   USING
+         EJECT
+PRGMEND  EQU   *                   ADDRESS OF THE END OF THE PROGRAM
+         END

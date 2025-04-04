@@ -1,0 +1,572 @@
+B0103C   START 0
+         USING *,11
+         USING ALLOFIT,9
+         USING IHADCB,10
+         USING DCBXT,12
+***********************************************************************
+         STM   14,12,12(13)       SAVE USER REGISTERS
+         LR    11,15              CALL ADDRESS TO BASE REGISTER
+         ST    13,SAVEAREA+4      STORE USER SAVE ADDRESS
+         LA    5,SAVEAREA         OWN SAVE ADDRESS -
+         ST    5,8(0,13)          STORE IN USER SAVE AREA -
+         LR    13,5               THEN TO SAVE ADDR REG
+         LM    3,8,0(1)           LOAD PARAMETERS TO REGS 3-8
+         STM   3,8,SAVR3          STORE PARAMETER ADDRESSES
+***********************************************************************
+*                                       REG3--SAVR3--  FILE NAME
+*                                       REG4---------  SEARCH KEY
+*                                       REG5--SAVR5    OPERATION
+*                                       REG6--SAVR6--  OP MODE
+*                                       REG7--SAVR7--  RECORD
+*                                       REG8--SAVR8--  RETURN CODE
+***********************************************************************
+         MVC   FILID(25),FILID-1  CLEAR MESSAGE AREA
+         MVC   FILID,0(3)         FILE NAME TO MSG TEXT
+         MVC   KEY,0(4)           SAVE USER KEY
+         MVC   ARG3,0(5)          STORE OPERATION REQUEST IN ARG3
+         MVC   ARG4,0(6)          STORE OP MODE   REQUEST IN ARG4
+***********************************************************************
+         LA    9,QBI-28           DUMMY DCB REF FOR HEAD OF QUEUE -
+LOOPA    LR    12,9               TO DECB REGISTER
+         L     9,CHADR            ADDRESS NEXT PAIR DCBS AND DECB
+         LTR   9,9                IS ANYONE THERE
+         BZ    BLDNU              NO - SO BUILD DCBS AND DECB
+         CLC   THEFILE,0(3)       YES - IS IT THIS FILE
+         BNE   LOOPA              NO - LOOK AT NEXT DCB-PAIR
+***********************************************************************
+         CLI   ARG3,C'C'          IS OP EQUAL -C-
+         BE    CLOSE              YES - SO CLOSE IT AND RELEASE CORE
+         LR    12,9               ADDRESS TO DECB REGISTER
+SEQRAND  CLI   ARG3,C'S'          IS THIS SEQUENTIAL OP
+         BNE   START1             NO - SO TRY RANDOM OPS
+         TITLE 'S   E   Q   U   E   N   T   I   A   L'
+         LA    10,QISDCB          ADDR QISAM DCB TO DCB REGISTER
+         TM    DCBSTAT,X'F0'      IS QISAM OPENED
+         BO    OPENEDQ            YES-ALREADY OPENED
+         OI    DCBSTAT,X'F0'      INDICATE QISAM OPENED
+         BAL   8,OPENSEQU         OPEN QISAM DCB
+OPENEDQ  CLI   MODEM,C'Q'         IS FILE IN SEQUENTIAL MODE
+         BNE   SEQSTART           NO - SO GO SET IT
+         CLI   ARG4,C'U'          IS IT UPDATE (-U-)
+         BE    SQOP4              YES, DELETE CODE IS SET
+         CLI   ARG4,C'D'          IS IT DELETE (-D-)
+         BE    SQOP3              YES - MUST SET DELETE CODE
+         CLI   ARG4,C'R'          IS THIS A READ OP
+         BNE   SQOP1              NO - MAYBE END OR START
+SEQREAD  BAL   14,GETLNK          LINK TO -GET- FUNCTION
+         ST    1,RECPNT           BUFFER ADDR TO UNUSED DECB AREA
+         LA    7,1(1)             DATA ADDR IN -FROM- REG
+         AH    1,DCBRKP           ADD KEY DISPLACEMENT TO RCD ADDR
+         BAL   8,KEYLNG           GET KEY LNG FOR NEXT INSTRUCTION
+         MVC   0(40,4),0(1)       MOVE RCD KEY TO USER KEY FIELD
+         L     6,SAVR7            USER ADDR IN -TO- REG
+         BAL   8,MOVE             MOVE RCD AND KEY TO USER AREA
+         B     RETURN0            NORMAL RETURN TO USER
+***********************************************************************
+SEQSTART MVI   MODEM,C'Q'         SET FILE IN SEQUENTIAL MODE
+         BAL   14,ESETLNK         LINK TO -ESETL- FUNCTION
+         TM    DCBSTAT,X'0F'      IS BISAM OPENED
+         BZ    NOSTATS            BISAM DCB IS NOT OPENED
+STATS    LA    6,BISDCB                 LOAD BISAM DCB
+         MVC   DCBLEMI2,120(6)
+         MVC   DCBLEMI3,132(6)
+         MVC   DCBLPDA,184(6)
+         MVC   DCBLECI,200(6)
+         MVC   DCBLEMI1,208(6)
+         MVC   DCBLIOV,216(6)
+NOSTATS  CLI   ARG4,C'S'          RQST FOR SET AT NEAREST KEY
+         BE    SEQCHKEY           YES - USE USERS START KEY
+         CLI   ARG4,C'B'          RQST FOR SET AT LOWEST KEY
+         BNE   SQ1                NO-USE USERS START KEY  FOR SETL-K
+SEQCHKEY LA    1,24               TYPE BYTE
+         SR    0,0                CLEAR R0 - KEY ADDR REG
+         BAL   14,SETLNK          LINK TO -SETL- FUNCTION
+         CLI   ARG4,C'B'          ERROR RETRY USES THIS CODE -
+         BE    RETURN0            NORMAL RETURN TO USER
+***********************************************************************
+SEQNXT   BAL   14,GETLNK          LINK TO -GET- FUNCTION
+         LR    6,1                BUFFER ADDR SAVED
+         AH    6,DCBRKP           ADD KEY DISPLACEMENT
+         BAL   8,KEYLNG           GET KEY LNG FOR NEXT INSTRUCTION
+         CLC   KEY,0(6)           COMPARE USER KEY TO RCD KEY
+         BH    SEQNXT             USER KEY HIGH - READ AGAIN
+         BAL   8,KEYLNG           GET KEY LENGTH FOR MOVE KEY
+         MVC   KEY,0(6)           RCD KEY TO DECB EXTENSION
+         BAL   14,ESETLNK         LINK TO -ESETL- FUNCTION
+SQ1      LA    0,KEY              KEY ADDRESS FOR SETL
+         LA    1,200              TYPE BYTE HEX C8 FOR -SETL-
+         CLI   ARG4,C'G'          IS GENERIC SEARCH RQSTD
+         BE    SQ2                YES - TYPE BYTE IS O.K.
+         LA    1,136              NO - LOAD TYPE BYTE HEX 88
+SQ2      BAL   14,SETLNK          LINK TO -SETL- FUNCTION -
+         B     RETURN0            THENCE TO NORMAL RETURN
+***********************************************************************
+SQOP1    CLI   ARG4,C'E'          RQST TO END SEQUENTIAL MODE
+         BNE   SQOP2              NO - LOOK FOR START
+         SR    0,0                CLEAR KEY REGISTER
+         MVI   MODEM,X'00'        SET FILE IN RANDOM MODE
+         BAL   14,ESETLNK         LINK TO -ESETL- FUNCTION -
+         B     RETURN0            THENCE TO NORMAL RETURN
+***********************************************************************
+SQOP2    CLI   ARG4,C'S'          IS IT RQST TO SET FILE SEQ MODE -
+         BE    SEQSTART           YES--
+         CLI   ARG4,C'B'          REQUEST TO SET SEQ MODE
+         BE    SEQSTART           YES--
+         CLI   ARG4,C'K'          REQUEST TO SET SEQ MODE
+         BE    SEQSTART           YES--
+         CLI   ARG4,C'G'          REQUEST TO SET SEQ MODE
+         BE    SEQSTART           YES--
+         B     ERR2
+GO4      MVI   FLAG,C'B'          FILE IN SEQUENTIAL MODE
+         B     ERR2X
+***********************************************************************
+SQOP3    EQU   *                       DELETE CURRENT RECORD
+SQOP4    L     2,RECPNT           BUFFER ADDR STORED AFTER -GET-
+         LH    1,DCBRKP           KEY DISPLACEMENT -
+         AR    1,2                ADDED TO BUFFER ADDR
+         MVI   FLAG,C'D'           RROR CODE FOR BAD KEY
+         BAL   8,KEYLNG           GET KEY LNG FOR NEXT INSTRUCTION
+         CLC   KEY,0(1)           IS USER KEY = RECORD KEY
+         BNE   RETURN             NO - RETURN WITH ERROR CODE
+         CLI   ARG4,C'D'               Q.  DELETE THIS RECORD
+         BNE   NODEL                   A.  NO
+         MVI   0(2),X'FF'              MOVE DELETE CODE INTO RECORD
+NODEL    EQU   *                       BRANCH HERE FOR NO DELETE
+         LA    6,1(2)             BUFFER ADDR IN -TO- REG
+         L     7,SAVR7            USER ADDR IN -FROM- REG
+         BAL   8,MOVE             MOVE USER RECORD TO BUFFER
+         BAL   14,PUTXLNK         LINK TO -PUTX- FUNCTION
+         B     RETURN0            NORMAL RETURN
+***********************************************************************
+ESETLNK  L     15,DCBESETL        DISPLACEMENT ESETL RTN ADDR IN DCB
+         B     COMLNK1            - TO SEQUENTIAL COMMON
+***********************************************************************
+PUTXLNK  MVI   LINK+3,X'04'       SET BR FOR SEQ PUT MODULE
+         B     GETPUTX            BR AROUND  GETLNK
+GETLNK   MVI   LINK+3,X'00'       SET BR FOR SEQ GET MODULE
+GETPUTX  L     15,DCBGET          DISPLACEMENT GET RTN ADDR IN DCB
+         B     COMLNK2            BRANCH AROUN COMLNK1
+***********************************************************************
+SETLNK   L     15,DCBSETL         DISPLACEMENT SETL RTN ADDR IN DCB
+         SLL   1,24               SHIFT TYPE TO HI-ORDER
+         OR    0,1                MASK TYPE ON KEY ADDR
+***********************************************************************
+COMLNK1  MVI   LINK+3,X'00'       SET BR FOR SEQ GET MODULE
+COMLNK2  LR    1,10               DCB ADDR TO R1
+LINK     B     0(15)              BRANCH TO ISAM SEQ MODULE
+***********************************************************************
+ENDFILE  MVI   FLAG,C'E'          SEQUENTIAL EOF - RETURN CODE -E-
+         B     RETURN             RETURN WITH CODE
+***********************************************************************
+         TITLE 'R       A       N       D       O       M'
+START1   LA    10,BISDCB          ADDR BISAM DCB TO DCB REGISTER
+         TM    DCBSTAT,X'0F'      IS BISAM OPENED
+         BO    OPENEDB            YES-ALREADY OPENED
+         OI    DCBSTAT,X'0F'      INDICATE BISAM OPENED
+         BAL   8,OPENRAND         OPEN BISAM DCB
+OPENEDB  CLI   MODEM,C'Q'         IS FILE IN SEQUENTIAL MODE
+         BE    GO4                YES, OP-MODE IS INVALID
+         CLI   ARG3,C'R'          IS THIS READ OP
+         BNE   START5             NO--IS IT AN UPDATE
+START2   BAL   8,RANDOM1          READ FOR UPDATE
+         CLI   0(5),X'FF'         HAS RECORD BEEN DELETED
+         BE    ER1X               RECORD ALREADY DELETED
+         MVI   0(5),X'00'         ZERO TO DELETE CODE POSITION
+         L     7,SAVR7            USER ADDR IN -FROM- REG
+         LA    8,1(5)             BUFFER ADDR IN REG 8
+         CLI   ARG3,C'W'          IS THIS WRITE OP -
+         BE    START3             YES-WRITE UPDATED RECORD
+         LR    6,7                USER ADDR IN -TO- REG
+         LR    7,8                BUFFER ADDR IN -FROM- REG
+         BAL   8,MOVE             MOVE RECORD TO USER AREA
+         CLI   ARG4,C'D'          IS RCD TO BE DELETED
+         BNE   RETURN0            NO - NORMAL RETURN
+         MVI   0(5),X'FF'         MOVE DELETE CODE TO 1ST POSITION
+         B     START4             DELETE THE RECORD
+START3   LR    6,8                BUFFER ADDR IN - TO- REG
+         BAL   8,MOVE             MOVE USER RECORD TO BUFFER
+START4   BAL   8,RANDOM3          WRITE UPDATE REQUEST
+         B     RETURN0            NORMAL RETURN
+START5   CLI   ARG3,C'W'          IS IT AN UPDATE OR ADD NEW
+         BNE   ERR2            NO--THEREFORE  INVALID REQUEST
+         L     7,SAVR7            USER RECORD AREA -
+         AH    7,DCBRKP           PLUS KEY DISPLACEMENT -
+         BCTR  7,0                LESS 1 - FOR KEY LOCATION
+         MVI   FLAG,C'D'           RROR CODE FOR BAD KEY
+         BAL   8,KEYLNG           GET KEY LNG FOR NEXT INSTRUCTION
+         CLC   KEY,0(7)           IS SEARCH KEY = RECORD KEY
+         BNE   RETURN             NO - BACK TO USER WITH ERROR CODE
+         CLI   ARG4,C'A'          IS THIS NEW RECORD TO BE ADDED
+         BNE   START2             NO, GO SEE IF WRITE
+         L     6,ADDNUREC         ADDR RCD WORK AREA
+         LTR   6,6                - IS IT ZERO
+         BNZ   GOTIT              NO, WE HAVE CORE
+***********************************************************************
+**       GETMAIN EC,LV=1000,A=ADDNUREC
+         MVI   AREABYTE,X'20'     GET CORE CODE
+         LA    1,AREALIST         NO RCD WORK AREA -
+         SVC   4                  CALL -GETMAIN- FUNCTION
+         LTR   15,15              WAS CORE AVAILABLE
+         BNZ   ERRG               NO, GO TELL EM AND ABEND
+         L     6,ADDNUREC         YEA, AREA ADDR IN -TO- REG
+***********************************************************************
+GOTIT    L     7,SAVR7            USER ADDR IN -FROM-REG
+         MVI   16(6),X'00'        REMOVE DELETE CODE
+         LA    6,17(6)            BUMP PAST 1ST 17 POSITIONS
+         BAL   8,MOVE             MOVE USER RCD TO OUTPUT AREA
+         BAL   8,RANDOM2          WRITE NEW RECORD
+         B     RETURN0            NORMAL RETURN TO USER
+***********************************************************************
+RANDOM1  MVI   TYPE2,32           READKU
+         B     RANDOM4            STORE DECB INFORMATION
+RANDOM2  MVI   TYPE2,4            WRITEKN
+         L     15,DCBWKPT2
+         MVI   37(15),X'00'
+         MVI   DECB+24,X'00'
+            L     15,DCBMSWA      3330 Z
+           XC    0(16,15),0(15)  3330 ZAP
+         L     6,ADDNUREC          ADDRESS OF NEW RECORD         POPE
+         MVI   ADDECB+24,0         RALPH SCHUELTE                POPE
+         WRITE ADDECB,KN,(10),(6),'S',KEY WRITE KEY NEW          POPE
+         WAIT  ECB=ADDECB                                        POPE
+         MVC   DECB+24(1),ADDECB+24 MOVE ERROR CODE TO WORK DECB POPE
+         B     WAITED              GO TEST IT                    POPE
+RANDOM3  MVI   TYPE2,8            WRITEK
+RANDOM4  L     15,DCBLRAN         READ AND UPDATE ROUTINE FROM DCB
+         L     6,BUFADDR          LOAD BUFFER ADDRESS
+RANDOM5  ST    6,AREAD            STORE BUFADDR OR ADDNUREC IN DECB
+         ST    10,DCBAD           STORE DCB ADDRESS IN DECB
+         LA    5,KEY
+         ST    5,KEYAD            STORE KEY ADDRESS IN DECB
+         MVI   TYPE1,2            NO DYNAMIC BUFFERRING REQUESTED
+         LA    1,DECB             LOAD DECB ADDRESS FOR BISAM
+         BALR  14,15              PERFORM BISAM REQUEST
+WAIT     WAIT  ECB=DECB
+         NI    DECB+24,X'FE'
+WAITED   TM    DECB+24,X'FD'      TEST FOR ERROR CONDITIONS
+         BM    READCHEX           YES--GO TO ERROR ROUTINE
+         L     5,RECPNT           BUFFER ADDRESS TO REG 5
+         BR    8
+***********************************************************************
+TYPEMSG  MVC   MSGOUT,4(8)
+         CNOP  0,4
+         BAL   1,TYPEOUT
+         DC    AL2(MSGLEN-*)           LENGTH OF MESSAGE
+         DC    AL2(0)
+         DC    C'.'
+FILID    DS    CL8                DD NAME FOR DISPLAY WITH CONSOLE MSG
+         DC    C'-'
+ARG3     DS    CL1                OPERATION
+         DC    C'-'
+ARG4     DS    CL1                OP-MODE
+         DC    C'-'
+FLAG     DS    CL1
+         DC    C'-'
+MSGOUT   DS    CL10
+         DC    C'.'
+MSGLEN   EQU   *
+TYPEOUT  DS    0H
+         SVC   35                      CONSOLE CALL
+         BR    8
+***********************************************************************
+         TITLE 'B   U   I   L   D      D    C    B    S'
+***********************************************************************
+BLDNU    CLI   ARG3,C'C'          REQUESTED CLOSE ON FILE NOT OPENED
+         BE    ERRF
+***********************************************************************
+**       GETMAIN  EC,LV=512,A=ALLOCATE
+GETDCB   MVI   MODEBYTE,X'20'     SET MODE TO ACQUIRE CORE -
+         LA    1,DCBLIST          AREA FOR EACH FILE
+         SVC   4                  CALL -GETMAIN- FUNCTION
+         LTR   15,15              HAS REQUESTED CORE BEEN ALLOCATED
+         BZ    BLDIT              YES - GO FORM DECB AND DCBS (2)
+ERRG     MVI   FLAG,C'G'
+         BAL   8,TYPEMSG
+         B     DUMPIT
+MSGG     DC    C'NO CORE   '
+***********************************************************************
+**       ABEND 199,DUMP
+DUMPIT   L     1,DMPCODES         LOAD DUMP CODES -
+         SVC   13                 AND CALL DUMP ROUTINE
+***********************************************************************
+BLDIT    L     9,ALLOCATE         PICK UP ADDR OF ALLOCATED CORE
+         ST    9,CHADR            QUEUE IT IN LAST PAIR OF DCBS -
+         LR    12,9               THEN FLIP IT TO DECB REG
+         XC    DCBXTNT,DCBXTNT    ZERO DECB AND EXTENSION -
+         LA    10,QISDCB          ADDR FIRST DCB TO DCB REGISTER
+LOOP2    XI    BLDSW+1,X'F0'      FLIP STATUS OF FLIP-FLOP
+         XC    THEDCB,THEDCB      ZERO AREA FOR DCB
+         MVC   DCBDDNAM,0(3)      MOVE FILE NAME TO DCB
+         LA    5,1                CONSTANT OF 1
+         SR    6,6                CLEAR REGISTER FOR IC
+         LA    7,TABDISP          ADDR STRING OF DISPLACEMENTS IN DCB
+         LA    8,18               COUNT OF 18 TO BCT REGISTER
+LOOP1    IC    6,0(7)             PICK UP DISPLACEMENT
+         STC   5,IHADCB(6)        STORE CONSTANT 1 IN DCB PLUS DISP
+         AR    7,5                BUMP STRING ADDR BY 1 -
+         BCT   8,LOOP1            DO IT AGAIN IF ANY REMAIN
+         OI    DCBDSORG,X'80'     FILE ORGANIZATION IS IND-SEQ -
+         OI    DCBOFLGS,X'02'     SET INTERNAL FLAGS
+         LA    5,ENDFILE          ESTABLISH END-OF-FILE -
+         LA    6,SCANERRS         AND SYNAD ADDRESSES FOR
+         ST    5,DCBEODAD         SEQUENTIAL MODE -
+         ST    6,DCBSYNAD         QISAM DCB ONLY
+BLDSW    B     NBLD               FINISH BISAM DCB, OPEN FILE IF BR -
+         MVC   DCBMACR,QISMACR    SET MACRO FORM FLAGS FOR QISAM -
+         LA    10,BISDCB          PICK UP ADDRESS BISAM DCB
+         B     LOOP2              REPEAT TO FLIP-FLOP -
+NBLD     MVI   DCBMAC,X'0E'       SET FLAG FOR RANDOM MODE
+         MVC   DCBMACR,BISMACR    SET MACRO FORM FLAGS FOR BISAM
+         MVC   FILENAME,0(3)      MOVE FILE NAME TO EXTENSION
+         B     SEQRAND            IS IT SEQUENTAIL OR RANDOM
+***********************************************************************
+OPENRAND L     15,BUFADDR         GET WORKAREA AND BUFFERS
+         LTR   15,15              HAS CORE ALREADY BEEN HAD
+         BNZ   OPENFILL           YES-THEN GO OPEN FILE
+***      GETMAIN EC,LV=8000,A=BUFADDR
+         MVI   BUFBYTE,X'20'      GET CORE CODE
+         LA    1,BUFLIST          LOAD GETMAIN PARAMETERS
+         SVC   4                  GETMAIN
+         LTR   15,15              WAS CORE AVAILABLE
+         BNZ   ERRG               NO--THEN ABEND THIS JOB
+         L     15,BUFADDR       3330  ZAP  *****************
+         L     6,BUFADDR
+         XC    0(16,6),0(6)     3330  ZAP  *****************
+OPENFILL MVC   DCBMSWA,BUFADDR    MOVE BUFFER ADDRESS TO DCB
+         MVC   DCBSMSW,BUFLIST+2  SIZE OF BUFFER/WORKAREA
+         L     15,BUFADDR       3330  ZAP  *****************
+         LA    15,16(15)        3330  ZAP  *****************
+         ST    15,DCBMSWA       3330  ZAP  *****************
+         MVC   DCBSMSW,=H'21000'       LENGTH OF WORKAREA
+         MVI   DCBBUFNO,X'01'  3330 ZAP  ******************
+         L     1,FREECORE
+         LA    1,1(1)
+         ST    1,FREECORE
+OPENSEQU ST    10,OPENER          OPEN QISAM OR BISAM DCB
+         MVI   OPENER,X'84'       OPEN FOR UPDAT
+         LA    1,OPENER           POINT TO OPEN LIST -
+         SVC   19                 OPEN THE FILE
+         BR    8
+***********************************************************************
+CLOSE    LA    6,QISDCB           ADDRESS OF CURRENT QISAM DCB -
+         LA    7,BISDCB           AND CURRENT BISAM DCB -
+         STM   6,7,OPENER         TO COMMON OPEN/CLOSE LIST
+         MVI   OPEN2,X'80'        BOTH DCB'S TO BE CLOSED
+         MVC   CHADR,NEXTONE      RECHAIN REMAINING DCB PAIR
+         ST    9,ALLOCATE         INITIAL ADDR DECB-DCB AREA
+         LR    12,9               ADDRESS TO DECB REGISTER
+         TM    DCBSTAT,X'FF'      ARE BOTH DCB'S OPENED
+         BO    CLOSES             YES-CLOSE BOTH DCB'S
+         MVI   OPENER,X'80'       ONLY ONE DCB IS OPENED
+         TM    DCBSTAT,X'0F'      IS IT THE BISAM DCB
+         BZ    CLOSES             NO-IT IS THE QISAM DCB
+         MVC   OPENER,OPEN2       YES-IT IS THE BISAM DCB
+CLOSES   LA    1,OPENER           POINT TO TOP OF LIST -
+         SVC   20                 CLOSE THE FILE(S)
+         MVC   FLAG,DCBSTAT            SAVE STATUS BYTE BEFORE FREEMAIN
+***********************************************************************
+**       FREEMAIN  E,LV=512,A=ALLOCATE
+         MVI   MODEBYTE,X'00'     SET MODE FOR RELEASING CORE -
+         LA    1,DCBLIST          AREA FOR EACH FILE
+         SVC   5                  AND CALL FREEMAIN FUNCTION
+***********************************************************************
+         L     6,FREECORE
+         TM    FLAG,X'0F'              Q.  BISAM DCB STATUS BYTE
+         BZ    NOTFREE                 A.  NO - QISAM DCB
+         BCT   6,NOTFREE
+***      FREEMAIN  E,LV=8400,A=BUFADDR
+         MVI   BUFBYTE,X'00'
+         LA    1,BUFLIST
+         SVC   5                  FREEMAIN
+         ST    6,BUFADDR
+         L     15,ADDNUREC
+         LTR   15,15
+         BZ    NOTFREE
+***      FREEMAIN  E,LV=1000,A=ADDNUREC
+         MVI   AREABYTE,X'00'
+         LA    1,AREALIST
+         SVC   5                  FREEMAIN
+         ST    6,ADDNUREC
+NOTFREE  ST    6,FREECORE
+RETURN0  MVI   FLAG,C'0'
+RETURN   L     2,SAVR8            ADDR USER RETURN CODE
+         MVC   0(1,2),FLAG
+         L     13,SAVEAREA+4      ADDR USER SAVE AREA
+         LM    14,12,12(13)       RESTORE USER REGS
+         BR    14                 RETURN TO USER
+***********************************************************************
+MOVE     LH    1,DCBLRECL         LOGICAL RECORD LENGTH
+         LA    2,255              MAXIMUM MOVE -MVC- LENGTH
+         BCTR  1,0                - BECAUSE USER DOESN'T GET 1ST BYTE
+MOVE1    BCTR  1,0                LOG REC LNG MINUS 1 FOR MVC
+         CR    2,1                LOG REC LNG GREATER THAN 255
+         BNL   MOVE2              NO - MAKE FINAL/ONLY MOVE
+         EX    2,MOVER            MOVE 256
+         SR    1,2                LOGICAL RCD LNG MINUS 255 MORE
+         LA    6,256(6)           BUMP -TO- REG BY MAX
+         LA    7,256(7)           BUMP -FROM- REG BY MAX
+         B     MOVE1              GO MAKE ANOTHER MOVE
+MOVE2    EX    1,MOVER            MOVE 256 OR LESS
+         BR    8                  RETURN TO MAIN LINE
+MOVER    MVC   0(1,6),0(7)        -MVC- OBJECT OF -EX- INSTRUCTIONS
+***********************************************************************
+KEYLNG   IC    5,DCBKEYLE         PICK KEY LENGTH FROM DCB -
+         BCTR  5,0                DECREMENT BY ONE -
+         STC   5,1(8)             STUFF INTO INSTRUCTION FOLLOWING BAL
+         BR    8                  - RETURN TO STUFFED INSTRUCTION
+***********************************************************************
+SAVEAREA DC    18F'0'             PROGRAM SAVE AREA
+***********************************************************************
+SAVR3    DC    4F'0'              SAVE PARAMETER REGISTERS 3, 4, 5, 6
+SAVR7    DC    F'0'               SAVE PARAMETER REGISTER  7
+SAVR8    DC    F'0'               SAVE PARAMETER REGISTER  8
+***********************************************************************
+QBI      DC    A(0)               ADDRESS 1ST DCB IN DCB CHAIN
+***********************************************************************
+OPENER   DC    F'0'               LIST OF DCB ADDRESSES -
+OPEN2    DC    F'0'               FOR OPEN AND CLOSE FUNCTIONS
+FREECORE DC    F'0'
+***********************************************************************
+DCBLIST  DC    F'512'             SIZE OF CORE RQSTD/RELEASED -
+         DC    A(ALLOCATE)        ADDR OF CORE ALLOCATED/RELEASED -
+MODEBYTE DC    X'00'              HEX -20- = ALLOCATE, -00- = RELEASE
+         DC    X'00'
+ALLOCATE DC    F'0'               CORE ADDR - GETMAIN AND FREEMAIN
+***********************************************************************
+AREALIST DC    F'1000'            LNGTH OF RCD WORK AREA
+         DC    A(ADDNUREC)        STORAGE LOCN FOR ADDRESS
+AREABYTE DC    X'2000'            X'20'-GET CORE  X'00'-FREE CORE
+ADDNUREC DC    F'0'               ADDR OF RECORD WORK AREA
+***********************************************************************
+BUFLIST  DC    F'21100'                3350 WORK AREA FOR ADDS
+         DC    A(BUFADDR)
+BUFBYTE  DC    X'2000'            X'20'-GET CORE  X'00'-FREE CORE
+BUFADDR  DC    F'0'
+***********************************************************************
+QISMACR  DC    X'48C6'            QISAM MACRF=(GL,SK,PU)
+BISMACR  DC    X'2020'            BISAM MACRF=(RU,WUA)
+***********************************************************************
+DMPCODES DC    AL1(128)
+         DC    AL3(1)             USER CODE FOR -GETMAIN- FAILURE
+***********************************************************************
+TABDISP  DC    X'171F434B4F575B5F63676B6FE7EBEFF3F7FB'
+KEY      DS    0CL256
+         DC    256X'40'
+***********************************************************************
+         TITLE 'E   R   R   O   R      R   E   C   O   V   E   R   Y'
+SCANERRS MVI   FLAG,C'8'                SYNAD ERROR
+         TM    DCBEXCD1,X'80'           KEY NOT FOUND-SETL ?
+         BO    ERR1
+         TM    DCBEXCD1,X'10'           INVALID REQUEST-SETL ?
+         BO    ERR2
+         TM    DCBEXCD1,X'08'           UNCORRECTABLE INPUT-GET ?
+         BO    ERR3
+         TM    DCBEXCD1,X'04'           UNCORRECTABLE OUTPUT-GET/CLOSE?
+         BO    ERR4
+         TM    DCBEXCD1,X'02'           UNREACHABLE BLOCK-GET ?
+         BO    ERR5
+         TM    DCBEXCD1,X'01'           UNREACHABLE BLOCK-GET/CLOSE ?
+         BO    ERR6
+SEXCD220 TM    DCBEXCD2,X'20'           CLOSED DCB ERROR ?
+         BO    ERR7
+         B     ERR8                     UNEXPLAINABLE ERROR
+         SPACE  4
+READCHEX MVI   FLAG,C'8'
+         TM    WORKDECB+24,X'80'        RECORD NOT FOUND
+         BO    ER1X
+         TM    WORKDECB+24,X'40'        RECORD LENGTH CHECK
+         BO    ERR9
+         TM    WORKDECB+24,X'20'        NO SPACE TO ADD
+         BO    ERR10
+         TM    WORKDECB+24,X'10'        INVALID REQUEST
+         BO    ERR2
+         TM    WORKDECB+24,X'08'        UNCORRECTIBLE I/O ERROR
+         BO    ERR3
+         TM    WORKDECB+24,X'04'        UNREACHABLE BLOCK
+         BO    ERR11
+         TM    WORKDECB+24,X'01'        DUPLICATE ADD
+         BO    ERR12
+         B     ERR8
+         EJECT
+ERR1     MVI   FLAG,C'1'                SEGMENT NOT FOUND
+         BAL   14,ESETLNK         YES - LINK TO -ESETL- FUNCTION
+         CLI   ARG4,C'S'          IS MODE SEQUENTIAL-START
+         BE    SEQCHKEY           YES - RECOVER START POINT
+         B     RETURN
+ER1X     MVI   FLAG,C'1'
+         B     RETURN
+ERR2     MVI   FLAG,C'8'
+ERR2X    BAL   8,TYPEMSG
+         B     RETURN
+MSG2     DC    C'INVLD RQST'
+ERR3     MVI   MSG3+9,C'8'
+ERR3X    BAL   8,TYPEMSG
+         B     RETURN
+MSG3     DC    C'I/O ERR-08'
+ERR4     MVI   MSG3+9,C'4'
+         B     ERR3X
+ERR5     MVI   MSG5+9,C'2'
+ERR5X    BAL   8,TYPEMSG
+         B     RETURN
+MSG5     DC    C'BLK ERR-02'
+ERR6     MVI   MSG5+9,C'1'
+         B     ERR5X
+ERR7     BAL   8,TYPEMSG
+         B     RETURN
+MSG7     DC    C'CLOSE ERR '
+ERR8     BAL   8,TYPEMSG
+         B     RETURN
+MSG8     DC    C'SYNAD ERR '
+ERR9     BAL   8,TYPEMSG
+         B     ER1X
+MSG9     DC    C'RCD LENGTH'
+ERR10    MVI   FLAG,C'7'
+         BAL   8,TYPEMSG
+         B     RETURN
+MSG10    DC    C'NO SPACE  '
+ERR11    MVI   MSG5+9,C'4'
+         B     ERR5X
+ERR12    MVI   FLAG,C'2'
+         B     RETURN
+ERRF     MVI   FLAG,C'F'
+         BAL   8,TYPEMSG
+         B     RETURN
+MSGF     DC    C'NOT OPENED'
+***********************************************************************
+         LTORG   *
+         TITLE 'I      H      A      D      C      B'
+         DCBD  DSORG=IS,DEVD=DA
+***********************************************************************
+         ORG   IHADCB
+THEDCB   DS    CL252
+***********************************************************************
+ALLOFIT  DSECT
+         DS    CL24
+         DS    H
+         DS    H
+NEXTONE  DS    F
+THEFILE  DS    CL8
+         ORG   *-16
+QISDCB   DS    CL252
+         ORG   *-16
+BISDCB   DS    CL252
+***********************************************************************
+DCBXT    DSECT
+DCBXTNT  DS    0CL40
+DECB     DS    0CL26
+WORKDECB EQU   DECB
+         DS    F
+TYPE1    DS    CL1
+TYPE2    DS    CL1
+         DS    H
+DCBAD    DS    F
+AREAD    DS    F
+RECPNT   DS    F
+KEYAD    DS    F
+STATUS   DS    H                  ERROR STATISTICS
+DCBSTAT  DS    CL1                F0=QISAM,0F=BISAM,FF=BOTH--OPENED
+MODEM    DS    CL1
+CHADR    DS    F
+FILENAME DS    CL8
+***********************************************************************
+         END

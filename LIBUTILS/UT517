@@ -1,0 +1,629 @@
+***********************************************************************   000010
+*                                                                         000020
+*        UT517: CATALOG SPACE USED FORMAT UTILITY.                        000030
+*                                                                         000040
+*        THIS ROUTINE WILL EXAMINE THE CONTENTS OF AN OS SYSCTLG AND      000050
+*        REPORT THE STATUS OF FREE AND USED SPACE WITHIN IT. DETAILS      000060
+*        WILL BE GIVEN ABOUT THE NUMBER OF USED OR PARTIALLY USED         000070
+*        BLOCKS, THE NUMBER OF EMPTY BLOCKS AND THE PERCENTAGES THAT      000080
+*        EACH REPRESENTS IN RELATION TO THE CATALOG AS A WHOLE.           000090
+*                                                                         000100
+*        EXECUTION:                                                       000110
+*          THE PROGRAM IS INVOKED BY JCL AS FOLLOWS-                      000120
+*                                                                         000130
+*        //CATALOG EXEC PGM=UT517,REGION=80K,PARM=80                      000140
+*        //STEPLIB DD DSN=SYS1.LINKLIB2                                   000150
+*        //SYSPRINT DD SYSOUT=A    OUTPUT REPORT LISTINGS                 000160
+*        //ANYNAME1 DD UNIT=SYSDA,VOL=SER=DSKXXX,DISP=OLD                 000170
+*            .                                                            000180
+*            .                                                            000190
+*            .                                                            000200
+*        //ANYNAMEN DD UNIT=SYSDA,VOL=SER=DSKXXX,DISP=OLD                 000210
+*                                                                         000220
+*        EACH OF THE VOLUMES DEFINED BY AN 'ANYNAME' DD CARD WILL BE      000230
+*        SEARCHED FOR A SYSCTLG DATA SET WHOSE SPACE WILL BE REPORTED     000240
+*        WHEN IT IS FOUND. 'ANYNAME' MAY NOT BEGIN WITH THE LETTERS       000250
+*        'SYS'.                                                           000260
+*            THE PARM FIELD CONTAINS A NUMBER IN THE RANGE 0-100 WHICH    000270
+*        REPRESENTS THE MAXIMUM PERCENTAGE OF USED BLOCKS WHICH CAN       000280
+*        BE TOLERATED IN THE CATALOG BEFORE IT MUST BE CONSIDERED FULL    000290
+*        AND BE EXPANDED. (SEE UT518).                                    000300
+*            WHEN THE PERCENTAGE OF USED BLOCKS EXCEEDS THIS PARM FIELD   000310
+*        VALUE, A MESSAGE IS WRITTEN TO THE CONSOLE ASKING THE OPERATOR   000320
+*        TO ACKNOWLEDGE THAT HE IS AWARE OF THE CONDITION.                000330
+*            SHOULD THE PARM FIELD BE OMITTED, A DEFAULT VALUE OF 80%     000340
+*        IS TAKEN AS THE CRITICAL LEVEL.                                  000350
+*                                                                         000360
+***********************************************************************   000370
+         EJECT                                                            000380
+***********************************************************************   000390
+*        INITIAL PROGRAM ENTRY HOUSEKEEPING                               000400
+***********************************************************************   000410
+         SPACE 2                                                          000420
+UT517    ZCSECT                                                           000430
+         EJECT                                                            000440
+***********************************************************************   000450
+*        EXTRACT THE PARM FIELD VALUE OR SUPPLY THE DEFAULT               000460
+***********************************************************************   000470
+         SPACE 2                                                          000480
+         L     REG1,0(REG1)        ADDRESS OF THE PARM FIELD              000490
+         LH    REG15,0(REG1)       LENGTH OF THE DATA                     000500
+         LA    REG14,2(REG1)       AND ADDRESS OF IT                      000510
+         LTR   REG15,REG15         ANYTHING PRESENT ?                     000520
+         BZ    NOPARMS             NO. LEAVE THE DEFAULT VALUE            000530
+         BCT   REG15,OVERTHEM      SUBTRACT ONE FOR EXECUTE               000540
+PACKINST PACK  DBLWORD,0(0,REG14)  PACK THE NUMBER                        000550
+TRTINST  TRT   0(0,REG14),TRTTABLE TEST FORVALID NUMERICS                 000560
+OVERTHEM EQU   *                                                          000570
+         EX    REG15,TRTINST       IS IT A VALID NUMERIC FIELD ?          000580
+         BNZ   BADPARMS            NO. GO BE RUDE TO HIM                  000590
+         EX    REG15,PACKINST      EXECUTE THE PACK INSTRUCTION           000600
+         MP    DBLWORD,PCTADJST    ALLOW FOR PCTFACTR BEING IN 1000'S     000610
+         ZAP   MAXRATE,DBLWORD+L'DBLWORD-L'MAXRATE(L'MAXRATE) SAVE IT     000620
+NOPARMS  EQU   *                                                          000630
+         EJECT                                                            000640
+***********************************************************************   000650
+*        INITIALISE THE PRINT DATA SET AND GET DATA AND TIME              000660
+***********************************************************************   000670
+         SPACE 2                                                          000680
+         OPEN  (SYSPRINT,OUTPUT)   OPEN THE DCB                           000690
+         UT458 ,                   GET FORMATTED DATE AND TIME            000700
+         EJECT                                                            000710
+***********************************************************************   000720
+*        LOCATE EACH SUITABLE DDNAME IN TURN                              000730
+***********************************************************************   000740
+         SPACE 2                                                          000750
+DDLOOP   DDNAME LAST=DDENDS        RETURNS DDNAMES ONE AFTER T'OTHER      000760
+         CLI   0(REG1),X'00'       SILLY DYNAMIC ENTRY ?                  000770
+         BE    DDLOOP              YES. IGNORE IT                         000780
+         CLC   0(7,REG1),=C'STEPLIB' STEPLIB DD CARD ?                    000790
+         BE    DDLOOP              YES. IGNORE IT                         000800
+         CLC   0(7,REG1),=C'STEPCAT' STEP CAT DDNAME ?                    000810
+         BE    DDLOOP              YES. IGNORE IT                         000820
+         CLC   0(3,REG1),=C'SYS'   SYSTEM JCL CARD ?                      000830
+         BE    DDLOOP              YES. IGNORE IT                         000840
+         EJECT                                                            000850
+***********************************************************************   000860
+*        LOCATE THE JFCB FOR THE VOLUME THAT DD NAME DESCRIBES            000870
+***********************************************************************   000880
+         SPACE 2                                                          000890
+         LA    REG2,CATALOG        LOAD ADDRESS OF THE DCB                000900
+         USING IHADCB,REG2         ADDRESSABILITY FOR THE DCB             000910
+         MVC   DCBDDNAM,0(REG1)    MOVE DDNAME TO THE DCB                 000920
+         DROP  REG2                RELEASE ADDRESSABILITY                 000930
+         RDJFCB (CATALOG)          READ IN THE JFCB                       000940
+         LA    REG2,JFCB           ADDRESS OF THE JFCB                    000950
+         USING INFMJFCB,REG2       ADDRESSABILITY FOR IT                  000960
+         OI    JFCBTSDM,JFCNWRIT   DO NOT WRITE BACK THIS JFCB            000970
+         LA    REG14,JFCBDSNM      ADDRESS OF DSNAME FIELD                000980
+         LA    REG15,L'JFCBDSNM    LENGTH OF THE DSNAME FIELD             000990
+         LA    REG0,CTLGNAME       ADDRESS OF MODEL SYSCTLG NAME          001000
+         LA    REG1,L'CTLGNAME     LENGTH OF THAT NAME FIELD              001010
+         ICM   REG1,8,=C' '        LOAD A PADDING CHARACTER               001020
+         MVCL  REG14,REG0          MOVE MODEL NAME TO JFCB                001030
+         DROP  REG2                RELEASE ADDRESSABILITY                 001040
+         EJECT                                                            001050
+***********************************************************************   001060
+*        OPEN THE CATALOG DATA SET READY FOR READING                      001070
+***********************************************************************   001080
+         SPACE 2                                                          001090
+         OPEN  (CATALOG,INPUT),TYPE=J ISSUE THE OPEN                      001100
+         LA    REG2,CATALOG        LOAD ADDRESS OF THE DCB                001110
+         USING IHADCB,REG2         ADDRESSABILITY FOR IT                  001120
+         TM    DCBOFLGS,DCBOFOPN   WAS THAT A SUCCESSFUL OPEN ?           001130
+         BZ    OPENFAIL            NO. GO ISSUE A SUITABLE MESSAGE        001140
+         EJECT                                                            001150
+***********************************************************************   001160
+*        INITIALISE WORK AREAS AND ACCUMULATORS                           001170
+***********************************************************************   001180
+         SPACE 2                                                          001190
+         ZAP   TOTLBLKS,=P'0'      INITIALISATION                         001200
+         ZAP   TOTLBYTS,=P'0'      INITIALISATION                         001210
+         ZAP   USEDBLKS,=P'0'      INITIALISATION                         001220
+         ZAP   USEDBYTS,=P'0'      INITIALISATION                         001230
+         ZAP   USEDPCNT,=P'0'      INITIALISATION                         001240
+         ZAP   USEDBPCT,=P'0'      INITIALISATION                         001250
+         ZAP   FREEBLKS,=P'0'      INITIALISATION                         001260
+         ZAP   FREEBYTS,=P'0'      INITIALISATION                         001270
+         ZAP   FREEPCNT,=P'0'      INITIALISATION                         001280
+         ZAP   FREEBPCT,=P'0'      INITIALISATION                         001290
+         LA    REG1,LINETABL       ADDRESS OF FIRST LINE TABLE ENTRY      001300
+         ST    REG1,THISLINE       INITIALISE TABLE POINTER               001310
+         EJECT                                                            001320
+***********************************************************************   001330
+*        PROCESS ALL THE RECORDS IN THE CATALOG                           001340
+***********************************************************************   001350
+         SPACE 2                                                          001360
+IOLOOP   DS    0H                                                         001370
+         GET   CATALOG             READ FIRST/NEXT RECORD                 001380
+         LR    REG3,REG1           SAVE ADDRESS OF THE RECORD             001390
+         BAL   REG11,DOACCUMS      ADD UP SOME TOTALS AND THINGS          001400
+         B     IOLOOP              AND PROCESS TH WHOLE FILE              001410
+         SPACE 2                                                          001420
+EODAD    EQU   *                   END OF THE CATALOG                     001430
+         EJECT                                                            001440
+***********************************************************************   001450
+*        CLOSE THE CATALOG FILE                                           001460
+***********************************************************************   001470
+         SPACE 2                                                          001480
+         CLOSE (CATALOG)           ISSUE CLOSE                            001490
+         EJECT                                                            001500
+***********************************************************************   001510
+*        PROCESS THE ACCUMULATED DATA TO GET REQUIRED RESULTS             001520
+***********************************************************************   001530
+         SPACE 2                                                          001540
+         ZAP   USEDPCNT,USEDBLKS   TAKE COUNT OF USED BLOCKS              001550
+         MP    USEDPCNT,PCTFACTR   MULTIPLY BY PERCENT FACTOR             001560
+         DP    USEDPCNT,TOTLBLKS   DIVIDE BY TOTAL OF BLOCKS              001570
+         ZAP   FREEPCNT,FREEBLKS   TAKE COUNT OF FREE BLOCKS              001580
+         MP    FREEPCNT,PCTFACTR   MULTIPLY BY PERCENT FACTOR             001590
+         DP    FREEPCNT,TOTLBLKS   DIVIDE BY TOTAL OF BLOCKS              001600
+         ZAP   USEDBPCT,USEDBYTS   TAKE COUNT OF USED BYTES               001610
+         MP    USEDBPCT,PCTFACTR   MULTIPLY BY PERCENT FACTOR             001620
+         DP    USEDBPCT,TOTLBYTS   DIVIDE BY TOTAL OF BYTES               001630
+         ZAP   FREEBPCT,FREEBYTS   TAKE COUNT OF FREE BYTES               001640
+         MP    FREEBPCT,PCTFACTR   MULTIPLY BY PERCENT FACTOR             001650
+         DP    FREEBPCT,TOTLBYTS   DIVIDE BY TOTAL OF BYTES               001660
+         EJECT                                                            001670
+***********************************************************************   001680
+*        OUTPUT THE RESULTS TO PRINT FILE                                 001690
+***********************************************************************   001700
+         SPACE 2                                                          001710
+         PUT   SYSPRINT            OBTAIN AN OUTPUT BUFFER                001720
+         XC    0(133,REG1),0(REG1) AND CLEAR IT                           001730
+         LR    REG5,REG1           SAVE ADDRESS OF THE BUFFER             001740
+         USING TITLE,REG5          ADDRESSABILITY FOR THE PRINT LINE      001750
+         MVI   TITASA,NEWPAGE      SET UP FOR A NEW PAGE                  001760
+         MVC   TITNAME,NAMETEXT    GET NAME OF THE REPORT                 001770
+         LA    REG2,JFCB           ADDRESS OF THE JFCB                    001780
+         USING INFMJFCB,REG2       ADDRESSABILITY FOR IT                  001790
+         MVC   TITVOL,JFCBVOLS     MOVE IN VOLUME SERIAL NUMBER           001800
+         MVC   VOLSER,JFCBVOLS     AND SAVE VOLUME SERIAL                 001810
+         DROP  REG2                RELEASE ADDRESSABILITY                 001820
+         MVC   TITDATE,UTREPORT    MOVE DATA TO TITLE LINE                001830
+         MVC   TITHH,UTHHMMSS      MOVE IN TIME                           001840
+         MVC   TITMM,UTHHMMSS+2    MOVE IN TIME                           001850
+         MVC   TITSS,UTHHMMSS+4    MOVE IN TIME                           001860
+         MVI   TITDOT1,C'.'        SEPARATE TIME FIELDS                   001870
+         MVI   TITDOT2,C'.'        SEPARATE TIME FIELDS                   001880
+         PUT   SYSPRINT            GET ONE MORE BUFFER                    001890
+         XC    0(133,REG1),0(REG1) AND CLEAR IT                           001900
+         MVI   0(REG1),C'-'        SET UP ASA CONTROL CHARACTER           001910
+         DROP  REG5                RELEASE ADDRESSABILITY                 001920
+         EJECT                                                            001930
+***********************************************************************   001940
+*        FILL THE PAGE WITH THE VOL SERIAL TO MAKE IT LOOK PRETTY         001950
+***********************************************************************   001960
+         SPACE 2                                                          001970
+         MVC   VOLSER2,VOLSER      TAKE A COPY OF VOL SERIAL              001980
+         LA    REG10,55            NUMBER OF LINES ON THE PAGE            001990
+         XR    REG9,REG9           LOAD AN INDEX REGISTER                 002000
+PRTLOOP1 EQU   *                                                          002010
+         PUT   SYSPRINT            OBTAIN A BUFFER                        002020
+         LR    REG5,REG1           SAVE ADDRESS OF IT                     002030
+         MVI   0(REG5),C' '        SET ASA CONTROL CHARACTER              002040
+         LA    REG15,VOLSER(REG9)  LOAD INDEXED ADDRESS OF LITERAL        002050
+         MVC   1(L'VOLSER,REG5),0(REG15) AND MOVE VOLSER IN               002060
+         MVC   L'VOLSER+1(133-L'VOLSER-1,REG5),1(REG5) PROPAGATE IT       002070
+         LA    REG6,LOFFSET(REG5)  ADDRESS OF START OF BUILD AREA         002080
+         BAL   REG11,ENTERNOS      GO ENTER ANY REQUIRED DATA             002090
+         LA    REG9,1(REG9)        GET ADDRESS OF NEXT CHARACTER          002100
+         CLM   REG9,1,=AL1(L'VOLSER) REACHED END OF NAME ?                002110
+         BL    PRTLOOPX            NO. CARRY ON                           002120
+         XR    REG9,REG9           YES. GO BACK TO START                  002130
+PRTLOOPX EQU   *                                                          002140
+         BCT   REG10,PRTLOOP1      AND THEN CARRY ON                      002150
+         B     DDLOOP              AND GO FETCH NEXT DD CARD              002160
+         EJECT                                                            002170
+***********************************************************************   002180
+*        LOCATE THE CORRECT PLACE TO PUT EACH LINE                        002190
+***********************************************************************   002200
+         SPACE 2                                                          002210
+ENTERNOS DS    0H                                                         002220
+         L     REG1,THISLINE       ADDRESS OF CURRENT LINE ENTRY          002230
+         L     REG15,0(REG1)       ADDRESS OF PROCESSOR                   002240
+         LA    REG1,4(REG1)        ADDRESS OF NEXT LINE ENTRY             002250
+         ST    REG1,THISLINE       AND RE-STORE IN WORK AREA              002260
+         BR    REG15               ENTER THE APPROPRIATE ROUTINE          002270
+         EJECT                                                            002280
+***********************************************************************   002290
+*        NULL AND BASIC BOX LINE PROCESSOR ROUTINES                       002300
+***********************************************************************   002310
+         SPACE 2                                                          002320
+NULLLINE DS    0H                                                         002330
+         BR    REG11               RETURN IMMEDIATELY TO CALLER           002340
+         SPACE 2                                                          002350
+TOPLINE  DS    0H                                                         002360
+BOTLINE  DS    0H                                                         002370
+         MVI   0(REG6),C'*'        INITIALISE BOX TOP CHARACTER           002380
+         MVC   1(LINELEN-1,REG6),0(REG6) AND PROPAGATE                    002390
+         BR    REG11               RETURN TO CALLER                       002400
+         SPACE 2                                                          002410
+BOXSPACE DS    0H                                                         002420
+         MVI   0(REG6),C'*'        LEFT HAND SIDE                         002430
+         XC    1(LINELEN-2,REG6),1(REG6) MIDDLE                           002440
+         MVI   LINELEN-1(REG6),C'*' RIGHT HAND SIDE                       002450
+         BR    REG11               RETURN TO CALLER                       002460
+         EJECT                                                            002470
+***********************************************************************   002480
+*        PREPARE USED BLOCKS LINE                                         002490
+***********************************************************************   002500
+         SPACE 2                                                          002510
+UBLKLINE DS    0H                                                         002520
+         MVC   0(LINELEN,REG6),USEDMAP INITIALISE BOX AREA                002530
+         USING USEDMAP,REG6        ADDRESSABILITY FOR IT                  002540
+         ED    USEDBLK1,USEDBLKS   PRINT COUNT OF USED BLOCKS             002550
+         ED    USEDBLK2,USEDPCNT   PRINT USED BLOCKS PERCENTAGE           002560
+         CP    MAXRATE,USEDPCNT(L'PCTFACTR) OVER THE LIMIT ?              002570
+         BL    DANGER              YES. GO WARN THE OPERATOR              002580
+         BR    REG11               RETURN TO CALLER                       002590
+         DROP  REG6                RELEASE ADDRESSABILITY                 002600
+         EJECT                                                            002610
+***********************************************************************   002620
+*        PREPARE FREE BLOCKS LINE                                         002630
+***********************************************************************   002640
+         SPACE 2                                                          002650
+FBLKLINE DS    0H                                                         002660
+         MVC   0(LINELEN,REG6),FREEMAP INITIALISE THE BOX AREA            002670
+         USING FREEMAP,REG6        AND GET ADDRESSABILITY                 002680
+         ED    FREEBLK1,FREEBLKS   PRINT COUNT OF FREE BLOCKS             002690
+         ED    FREEBLK2,FREEPCNT   PRINT FREE BLOCKS PERCENTAGE           002700
+         BR    REG11               RETURN TO CALLER                       002710
+         DROP  REG6                RELEASE ADDRESSABILITY                 002720
+         EJECT                                                            002730
+***********************************************************************   002740
+*        PREPARE USED BYTES LINE                                          002750
+***********************************************************************   002760
+         SPACE 2                                                          002770
+UBYTLINE DS    0H                                                         002780
+         MVC   0(LINELEN,REG6),USEDMAP2 INITIALISE BOX AREA               002790
+         USING USEDMAP2,REG6       ADDRESSABILITY FOR IT                  002800
+         ED    USEDBYT1,USEDBYTS   PRINT COUNT OF USED BLOCKS             002810
+         ED    USEDBYT2,USEDBPCT   PRINT USED BLOCKS PERCENTAGE           002820
+         BR    REG11               RETURN TO CALLER                       002830
+         DROP  REG6                RELEASE ADDRESSABILITY                 002840
+         EJECT                                                            002850
+***********************************************************************   002860
+*        PREPARE FREE BYTES LINE                                          002870
+***********************************************************************   002880
+         SPACE 2                                                          002890
+FBYTLINE DS    0H                                                         002900
+         MVC   0(LINELEN,REG6),FREEMAP2 INITIALISE THE BOX                002910
+         USING FREEMAP2,REG6       AND GET ADDRESSABILITY                 002920
+         ED    FREEBYT1,FREEBYTS   PRINT COUNT OF FREE BLOCKS             002930
+         ED    FREEBYT2,FREEBPCT   PRINT FREE BLOCKS PERCENTAGE           002940
+         BR    REG11               RETURN TO CALLER                       002950
+         DROP  REG6                RELEASE ADDRESSABILITY                 002960
+         EJECT                                                            002970
+***********************************************************************   002980
+*        PREPARE TOTAL BLOCKS LINE                                        002990
+***********************************************************************   003000
+         SPACE 2                                                          003010
+TOTLLINE DS    0H                                                         003020
+         MVC   0(LINELEN,REG6),TOTLMAP INITIALISE THE BOX                 003030
+         USING TOTLMAP,REG6        AND GET ADDRESSABILITY                 003040
+         ED    TOTLPRT1,TOTLBLKS   PRINT COUNT OF ALL BLOCKS              003050
+         BR    REG11               RETURN TO CALLER                       003060
+         DROP  REG6                RELEASE ADDRESSABILITY                 003070
+         EJECT                                                            003080
+***********************************************************************   003090
+*        PREPARE TOTAL BYTES LINE                                         003100
+***********************************************************************   003110
+         SPACE 2                                                          003120
+TOTLLIN2 DS    0H                                                         003130
+         MVC   0(LINELEN,REG6),TOTLMAP2 INITIALISE THE BOX                003140
+         USING TOTLMAP2,REG6        AND GET ADDRESSABILITY                003150
+         ED    TOTLPRT2,TOTLBYTS   PRINT TOTAL BYTES COUNT                003160
+         BR    REG11               RETURN TO CALLER                       003170
+         DROP  REG6                RELEASE ADDRESSABILITY                 003180
+         EJECT                                                            003190
+***********************************************************************   003200
+*        ADVERTISE THE SERVICES OF UT518                                  003210
+***********************************************************************   003220
+         SPACE 2                                                          003230
+INFOLINE DS    0H                                                         003240
+         MVC   0(LINELEN,REG6),INFOMAP  INITIALISE THE BOX                003250
+         USING INFOLINE,REG6       ADDRESSABILITY FOR IT                  003260
+         ED    INFOPRT1,MAXRATE    EDIT MAXIMUM %AGE TO PRINT AREA        003270
+         BR    REG11               RETURN TO CALLER                       003280
+         DROP  REG6                RELEASE ADDRESSABILITY                 003290
+         EJECT                                                            003300
+***********************************************************************   003310
+*        TERMINATION PROCESSING                                           003320
+***********************************************************************   003330
+         SPACE 2                                                          003340
+DDENDS   DS    0H                                                         003350
+         CLOSE (SYSPRINT)          CLOSE THE PRINT FILE                   003360
+         ZRETURN                   RETURN TO CALLER                       003370
+         EJECT                                                            003380
+***********************************************************************   003390
+*        PARM FIELD IS INVALID. TERMINATE EXECUTION                       003400
+***********************************************************************   003410
+         SPACE 2                                                          003420
+BADPARMS DS    0H                                                         003430
+         WTO   '**** UT517 **** YOUR PARM FIELD CONTAINS NON-NUMERIC DAX  003440
+               TA. EXECUTION TERMINATED.',ROUTCDE=13                      003450
+         ZRETURN RC=4              RETURN WITH CODE                       003460
+         EJECT                                                            003470
+***********************************************************************   003480
+*        INFORM THE OPERATOR THAT THIS CATALOG IS IN DANGER               003490
+***********************************************************************   003500
+         SPACE 2                                                          003510
+DANGER   DS    0H                                                         003520
+         MVC   WTORVOL,VOLSER      INITIALISE WTOR MESSAGE                003530
+         XC    WTORECB,WTORECB     CLEAR REPLY ECB                        003540
+         WTOR  MF=(E,WTORLIST)     TELL HIM OF SITUATION                  003550
+         WAIT  ECB=WTORECB         WAIT FOR HIS RESPONSE                  003560
+         BR    REG11               RETURN TO CALLER                       003570
+         EJECT                                                            003580
+***********************************************************************   003590
+*        REPORT THE FAILURE TO FIND A CATALOG ON THIS VOLUME              003600
+***********************************************************************   003610
+         SPACE 2                                                          003620
+OPENFAIL DS    0H                                                         003630
+         PUT   SYSPRINT            OBTAIN AN OUTPUT BUFFER                003640
+         XC    0(133,REG1),0(REG1) AND CLEAR IT                           003650
+         LR    REG5,REG1           SAVE ADDRESS OF THE BUFFER             003660
+         USING TITLE,REG5          ADDRESSABILITY FOR THE PRINT LINE      003670
+         MVI   TITASA,NEWPAGE      SET UP FOR A NEW PAGE                  003680
+         MVC   TITNAME,NAMETEXT    GET NAME OF THE REPORT                 003690
+         LA    REG2,JFCB           ADDRESS OF THE JFCB                    003700
+         USING INFMJFCB,REG2       ADDRESSABILITY FOR IT                  003710
+         MVC   TITVOL,JFCBVOLS     MOVE IN VOLUME SERIAL NUMBER           003720
+         DROP  REG2                RELEASE ADDRESSABILITY                 003730
+         MVC   TITDATE,UTREPORT    MOVE DATA TO TITLE LINE                003740
+         MVC   TITHH,UTHHMMSS      MOVE IN TIME                           003750
+         MVC   TITMM,UTHHMMSS+2    MOVE IN TIME                           003760
+         MVC   TITSS,UTHHMMSS+4    MOVE IN TIME                           003770
+         MVI   TITDOT1,C'.'        SEPARATE TIME FIELDS                   003780
+         MVI   TITDOT2,C'.'        SEPARATE TIME FIELDS                   003790
+         DROP  REG5                RELEASE ADDRESSABILITY                 003800
+         PUT   SYSPRINT            GET NEXT BUFFER                        003810
+         XC    0(133,REG1),0(REG1) CLEAR IT                               003820
+         LR    REG5,REG1           SAVE ITS ADDRESS                       003830
+         USING ERRDATA,REG5        ADDRESSABILITY FOR ERROR LINE          003840
+         MVI   ERRASA,SKIPTWO      SKIP AWAY FROM THE TITLE LINE          003850
+         MVC   ERRLIT,ERRTXT       MOVE IN THE ERROR MESSAGE              003860
+         DROP  REG5                RELEASE ADDRESSABILITY                 003870
+         B     DDLOOP              AND GO FETCH NEXT DDNAME               003880
+         EJECT                                                            003890
+***********************************************************************   003900
+*        ACCUMULATE THE DETAILS OF SPACE FREE AND USED                    003910
+***********************************************************************   003920
+         SPACE 2                                                          003930
+DOACCUMS DS    0H                                                         003940
+         AP    TOTLBLKS,=P'1'      INCREMENT TOTAL COUNT OF BLOCKS        003950
+         AP    TOTLBYTS,BLKFACTR   INCREMENT TOTAL COUNT OF BYTES         003960
+         LH    REG4,0(REG3)        LOAD LENGTH OF USED DATA IN BLOCK      003970
+         CVD   REG4,DBLWORD        CONVERT TO DECIMAL                     003980
+         AP    USEDBYTS,DBLWORD    AND ADD TO NUMBER OF USED BYTES        003990
+         SP    DBLWORD,BLKFACTR    GET (NEGATIVE) FREE BYTES              004000
+         SP    FREEBYTS,DBLWORD    AND SUBTRACT (ADD) TO FREE BYTE CNT    004010
+         LTR   REG4,REG4           IS THIS A FREE BLOCK                   004020
+         BNZ   USEDBLK             NO. IT HAS SOME DATA IN IT             004030
+         AP    FREEBLKS,=P'1'      INCREMENT COUNT OF FREE BLOCKS         004040
+         B     INCRDONE            AND CONTINUE                           004050
+USEDBLK  EQU   *                                                          004060
+         AP    USEDBLKS,=P'1'      INCREMENT COUNT OF USED BLOCKS         004070
+INCRDONE EQU   *                                                          004080
+         BR    REG11               RETURN TO CALLER                       004090
+         EJECT                                                            004100
+***********************************************************************   004110
+*        DCB ABEND EXIT ROUTINE                                           004120
+***********************************************************************   004130
+         SPACE 2                                                          004140
+DCBABEND DS    0H                                                         004150
+         PUSH  USING               SAVE OLD ADDRESSABILITY                004160
+         USING *,REG15             TEMPORARY ADDRESSABILITY               004170
+         CLC   0(2,REG1),=X'2130'  IS THIS DATA SET NOT FOUND             004180
+         BNE   ABNDEXIT            NO. LEAVE IT ALONE THEN                004190
+         MVI   3(REG1),X'04'       OTHERWISE REQUEST TO IGNORE IT         004200
+ABNDEXIT EQU   *                                                          004210
+         BR    REG14               RETURN TO SYSTEM                       004220
+         DROP  REG15               RELEASE ADDRESSABILITY                 004230
+         POP   USING               RESTORE OLD ADDRESSABILITY             004240
+         EJECT                                                            004250
+***********************************************************************   004260
+*        WORK AREAS AND CONSTANTS                                         004270
+***********************************************************************   004280
+         SPACE 2                                                          004290
+DBLWORD  DS    D                   WORK AREA FOR CONVERSIONS              004300
+THISLINE DC    A(LINETABL)         START OF LINE PROCESSOR TABLE          004310
+LINETABL DS    0F                  TABLE OF LINE PROCESS ROUTINES         004320
+         DC    19A(NULLLINE)                                              004330
+         DC    A(TOPLINE)                                                 004340
+         DC    A(BOXSPACE)                                                004350
+         DC    A(UBLKLINE)                                                004360
+         DC    A(BOXSPACE)                                                004370
+         DC    A(UBYTLINE)                                                004380
+         DC    A(BOXSPACE)                                                004390
+         DC    A(FBLKLINE)                                                004400
+         DC    A(BOXSPACE)                                                004410
+         DC    A(FBYTLINE)                                                004420
+         DC    2A(BOXSPACE)                                               004430
+         DC    A(TOTLLINE)                                                004440
+         DC    A(BOXSPACE)                                                004450
+         DC    A(TOTLLIN2)                                                004460
+         DC    2A(BOXSPACE)                                               004470
+         DC    A(BOTLINE)                                                 004480
+         DC    7A(NULLLINE)                                               004490
+         DC    A(TOPLINE)                                                 004500
+         DC    A(BOXSPACE)                                                004510
+         DC    A(INFOLINE)                                                004520
+         DC    A(BOXSPACE)                                                004530
+         DC    A(BOTLINE)                                                 004540
+         DC    7A(NULLLINE)                                               004550
+TRTTABLE DC    256X'FF'            TABLE USED FOR NUMERIC TESTS           004560
+         ORG   TRTTABLE+C'0'       START OF NUMERIC CODES                 004570
+         DC    10X'00'             THESE ONES ARE VALID                   004580
+         ORG   ,                   RESET LOCATION COUNTER                 004590
+WTORLIST WTOR  '**** UT517 **** SYSCTLG DATA SET ON VOLUME VVVVVV IS FUX  004600
+               LL. REPLY WITH YOUR INITIALS TO ACKNOWLEDGE',REPLY,3,   X  004610
+               WTORECB,MF=L                                               004620
+         ORG   WTORLIST+12+43      FIND VOLUME IN WTOR TEXT               004630
+WTORVOL  DS    CL6                 NAME OF THE VOLUME IN ERROR            004640
+         ORG                                                              004650
+WTORECB  DS    F                   WAIT ECB FOR OPERATOR RESPONSE         004660
+REPLY    DS    CL3                 OPERATORS RESPONSE                     004670
+NEWPAGE  EQU   C'1'                ASA CONTROL CHARACTER FOR NEW PAGE     004680
+SKIPTWO  EQU   C'0'                ASA CONTROL CHARACTER FOR SKIP TWO     004690
+LOFFSET  EQU   36                  OFFSET OF CENTRAL BOX                  004700
+LINELEN  EQU   61                  LENGTH OF CENTRAL BOX                  004710
+NAMETEXT DC    C'**** UT517 **** CATALOG FREE SPACE STATUS REPORT FOR SX  004720
+               YSCTLG DATA SET ON ---- '                                  004730
+ERRTXT   DC    C'**** ERROR. ****   NO OS CATALOG FOUND ON THIS VOLUME.X  004740
+                **** PLEASE VERIFY YOUR REQUEST. ****'                    004750
+VOLSER   DS    CL6                 SAVE AREA FOR VOLUME SERIAL NUMBER     004760
+VOLSER2  DS    CL6                 WORK AREA. MUST FOLLOW 'VOLSER'        004770
+CTLGNAME DC    C'SYSCTLG'          NAME OF A CATALOG DATA SET             004780
+         SPACE 2                                                          004790
+BLKFACTR DC    PL2'256'            NUMBER OF BYTES IN A BLOCK             004800
+PCTFACTR DC    PL3'1000'           USED TO GET %AGE +1 DECIMAL PLACE      004810
+PCTADJST DC    P'10'               DIFF. BETWEEN 'PCTFACTR' AND 100       004820
+USEDBLKS DS    PL8                 COUNT OF BLOCKS USED                   004830
+USEDPCNT DS    PL(L'PCTFACTR+L'USEDBLKS) PERCENTAGE ABOVE REPRESENTS      004840
+USEDBYTS DS    PL8                 COUNT OF BYTES USED                    004850
+USEDBPCT DS    PL(L'PCTFACTR+L'USEDBLKS) PERCENTAGE ABOVE REPRESENTS      004860
+FREEBLKS DS    PL8                 COUNT OF FREE BLOCKS                   004870
+FREEPCNT DS    PL(L'PCTFACTR+L'USEDBLKS) PERCENTAGE ABOVE REPRESENTS      004880
+FREEBYTS DS    PL8                 COUNT OF FREE BYTES                    004890
+FREEBPCT DS    PL(L'PCTFACTR+L'USEDBLKS) PERCENTAGE ABOVE REPRESENTS      004900
+TOTLBLKS DS    PL8                 COUNT OF TOTAL BLOCKS IN FILE          004910
+TOTLBYTS DS    PL8                 COUNT OF TOTAL BYTES IN DATA SET       004920
+MAXRATE  DC    PL2'80'             MAXIMUM ALLOWED PERCENTAGE FULL BLKS   004930
+         SPACE 2                                                          004940
+USEDMAP  DS    0C                  MAP OF USED BLKS LINE                  004950
+         DC    C'*'                LEFT HAND SIDE                         004960
+         DC    C'  NO OF BLOCKS USED ='                                   004970
+USEDBLK1 DS    0XL(L'USEDBLKS*2)   PRINT AREA FOR USED BLOCKS             004980
+         DC    X'40'               FILL CHARACTER                         004990
+         DC    XL(L'USEDBLKS*2-3)'202020202020202020202020202020202020'   005000
+         DC    X'2120'             END OF EDIT PATTERN                    005010
+         DC    C'  '               SPACING                                005020
+         DC    C'('                START OF PERCENTAGE                    005030
+USEDBLK2 DS    0XL7                PRINT AREA FOR PERCENTAGE              005040
+         DC    X'40202021206B20'   EDIT PATTERN FOR PERCENTAGE            005050
+         DC    C'% )'              END OF PERCENTAGE                      005060
+         DC    CL(USEDMAP-*+LINELEN-1)' ' PADDING                         005070
+         DC    C'*'                RIGHT HAND SIDE                        005080
+         SPACE 2                                                          005090
+USEDMAP2 DS    0C                  MAP OF USED BYTES LINE                 005100
+         DC    C'*'                LEFT HAND SIDE                         005110
+         DC    C'  NO OF BYTES  USED ='                                   005120
+USEDBYT1 DS    0XL(L'USEDBYTS*2)   PRINT AREA FOR USED BYTES              005130
+         DC    X'40'               FILL CHARACTER                         005140
+         DC    XL(L'USEDBYTS*2-3)'202020202020202020202020202020202020'   005150
+         DC    X'2120'             END OF EDIT PATTERN                    005160
+         DC    C'  '               SPACING                                005170
+         DC    C'('                START OF PERCENTAGE                    005180
+USEDBYT2 DS    0XL7                PRINT AREA FOR PERCENTAGE              005190
+         DC    X'40202021206B20'   EDIT PATTERN FOR PERCENTAGE            005200
+         DC    C'% )'              END OF PERCENTAGE                      005210
+         DC    CL(USEDMAP2-*+LINELEN-1)' ' PADDING                        005220
+         DC    C'*'                RIGHT HAND SIDE                        005230
+         SPACE 2                                                          005240
+FREEMAP  DS    0C                  MAP OF FREE BLKS LINE                  005250
+         DC    C'*'                LEFT HAND SIDE                         005260
+         DC    C'  NO OF BLOCKS FREE ='                                   005270
+FREEBLK1 DS    0XL(L'FREEBLKS*2)   PRINT AREA FOR FREE BLOCKS             005280
+         DC    X'40'               FILL CHARACTER                         005290
+         DC    XL(L'FREEBLKS*2-3)'202020202020202020202020202020202020'   005300
+         DC    X'2120'             END OF EDIT PATTERN                    005310
+         DC    C'  '               SPACING                                005320
+         DC    C'('                START OF PERCENTAGE                    005330
+FREEBLK2 DS    0XL7                PRINT AREA FOR PERCENTAGE              005340
+         DC    X'40202021206B20'   EDIT PATTERN FOR PERCENTAGE            005350
+         DC    C'% )'              END OF PERCENTAGE                      005360
+         DC    CL(FREEMAP-*+LINELEN-1)' ' PADDING                         005370
+         DC    C'*'                RIGHT HAND SIDE                        005380
+         SPACE 2                                                          005390
+FREEMAP2 DS    0C                  MAP OF FREE BYTES LINE                 005400
+         DC    C'*'                LEFT HAND SIDE                         005410
+         DC    C'  NO OF BYTES  FREE ='                                   005420
+FREEBYT1 DS    0XL(L'FREEBYTS*2)   PRINT AREA FOR FREE BYTES              005430
+         DC    X'40'               FILL CHARACTER                         005440
+         DC    XL(L'FREEBYTS*2-3)'202020202020202020202020202020202020'   005450
+         DC    X'2120'             END OF EDIT PATTERN                    005460
+         DC    C'  '               SPACING                                005470
+         DC    C'('                START OF PERCENTAGE                    005480
+FREEBYT2 DS    0XL7                PRINT AREA FOR PERCENTAGE              005490
+         DC    X'40202021206B20'   EDIT PATTERN FOR PERCENTAGE            005500
+         DC    C'% )'              END OF PERCENTAGE                      005510
+         DC    CL(FREEMAP2-*+LINELEN-1)' ' PADDING                        005520
+         DC    C'*'                RIGHT HAND SIDE                        005530
+         SPACE 2                                                          005540
+TOTLMAP  DS    0C                  MAP OF TOTAL BLOCKS LINE               005550
+         DC    C'*'                LEFT HAND SIDE                         005560
+         DC    C'  TOTAL BLOCKS IN FILE ='                                005570
+TOTLPRT1 DS    0XL(L'TOTLBLKS*2)   PRINT AREA FOR TOTAL BLOCKS            005580
+         DC    X'40'               FILL CHARACTER                         005590
+         DC    XL(L'TOTLBLKS*2-3)'202020202020202020202020202020202020'   005600
+         DC    X'2120'             END OF EDIT PATTERN                    005610
+         DC    CL(TOTLMAP-*+LINELEN-1)' ' PADDING                         005620
+         DC    C'*'                RIGHT HAND SIDE                        005630
+         SPACE 2                                                          005640
+TOTLMAP2 DS    0C                  MAP OF TOTAL BYTES LINE                005650
+         DC    C'*'                LEFT HAND SIDE                         005660
+         DC    C'  TOTAL BYTES  IN FILE ='                                005670
+TOTLPRT2 DS    0XL(L'TOTLBYTS*2)   PRINT AREA FOR TOTAL BYTES             005680
+         DC    X'40'               FILL CHARACTER                         005690
+         DC    XL(L'TOTLBYTS*2-3)'202020202020202020202020202020202020'   005700
+         DC    X'2120'             END OF EDIT PATTERN                    005710
+         DC    CL(TOTLMAP2-*+LINELEN-1)' ' PADDING                        005720
+         DC    C'*'                RIGHT HAND SIDE                        005730
+         SPACE 2                                                          005740
+INFOMAP  DS    0C                  MAP OF INFORMATION LINE                005750
+         DC    C'*'                LEFT HAND SIDE                         005760
+         DC    C' IF CATALOG IS MORE THAN'                                005770
+INFOPRT1 DS    0XL(L'MAXRATE*2)   PRINT AREA FOR FULL %AGE                005780
+         DC    X'40'               FILL CHARACTER                         005790
+         DC    XL(L'MAXRATE*2-3)'202020202020202020202020202020202020'    005800
+         DC    X'2120'             END OF EDIT PATTERN                    005810
+         DC    C'% FULL. RUN UT518 (CATXPAND).'                           005820
+         DC    CL(INFOMAP-*+LINELEN-1)' ' PADDING                         005830
+         DC    C'*'                RIGHT HAND SIDE                        005840
+         EJECT                                                            005850
+***********************************************************************   005860
+*        DATA CONTROL BLOCKS AND EXIT ROUTINES                            005870
+***********************************************************************   005880
+         SPACE 2                                                          005890
+         PRINT NOGEN                                                      005900
+SYSPRINT DCB   DDNAME=SYSPRINT,DSORG=PS,MACRF=PL,LRECL=133,RECFM=FA,   X  005910
+               BLKSIZE=133                                                005920
+CATALOG  DCB   DDNAME=SYSUT1,DSORG=PS,MACRF=GL,LRECL=256,BLKSIZE=256,  X  005930
+               RECFM=F,EXLST=EXLST,EODAD=EODAD                            005940
+         PRINT GEN                                                        005950
+EXLST    DS    0F                                                         005960
+         DC    X'11'               DCB ABEND EXIT                         005970
+         DC    AL3(DCBABEND)       ADDRESS OF THE ABEND EXIT ROUTINE      005980
+         DC    X'87'               JFCB EXIT                              005990
+         DC    AL3(JFCB)           ADDRESS OF THE JFCB                    006000
+JFCB     DS    CL176               WORK AREA FOR JFCB                     006010
+         EJECT                                                            006020
+***********************************************************************   006030
+*        DSECTS USED BY THIS ROUTINE                                      006040
+***********************************************************************   006050
+         SPACE 2                                                          006060
+TITLE    DSECT                                                            006070
+TITASA   DS    C                   ASA PRINT CONTROL CHARACTER            006080
+TITNAME  DS    CL(L'NAMETEXT)      NAME OF THE REPORT                     006090
+TITVOL   DS    CL6                 VOLUME SERIAL NUMBER                   006100
+         ORG   TITLE+133-30        GOT TO END AND COME BACK A BIT         006110
+TITDATE  DS    CL9                 DATE OF THE REPORT                     006120
+         DS    CL2                 PADDING                                006130
+TITHH    DS    CL2                 TIME OF THE REPORT                     006140
+TITDOT1  DS    C                   SEPARATING FULL STOP                   006150
+TITMM    DS    CL2                 TIME OF THE REPORT                     006160
+TITDOT2  DS    C                   SEPARATING FULL STOP                   006170
+TITSS    DS    CL2                 TIME OF THE REPORT                     006180
+         SPACE 2                                                          006190
+ERRDATA  DSECT                                                            006200
+ERRASA   DS    C                   ASA CONTROL CHARACTER                  006210
+ERRLIT   DS    CL(L'ERRTXT)        ERROR MESSAGE                          006220
+         SPACE 2                                                          006230
+         PRINT NOGEN                                                      006240
+         DCBD  DSORG=QS,DEVD=DA                                           006250
+         SPACE 2                                                          006260
+         IEFJFCBN                                                         006270
+         PRINT GEN                                                        006280
+         END                                                              006290

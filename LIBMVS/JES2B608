@@ -1,0 +1,1113 @@
+JES2B608 TITLE '$? COMMAND PROCESSOR - CONTROL BLOCK GENERATION MACRO DCMKB00100
+               EFINITIONS'                                              MKB00110
+*                                                                       MKB00120
+**** $HASPCB ****                  GENERATE HASP CONTROL BLOCKS         MKB00130
+*                                                                       MKB00140
+         MACRO                                                          MKB00150
+         $HASPCB &DOC=NO,&LIST=NO                                       MKB00160
+         GBLC  &PRINT,&GEN,&DATA                                        MKB00170
+         PUSH  PRINT                                                    MKB00180
+         PRINT &PRINT                                                   MKB00190
+         $HCT  DOC=&DOC            GENERATE HASP HCT DSECT              MKB00200
+         $AHCT DOC=&DOC            GENERATE MODS AHCT DSECT             MKB00210
+         $DCT  DOC=&DOC            GENERATE HASP DCT DSECT              MKB00220
+         $ADCT DOC=&DOC            GENERATE MODS ADCT DSECT             MKB00230
+         $APCE DOC=&DOC            GENERATE MODS APCE DSECT             MKB00240
+         $APCE DOC=NO,TYPE=SPCE    GENERATE MODS SECONDARY APCE DSECT   MKB00250
+         $PCE  DOC=&DOC            GENERATE HASP PCE DSECT              MKB00260
+         $COMWORK DOC=&DOC         GENERATE HASP COMWORK DSECT          MKB00270
+         $BUFFER DOC=&DOC          GENERATE HASP BUFFER DSECT           MKB00280
+         $CMB  DOC=&DOC            GENERATE HASP CMB DSECT              MKB00290
+         $JCT  DOC=&DOC            GENERATE HASP JCT DSECT              MKB00300
+         $UCM  LIST=&LIST          GENERATE OS UCM DSECT                MKB00310
+         SPACE 1                                                        MKB00320
+         POP   PRINT                                                    MKB00330
+         PRINT &GEN,&DATA          SET ASSEMBLY PRINT OPTIONS           MKB00340
+         MEND                                                           MKB00350
+         EJECT                                                          MKB00360
+         MACRO -- $COMSAY -- DEFINE COMMAND TABLE ENTRY                 MKB00370
+&NAME    $COMSAY &VERB,&TEXT,&REDIR=0,&REJECT=0                         MKB00380
+         LCLC  &C,&D                                                    MKB00390
+&NAME    DS    0F                  DEFINE EXPLANATION TEXT              MKB00400
+         DC    A(&TEXT)            ADDRESS OF START OF TEXT             MKB00410
+         DC    AL1(0)                UNUSED                             MKB00420
+         DC    AL1(&REDIR*16+&REJECT)  FLAG BYTES                       MKB00430
+         AIF   (K'&VERB LT 2).A                                         MKB00440
+         AIF   (K'&VERB EQ 3).B                                         MKB00450
+         DC    CL2'&VERB'                                               MKB00460
+         MEXIT                                                          MKB00470
+.A       DC    CL1'&VERB',X'FF'                                         MKB00480
+         MEXIT                                                          MKB00490
+.B       ANOP                                                           MKB00500
+&C       SETC  '&VERB'(1,1)                                             MKB00510
+&D       SETC  '&VERB'(2,2)                                             MKB00520
+         DC    CL1'&C',X'&D'                                            MKB00530
+         MEND                                                           MKB00540
+         EJECT                                                          MKB00550
+         MACRO -- $TEXT -- CREATE A LINE OF EXPLANATORY TEXT            MKB00560
+&NAME    $TEXT &MSG,&LAST                                               MKB00570
+         AIF   ('&NAME' EQ '').NONAME                                   MKB00580
+&NAME    EQU   *                   START OF TEXT ELEMENT                MKB00590
+.NONAME  AIF   ('&LAST' NE '').ENDFLAG                                  MKB00600
+         DC    AL1(0),AL1(L'TXT&SYSNDX) FLAG,LENGTH OF TEXT             MKB00610
+         AGO   .MESAG                                                   MKB00620
+.ENDFLAG ANOP                                                           MKB00630
+         DC    AL1(128),AL1(L'TXT&SYSNDX) LAST LINE OF &NAME TEXT       MKB00640
+.MESAG   ANOP                                                           MKB00650
+TXT&SYSNDX DC  C&MSG                                                    MKB00660
+         MEND                                                           MKB00670
+         TITLE 'HASP COMMAND PROCESSOR FUNCTION MACRO DEFINITIONS'      MKB00680
+         TITLE 'JES2B608 - AUXILIARY COMMAND PROCESSOR'                 MKB00690
+JES2B608 CSECT                     AUXILIARY COMMAND PROCESSOR          MKB00700
+         SPACE 2                                                        MKB00710
+**********************************************************************  MKB00720
+*                                                                     * MKB00730
+*        PROGRAM ID. :             JES2B608                           * MKB00740
+*                                                                     * MKB00750
+*        DATE WRITTEN :            APRIL 1977                         * MKB00760
+*                                                                     * MKB00770
+*        AUTHOR :                  D.H.CARTWRIGHT.                    * MKB00780
+*                                                                     * MKB00790
+*        LOCATION :                MONSANTO MISD/TSG BRUSSELS         * MKB00800
+*                                                                     * MKB00810
+*********************************************************************** MKB00820
+         EJECT                                                          MKB00830
+*********************************************************************** MKB00840
+*                                                                     * MKB00850
+*        PURPOSE                                                      * MKB00860
+*       ---------                                                     * MKB00870
+*                                                                     * MKB00880
+*        THIS IS A MONSANTO JES2 MODIFICATION MODULE.                 * MKB00890
+*        IT IT LOADED AT JES2 INITIALISATION UPON REQUEST VIA         * MKB00900
+*        JES2B001,THE MONSANTO INITIALISATION MODULE,AND IS           * MKB00910
+*        ENTERED FROM JES2B002 AS THE PROCESSOR FOR '?' COMMANDS.     * MKB00920
+*                                                                     * MKB00930
+*        THE COMMAND,BROKEN DOWN INTO OPERANDS BY HASPCOMM, IS        * MKB00940
+*        COMPARED AGAINST A TABLE OF COMMANDS WHICH THIS ROUTINE      * MKB00950
+*        CAN EXPLAIN AND WHEN A MATCH IS FOUND LINES OF EXPLANATION   * MKB00960
+*        ARE WRITTEN TO THE OPERATOR VIA A MONSANTO $CWTO-TYPE        * MKB00970
+*        SERVICE ROUTINE (JES2B011).EACH LINE OF TEXT HAS A TWO-BYTE  * MKB00980
+*        LENGTH/FLAG FIELD AT THE START TO ENABLE VARIABLE LENGTH     * MKB00990
+*        LINES TO BE WRITTEN AND ALSO TO ENABLE THE END OF TEXT       * MKB01000
+*        TO BE RECOGNISED.THERE ARE STANDARD BULLETINS FOR MOST       * MKB01010
+*        SITUATIONS.RETURN IS TO HASPCOMM VIA JES2B002 WITH THE       * MKB01020
+*        CONDITION CODE LOW TO STOP JES2 RE-PROCESSING THE COMMAND.   * MKB01030
+*                                                                     * MKB01040
+*        COMMAND SUB-PROCESSOR CONVENTIONS                            * MKB01050
+*                                                                     * MKB01060
+* CONTENTS OF REGISTERS UPON ENTRY TO EACH COMMAND SUB-PROCESSOR      * MKB01070
+*                                                                     * MKB01080
+*        R0    = UNPREDICTABLE                                        * MKB01090
+*        R1    = UNPREDICTABLE                                        * MKB01100
+*        R2    = UNPREDICTABLE                                        * MKB01110
+*        R3    = FIRST OPERAND POINTER                                * MKB01120
+*        R4    = COUNT OF 4                                           * MKB01130
+*        R5    = LAST OPERAND POINTER ( SET FOR BXLE R3,R4,... )      * MKB01140
+*        R6    = AHCTDSCT                                             * MKB01150
+*        R7    = APCE OF PROCESSOR                                    * MKB01160
+*        BASE3 = UNPREDICTABLE - USED FOR $SERVICE ADDRESSABILITY     * MKB01170
+*        R10   = UNPREDICTABLE                                        * MKB01180
+*        BASE1 = HCTDSECT                                             * MKB01190
+*        BASE2 = BASE REGISTER OF PROCESSOR                           * MKB01200
+*        SAVE  = PCE OF COMMAND PROCESSOR                             * MKB01210
+*        LINK  = RETURN ADDRESS TO THIS MODULE                        * MKB01220
+*        R15   = UNPREDICTABLE                                        * MKB01230
+*                                                                     * MKB01240
+*        IN ORDER TO ISSUE A $SERVICE CWTO REQUEST THE COMMAND        * MKB01250
+*        PROCESSOR MUST ACQUIRE A WORK APCE AND SAVE THE $WTO         * MKB01260
+*        FIELDS OF THE COMM PCE WORK AREA,OTHERWISE THE ORIGINAL      * MKB01270
+*        COMMAND WILL BE LOST.THIS WORK AREA SHOULD BE RESTORED       * MKB01280
+*        BEFORE RETURN TO JES2B002,EVEN IF THE COMMAND WILL NOT       * MKB01290
+*        BE PROCESSED BY JES2.                                        * MKB01300
+*                                                                     * MKB01310
+*********************************************************************** MKB01320
+         EJECT                                                          MKB01330
+*********************************************************************** MKB01340
+*                                                                     * MKB01350
+* EXAMPLE EDIT OF COMMAND TEXT BEFORE ENTRY TO SUB-COMMAND PROCESSOR  * MKB01360
+*                                                                     * MKB01370
+* ORIGIONAL IN $WTO BUFFER  ( S OVER CHARACTER = LOWER CASE )         * MKB01380
+*                                                                     * MKB01390
+*         S  S S S    S S S    S    S    S                            * MKB01400
+*        $V  A B C, ' A B,C '' D ', D '' E                            * MKB01410
+*                                                                     * MKB01420
+* FORM PASSED TO COMMAND SUB-PROCESSOR                                * MKB01430
+*                                                                     * MKB01440
+*        $VABC,' A B,C ' D ',D'E                                      * MKB01450
+*          1   2             3   4                                    * MKB01460
+*                                                                     * MKB01470
+*        $ IS LOCATED AT COMMAND                                      * MKB01480
+*        V IS SINGLE CHARACTER FORM OF VERB                           * MKB01490
+*                                                                     * MKB01500
+*        R3 POINTS TO FIRST OF OPERAND POINTER TABLE WHICH, IN THIS   * MKB01510
+*        EXAMPLE, CONTAINS FOUR WORDS OF ADDRESSES WHICH IN TURN      * MKB01520
+*        LOCATES THE BEGINNING OF EACH OPERAND ( INCLUDING A NULL     * MKB01530
+*        END OPERAND ). THESE LOCATIONS ARE DENOTED BY REFERANCE      * MKB01540
+*        POINTS 1, 2, 3, AND 4 RESPECTIVELY. USING BXLE R3,R4,...     * MKB01550
+*        INSTRUCTION WILL FALL THROUGH WITH R3 POINTING TO COMNULOP   * MKB01560
+*                                                                     * MKB01570
+*********************************************************************** MKB01580
+         SPACE 3                                                        MKB01590
+         COPY  $HASPGEN            HASP OPTIONS                         MKB01600
+         TITLE 'CONTROL BLOCK OPTIONS'                                  MKB01610
+         $SYSPARM (ON,GEN,DATA,NO,NO)        SET DOCUMENTATION OPTIONS  MKB01620
+         SPACE 3                                                        MKB01630
+*                                                                       MKB01640
+*        GENERATE HASP CONTROL BLOCKS                                   MKB01650
+*                                                                       MKB01660
+         SPACE 2                                                        MKB01670
+         $HASPCB DOC=&DOC,LIST=&LIST GENERATE HASP CONTROL BLOCKS       MKB01680
+         TITLE 'COMMAND PROCESSOR - ENTRY POINT PROCESSING'             MKB01690
+JES2B608 $MODNTRY CSECT=YES,EXIT=EXITB608  MODIFICATION ENTRY           MKB01700
+         $GETAPCE SPCE,DOC=&DOC    AQUIRE A STORAGE BLOCK               MKB01710
+         L     R10,APCESNXT        GET ITS ADDRESS                      MKB01720
+         USING SPCEDSCT,R10        ESTABLISH ADDRESSABILITY FOR IT      MKB01730
+         MVC   SPCEAREA(COMPNTER-PCEWORK),PCEWORK SAVE PCEWORK AREA     MKB01740
+         LA    R15,APCEUSER        POINT AT MY OWN WORK AREA            MKB01750
+         ST    R15,APCEUSER        POINT IT AT ITS NEXT FREE AREA       MKB01760
+         TITLE 'COMMAND PROCESSOR - COMMAND TABLE SEARCH'               MKB01770
+COMLOOK  DS    0H                  SEARCH TABLE FOR OPERAND             MKB01780
+         $REGSAVE SAVE=(R3,R4,R5)  SAVE POINTERS                        MKB01790
+         L     R1,0(,R3)           LOAD OPERAND POINTER                 MKB01800
+         CLC   $CCOMCHR,0(R1)      HASP PREFIX?                         MKB01810
+         BE    *+4+6+4             YES,IGNORE IT                        MKB01820
+         CLC   $RCOMCHR,0(R1)      HOW ABOUT REMOTE PREFIX?             MKB01830
+         BNE   *+4+4               NO,MUST BE REAL DATA                 MKB01840
+         LA    R1,1(,R1)           YES,SKIP OVER IT                     MKB01850
+         CLI   0(R1),C' '          IS IT JUST '$?'                      MKB01860
+         BE    COMDEFLT            YES,EXPLAIN IT                       MKB01870
+         LA    WC,COMFASTR         POINT TO FAST LOOKUP TABLE        R4 MKB01880
+         LA    WA,4                SET INCREMENT FOR TABLE SCAN      R4 MKB01890
+         LA    WB,COMFSTND         SET COMPORAND FOR TABLE SCAN         MKB01900
+         CLC   0(1,WC),0(R1)       CHECK FOR HIT IN TABLE               MKB01910
+         BH    COMBAD              IF TABLE HIGHER -- ERROR             MKB01920
+         BE    *+12                IF EQUAL -- GO GET TEXT              MKB01930
+         BXLE  WC,WA,*-14          ELSE LOOP THROUGH TABLE              MKB01940
+         B     COMBAD              IF NOT FOUND -- ERROR                MKB01950
+         SPACE 1                                                        MKB01960
+         ICM   WC,7,1(WC)          GET COMMAND TABLE ADDRESS            MKB01970
+         BZ    COMNOT              EXIT IF NONE                         MKB01980
+         LA    WA,COMTEL           SET INCREMENT TABLE LENGTH           MKB01990
+         LA    WB,COMTABE          SET COMPORAND FOR TABLE SCAN         MKB02000
+COMSRL   CLC   COMTVB(1,WC),0(R1)    CHECK FOR VERB IN RANGE            MKB02010
+         BH    COMBAD              HIGHER IS ERROR                      MKB02020
+         CLC   COMTVB+1(1,WC),1(R1)     LOOK AT SECOND CHARACTER        MKB02030
+         BE    COMFND              EXIT IF FOUND                        MKB02040
+         CLI   COMTVB+1(WC),X'FF'  IS IT THE LAST ENTRY FOR COMMAND     MKB02050
+         BE    COMFND              EXIT IF FOUND                        MKB02060
+COMSRC   BXLE  WC,WA,COMSRL        LOOP                                 MKB02070
+         B     COMBAD              ERROR IF NOT FOUND                   MKB02080
+         SPACE 2                                                        MKB02090
+COMNEXT  $REGREST ,                RELOAD OPERAND POINTERS              MKB02100
+         BXLE  R3,R4,COMLOOK       TEST EVERY OPERAND                   MKB02110
+         B     COMANSWR            THEN REPLY                           MKB02120
+         TITLE 'COMMAND PROCESSOR - SAVE OPERAND DATA'                  MKB02130
+*********************************************************************** MKB02140
+*                                                                     * MKB02150
+*        THIS ROUTINE SAVES THE ADRESS OF THE TEXT FOUND IN THE       * MKB02160
+*        LOOK-UP TABLE FOR EVERY OPERAND.THUS WHEN ALL OPERANDS HAVE  * MKB02170
+*        BEEN FOUND IT IS SAFE TO OVER-WRITE THE ORIGINAL COMMAND     * MKB02180
+*        AREA IN $SERVICE CWTO PROCESSING BECAUSE :                   * MKB02190
+*        A) WE NOW HAVE OUR OWN POINTERS                              * MKB02200
+*        B)WE WILL RESTORE IT BEFORE RETURNING TO JES2.               * MKB02210
+*                                                                     * MKB02220
+*        POINTERS ARE SAVED IN THE APCEUSER AREA.THE FIRST WORD IS    * MKB02230
+*        MAINTAINED AS A POINTER TO THE LAST OPERAND POINTER FOR      * MKB02240
+*        BXLE LOOP PROCESSING.                                        * MKB02250
+*                                                                     * MKB02260
+*********************************************************************** MKB02270
+         SPACE 2                                                        MKB02280
+COMFND   DS    0H                  COMMAND FOUND,SAVE TEXT ADDRESS      MKB02290
+         L     R15,APCEUSER        PICK LAST OPERAND POINTER            MKB02300
+         MVC   4(4,R15),COMTXT(WC) SAVE TEXT ADDRESS                    MKB02310
+         LA    R15,4(,R15)         UPDATE OPERAND POINTER               MKB02320
+         ST    R15,APCEUSER        AND SAVE NEW POINTER                 MKB02330
+         B     COMNEXT             GO BACK FOR NEXT OPERAND             MKB02340
+         SPACE 2                                                        MKB02350
+COMNOT   DS    0H                  NO TEXT AVAILABLE FOR COMMAND        MKB02360
+         L     R3,APCEUSER         PICK UP LAST OPERAND POINTER         MKB02370
+         LA    R3,4(,R3)           INCREMENT ONE SLOT                   MKB02380
+         LA    R4,NOTEXT           GET APOLOGIES MESSAGE                MKB02390
+         ST    R4,0(,R3)           SAVE AS NEXT OPERAND                 MKB02400
+         ST    R3,APCEUSER         SAVE NEW POINTER                     MKB02410
+         B     COMNEXT             GO BACK FOR NEXT OPERAND             MKB02420
+         SPACE 3                                                        MKB02430
+*********************************************************************** MKB02440
+*        SET DEFAULT TEXT FOR $? ONLY PROCESSING                      * MKB02450
+*********************************************************************** MKB02460
+         SPACE 2                                                        MKB02470
+COMDEFLT DS    0H                  DEFAULT MESSAGE FOR NO OPERAND       MKB02480
+         L     R3,APCEUSER         GET LAST OPERAND POINTER             MKB02490
+         LA    R3,4(,R3)           UPDATE BY ONE                        MKB02500
+         LA    R1,TEXTB608         ANSWER IS OUR OWN TEXT               MKB02510
+         ST    R1,0(,R3)           SAVE IT                              MKB02520
+         ST    R3,APCEUSER         SAVE IT                              MKB02530
+         B     COMANSWR            GO TELL OPERATOR                     MKB02540
+         TITLE 'COMMAND PROCESSOR - TEXT LIST PROCESSING'               MKB02550
+*********************************************************************** MKB02560
+*                                                                     * MKB02570
+*        THIS ROUTINE PERFORMS THE REAL FUNCTION OF THIS COMMAND      * MKB02580
+*        PROCESSOR - IT OUTPUTS LINES OF EXPLANATION TEXT FOR EVERY   * MKB02590
+*        OPERAND.THE ADDRESSES OF THE BLOCKS OF TEXT ARE PICKED UP    * MKB02600
+*        FROM THE APCE WORK AREA WHERE THEY HAVE BEEN STORED BY THE   * MKB02610
+*        OPERAND SCANNING ROUTINES.EACH LINE OF TEXT IS PREFIXED      * MKB02620
+*        BY A TWO BYTE FIELD CONTAINING THE LENGTH OF THE LINE.       * MKB02630
+*        IF THE HIGH ORDER BIT OF THE FIRST BYTE IS ON IT SIGNIFIES   * MKB02640
+*        THAT THIS IS THE LAST LINE OF THE MESSAGE.                   * MKB02650
+*                                                                     * MKB02660
+*********************************************************************** MKB02670
+         SPACE 2                                                        MKB02680
+COMANSWR DS    0H                  REPLY TO OPERATOR                    MKB02690
+         LA    R3,APCEUSER         POINT AT FIRST OPERAND               MKB02700
+         LA    R4,4                SET INCREMENT                        MKB02710
+         L     R5,APCEUSER         PICK UP LAST OPERAND POINTER         MKB02720
+         SPACE 1                                                        MKB02730
+TEXTLOOP DS    0H                  ANSWER EVERY QUERY                   MKB02740
+         BXLE  R3,R4,EXPLAIN       GO PROCESS AN OPERAND                MKB02750
+         B     EXITB608            RETURN WHEN FINISHED                 MKB02760
+         SPACE 2                                                        MKB02770
+EXPLAIN  DS    0H                  OUTPUT ONE EXPLANATION               MKB02780
+         L     R2,0(,R3)           PICK UP OPERAND POINTER              MKB02790
+NEXTLINE DS    0H                  OUTPUT NEXT LINE OF TEXT             MKB02800
+         MVI   COMMAND,C' '        BLANK OUT                            MKB02810
+         MVC   COMMAND+1(L'COMMAND-1),COMMAND REPLY AREA                MKB02820
+         SR    R0,R0               CLEAR LENGTH REGISTER                MKB02830
+         IC    R0,1(,R2)           PICK UP LENGTH OF LINE               MKB02840
+         LA    R1,2(,R2)           PICK UP ADDRESS OF TEXT              MKB02850
+         $MWTO MSG=(R1),L=(R0)     GO OUTPUT LINE TO REQUESTOR          MKB02860
+         SR    R1,R1               CLEAR REGISTER                       MKB02870
+         ICM   R1,1,0(R2)          PICK UP FLAG BYTE AND TEST IT        MKB02880
+         BNZ   TEXTLOOP            GET NEXT OPERAND IF LAST LINE        MKB02890
+         IC    R1,1(,R2)           PICK UP LINE LENGTH                  MKB02900
+         LA    R2,2(R1,R2)         UPDATE LINE POINTER                  MKB02910
+         B     NEXTLINE            GO OUTPUT NEXT LINE                  MKB02920
+         SPACE 2                                                        MKB02930
+COMBAD   DS    0H                  INVALID OPERAND ENCOUNTERED          MKB02940
+         L     R3,APCEUSER         PICK UP LAST POINTER                 MKB02950
+         LA    R3,4(,R3)           INCREMENT ONE SLOT                   MKB02960
+         LA    R4,ERRORTXT         POINT TO 'TWIT' MESSAGE              MKB02970
+         ST    R4,0(,R3)           SAVE IT FOR LATER                    MKB02980
+         ST    R3,APCEUSER         SAVE LAST OPERAND ADDRESS            MKB02990
+         B     COMNEXT             TRY NEXT OPERAND                     MKB03000
+         TITLE 'COMMAND PROCESSOR - EXIT ROUTINES'                      MKB03010
+EXITB608 $MODEXIT NO               RETURN TO JES2 CODE                  MKB03020
+         TITLE 'COMMAND PROCESSOR - COMMAND TABLES'                     MKB03030
+COMTAB   DS    0F                  COMMAND / TEXT    LOOK-UP TABLE      MKB03040
+COMTBLHX $COMSAY ?,TEXTB608,REJECT=COMJ QUERY JES2 FUNCTIONS            MKB03050
+COMTA    $COMSAY AL,ALLTEXT,REJECT=COMJ COMMAND SUMMARY                 MKB03060
+         $COMSAY A,TEXTA,REJECT=COMJ $A COMMAND                         MKB03070
+COMTB    $COMSAY B,TEXTB,REJECT=COMJ $B COMMAND                         MKB03080
+COMTC    $COMSAY C,TEXTC,REJECT=COMJ $C COMMAND                         MKB03090
+COMTD    $COMSAY DA,TEXTDA,REJECT=COMJ DISPLAY ACTIVE                   MKB03100
+         $COMSAY DD,TEXTDD,REJECT=COMJ DISPLAY DISKS                    MKB03110
+         $COMSAY DF,TEXTDF,REJECT=COMJ DISPLAY FORMS                    MKB03120
+         $COMSAY DI,TEXTDI,REJECT=COMJ DISPLAY INITIATORS               MKB03130
+         $COMSAY DJ,TEXTDJ,REJECT=COMJ DISPLAY JOBS                     MKB03140
+         $COMSAY DM,TEXTDM,REJECT=COMJ DISPLAY MESSAGES                 MKB03150
+         $COMSAY DN,TEXTDN,REJECT=COMJ DISPLAY NAMES                    MKB03160
+         $COMSAY DO,TEXTDO,REJECT=COMJ DISPLAY REQUESTS                 MKB03170
+         $COMSAY DQ,TEXTDQ,REJECT=COMJ DISPLAY QUEUES                   MKB03180
+         $COMSAY DT,TEXTDT,REJECT=COMJ DISPLAY TAPES                    MKB03190
+         $COMSAY DU,TEXTDU,REJECT=COMJ DISPLAY UNITS                    MKB03200
+         $COMSAY D,TEXTD,REJECT=COMJ DISPLAY COMMAND SUMMARRY           MKB03210
+COMTE    $COMSAY E,TEXTE,REJECT=COMJ $E COMMAND                         MKB03220
+COMTF    $COMSAY F,TEXTF,REJECT=COMJ $F COMMAND                         MKB03230
+COMTH    $COMSAY H,TEXTH,REJECT=COMJ $H COMMAND                         MKB03240
+COMTI    $COMSAY I,TEXTI,REJECT=COMJ $I COMMAND                         MKB03250
+COMTL    $COMSAY L,TEXTL,REJECT=COMJ $L COMMAND                         MKB03260
+COMTN    $COMSAY N,TEXTN,REJECT=COMJ $N COMMAND                         MKB03270
+COMTOO   $COMSAY O,TEXTO,REJECT=COMJ $O COMMAND                         MKB03280
+COMTP    $COMSAY P,TEXTP,REJECT=COMJ $P COMMAND                         MKB03290
+COMTR    $COMSAY R,TEXTR,REJECT=COMJ RE-ROUTE COMMAND                   MKB03300
+COMTS    $COMSAY S,TEXTP,REJECT=COMJ $S COMMAND                         MKB03310
+COMTT    $COMSAY TA,TEXTTA,REJECT=COMJ $TA COMMAND                      MKB03320
+         $COMSAY TJ,TEXTTJ,REJECT=COMJ $TJ COMMAND                      MKB03330
+         $COMSAY TL,TEXTTL,REJECT=COMJ $TL COMMAND                      MKB03340
+         $COMSAY TO,TEXTTO,REJECT=COMJ $TO COMMAND                      MKB03350
+         $COMSAY TP,TEXTTP,REJECT=COMJ $TP COMMAND                      MKB03360
+         $COMSAY TR,TEXTTR,REJECT=COMJ $TR COMMAND                      MKB03370
+         $COMSAY T,TEXTT,REJECT=COMJ $T COMMAND                         MKB03380
+COMTV    $COMSAY VS,TEXTVS,REJECT=COMJ $VS COMMAND                      MKB03390
+COMTZ    $COMSAY Z,TEXTZ,REJECT=COMJ $Z COMMAND                         MKB03400
+COMTEL   EQU   8                   LENGTH OF EACH COMTAB ELEMENT        MKB03410
+COMTABE  EQU   *-COMTEL            LAST TABLE ENTRY                     MKB03420
+         EJECT                                                          MKB03430
+COMFASTR DS    0F                  FAST LOOK-UP TABLE FOR JES2B002      MKB03440
+         DC    C'?',AL3(COMTBLHX)  ENTRY FOR '?' VERBS                  MKB03450
+         DC    C'A',AL3(COMTA)     ENTRY FOR 'A' VERBS                  MKB03460
+         DC    C'B',AL3(COMTB)     ENTRY FOR 'B' VERBS                  MKB03470
+         DC    C'C',AL3(COMTC)     ENTRY FOR 'C' VERBS                  MKB03480
+         DC    C'D',AL3(COMTD)     ENTRY FOR 'D' VERBS                  MKB03490
+         DC    C'E',AL3(COMTE)     ENTRY FOR 'E' VERBS                  MKB03500
+         DC    C'F',AL3(COMTF)     ENTRY FOR 'F' VERBS                  MKB03510
+         DC    C'H',AL3(COMTH)     ENTRY FOR 'H' VERBS                  MKB03520
+         DC    C'I',AL3(COMTI)     ENTRY FOR 'I' VERBS                  MKB03530
+         DC    C'L',AL3(COMTL)     ENTRY FOR 'L' VERBS                  MKB03540
+         DC    C'N',AL3(COMTN)     ENTRY FOR 'N' VERBS                  MKB03550
+         DC    C'O',AL3(COMTOO)    ENTRY FOR 'O' VERBS                  MKB03560
+         DC    C'P',AL3(COMTP)     ENTRY FOR 'P' VERBS                  MKB03570
+         DC    C'R',AL3(COMTR)     ENTRY FOR 'R' VERBS                  MKB03580
+         DC    C'S',AL3(COMTS)     ENTRY FOR 'S' VERBS                  MKB03590
+         DC    C'T',AL3(COMTT)     ENTRY FOR 'T' VERBS                  MKB03600
+         DC    C'V',AL3(COMTV)     ENTRY FOR 'V' VERBS                  MKB03610
+COMFSTND DC    C'Z',AL3(COMTZ)     ENTRY FOR 'Z' VERBS                  MKB03620
+         EJECT                                                          MKB03630
+*                                                                       MKB03640
+*        SYMBOLS TO DEFINE COMMAND TABLE ELEMENT FIELDS                 MKB03650
+*                                                                       MKB03660
+COMTXT   EQU   0                   POSITION OF TEXT ADDRESS             MKB03670
+COMTVB   EQU   COMTEL-2            LOCATION OF VERB WITHIN ENTRY        MKB03680
+COMR     EQU   CMBFLAGR            LEVEL OF RESTRICTION FOR REMOTES  R4 MKB03690
+COMS     EQU   DCTREJSY            REJECT UNLESS SYSTEM AUTHORIZATION   MKB03700
+COMD     EQU   DCTREJDV            REJECT UNLESS DEVICE AUTHORIZATION   MKB03710
+COMJ     EQU   DCTREJJB            REJECT UNLESS JOB AUTHORIZATION      MKB03720
+COMJDS   EQU   COMJ+COMD+COMS      COMBINATION                          MKB03730
+         SPACE 2                                                        MKB03740
+         LTORG ,                                                        MKB03750
+         TITLE 'COMMAND PROCESSOR - TEXT DEFINITIONS'                   MKB03760
+NOTEXT   $TEXT 'SORRY,FUNCTION NOT YET DOCUMENTED'                      MKB03770
+         $TEXT 'REFER TO JES2 COMMAND MANUAL GC23-0007',STOP            MKB03780
+ERRORTXT $TEXT 'COMMAND DOES NOT EXIST',STOP                            MKB03790
+         PRINT NOGEN                                                    MKB03800
+         TITLE '$?  $?  $?  $?  $?  $?  $?  $?  $?  $?  $?  $?  $? '    MKB03810
+TEXTB608 $TEXT '? WILL DISPLAY JES2 COMMAND FORMATS'                    MKB03820
+         $TEXT 'ENTER $?ALL FOR SUMMARY OF ALL JES2 COMMANDS,'          MKB03830
+         $TEXT 'ENTER $?X FOR SUMMARY OF COMMAND $X,'                   MKB03840
+         $TEXT 'ENTER $?XY FOR OPTION Y OF COMMAND $X',                CMKB03850
+               STOP                LAST LINE                            MKB03860
+         TITLE '$ALL $ALL $ALL $ALL $ALL $ALL $ALL $ALL $ALL $ALL $ALL' MKB03870
+ALLTEXT  $TEXT '$A     RELEASE     JOBS,QUEUES,ALL'                     MKB03880
+         $TEXT '$B     BACKSPACE   PRINTER,PUNCH'                       MKB03890
+         $TEXT '$C     CANCEL      READER,PRINTER,PUNCH,JOB'            MKB03900
+         $TEXT '                   AUTOMATIC COMMANDS'                  MKB03910
+         $TEXT '$D     DISPLAY     INITIATOR(S),ACTIVITY,REQUESTS,'     MKB03920
+         $TEXT '                   JOBS,QUEUES,JES2 DEVICES,'           MKB03930
+         $TEXT '                   MESSAGES TO REMOTE OPERATORS'        MKB03940
+         $TEXT '$E     RESTART     JOB,DEVICE,LINE'                     MKB03950
+         $TEXT '$F     FORWARD-SPACE PRINTER,PUNCH'                     MKB03960
+         $TEXT '$H     HOLD        JOB(S),QUEUE(S)'                     MKB03970
+         $TEXT '$I     INTERRUPT   PRINTER,PUNCH'                       MKB03980
+         $TEXT '$L     LIST        JOB OUTPUT'                          MKB03990
+         $TEXT '$N     REPEAT      PRINTER,PUNCH'                       MKB04000
+         $TEXT '$O     OUTPUT      RELEASE OR CANCEL JOB OUTPUT'        MKB04010
+         $TEXT '$P     PURGE       JES2,DEVICE,LINE,INITIATOR(S),'      MKB04020
+         $TEXT '                   JOB,OUTPUT'                          MKB04030
+         $TEXT '$R     ROUTE       OUTPUT'                              MKB04040
+         $TEXT '$S     START       JES2,INITIATOR(S),DEVICE,LINE,'      MKB04050
+         $TEXT '                   AUTOMATIC COMMANDS'                  MKB04060
+         $TEXT '$T     SET         DEVICE,LINE,CONSOLE,JOB NUMBER,'     MKB04070
+         $TEXT '                   INITIATOR,JOB,AUTOMATIC COMMAND'     MKB04080
+         $TEXT '$VS    COMMAND     SUBMIT COMMAND TO MVS'               MKB04090
+         $TEXT '$Z     STOP        DEVICE,INITIATOR,AUTO-COMMAND',     CMKB04100
+               STOP                END OF SUMMARY                       MKB04110
+         TITLE '$A  $A  $A  $A  $A  $A  $A  $A  $A  $A  $A  $A  $A '    MKB04120
+TEXTA    $TEXT '$A     RELEASE     JOBS,QUEUES OR ALL.'                 MKB04130
+         $TEXT '                                                     '  MKB04140
+         $TEXT '       $A''JOBNAME'' RELEASE NAMED JOB.'                MKB04150
+         $TEXT '       $AJNNNN     RELEASE JOB NUMBER NNNN.'            MKB04160
+         $TEXT '       $AJNNNN,MMMM RELEASE JOBS NUMBER NNNN AND MMMM.' MKB04170
+         $TEXT '       $AJNNNN-MMMM RELEASE JOBS NNNN THRU'' MMMM.'     MKB04180
+         $TEXT '       $AJNNNN,MMMM-PPPP,QQQQ OPERANDS MAY BE COMBINED' MKB04190
+         $TEXT '       $AQ         RELEASE ALL QUEUES'                  MKB04200
+         $TEXT '       $AQ,ABCDE   RELEASE QUEUES OF CLASSES ABCDE'     MKB04210
+         $TEXT '       $AA         RELEASE ALL JOBS ON ''SOFT'' HOLD.'  MKB04220
+         $TEXT 'RESTRICTIONS   -   REMOTES MAY NOT ;'                   MKB04230
+         $TEXT '  A)RELEASE JOBS AWAITING EXECUTION'                    MKB04240
+         $TEXT '  B)RELEASE JOBS QUEUED FOR ANOTHER TERMINAL'           MKB04250
+         $TEXT '  C)RELEASE ANY QUEUES',                               CMKB04260
+               STOP                                                     MKB04270
+         TITLE '$B  $B  $B  $B  $B  $B  $B  $B  $B  $B  $B  $B  $B '    MKB04280
+TEXTB    $TEXT '$B     BACKSPACE   PRINTER,PUNCH'                       MKB04290
+         $TEXT '                                                    '   MKB04300
+         $TEXT 'ENTER $B<PRTX|RY.PRX|PUNX|RY.PUX>,<N|D>'                MKB04310
+         $TEXT 'WHERE  PRTX THE LOCAL DEVICE PRINTING THE OUTPUT    '   MKB04320
+         $TEXT '            TO BE BACKSPACED.'                          MKB04330
+         $TEXT '       RY.PRX THE REMOTE DEVICE PRINTING THE OUTPUT '   MKB04340
+         $TEXT '              TO BE BACKSPACED.'                        MKB04350
+         $TEXT '       PUNX THE LOCAL PUNCH TO BE BACKSPACED.'          MKB04360
+         $TEXT '       RY.PUX THE REMOTE PUNCH TO BE BACKSPACED.'       MKB04370
+         $TEXT '                   ( X = PRINTER/PUNCH NUMBER,'         MKB04380
+         $TEXT '                     Y = REMOTE NUMBER).'               MKB04390
+         $TEXT '       N  THE NUMBER (1-999) OF PAGES OR CARDS      '   MKB04400
+         $TEXT '          THE OUTPUT IS TO BE BACKSPACED.'              MKB04410
+         $TEXT '       D  THE SPECIFIED PRINTER|PUNCH IS TO BE      '   MKB04420
+         $TEXT '          BACKSPACED TO THE BEGINNING OF THE DATA SET.'CMKB04430
+               ,STOP                                                    MKB04440
+         TITLE '$C  $C  $C  $C  $C  $C  $C  $C  $C  $C  $C  $C  $C '    MKB04450
+TEXTC    $TEXT '$C     CANCEL          READER,PRINTER,PUNCH,JOB'        MKB04460
+         $TEXT '                                                     '  MKB04470
+         $TEXT 'ENTER $C<RDRX|RY.RDX>  THE SPECIFIED READER WILL FLUSH' MKB04480
+         $TEXT '             THE JOB CURRENTLY BEING READ AND WILL   '  MKB04490
+         $TEXT '             CONTINUE READING AT THE NEXT VALID     '   MKB04500
+         $TEXT '             JOB CARD.'                                 MKB04510
+         $TEXT '      $C<PRTX|RY.PRX|PUNX|RY.PUX>  THE SPECIFIED    '   MKB04520
+         $TEXT '             PRINTER|PUNCH WILL STOP PRINTING -     '   MKB04530
+         $TEXT '             PUNCHING THE CURRENTLY ACTIVE DATA SET '   MKB04540
+         $TEXT '             AND THE OUTPUT WILL BE PURGED.'            MKB04550
+         $TEXT '      $CJXXX           PROCESSING OF JOB XXX WILL   '   MKB04560
+         $TEXT '             BE TERMINATED.'                            MKB04570
+         $TEXT '      $CNAMED,DUMP     THE JOB NAMED WILL BE        '   MKB04580
+         $TEXT '                       CANCELLED AND A STORAGE DUMP '   MKB04590
+         $TEXT '                       WILL BE TAKEN.'                  MKB04600
+         $TEXT '                                                    '   MKB04610
+         $TEXT ' NOTE: IF THE $C COMMAND IS USED FOLLOWING A $N     '   MKB04620
+         $TEXT ' ====  COMMAND AND THE DATA SET TO BE REPEATED HAS  '   MKB04630
+         $TEXT '       THE *FREE=CLOSE* ATTRIBUTE , ALL COPIES OF   '   MKB04640
+         $TEXT '       THE DATA SET WILL BE LOST.',                    CMKB04650
+               STOP                                                     MKB04660
+         TITLE '$D  $D  $D  $D  $D  $D  $D  $D  $D  $D  $D  $D  $D '    MKB04670
+TEXTD    $TEXT '$D                 DISPLAY JES2 INFORMATION.'           MKB04680
+         $TEXT '     $DA           DISPLAY ACTIVITY'                    MKB04690
+         $TEXT '     $DD           DISPLAY DISKS'                       MKB04700
+         $TEXT '     $DF           DISPLAY FORMS'                       MKB04710
+         $TEXT '     $DI           DISPLAY INITIATORS'                  MKB04720
+         $TEXT '     $DJ           DISPLAY JOB'                         MKB04730
+         $TEXT '     $DM           DISPLAY MESSAGE'                     MKB04740
+         $TEXT '     $DN           DISPLAY NAMES'                       MKB04750
+         $TEXT '     $DO           DISPLAY OPERATOR REQUESTS'           MKB04760
+         $TEXT '     $DQ           DISPLAY QUEUES'                      MKB04770
+         $TEXT '     $DT           DISPLAY TAPES'                       MKB04780
+         $TEXT '     $DU           DISPLAY UNITS'                       MKB04790
+         $TEXT 'FOR DETAILS OF ONE OF THESE ENTER $?DX,'                MKB04800
+         $TEXT ' WHERE X IS THE REQUIRED FUNCTION.',STOP                MKB04810
+         TITLE '$DA $DA $DA $DA $DA $DA $DA $DA $DA $DA $DA $DA $DA'    MKB04820
+TEXTDA   $TEXT '$DA                DISPLAY ACTIVITY'                    MKB04830
+         $TEXT '     $DA<,JOB><,STC><,XEQ><,DEV>'                       MKB04840
+         $TEXT 'WHERE  JOB  (J)  = DISPLAY ACTIVE JOBS'                 MKB04850
+         $TEXT '       STC  (S)  = DISPLAY ACTIVE STARTED TASKS'        MKB04860
+         $TEXT '       XEQ  (X)  = DISPLAY EXECUTING JOBS'              MKB04870
+         $TEXT '       DEV  (D)  = DISPLAY ACTIVE DEVICES'              MKB04880
+         $TEXT 'THE DEFAULT $DA IS EQUIVALENT TO $DA,JOB',STOP          MKB04890
+         TITLE '$DD $DD $DD $DD $DD $DD $DD $DD $DD $DD $DD $DD $DD'    MKB04900
+TEXTDD   $TEXT '$DD                DISPLAY DISKS'                       MKB04910
+         $TEXT '     $DD<,ALL><,NNN>'                                   MKB04920
+         $TEXT 'WHERE    ALL     = DISPLAY DISKS (EVEN IF OFFLINE)'     MKB04930
+         $TEXT '         NNN     = UNIT NAME (DISPLAY ONLY THIS UNIT)'  MKB04940
+         $TEXT 'IF OPERAND OMITTED ONLY DISKS ONLINE WILL BE DISPLAYED'CMKB04950
+               ,STOP                                                    MKB04960
+         TITLE '$DF $DF $DF $DF $DF $DF $DF $DF $DF $DF $DF $DF $DF'    MKB04970
+TEXTDF   $TEXT '$DF                DISPLAY FORMS QUEUE'                 MKB04980
+         $TEXT '     $DF,<R=RMTXX<-RMTXX>><,J=<JNNN<-JMMM>><,D=<H|A>>'  MKB04990
+         $TEXT 'WHERE    R=        REMOTE OR RANGE OF REMOTES,'         MKB05000
+         $TEXT '                   DEFAULT IS SUBMITTING REMOTE'        MKB05010
+         $TEXT '         R=LOCAL   DISPLAY CENTRAL OPERATIONS QUEUE'    MKB05020
+         $TEXT '         J=JNNNN   JOB NUMBER OR RANGE OF JOBS'         MKB05030
+         $TEXT '         J=SXXXX   NUMBER OR RANGE OF STARTED TASKS'    MKB05040
+         $TEXT '         D=H       DISPLAY ONLY HELD JOBS'              MKB05050
+         $TEXT '         D=A       DISPLAY BOTH HELD AND FREE JOBS'     MKB05060
+         $TEXT 'IF D IS OMITTED ONLY JOBS NOT HELD WILL BE DISPLAYED', CMKB05070
+               STOP                                                     MKB05080
+         TITLE '$DI $DI $DI $DI $DI $DI $DI $DI $DI $DI $DI $DI $DI'    MKB05090
+TEXTDI   $TEXT '$DI                DISPLAY INITIATORS'                  MKB05100
+         $TEXT '     $DI<N<-M>>'                                        MKB05110
+         $TEXT 'WHERE    N         IS ONE OR A RANGE OF INITIATORS'     MKB05120
+         $TEXT 'DEFAULT IS DISPLAY ALL INITIATORS',STOP                 MKB05130
+         TITLE '$DJ $DJ $DJ $DJ $DJ $DJ $DJ $DJ $DJ $DJ $DJ $DJ $DJ'    MKB05140
+TEXTDJ   $TEXT '$DJ                DISPLAY JOB INFORMATION'             MKB05150
+         $TEXT '     $DJ<N<-M>><,JP<-Q>><.......>'                      MKB05160
+         $TEXT '     $D''JOBNAME'''                                     MKB05170
+         $TEXT 'WHERE    JN        SPECIFIES ONE OR A RANGE OF JOB NOS' MKB05180
+         $TEXT '          ''JOBNAME'' IS THE FULL NAME OF A JOB'        MKB05190
+         $TEXT 'NOTE THAT THE WONDERFUL MONSANTO GROUP SCAN,'           MKB05200
+         $TEXT ' I.E. $D''JO*      HAS NOW BEEN IMPROVED FOR JES2'      MKB05210
+         $TEXT ' SO THAT $D''*TIM'' WILL DISPLAY ALL JOBS WITH '        MKB05220
+         $TEXT ' THE STRING ''TIM'' ANYWHERE IN THE JOBNAME',STOP       MKB05230
+         TITLE '$DM $DM $DM $DM $DM $DM $DM $DM $DM $DM $DM $DM $DM'    MKB05240
+TEXTDM   $TEXT '$DM                DISPLAY MESSAGE'                     MKB05250
+         $TEXT '     $DMRX<-RY>,''MESSAGE'''                            MKB05260
+         $TEXT 'WHERE    RX        IS ONE OR A RANGE OF REMOTES'        MKB05270
+         $TEXT '         R0        IS THE SYSTEM OPERATOR'              MKB05280
+         $TEXT 'NOTE THAT THE FORM ''RMTXX'' IS NOT ALLOWED,'           MKB05290
+         $TEXT ' IT MUST BE RXX',STOP                                   MKB05300
+         TITLE '$DN $DN $DN $DN $DN $DN $DN $DN $DN $DN $DN $DN $DN'    MKB05310
+TEXTDN   $TEXT '$DN                DISPLAY NAMES'                       MKB05320
+         $TEXT '     $DN<R=RMTXX<-RMTYY>><,Q=XEQ<CLASS>'                MKB05330
+         $TEXT '                             OUT'                       MKB05340
+         $TEXT '                             PPU'                       MKB05350
+         $TEXT '                             HOLD'                      MKB05360
+         $TEXT 'WHERE    R=RMTXX   IS ONE OR A RANGE OF REMOTES'        MKB05370
+         $TEXT '         R=LOCAL   IS THE CENTRAL OPERATIONS QUEUE'     MKB05380
+         $TEXT '         DEFAULT IS SUBMITTING REMOTE'                  MKB05390
+         $TEXT '         Q=        SPECIFIES TYPE OF QUEUE TO DISPLAY'  MKB05400
+         $TEXT '           XEQ     JOBS AWAITING EXECUTION'             MKB05410
+         $TEXT '           XEQN    CLASS N JOBS AWAITING EXECUTION'     MKB05420
+         $TEXT '           XEQ*    JOBS AWAITING INTERPRETER'           MKB05430
+         $TEXT '           XEQ$    STARTED TASKS AWAITING EXECUTION'    MKB05440
+         $TEXT '           OUT     JOBS AWAITING OUTPUT PROCESSING'     MKB05450
+         $TEXT '           PPU     JOBS AWAITING HARDCOPY OUTPUT'       MKB05460
+         $TEXT '*NOTE THE DIFFERENCE - OUTPUT PROCESSING IS PURELY'     MKB05470
+         $TEXT ' AN INTERNAL JES2 FUNCTION'                             MKB05480
+         $TEXT '         Q=HOLD    DISPLAY ONLY JOBS IN HOLD STATUS',  CMKB05490
+               STOP                                                     MKB05500
+         TITLE '$DO $DO $DO $DO $DO $DO $DO $DO $DO $DO $DO $DO $DO'    MKB05510
+TEXTDO   $TEXT '$DO                DISPLAY OPERATOR REQUESTS'           MKB05520
+         $TEXT '     $DO'                                               MKB05530
+         $TEXT 'THERE ARE NO OPERANDS'                                  MKB05540
+         $TEXT '*NOTE THAT JES2 WILL LIST ONLY ITS OWN REQUESTS'        MKB05550
+         $TEXT ' SUCH AS ''SETUP'' MESSAGES.TO LIST OUTSTANDING'        MKB05560
+         $TEXT ' REPLIES OR MOUNTS USE AN MVS ''D R,L'' COMMAND',STOP   MKB05570
+         TITLE '$DQ $DQ $DQ $DQ $DQ $DQ $DQ $DQ $DQ $DQ $DQ $DQ $DQ'    MKB05580
+TEXTDQ   $TEXT '$DQ                DISPLAY QUEUES'                      MKB05590
+         $TEXT '     $DQ<,R=RMTXX<-RMTYY>><,Q=XEQ<CLASS>>'              MKB05600
+         $TEXT '                              OUT'                      MKB05610
+         $TEXT '                              PPU'                      MKB05620
+         $TEXT '                              HOLD'                     MKB05630
+         $TEXT 'THE OPERANDS ARE THE SAME AS FOR THE $DN COMMAND',STOP  MKB05640
+         TITLE '$DT $DT $DT $DT $DT $DT $DT $DT $DT $DT $DT $DT $DT'    MKB05650
+TEXTDT   $TEXT '$DT                DISPLAY TAPES'                       MKB05660
+         $TEXT '     $DT<,ALL><,NNN>'                                   MKB05670
+         $TEXT 'WHERE    ALL     = DISPLAY TAPES (EVEN IF OFFLINE)'     MKB05680
+         $TEXT '         NNN     = UNIT NAME (DISPLAY ONLY THIS UNIT)'  MKB05690
+         $TEXT 'IF OPERAND OMITTED ONLY TAPES ONLINE WILL BE DISPLAYED'CMKB05700
+               ,STOP                                                    MKB05710
+         TITLE '$DU $DU $DU $DU $DU $DU $DU $DU $DU $DU $DU $DU $DU'    MKB05720
+TEXTDU   $TEXT '$DU                DISPLAY UNITS'                       MKB05730
+         $TEXT '     $DU           ALL JES2 CONTROLLED UNITS'           MKB05740
+         $TEXT '     $DU,ALL       ALL JES2 CONTROLLED UNITS'           MKB05750
+         $TEXT '         LNEX      LINE NUMBER X (AND REMOTES ON IT)'   MKB05760
+         $TEXT '         LNES      ALL TP LINES AND REMOTES'            MKB05770
+         $TEXT '         PRTS      ALL LOCAL PRINTERS'                  MKB05780
+         $TEXT '         PUNS      ALL LOCAL PUNCHES'                   MKB05790
+         $TEXT '         RDRS      ALL LOCAL READERS'                   MKB05800
+         $TEXT '         RDI       ALL INTERNAL READERS'                MKB05810
+         $TEXT '         RMTS      ALL ACTIVE REMOTES AND THEIR LINES'  MKB05820
+         $TEXT '         RMTX<-Y>  SPECIFIED TERMINAL(S)'               MKB05830
+         $TEXT '         DEVICE    A PARTICULAR DEVICE,OF THE FORM;'    MKB05840
+         $TEXT '         PRTN      PRINTER NUMBER N'                    MKB05850
+         $TEXT '         PUNX      PUNCH      "   X'                    MKB05860
+         $TEXT '         RDRZ      READER     "   Z'                    MKB05870
+         $TEXT '         RXX.PRY   REMOTE XX PRINTER Y'                 MKB05880
+         $TEXT '         RXX.PUY      "   XX PUNCH   Y'                 MKB05890
+         $TEXT '         RXX.RDY      "   XX READER  Y'                 MKB05900
+         $TEXT '*NOTE THAT THE FORM RMTXX.PRT1 IS NOT ALLOWED.',       CMKB05910
+               STOP                                                     MKB05920
+         TITLE '$E  $E  $E  $E  $E  $E  $E  $E  $E  $E  $E  $E  $E '    MKB05930
+TEXTE    $TEXT '$E     RESTART         JOB,LINE'                        MKB05940
+         $TEXT '                                                    '   MKB05950
+         $TEXT 'ENTER $ELNEX           FOR RESTARTING LINE ACTIVITY.'   MKB05960
+         $TEXT '          IF THE LINE WAS IN THE ACTIVE STATUS,NEW  '   MKB05970
+         $TEXT '          JES2 REMOTE WORKSTATIONS CAN SIGN         '   MKB05980
+         $TEXT '          ONTO THE LINE.'                               MKB05990
+         $TEXT '          IF THE LINE WAS IN THE DRAINING STATUS    '   MKB06000
+         $TEXT '          (E.G.,AFTER $PLNEX),IT BECOMES DRAINED    '   MKB06010
+         $TEXT '          AND UNUSABLE FOR JES2 I/O UNTIL THE       '   MKB06020
+         $TEXT '          OPERATOR STARTS IT AGAIN.'                    MKB06030
+         $TEXT '      $EJXXX-XXX   TO RESTART JOB(S) CURRENTLY      '   MKB06040
+         $TEXT '      $E''JOBNAME''           IN EXECUTION.'            MKB06050
+         $TEXT '                   JXXX-XXX=THE JOB NUMBER OR RANGE '   MKB06060
+         $TEXT '                   OF JOB NUMBERS TO BE RESTARTED.'     MKB06070
+         $TEXT '                   ''JOBNAME''=THE NAME OF A JOB TO '   MKB06080
+         $TEXT '                   BE RESTARTED.NO ACTION IS TAKEN  '   MKB06090
+         $TEXT '                   IF THERE IS MORE THAN ONE JOB ON '   MKB06100
+         $TEXT '                   THE QUEUE WITH THIS NAME.'           MKB06110
+         $TEXT '      $E<PRTX|RY.PRX|PUNX|RY.PUX>  THE SPECIFIED    '   MKB06120
+         $TEXT '                   PRINTER|PUNCH WILL STOP PRINTING-'   MKB06130
+         $TEXT '                   PUNCHING AND THE OUTPUT WILL BE  '   MKB06140
+         $TEXT '                   RETURNED TO THE OUTPUT QUEUE     '   MKB06150
+         $TEXT '                   ACCORDING TO ITS JOB PRIORITY.',    CMKB06160
+               STOP                                                     MKB06170
+         TITLE '$F  $F  $F  $F  $F  $F  $F  $F  $F  $F  $F  $F  $F '    MKB06180
+TEXTF    $TEXT '$F     FORWARD-SPACE   PRINTER,PUNCH'                   MKB06190
+         $TEXT '                                                    '   MKB06200
+         $TEXT 'ENTER $F<PRTX|RY.PRX|PUNX|RY.PUX>,<N|D>'                MKB06210
+         $TEXT 'WHERE  PRTX THE LOCAL DEVICE PRINTING THE OUTPUT    '   MKB06220
+         $TEXT '            TO BE FORWARDSPACED.'                       MKB06230
+         $TEXT '       RY.PRX THE REMOTE DEVICE PRINTING THE OUTPUT '   MKB06240
+         $TEXT '              TO BE FORWARDSPACED.'                     MKB06250
+         $TEXT '       PUNX THE LOCAL PUNCH TO BE FORWARDSPACED.'       MKB06260
+         $TEXT '       RY.PUX THE REMOTE PUNCH TO BE FORWARDSPACED.'    MKB06270
+         $TEXT '                   ( X = PRINTER/PUNCH NUMBER,'         MKB06280
+         $TEXT '                     Y = REMOTE NUMBER).'               MKB06290
+         $TEXT '       N  THE NUMBER (1-999) OF PAGES OR CARDS      '   MKB06300
+         $TEXT '          THE OUTPUT IS TO BE FORWARDSPACED.'           MKB06310
+         $TEXT '       D  THE SPECIFIED PRINTER|PUNCH IS TO BE      '   MKB06320
+         $TEXT '          FORWARDSPACED TO THE END OF THE DATA SET.',  CMKB06330
+               STOP                                                     MKB06340
+         TITLE '$H  $H  $H  $H  $H  $H  $H  $H  $H  $H  $H  $H  $H '    MKB06350
+TEXTH    $TEXT '$H     HOLD        JOB(S),QUEUE(S)'                     MKB06360
+         $TEXT '                                                    '   MKB06370
+         $TEXT 'ENTER $HA     ALL JOBS CURRENTLY IN THE SYSTEM      '   MKB06380
+         $TEXT '              WILL BE HELD.'                            MKB06390
+         $TEXT '      $HJXXX-XXX     THE JOB NUMBER(S) OR JOBNAME   '   MKB06400
+         $TEXT '      $HSXXXX-XXXX   WILL BE PLACED IN HOLD STATUS. '   MKB06410
+         $TEXT '      $H''JOBNAME'''                                    MKB06420
+         $TEXT '                                                   '    MKB06430
+         $TEXT '                   JXXX-XXX=THE JOB NUMBER OR RANGE '   MKB06440
+         $TEXT '               OF JOB NUMBERS OF THE JOBS TO BE     '   MKB06450
+         $TEXT '               PLACED IN HOLD STATUS.'                  MKB06460
+         $TEXT '                   SXXXX-XXXX=THE SYSTEM TASK OR    '   MKB06470
+         $TEXT '               RANGE OF SYSTEM TASKS TO BE HELD.'       MKB06480
+         $TEXT '                   ''JOBNAME''=THE NAME OF THE JOB  '   MKB06490
+         $TEXT '               (ENCLOSED IN APOSTROPHES) TO BE HELD.'   MKB06500
+         $TEXT '               -IF THERE IS MORE THAN ONE JOB WITH  '   MKB06510
+         $TEXT '               THE SPECIFIED JOB NAME , NO ACTION   '   MKB06520
+         $TEXT '               WILL BE TAKEN.',                        CMKB06530
+               STOP                                                     MKB06540
+         TITLE '$I  $I  $I  $I  $I  $I  $I  $I  $I  $I  $I  $I  $I '    MKB06550
+TEXTI    $TEXT '$I     INTERRUPT   PRINTER,PUNCH'                       MKB06560
+         $TEXT '                                                    '   MKB06570
+         $TEXT 'ENTER $I<PRTX|RY.PRX|PUNX|RY.PUX>   THE SPECIFIED   '   MKB06580
+         $TEXT '             PRINTER|PUNCH WILL STOP PRINTING -     '   MKB06590
+         $TEXT '             PUNCHING AND THE WORK WILL BE RETURNED '   MKB06600
+         $TEXT '             TO THE OUTPUT QUEUE. WHEN THE DATA SET '   MKB06610
+         $TEXT '             IS AGAIN SELECTED FOR PROCESSING :     '   MKB06620
+         $TEXT '                    -THE PRINTER WILL BACKSPACE ONE '   MKB06630
+         $TEXT '                     OR MORE PAGES AND RESUME       '   MKB06640
+         $TEXT '                     PRINTING.'                         MKB06650
+         $TEXT '                    -THE PUNCH WILL RESUME AT THE   '   MKB06660
+         $TEXT '                     LAST JES2 CHECKPOINT.',           CMKB06670
+               STOP                                                     MKB06680
+         TITLE '$L  $L  $L  $L  $L  $L  $L  $L  $L  $L  $L  $L  $L '    MKB06690
+TEXTL    $TEXT '$L     LIST        JOB OUTPUT'                          MKB06700
+         $TEXT '                                                    '   MKB06710
+         $TEXT '             -TO LIST EACH SYSTEM IN A MULTI-ACCESS '   MKB06720
+         $TEXT '            SPOOL CONFIGURATION AND ITS STATUS.'        MKB06730
+         $TEXT '              EXAMPLE :         $LSYS               '   MKB06740
+         $TEXT '                       THE SYSTEM WILL LIST ALL     '   MKB06750
+         $TEXT '                 SYSTEM IDENTIFIERS FOR A MULTI-    '   MKB06760
+         $TEXT '                 ACCESS SPOOL CONFIGURATION ALONG   '   MKB06770
+         $TEXT '                 WITH THE STATUS OF EACH SYSTEM.'       MKB06780
+         $TEXT '                                                    '   MKB06790
+         $TEXT '             -TO DISPLAY THE AMOUNT OF OUTPUT FOR   '   MKB06800
+         $TEXT '            A JOB OR JOBS IN EITHER THE HELD OR     '   MKB06810
+         $TEXT '            RELEASED OUTPUT CLASSES.'                   MKB06820
+         $TEXT '      $L<JXXX-XXX>    |             |               '   MKB06830
+         $TEXT '      $L<SXXXX-XXXX>  |             |     <    A>   '   MKB06840
+         $TEXT '                      |---> <,HOLD> |---> <,L=CC>   '   MKB06850
+         $TEXT '      $L<TXXXX-XXXX>  |             |     <   CCA>  '   MKB06860
+         $TEXT '      $L<''JOBNAME''> |             |               '   MKB06870
+         $TEXT '                                                    '   MKB06880
+         $TEXT '         JXXX-XXX      THE JOB NUMBER OR RANGE OF   '   MKB06890
+         $TEXT '                       JOB NUMBERS FOR WHICH THE    '   MKB06900
+         $TEXT '                       OUTPUT IS TO BE DISPLAYED.'      MKB06910
+         $TEXT '         SXXXX-XXXX    THE SYSTEM TASK OR RANGE OF  '   MKB06920
+         $TEXT '                       SYSTEM TASKS FOR WHICH THE   '   MKB06930
+         $TEXT '                       OUTPUT IS TO BE DISPLAYED.'      MKB06940
+         $TEXT '         TXXXX-XXXX    THE TIME SHARING USER OR     '   MKB06950
+         $TEXT '                       RANGE OF TIME SHARING USERS  '   MKB06960
+         $TEXT '                       FOR WHICH THE OUTPUT IS TO   '   MKB06970
+         $TEXT '                       BE DISPLAYED.'                   MKB06980
+         $TEXT '         ''JOBNAME''   THE NAME OF THE JOB FOR WHICH'   MKB06990
+         $TEXT '                       THE OUTPUT IS TO BE DISPLAYED'   MKB07000
+         $TEXT '                       ONLY ONE ''JOBNAME'' CAN BE  '   MKB07010
+         $TEXT '                       SPECIFIED AND NO JOB NUMBER  '   MKB07020
+         $TEXT '                       RANGES CAN BE SPECIFIED WITH '   MKB07030
+         $TEXT '                       A ''JOBNAME''.'                  MKB07040
+         $TEXT '         HOLD       LISTS ONLY HELD DATA SETS. IF   '   MKB07050
+         $TEXT '                    OMITTED,ONLY NON-HELD DATA SETS '   MKB07060
+         $TEXT '                    ARE LISTED. HOLD MAY BE         '   MKB07070
+         $TEXT '                    ABBREVIATED AS  H  .'               MKB07080
+         $TEXT '         L=A,CC OR CCA          THE AREA (A) ,      '   MKB07090
+         $TEXT '                       CONSOLE IDENTIFIER (CC) , OR '   MKB07100
+         $TEXT '                       BOTH (CCA) OF THE ACTIVE MCS '   MKB07110
+         $TEXT '                       CONSOLE AT WHICH THE         '   MKB07120
+         $TEXT '                       REQUESTED DISPLAY IS TO      '   MKB07130
+         $TEXT '                       APPEAR . '                       MKB07140
+         $TEXT '           EXAMPLE :         $LJ30-35,T22           '   MKB07150
+         $TEXT '                    THE SYSTEM WILL DISPLAY THE     '   MKB07160
+         $TEXT '                    NUMBER OF RELEASED OUTPUT       '   MKB07170
+         $TEXT '                    ELEMENTS FOR JOBS 30,31,32,33,34'   MKB07180
+         $TEXT '                    AND 35 AND FOR TIME SHARING USER'   MKB07190
+         $TEXT '                    22 BY OUTPUT CLASS .',             CMKB07200
+               STOP                                                     MKB07210
+         TITLE '$N  $N  $N  $N  $N  $N  $N  $N  $N  $N  $N  $N  $N '    MKB07220
+TEXTN    $TEXT '$N     REPEAT      PRINTER,PUNCH'                       MKB07230
+         $TEXT '                                                    '   MKB07240
+         $TEXT 'ENTER $N<PRTX|RY.PRX|PUNX|RY.PUX>'                      MKB07250
+         $TEXT '        COMMAND TO REPEAT THE PRINTING|PUNCHING OF  '   MKB07260
+         $TEXT '                A DATA SET GROUP.'                      MKB07270
+         $TEXT '        WHEN YOU WANT TO PRINT|PUNCH SEVERAL COPIES '   MKB07280
+         $TEXT '                OF AN OUTPUT DATA SET , WAIT FOR    '   MKB07290
+         $TEXT '                THE PRINTER|PUNCH REPEATED MESSAGE  '   MKB07300
+         $TEXT '                TO APPEAR BETWEEN THE SCHEDULING    '   MKB07310
+         $TEXT '                OF EACH REPRINT|REPUNCH.',             CMKB07320
+               STOP                                                     MKB07330
+         TITLE '$O  $O  $O  $O  $O  $O  $O  $O  $O  $O  $O  $O  $O '    MKB07340
+TEXTO    $TEXT '$O     OUTPUT      RELEASE OR CANCEL JOB OUTPUT'        MKB07350
+         $TEXT '                                                    '   MKB07360
+         $TEXT 'ENTER $O<Q|JX-X|SX-X|''JOBNAME''><,Q=CLASSES><,C>   '   MKB07370
+         $TEXT '                       <,R=RY|UX|LOCAL|NAME>        '   MKB07380
+         $TEXT '                       <,D=YYYDD|NN>.'                  MKB07390
+         $TEXT 'WHERE :                                             '   MKB07400
+         $TEXT '          Q=       ALL HELD OUTPUT DATA SETS IN THE '   MKB07410
+         $TEXT '                   SYSTEM ARE TO BE AFFECTED BY     '   MKB07420
+         $TEXT '                   THIS COMMAND.'                       MKB07430
+         $TEXT '          JX-X=    JOB NUMBER OR RANGE OF JOB        '  MKB07440
+         $TEXT '                   NUMBERS FOR WHICH THE HELD OUTPUT'   MKB07450
+         $TEXT '                   IS TO BE RELEASED OR CANCELLED.'     MKB07460
+         $TEXT '          SX-X=    THE SYSTEM TASK OR RANGE OF      '   MKB07470
+         $TEXT '                   SYSTEM TASKS FOR WHICH THE HELD  '   MKB07480
+         $TEXT '                   OUTPUT IS TO BE RELEASED OR      '   MKB07490
+         $TEXT '                   CANCELLED.'                          MKB07500
+         $TEXT '        ''JOBNAME''=THE NAME OF THE JOB FOR WHICH   '   MKB07510
+         $TEXT '                   THE OUTPUT IS TO BE RELEASED OR  '   MKB07520
+         $TEXT '                   CANCELLED.'                          MKB07530
+         $TEXT '        Q=CLASSES  THE OUTPUT CLASS(ES) A-Z OR 0-9. '   MKB07540
+         $TEXT '                   THE SYSTEM IS TO RELEASE OR      '   MKB07550
+         $TEXT '                   CANCEL THE OUTPUT IN THE         '   MKB07560
+         $TEXT '                   SPECIFIED CLASS(ES) FOR THE      '   MKB07570
+         $TEXT '                   SPECIFIED JOB(S) . IF THIS       '   MKB07580
+         $TEXT '                   OPERAND IS OMITTED,ALL OUTPUT    '   MKB07590
+         $TEXT '                   CLASSES WILL BE RELEASED OR      '   MKB07600
+         $TEXT '                   CANCELLED.'                          MKB07610
+         $TEXT '                   E.G.   $OQ,Q=ABCD'                   MKB07620
+         $TEXT '                           ALL HELD OUTPUT OF       '   MKB07630
+         $TEXT '                           CLASSES A,B,C,AND D IN   '   MKB07640
+         $TEXT '                           THE SYSTEM WILL BE       '   MKB07650
+         $TEXT '                           RELEASED.'                   MKB07660
+         $TEXT '                                                    '   MKB07670
+         $TEXT '          C=       THE SYSTEM IS TO * CANCEL * ALL  '   MKB07680
+         $TEXT '                   OF THE SELECTED HELD OUTPUT OR , '   MKB07690
+         $TEXT '                   IF Q=CLASSES IS SPECIFIED , THE  '   MKB07700
+         $TEXT '                   OUTPUT IN CERTAIN OUTPUT CLASSES.'   MKB07710
+         $TEXT '                   E.G.    $OQ,C,Q=TAB'                 MKB07720
+         $TEXT '                            THE SYSTEM WILL CANCEL  '   MKB07730
+         $TEXT '                            ALL HELD OUTPUT FOR THE '   MKB07740
+         $TEXT '                            CLASSES T,A AND B.'         MKB07750
+         $TEXT '                                                    '   MKB07760
+         $TEXT '          R=RY     THE DATA SETS ARE TO BE RELEASED '   MKB07770
+         $TEXT '                   TO THE SPECIFIED DESTINATION ;   '   MKB07780
+         $TEXT '                   WHERE : RY IS THE REMOTE DEVICE. '   MKB07790
+         $TEXT '          R=UX             UX IS A LOCAL DEVICE WITH'   MKB07800
+         $TEXT '                              SPECIAL ROUTING.'         MKB07810
+         $TEXT '          R=LOCAL          LOCAL(OR R0) , ANY LOCAL '   MKB07820
+         $TEXT '                              DEVICE WITH NORMAL    '   MKB07830
+         $TEXT '                              ROUTING.'                 MKB07840
+         $TEXT '          R=NAME           NAME IS A DESTINATION    '   MKB07850
+         $TEXT '                              WITH AN INSTALLATION- '   MKB07860
+         $TEXT '                              DEFINED NAME.'            MKB07870
+         $TEXT '          THIS OPERAND IS IGNORED IF * C * IS       '   MKB07880
+         $TEXT '          SPECIFIED.'                                   MKB07890
+         $TEXT '                   E.G.     $O''PAYROLL'',Q=ABC,R=RY'   MKB07900
+         $TEXT '                           THE CLASS A,B AND C FOR  '   MKB07910
+         $TEXT '                           THE JOB PAYROLL WILL BE  '   MKB07920
+         $TEXT '                           RELEASED TO REMOTE       '   MKB07930
+         $TEXT '                           TERMINAL Y .'                MKB07940
+         $TEXT '                     OUTPUT IN OTHER OUTPUT CLASSES '   MKB07950
+         $TEXT '                     WILL BE UNAFFECTED.'               MKB07960
+         $TEXT '                                                    '   MKB07970
+         $TEXT '          D=YYDDD  TO RELEASE OR CANCEL ONLY THE    '   MKB07980
+         $TEXT '                   HELD OUTPUT CREATED ON OR BEFORE '   MKB07990
+         $TEXT '                   YYDDD(JULIAN DATE).'                 MKB08000
+         $TEXT '          D=NN     TO RELEASE OR CANCEL THE HELD    '   MKB08010
+         $TEXT '                   OUTPUT WHICH WAS CREATED AT LEAST'   MKB08020
+         $TEXT '                   NN DAYS AGO . THE VALID RANGE    '   MKB08030
+         $TEXT '                   FOR NN IS 0 TO 99 .'                 MKB08040
+         $TEXT '                   E.G.     $OJ1-22,D=5'                MKB08050
+         $TEXT '                       ALL HELD OUTPUT FOR JOBS 1-22'   MKB08060
+         $TEXT '                       WHICH ARE AT LEAST 5 DAYS    '   MKB08070
+         $TEXT '                       OLD , WILL BE RELEASED.',       CMKB08080
+               STOP                                                     MKB08090
+         TITLE '$P  $P  $P  $P  $P  $P  $P  $P  $P  $P  $P  $P  $P '    MKB08100
+TEXTP    $TEXT '$P     PURGE       JES2,DEVICE,LINE,INITIATOR(S),   '   MKB08110
+         $TEXT '                   JOB,OUTPUT'                          MKB08120
+         $TEXT '                                                    '   MKB08130
+         $TEXT '   A)  JES2        BEFORE STOPPING THE SYSTEM , YOU '   MKB08140
+         $TEXT '             SHOULD ENTER : $PJES2 TO STOP ALL JES2 '   MKB08150
+         $TEXT '             PROCESSING . ONCE THE SYSTEM NOTIFIES  '   MKB08160
+         $TEXT '             YOU THAT ALL SYSTEM ACTIVITY HAS       '   MKB08170
+         $TEXT '             COMPLETED,YOU CAN ISSUE THE HALT EOD   '   MKB08180
+         $TEXT '             COMMAND (BY TYPING : Z EOD) TO ENSURE  '   MKB08190
+         $TEXT '             THAT IMPORTANT STATISTICS AND DATA     '   MKB08200
+         $TEXT '             RECORDS IN STORAGE ARE NOT PERMANENTLY '   MKB08210
+         $TEXT '             LOST.'                                     MKB08220
+         $TEXT '   B)  $P<RDRX|RY.RDX>  THE LOCAL|REMOTE READER WILL'   MKB08230
+         $TEXT '             COMPLETE ITS CURRENT ACTIVITY AND      '   MKB08240
+         $TEXT '             BECOME DRAINED.'                           MKB08250
+         $TEXT '   C)  $P<PRTX|PUNX|RY.PRX|RY.PUX>  THE LOCAL|REMOTE'   MKB08260
+         $TEXT '             PRINTER|PUNCH WILL BE DRAINED AFTER    '   MKB08270
+         $TEXT '             COMPLETING THE CURRENT OUTPUT.'            MKB08280
+         $TEXT '   D)  $PLNEX      TO STOP A REMOTE JOB ENTRY LINE  '   MKB08290
+         $TEXT '             AFTER COMPLETION OF ITS CURRENT        '   MKB08300
+         $TEXT '             ACTIVITY.'                                 MKB08310
+         $TEXT '   E)  $PIX-X      INITIATOR(S) WILL NOT START ANY  '   MKB08320
+         $TEXT '             NEW JOBS AFTER COMPLETING ITS CURRENT  '   MKB08330
+         $TEXT '             ACTIVITY , BUT IT WILL REMAIN IN THE   '   MKB08340
+         $TEXT '             SYSTEM.'                                   MKB08350
+         $TEXT '   F)  $PJXXX(,XXX,XXX)      -WILL STOP JOB(S),     '   MKB08360
+         $TEXT '       $PSXXXX(,XXXX,XXXX)   SYSTEM TASKS ,         '   MKB08370
+         $TEXT '       $PTXXXX(,XXXX,XXXX)   TIME SHARING USER(S),  '   MKB08380
+         $TEXT '             CANCEL ITS OUTPUT,AND REMOVE ALL TRACES'   MKB08390
+         $TEXT '             OF IT FROM THE SYSTEM AFTER THE CURRENT'   MKB08400
+         $TEXT '             ACTIVITY IS COMPLETE.'                     MKB08410
+         $TEXT '       NOTE :      STARTED TASKS AND TIME SHARING   '   MKB08420
+         $TEXT '       ====        USERS CAN ONLY BE STOPPED AFTER  '   MKB08430
+         $TEXT '       THEY HAVE COMPLETED EXECUTION. TO CANCEL SUCH'   MKB08440
+         $TEXT '       JOBS DURING EXECUTION,USE THE SYSTEM  CANCEL '   MKB08450
+         $TEXT '       COMMAND. BATCH JOBS THAT HAVE THE NON-       '   MKB08460
+         $TEXT '       CANCELLABLE ATTRIBUTE CANNOT BE CANCELLED    '   MKB08470
+         $TEXT '       DURING EXECUTION.'                               MKB08480
+         $TEXT '       $P''JOBNAME''   THE NAME OF THE JOB TO BE    '   MKB08490
+         $TEXT '             TERMINATED ; ITS OUTPUT WILL BE        '   MKB08500
+         $TEXT '             CANCELLED,AND ALL TRACES OF IT WILL BE '   MKB08510
+         $TEXT '             REMOVED FROM THE SYSTEM. IF MORE THAN  '   MKB08520
+         $TEXT '             ONE JOB WITH THE SPECIFIED NAME IS     '   MKB08530
+         $TEXT '             FOUND,NO ACTION IS TAKEN.'                 MKB08540
+         $TEXT '       $PJXXX        |                              '   MKB08550
+         $TEXT '       $PSXXXX       |                              '   MKB08560
+         $TEXT '                     |---> ,Q=CLASSES               '   MKB08570
+         $TEXT '       $PTXXXX       |                              '   MKB08580
+         $TEXT '       $P''JOBNAME'' |                              '   MKB08590
+         $TEXT '                         CANCEL ALL OUTPUT QUEUED IN'   MKB08600
+         $TEXT '               THE SPECIFIED OUTPUT CLASSES(FROM 1  '   MKB08610
+         $TEXT '               TO 8 CLASSES MAY BE SPECIFIED AT ONE '   MKB08620
+         $TEXT '               TIME). THE JOB WILL NOT BE CANCELLED '   MKB08630
+         $TEXT '               FROM THE SYSTEM IF DATA IN OTHER     '   MKB08640
+         $TEXT '               OUTPUT CLASSES REMAINS QUEUED FOR    '   MKB08650
+         $TEXT '               OUTPUT. THE Q=OPERAND IS IGNORED IF  '   MKB08660
+         $TEXT '               NO OUTPUT IS QUEUED FOR THE SPECIFIED'   MKB08670
+         $TEXT '               JOBS.'                                   MKB08680
+         $TEXT '   G)  $PQ<,R=RX|UX|LOCAL|NAME><,Q=CLASSES>'            MKB08690
+         $TEXT '                   CANCEL OUTPUT DATA SETS ON A     '   MKB08700
+         $TEXT '               CLASS AND/OR ROUTING BASIS.'             MKB08710
+         $TEXT '            Q =    ALL QUEUED OUTPUT DATA SETS NOT  '   MKB08720
+         $TEXT '               CURRENTLY ACTIVE ON AN OUTPUT DEVICE '   MKB08730
+         $TEXT '               WILL BE AFFECTED.'                       MKB08740
+         $TEXT '            R=RX,UX,LOCAL,OR NAME                   '   MKB08750
+         $TEXT '                   ONLY DATA SETS THAT ARE ROUTED TO'   MKB08760
+         $TEXT '               THE REMOTE TERMINAL (RX),A LOCAL     '   MKB08770
+         $TEXT '               DEVICE WITH SPECIAL ROUTING (UX),ANY '   MKB08780
+         $TEXT '               LOCAL DEVICE WITH NORMAL ROUTING (R0 '   MKB08790
+         $TEXT '               OR LOCAL),OR INSTALLATION-DEFINED    '   MKB08800
+         $TEXT '               DESTINATION (NAME) ARE CANCELLED.    '   MKB08810
+         $TEXT '               IF MORE THAN ONE ROUTING IS SPECIFIED'   MKB08820
+         $TEXT '               IN THE COMMAND,THE LAST ROUTING IS   '   MKB08830
+         $TEXT '               USED.'                                   MKB08840
+         $TEXT '            Q=CLASSES        THE OUTPUT CLASSES     '   MKB08850
+         $TEXT '               (A-Z AND 0-9). THE SYSTEM IS TO      '   MKB08860
+         $TEXT '               CANCEL ALL QUEUED OUTPUT DATA SETS IN'   MKB08870
+         $TEXT '               THE SPECIFIED CLASSES. IF MORE THAN  '   MKB08880
+         $TEXT '               ONE Q=OPERAND IS SPECIFIED,THE LAST  '   MKB08890
+         $TEXT '               Q=OPERAND ENTERED WILL BE USED. UP TO'   MKB08900
+         $TEXT '               8 CLASSES MAY BE SPECIFIED.'             MKB08910
+         $TEXT '                   E.G.     $PQ,Q=BFLO,R=RX         '   MKB08920
+         $TEXT '                        THE SYSTEM WILL DELETE ALL  '   MKB08930
+         $TEXT '                     OUTPUT DATA SETS OF CLASSES    '   MKB08940
+         $TEXT '                     B,F,L AND O WHOSE ROUTING IS   '   MKB08950
+         $TEXT '                     TO REMOTE STATION X .',           CMKB08960
+               STOP                                                     MKB08970
+         TITLE '$R  $R  $R  $R  $R  $R  $R  $R  $R  $R  $R  $R  $R '    MKB08980
+TEXTR    $TEXT '$R WILL ROUTE OUTPUT FROM ONE DESTINATION TO ANOTHER'   MKB08990
+         $TEXT 'ENTER $R<PRT|PUN|ALL><,<J=JNNNN|R=RXX>>,'               MKB09000
+         $TEXT '                   D=<RYY|LOCAL>'                       MKB09010
+         $TEXT '                   <,Q=CLASSES>'                        MKB09020
+         $TEXT 'WHERE J=JNNNN SPECIFIES A JOB NUMBER'                   MKB09030
+         $TEXT '      R=RXX SPECIFIES REMOTE NO. TO ROUTE FROM'         MKB09040
+         $TEXT '      D=RYY     "        "    "   "   "   TO'           MKB09050
+         $TEXT '                   ''LOCAL'' IS THE BXL COMPUTER ROOM'  MKB09060
+         $TEXT '      Q=OPTIONAL LIST OF OUTPUT CLASSES TO ROUTE'       MKB09070
+         $TEXT 'EXAMPLES: $RPRT,J=J1124,D=R14 ROUTE JOB 1124 TO RMT.14' MKB09080
+         $TEXT '          $RALL,R=R14,D=LOCAL      ALL RMT.14''S O/P'   MKB09090
+         $TEXT '*NOTE FOR OPERATIONS:- THE $RUN COMMAND HAS BEEN'       MKB09100
+         $TEXT ' REPLACED BY A STARTED TASK,SO TO START DUMMY ENTER:'   MKB09110
+         $TEXT '                   S R,,,J=DUMMY',STOP                  MKB09120
+         TITLE '$S  $S  $S  $S  $S  $S  $S  $S  $S  $S  $S  $S  $S '    MKB09130
+TEXTS    $TEXT '$S     START       JES2,DEVICE,INITIATOR,LINE,      '   MKB09140
+         $TEXT '                   AUTOMATIC COMMANDS'                  MKB09150
+         $TEXT '                                                    '   MKB09160
+         $TEXT 'ENTER  $S          TO START SYSTEM ACTIVITY         '   MKB09170
+         $TEXT '       $SRDRX      THE LOCAL READER TO BE STARTED   '   MKB09180
+         $TEXT '       $SPRTX      THE LOCAL PRINTER TO BE STARTED  '   MKB09190
+         $TEXT '       $SPUNX      THE LOCAL PUNCH TO BE STARTED    '   MKB09200
+         $TEXT '       $SRY.RDX    THE REMOTE READER TO BE STARTED  '   MKB09210
+         $TEXT '       $SRY.PRX    THE REMOTE PRINTER TO BE STARTED '   MKB09220
+         $TEXT '       $SRY.PUX    THE REMOTE PUNCH TO BE STARTED   '   MKB09230
+         $TEXT '       $SIN(-N)    THE INITIATOR(S) TO BE STARTED.  '   MKB09240
+         $TEXT '                   IF THE INITIATOR IDENTIFIER (N)  '   MKB09250
+         $TEXT '                   IS OMITTED,ONLY THOSE INITIATORS '   MKB09260
+         $TEXT '                   STOPPED BY A PRIOR  $ZI OR $PI   '   MKB09270
+         $TEXT '                   COMMAND WILL BE STARTED.'            MKB09280
+         $TEXT '       $SLNEX<,LNEX>...      TO START REMOTE JOB    '   MKB09290
+         $TEXT '                   ENTRY (RJE) LINES.'                  MKB09300
+         $TEXT '       - THE SYSTEM IS TO START PROCESSING ANY      '   MKB09310
+         $TEXT '       COMMANDS ENTERED FOR AUTOMATIC PROCESSING VIA'   MKB09320
+         $TEXT '       THE   $SA   COMMAND.',                          CMKB09330
+               STOP                                                     MKB09340
+         TITLE '$T  $T  $T  $T  $T  $T  $T  $T  $T  $T  $T  $T  $T '    MKB09350
+TEXTT    $TEXT '$T                 SET COMMAND'                         MKB09360
+         $TEXT '    $TA            SET AUTOMATIC COMMAND'               MKB09370
+         $TEXT '    $TC            SET CONSOLE LEVEL'                   MKB09380
+         $TEXT '    $TI            SET INITIATOR'                       MKB09390
+         $TEXT '    $TJ            SET JOB'                             MKB09400
+         $TEXT '    $TLNE          SET LINE'                            MKB09410
+         $TEXT '    $TM            SET CONSOLE ROUTING'                 MKB09420
+         $TEXT '    $TOSC          SET CONSOLE'                         MKB09430
+         $TEXT '    $TP            SET PRINTER OR PUNCH'                MKB09440
+         $TEXT '    $TRD           SET READER'                          MKB09450
+         $TEXT '    ENTER ?TX FOR DETAILS OF OPERAND X',STOP            MKB09460
+         TITLE '$TA $TA $TA $TA $TA $TA $TA $TA $TA $TA $TA $TA $TA'    MKB09470
+TEXTTA   $TEXT '$TA                SET AUTOMATIC COMMANDS'              MKB09480
+         $TEXT ' THESE COMMANDS ARE RESTRICTED TO THE SYSTEM'           MKB09490
+         $TEXT ' OPERATOR ONLY.'                                        MKB09500
+         $TEXT ' $TA(CCCC)<I=SSSS|T=HH.MM>,''COMMAND<;COMMAND..>'''     MKB09510
+         $TEXT '        <,L=<A|CC|CCA>>'                                MKB09520
+         $TEXT ' OR '                                                   MKB09530
+         $TEXT ' $TA(CCCC),CANCEL'                                      MKB09540
+         $TEXT ' WHERE : - '                                            MKB09550
+         $TEXT '    CCCC         = THE 4-CHARACTER IDENTIFIER OF THE'   MKB09560
+         $TEXT '                   COMMAND.IF A COMMAND WITH THIS ID.'  MKB09570
+         $TEXT '                   EXISTS IT IS MODIFIED,OTHERWISE A'   MKB09580
+         $TEXT '                   NEW COMMAND IS CREATED.'             MKB09590
+         $TEXT '    I            = THE INTERVAL,IN SECONDS,AT WHICH'    MKB09600
+         $TEXT '                   THE COMMAND WILL BE REPEATED'        MKB09610
+         $TEXT '                   30 SECONDS IS THE MINIMUM'           MKB09620
+         $TEXT '    T            = TIME OF DAY AT WHICH COMMAND'        MKB09630
+         $TEXT '                   SHOULD BE EXECUTED.MAX. IS'          MKB09640
+         $TEXT '                   99.59 HRS FROM LAST MIDNIGHT'        MKB09650
+         $TEXT '    COMMAND        IS THE REQUIRED JES2 COMMAND(S)'     MKB09660
+         $TEXT '    L=CCA          CONSOLE(CC) AND AREA(A) TO '         MKB09670
+         $TEXT '                   WHICH RESPONSE WILL BE ROUTED'       MKB09680
+         $TEXT '                   DEFAULT IS ENTRY CONSOLE'            MKB09690
+         $TEXT '    CANCEL         THE SPECIFIED ENTRY WILL BE DELETED' MKB09700
+         $TEXT ' EXAMPLES : -'                                          MKB09710
+         $TEXT ' $TA1,I=120,''$DA'' AUTOMATIC $DA EVERY 2 MINS.'        MKB09720
+         $TEXT ' $TA2,T=5.30,''$SLNES'' START LINES EVERY MORNING'      MKB09730
+         $TEXT ' $TA1,CANCEL       STOP THE ABOVE AUTOMATIC $DA',      CMKB09740
+               STOP                                                     MKB09750
+         TITLE '$TJ $TJ $TJ $TJ $TJ $TJ $TJ $TJ $TJ $TJ $TJ $TJ $TJ'    MKB09760
+TEXTTJ   $TEXT '$TJ                SET JOB'                             MKB09770
+         $TEXT ' $T<JXXX|SXXXX|TXXXX>   TO SET OR RESET THE BASE    '   MKB09780
+         $TEXT '                   JES2 JOB NUMBERS.'                   MKB09790
+         $TEXT '   E.G.   $TJ10    THE NEXT JOB IN THE SYSTEM WILL  '   MKB09800
+         $TEXT '                   BE ASSIGNED JOB NUMBER  10 .     '   MKB09810
+         $TEXT '                   IF JOB 10 IS ALREADY EXISTING    '   MKB09820
+         $TEXT '                   IN THE SYSTEM,THE JOB WILL BE    '   MKB09830
+         $TEXT '                   ASSIGNED JOB NUMBER 11 .',          CMKB09840
+               STOP                                                     MKB09850
+         TITLE '$TL $TL $TL $TL $TL $TL $TL $TL $TL $TL $TL $TL $TL'    MKB09860
+TEXTTL   $TEXT '$TLNE              SET LINE'                            MKB09870
+         $TEXT '   $TLNEX,E=<Y|N>                                   '   MKB09880
+         $TEXT '                   E=Y   THE SYSTEM WILL ISSUE A    '   MKB09890
+         $TEXT '                       MESSAGE ON THE MASTER CONSOLE'   MKB09900
+         $TEXT '                       EVERY TIME A CHANNEL END IS  '   MKB09910
+         $TEXT '                       DETECTED OR FOR EACH EVENT   '   MKB09920
+         $TEXT '                       DETECTED ON THE SPECIFIED    '   MKB09930
+         $TEXT '                       LINE . '                         MKB09940
+         $TEXT '                   E=N   THE SYSTEM IS TO DISCONTINUE'  MKB09950
+         $TEXT '                       THE MONITORING OF CHANNEL END '  MKB09960
+         $TEXT '                       COMPLETIONS OR SYSTEMS NETWORK'  MKB09970
+         $TEXT '                       ARCHITECTURE(SNA) EVENTS.',     CMKB09980
+               STOP                                                     MKB09990
+         TITLE '$TO $TO $TO $TO $TO $TO $TO $TO $TO $TO $TO $TO $TO'    MKB10000
+TEXTTO   $TEXT '$TOSC              SET CONSOLE'                         MKB10010
+         $TEXT '   $T<OSCX|RY.CON><,D=T|J|M>'                           MKB10020
+         $TEXT '         OSCX      THE SYSTEM CONSOLE FOR WHICH YOU '   MKB10030
+         $TEXT '                   WANT TO ALTER MESSAGE INFORMATION.'  MKB10040
+         $TEXT '         RY.CON    THE REMOTE CONSOLE FOR WHICH YOU '   MKB10050
+         $TEXT '                   WANT TO ALTER MESSAGE INFORMATION.'  MKB10060
+         $TEXT '         D=T       THE SYSTEM IS TO DISPLAY THE     '   MKB10070
+         $TEXT '                   TIME AND JOB IDENTIFICATION      '   MKB10080
+         $TEXT '                   NUMBER ON ALL SYSTEM MESSAGES. '     MKB10090
+         $TEXT '         D=J       THE SYSTEM IS TO DISPLAY THE JOB '   MKB10100
+         $TEXT '                   IDENTIFICATION NUMBER ON ALL     '   MKB10110
+         $TEXT '                   SYSTEM MESSAGES. '                   MKB10120
+         $TEXT '         D=M       THE SYSTEM IS TO DISPLAY ONLY    '   MKB10130
+         $TEXT '                   THE MESSAGE TEXT ON ALL SYSTEM   '   MKB10140
+         $TEXT '                   MESSAGES. ',                        CMKB10150
+               STOP                                                     MKB10160
+         TITLE '$TP $TP $TP $TP $TP $TP $TP $TP $TP $TP $TP $TP $TP'    MKB10170
+TEXTTP   $TEXT '$TP                SET PRINTER OR PUNCH'                MKB10180
+         $TEXT '   $T<PRTX|RY.PRX|PUNX|RY.PUX><,R=<RY|UX|LOCAL|NAME>>'  MKB10190
+         $TEXT '   USE THIS COMMAND TO ALTER THE ROUTE CODE OF A     '  MKB10200
+         $TEXT '   PRINTER|PUNCH DEVICE. '                              MKB10210
+         $TEXT '         PRTX|RY.PRX   THE LOCAL|REMOTE PRINTER THAT '  MKB10220
+         $TEXT '                       IS AFFECTED. '                   MKB10230
+         $TEXT '         PUNX|RY.PUX   THE LOCAL|REMOTE PUNCH THAT   '  MKB10240
+         $TEXT '                       IS AFFECTED. '                   MKB10250
+         $TEXT '         R=RY          REMOTE WORKSTATION. '            MKB10260
+         $TEXT '         R=UX          LOCAL DEVICE WITH SPECIAL     '  MKB10270
+         $TEXT '                       ROUTING. '                       MKB10280
+         $TEXT '         R=LOCAL OR R0      LOCAL DEVICE WITH NORMAL '  MKB10290
+         $TEXT '                       ROUTING. '                       MKB10300
+         $TEXT '         R=NAME        A DESTINATION WITH A SYMBOLIC '  MKB10310
+         $TEXT '                       NAME. '                          MKB10320
+         $TEXT '    THE OUTPUT QUEUED FOR THE SPECIFIED DESTINATION  '  MKB10330
+         $TEXT '    IS TO BE PROCESSED BY THE SPECIFIED PRINTER-     '  MKB10340
+         $TEXT '    PUNCH. '                                            MKB10350
+         $TEXT '         EXAMPLES :                                  '  MKB10360
+         $TEXT '               $TPRT1,R=U1     LOCAL PRINTER 1 WILL  '  MKB10370
+         $TEXT '                    PRINT THE OUTPUT THAT WAS TO BE  '  MKB10380
+         $TEXT '                    ROUTED TO LOCAL DEVICES WITH     '  MKB10390
+         $TEXT '                    ROUTING SET TO 1. '                 MKB10400
+         $TEXT '                                                     '  MKB10410
+         $TEXT '               $TR2.PU1,R=R4   REMOTE PUNCH 1 AT     '  MKB10420
+         $TEXT '                    WORKSTATION 2 WILL PUNCH THE     '  MKB10430
+         $TEXT '                    OUTPUT THAT WAS TO BE ROUTED TO  '  MKB10440
+         $TEXT '                    REMOTE DEVICE 4. '                 CMKB10450
+               STOP                                                     MKB10460
+         TITLE '$TR $TR $TR $TR $TR $TR $TR $TR $TR $TR $TR $TR $TR'    MKB10470
+TEXTTR   $TEXT '$TRD               SET READER'                          MKB10480
+         $TEXT '   $T<RDRX|RY.RDX><,P=<RY|UX|LOCAL|NAME>>            '  MKB10490
+         $TEXT '                  <,U=<RY|UX|LOCAL|NAME>>            '  MKB10500
+         $TEXT '   COMMAND TO RESET THE DEFAULT DESTINATION ROUTINGS '  MKB10510
+         $TEXT '   FOR JOBS ENTERED IN A LOCAL OR REMOTE READER. '      MKB10520
+         $TEXT '         RDRX|RY.RDX   LOCAL|REMOTE READER THAT IS   '  MKB10530
+         $TEXT '                       AFFECTED. '                      MKB10540
+         $TEXT '         THE PRINT OUTPUT FOR ALL JOBS READ BY THE   '  MKB10550
+         $TEXT '         SPECIFIED READER IS TO BE ROUTED TO THIS    '  MKB10560
+         $TEXT '         DEFAULT DESTINATION :                       '  MKB10570
+         $TEXT '         P=RY       REMOTE WORKSTATION '                MKB10580
+         $TEXT '         P=UX       LOCAL DEVICE WITH SPECIAL        '  MKB10590
+         $TEXT '                    ROUTING. '                          MKB10600
+         $TEXT '         P=LOCAL OR R0     LOCAL DEVICE WITH NORMAL  '  MKB10610
+         $TEXT '                    ROUTING. '                          MKB10620
+         $TEXT '         P=NAME     A DESTINATION WITH A SYMBOLIC    '  MKB10630
+         $TEXT '                    NAME. '                             MKB10640
+         $TEXT '         THE PUNCH OUTPUT FOR ALL JOBS READ BY THE   '  MKB10650
+         $TEXT '         SPECIFIED READER IS TO BE ROUTED TO THIS    '  MKB10660
+         $TEXT '         DEFAULT DESTINATION :                       '  MKB10670
+         $TEXT '         U=RY       REMOTE WORKSTATION               '  MKB10680
+         $TEXT '         U=UX       LOCAL DEVICE WITH SPECIAL        '  MKB10690
+         $TEXT '                    ROUTING. '                          MKB10700
+         $TEXT '         U=LOCAL OR R0     LOCAL DEVICE WITH NORMAL  '  MKB10710
+         $TEXT '                    ROUTING. '                          MKB10720
+         $TEXT '         U=NAME     A DESTINATION WITH A SYMBOLIC    '  MKB10730
+         $TEXT '                    NAME. '                             MKB10740
+         $TEXT '         EXAMPLES :                                  '  MKB10750
+         $TEXT '               $TRDR1,P=U1     THE PRINT OUTPUT OF   '  MKB10760
+         $TEXT '                    ANY JOB READ AT LOCAL READER 1   '  MKB10770
+         $TEXT '                    WILL BE ROUTED TO LOCAL DEVICES  '  MKB10780
+         $TEXT '                    WITH ROUTING SET TO 1. '            MKB10790
+         $TEXT '               $TR4.RD1,U=R0   THE PUNCH OUTPUT OF   '  MKB10800
+         $TEXT '                    ANY JOB READ AT READER 1 IN      '  MKB10810
+         $TEXT '                    REMOTE WORKSTATION 4 WILL BE     '  MKB10820
+         $TEXT '                    ROUTED TO LOCAL DEVICES WITH     '  MKB10830
+         $TEXT '                    NORMAL ROUTING. '                  CMKB10840
+               STOP                                                     MKB10850
+         TITLE '$VS $VS $VS $VS $VS $VS $VS $VS $VS $VS $VS $VS $VS'    MKB10860
+TEXTVS   $TEXT '$VS    COMMAND     SUBMIT COMMAND TO MVS'               MKB10870
+         $TEXT '                                                    '   MKB10880
+         $TEXT '   THIS COMMAND IS TO SUBMIT A SYSTEM COMMAND FROM  '   MKB10890
+         $TEXT '   A CONSOLE WITH JES2 SYSTEM AUTHORITY.'               MKB10900
+         $TEXT '                                                    '   MKB10910
+         $TEXT '       $VS,''COMMAND''<,''COMMAND''>...'                MKB10920
+         $TEXT '                   ''COMMAND'' : THE SYSTEM COMMAND '   MKB10930
+         $TEXT '                   TO BE SUBMITTED VIA JES2.'           MKB10940
+         $TEXT '       EXAMPLE :                                    '   MKB10950
+         $TEXT '           $VS,''V (234,235,236),OFFLINE'',''D A''  '   MKB10960
+         $TEXT '                   THE  VARY AND DISPLAY  COMMANDS  '   MKB10970
+         $TEXT '                   WILL BE SUBMITTED TO THE SYSTEM  '   MKB10980
+         $TEXT '                   FOR PROCESSING.',                   CMKB10990
+               STOP                                                     MKB11000
+         TITLE '$Z  $Z  $Z  $Z  $Z  $Z  $Z  $Z  $Z  $Z  $Z  $Z  $Z '    MKB11010
+TEXTZ    $TEXT '$Z     STOP        DEVICE,INITIATOR,AUTO-COMMAND'       MKB11020
+         $TEXT '                                                    '   MKB11030
+         $TEXT '       $ZRDRX      TEMPORARILY HALT LOCAL READER    '   MKB11040
+         $TEXT '       $ZPRTX                             PRINTER   '   MKB11050
+         $TEXT '       $ZPUNX                             PUNCH     '   MKB11060
+         $TEXT '       $ZRY.RDX    TEMPORARILY HALT REMOTE READER   '   MKB11070
+         $TEXT '       $ZRY.PRX                            PRINTER  '   MKB11080
+         $TEXT '       $ZRY.PUX                            PUNCH    '   MKB11090
+         $TEXT '   READER/PRINTER/PUNCH WILL STOP IMMEDIATELY AND   '   MKB11100
+         $TEXT '   WILL RESUME AT THE SAME POINT WHEN A SUBSEQUENT  '   MKB11110
+         $TEXT '   $S<RDRX|RY.RDX|PRTX|RY.PRX|PUNX|RY.PUX> COMMAND  '   MKB11120
+         $TEXT '   IS ISSUED . '                                        MKB11130
+         $TEXT '       $ZIN(-N)    THE INITIATOR(S) TO BE HALTED    '   MKB11140
+         $TEXT '                   AFTER COMPLETING THEIR CURRENT   '   MKB11150
+         $TEXT '                   ACTIVITY. IF THE INITIATOR       '   MKB11160
+         $TEXT '                   IDENTIFIER (N) IS NOT SPECIFIED ,'   MKB11170
+         $TEXT '                   ALL INITIATORS WILL BE HALTED.'      MKB11180
+         $TEXT '       $ZA     THE SYSTEM WILL SUSPEND ALL AUTOMATIC'   MKB11190
+         $TEXT '               COMMAND PROCESSING .',                  CMKB11200
+               STOP                                                     MKB11210
+         END                                                            MKB11220

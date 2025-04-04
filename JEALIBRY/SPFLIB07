@@ -1,0 +1,173 @@
+//JEASPF07 JOB (1330,5),'J ABBEY',CLASS=N,NOTIFY=JEA
+//SPFLIB07 EXEC LIBRARYN,FILE=TESTLIB,BLKSIZE=800
+-OPT NOLIST,EXEC
+-DLM SPFLIB07,SPF7
+-ADD SPFLIB07,SPF7
+-PGMR JEABBEY
+-DESC SPF/LIBRARYN INTERFACE - ALLOC OS DSN
+***********************************************************************
+*                     S P F L I B 0 7                                 *
+*                                                                     *
+*            THIS ROUTINE IS A COMMON SERVICE UTILITY FOR THE         *
+*        MONSANTO SPF/LIBRARYN INTERFACE ROUTINE. IS IS INVOKED TO    *
+*        ALLOCATE THE OS/SPF DATA SET WITH A DDNAME OF @@OSDSN        *
+*        READY FOR PROCESSING BY THE PARTICULAR FUNCTION              *
+*        REQUESTED BY THE TSO/SPF USER.                               *
+*            ON ENTRY TO THIS ROUTINE, REGISTER 1 CONTAINS THE        *
+*        ADDRESS OF THE COMMON DATA AREA.                             *
+*            THE ROUTINE OPERATES BY PERFORMING THE FOLLOWING         *
+*        THE FOLLOWING STEPS:                                         *
+*                                                                     *
+*        1)    BUILD A COMPOSITE DSN FROM THAT DATA.                  *
+*        2)    FREE THE DDNAME '@@OSDSN' IN CASE IT IS ALREADY        *
+*              ALLOCATED FOR SOME REASON.                             *
+*        3)    ALLOCATE THE FILE AND CHECK ITS SUCCESS. SET A         *
+*              RETURN CODE ACCORDINGLY.                               *
+*                                                                     *
+***********************************************************************
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING
+***********************************************************************
+         SPACE 2
+SPFLIB07 ZCSECT
+         LR    REG10,REG1          ADDRESS OF COMMON WORK AREA
+         USING DATAAREA,REG10      ADDRESSABILITY FOR IT
+         XC    ALLCCODE,ALLCCODE   CLEAR THE RETURN CODE
+         MVC   OSDSN2,SPACES       CLEAR DSNAME BUILD AREA
+         EJECT
+***********************************************************************
+*        BUILD THE DATA SET NAME FOR THE OUTPUT OS FILE
+***********************************************************************
+         SPACE 2
+         CLC   DSNAME,SPACES       TEST FOR AN ALTERNATE DATA SET NAME
+         BE    GOTSPFNM            GO BUILD SPF LIBRARY NAME
+         MVC   OSDSN2(L'DSNAME),DSNAME  MOVE HIS ENTERED DATA
+         B     COMPRSIT            GO COMPRESS THE NAME IF NECCESSARY
+         SPACE 2
+GOTSPFNM DS    0H
+         MVC   OSDSN2(L'PROJECT),PROJECT PART1 OF DATA SET NAME
+         MVC   OSDSN2+L'PROJECT+1(L'LIBRARY),LIBRARY PART2 OF DATA SET
+         MVC   OSDSN2+L'PROJECT+L'LIBRARY+2(L'TYPE),TYPE PART3 OF DATA
+         MVC   OSDSN2+L'PROJECT+L'LIBRARY+L'TYPE+3(L'MEMBER),MEMBER
+         MVI   OSDSN2+L'PROJECT,C'.' INSERT DELIMITER
+         MVI   OSDSN2+L'PROJECT+L'LIBRARY+1,C'.' INSERT DELIMITER
+         CLC   MEMBER,SPACES       MEMBER NAME OMITTED ?
+         BE    COMPRSIT            YES. NO BRACKETS NEEDED
+         MVI   OSDSN2+L'PROJECT+L'LIBRARY+L'TYPE+2,C'(' OPEN BRKTS
+         MVI   OSDSN2+L'PROJECT+L'LIBRARY+L'TYPE+L'MEMBER+3,C')' CLOSEM
+COMPRSIT DS    0H
+         LA    REG14,OSDSN2        START ADDRESS OF THE COMPOSITE NAME
+         LA    REG15,L'OSDSN2      LENGTH OF IT
+SHFTLOOP EQU   *
+         CLI   0(REG14),C' '       ANY PADDING IN THERE
+         BNE   NOSHIFT             NO. GO FETCH NEXT BYTE
+         LR    REG4,REG14          RECEIVING ADDRESS
+         LR    REG5,REG15          LENGTH OF RECEIVING FIELD
+         LA    REG6,1(REG14)       SOURCE ADDRESS
+         LR    REG7,REG15          LENGTH OF SOURCE DATA
+         BCTR  REG7,0              SUBTRACT TO LOSE A BYTE
+         ICM   REG7,8,=C' '        AND REPLACE IT AT END C. BLANK
+         MVCL  REG4,REG6           GO.
+         B     SHIFTED             GO INCREMENT LOOP
+NOSHIFT  EQU   *
+         LA    REG14,1(REG14)      INCREMENT TO NEXT BYTE
+SHIFTED  EQU   *
+         BCT   REG15,SHFTLOOP      AND PROCESS EACH BYTE
+         CLC   VOLSER,SPACES       WAS A VOLUME SERIAL ENTERED ?
+         BE    BLDNMXIT            NO. EXIT FROM BUILD NAME ROUTINE
+         CLC   DSNAME,SPACES       IS HE WORKING ON AN 'OTHER' FILE ?
+         BE    BLDNMXIT            NO. EXIT FROM BUILD NAME ROUTINE
+         MVC   0(L'VOLTEXT,REG14),VOLTEXT SET UP 'VOL=SER='
+         MVC   L'VOLTEXT(L'VOLSER,REG14),VOLSER AND THEN MOVE IN VOLSER
+BLDNMXIT EQU   *
+         B     ALLOCIT             GO ALLOCATE THE FILE
+         EJECT
+***********************************************************************
+*        FREE THE DDNAME '@@OSDSN' IN CASE ALLOCATED ALREADY
+***********************************************************************
+         SPACE 2
+ALLOCIT  DS    0H
+         LINK  EP=UT501,PARAM=(OSDSJCL,DFUNCT,RETCODE,X1,X2),VL=1,     X
+               MF=(E,CALLLIST)
+         EJECT
+***********************************************************************
+*        ALLOCATE THE SPF LIBRARY DATA SET
+***********************************************************************
+         SPACE 2
+         LINK  EP=UT501,PARAM=(OSDSJCL,AFUNCT,RETCODE,X1,X2),VL=1,     X
+               MF=(E,CALLLIST)
+         CLI   RETCODE,0           WAS ALLOCATION SUCCESSFUL ?
+         BNE   BADALLOC            NO. ALLOCATION FAILED
+         EJECT
+***********************************************************************
+*        CHECK FOR PS/PO AND MEMBER NAME CONSISTENCY
+***********************************************************************
+         SPACE 2
+         NI    WRKFLAG2,255-OSDSPS-OSDSPO RESET LOGIC FLAG
+         LA    REG2,OSOUTPUT       ADDRESS OF THE DCB
+         RDJFCB ((2))              READ THE JFCB
+         OBTAIN CAMLIST            READ THE DSCB FOR IT
+         TM    DS1DSORG,X'02'      PARTITIONED DATA SET ?
+         BO    CHKMEMBR            YES. GO CHECK MEMBER NAME
+         TM    DS1DSORG,X'40'      SEQUENTIAL DATA SET ?
+         BZ    BADDSORG            NO. GO SIGNAL ERROR CONDITION
+         CLC   JFCBELNM,SPACES     FOR PS THAT BETTER BE BLANK
+         BNE   MEMANDPS            MEMBER NAME AND PS NOT VALID
+         OI    WRKFLAG2,OSDSPS     SIGNAL SEQUENTIAL DATASET
+         B     CHKEXIT1            AND RETURN TO CALLER
+CHKMEMBR EQU   *
+         OI    WRKFLAG2,OSDSPO     SIGNAL PARTITIONED ORGANISATION
+         CLC   JFCBELNM,SPACES     NEED A MAMBER NAME FOR PO
+         BNE   CHKEXIT1            GOT ONE. RETURN TO CALLER
+         MVC   JFCBELNM,PGMNAME    TAKE LIBRARYN NAME IF NONE
+         OI    JFCBIND1,JFCPDS     SIGNAL MEMBER OF PDS
+CHKEXIT1 EQU   *
+         EJECT
+***********************************************************************
+*        RETURN TO THE CALLER OF THIS ROUTINE
+***********************************************************************
+         SPACE 2
+PGMEXIT  DS    0H
+         LH    REG15,ALLCCODE      LOAD THE RETURN CODE
+         ZRETURN RC=(15)           RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        ERROR ROUTINES
+***********************************************************************
+         SPACE 2
+BADALLOC DS    0H
+         LA    REG15,4             DATA SET IS UNAVAILABLE
+         STH   REG15,ALLCCODE      SAVE IN RETURN CODE AREA
+         B     PGMEXIT             RETURN TO CALLER
+BADDSORG DS    0H
+         LA    REG15,8             DSORG IS NOT VALID FOR SPF
+         STH   REG15,ALLCCODE      SAVE IN RETURN CODE AREA
+         B     PGMEXIT             RETURN TO CALLER
+MEMANDPS DS    0H
+         LA    REG15,12            MEMBER NAME CODED WITH SEQ. FILE
+         STH   REG15,ALLCCODE      SAVE IN RETURN CODE AREA
+         B     PGMEXIT             RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        CONSTANTS AND WORK AREAS
+***********************************************************************
+         SPACE 2
+SPACES   DC    CL80' '             COMPARISON TEST CONSTANT
+VOLTEXT  DC    C',VOL=SER='        USED TO ADD VOLSER TO DSNAME AREA
+         LTORG
+         DATAAREA
+         END
+-EMOD
+-END
+//SPFLIB07 EXEC ASMFCL,L=H,LOPT=RENT
+//SYSLIB DD DSN=JEA.MACLIB,DISP=SHR
+// DD DSN=SYS1.MACLIB,DISP=SHR
+// DD DSN=SYS2.MACLIB,DISP=SHR
+// DD DSN=SYS1.AMODGEN,DISP=SHR
+//SYSIN DD DSN=&&OSJOB,DISP=(OLD,DELETE)
+//LKED.SYSLMOD DD DSN=JEA.LOADLIB,DISP=SHR
+ INCLUDE SYSLMOD(SPFLIB01)
+ ENTRY SPFLIB01
+ NAME SPFLIB01(R)
+/*

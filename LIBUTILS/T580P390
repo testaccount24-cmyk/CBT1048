@@ -1,0 +1,157 @@
+         TITLE 'RECORD SCAN AND REPLACE ROUTINE'
+***********************************************************************
+*        T580P390
+*
+*            THIS ROUTINE WILL READ AND COPY THE CONTENTS OF A FILE OF
+*        RECORDS USING DDNAMES 'SYSUT1' AND 'SYSUT2' RESPECTIVELY.
+*            DURING THE COPY, THE PROGRAM WILL SEARCH FOR A PARTICULAR
+*        VALUE AS SPECIFIED IN THE PARM FIELD. WHEN A FIELD OF THIS
+*        VALUE IS FOUND, IT IS REPLACED BY THE VALUE SPECIFIED IN
+*        THE SECOND PARM FIELD. FOR EXAMPLE:
+*
+*        // EXEC PGM=T580P390,PARM='78100,78200'
+*
+*        WILL CAUSE ALL OCCURRENCES OF THE VALUE '78100' IN THE FILE
+*        TO BE REPLACED BY THE VALUE '78200'.
+*            THE DCB ATTRIBUTES FOR THE OUTPUT FILE MUST BE SPECIFIED
+*        IN THE JCL.
+*
+***********************************************************************
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING
+***********************************************************************
+         SPACE 2
+T580P390 ZCSECT
+         EJECT
+***********************************************************************
+*        LOCATE AND CONVERT THE PARM FIELD
+***********************************************************************
+         SPACE 2
+         L     REG1,0(REG1)        ADDRESS OF JCL PARMS
+         LH    REG15,0(REG1)       LENGTH OF DATA SUPPLIED
+         PRINT NOGEN
+         SCAN DATA=2(REG1),LENGTH=(REG15),DELIM=(','),RETAREA=CHAIN
+         PRINT GEN
+         L     REG2,CHAIN          ADDRESS OF FIRST SCAN BLOCK
+         XR    REG15,REG15         CLEAR WORK REGISTER
+         IC    REG15,4(REG2)       LENGTH OF FIRST FIELD
+         L     REG14,4(REG2)       ADDRESS OF FIRST FIELD
+         BCT   REG15,*+16          SUBTRACT 1 FOR EXECUTE
+         MVC   OEBCDIC(0),0(REG14) SAVE THE EBCDIC VALUE
+         PACK  DBLWORD,0(0,REG14)  PACK THE INPUT DATA
+         EX    REG15,*-6           EXECUTE THE PACK
+         EX    REG15,*-16          AND THE MOVE
+         MVC   OLD,DBLWORD+4       SAVE THE OLD VALUE
+         L     REG2,0(REG2)        LOAD ADDRESS OF NEXT BLOCK
+         IC    REG15,4(REG2)       LENGTH OF NEXT FIELD
+         L     REG14,4(REG2)       ADDRESS OF NEXT FIELD
+         BCT   REG15,*+16          SUBTRACT 1 FOR EXECUTE
+         MVC   NEBCDIC(0),0(REG14) AND SAVE THE EBCDIC VALUE
+         PACK  DBLWORD,0(0,REG14)  PACK THE SECOND FIELD
+         EX    REG15,*-6           EXECUTE THE PACK
+         EX    REG15,*-16          AND EXECUTE THE MOVE
+         MVC   NEW,DBLWORD+4       AND SAVE THE NEW VALUE
+         EJECT
+***********************************************************************
+*        OPEN THE FILES
+***********************************************************************
+         SPACE 2
+         OPEN  (IN,,OUT,OUTPUT)
+         LH    REG1,IN+X'52'       GET LENGTH OF A RECORD
+         GETMAIN R,LV=(1)          GETMAIN CORE FOR A BUFFER
+         STM   REG0,REG1,GETREGS   SAVE REGS FOR FREEMAIN
+         LR    REG3,REG1           SAVE ADDRESS OF BUFFER
+         EJECT
+***********************************************************************
+*        PROCESS ALL THE RECORDS IN THE FILE
+***********************************************************************
+         SPACE 2
+IOLOOP   EQU   *
+         GET   IN,(3)              OBTAIN AN INPUT RECORD
+         BAL   REG11,OSCHECK       GO CHECK FOR SPECIAL RECORDS
+         BAL   REG11,CHECKIT       GO PROCESS IT
+         PUT   OUT,(3)             AND REWRITE TO OUTPUT FILE
+         B     IOLOOP              AND CONTINUE FOR WHOLE FILE
+         EJECT
+***********************************************************************
+*        CLOSE FILES AND RETURN
+***********************************************************************
+         SPACE 2
+EODAD    DS    0H
+         CLOSE (IN,,OUT)           CLOSE THE FILES
+         LM    REG0,REG1,GETREGS   RELOAD GETMAIN PARAMETER REGISTERS
+         FREEMAIN R,LV=(0),A=(1)   FREE UP THE BUFFER CORE
+         ZRETURN ,                 AND RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        CHECK FOR RECORD TYPES 204,205,234,235 AND PROCESS THEM
+***********************************************************************
+         SPACE 2
+OSCHECK  DS    0H
+         TRT   5(1,REG3),OSTABLE   TEST FOR SPECIAL RECORD
+         BZ    0(REG11)            NO. NORMAL. SO RETURN IMMEDIATELY
+         CLC   127(3,REG3),OLD+1   MAKE SPECIAL TEST
+         BNE   TSTFAIL1            NO. TRY NEXT
+         MVC   127(3,REG3),NEW+1   YES REPLACE WITH NEW
+TSTFAIL1 EQU   *
+         CLC   191(3,REG3),OLD+1   MAKE SPECIAL TEST
+         BNE   TSTFAIL2            NO. TRY NEXT
+         MVC   191(3,REG3),NEW+1   YES. REPLACE WITH NEW VALUE
+TSTFAIL2 EQU   *
+         CLC   45(5,REG3),OEBCDIC  MAKE SPECIAL TEST
+         BNE   TSTFAIL3            NO. TRY NEXT
+         MVC   45(5,REG3),NEBCDIC  YES. REPLACE WITH NEW VALUE
+TSTFAIL3 EQU   *
+         CLC   77(5,REG3),OEBCDIC  MAKE SPECIAL TEST
+         BNE   TSTFAIL4            NO. TRY NEXT
+         MVC   77(5,REG3),NEBCDIC  YES. REPLACE WITH NEW VALUE
+TSTFAIL4 EQU   *
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        SCAN THE RECORD FOR THE REQUESTED FIELD
+***********************************************************************
+         SPACE 2
+CHECKIT  DS    0H
+         LR    REG6,REG3           START ADDRESS FOR SCAN
+         LH    REG5,0(REG3)        LENGTH OF THIS RECORD
+         AR    REG5,REG3           ADDRESS OF END OF RECORD
+         SH    REG5,ENDLENTH       GET LAST POSITION TO CHK
+         LA    REG4,1              LOAD INCREMENT FOR LOOP
+CHKLOOP  EQU   *
+         CLC   OLD,0(REG6)         THIS IS A FIELD WE'RE LOOKING FOR
+         BNE   NOSWAP              NO. BYPASS THE EXCHANGE
+         MVC   0(L'NEW,REG6),NEW   REPLACE IT WITH NEW VALUE
+         LA    REG6,4(REG6)        STEP OVER FIELD CHANGED
+NOSWAP   EQU   *
+         BXLE  REG6,REG4,CHKLOOP   LOOP DOWN ENTIRE RECORD
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        CONSTANTS AND WORK AREAS
+***********************************************************************
+         SPACE 2
+DBLWORD  DS    D                   WORK AREA FOR PACK INSTR
+GETREGS  DS    2F                  SAVE AREA FOR GETMAIN REGISTERS
+OLD      DS    F                   VALUE TO LOOK FOR
+NEW      DS    F                   WHAT TO REPLACE IT WITH
+CHAIN    DS    20D                 WORK AREA FOR SCAN MACRO
+OEBCDIC  DS    CL5                 OLD VALUE IN EBCDIC
+NEBCDIC  DS    CL5                 NEW VALUE IN EBCDIC
+OSTABLE  DC    256X'00'            TRANSLATE AND TEST TABLE
+         ORG   OSTABLE+204
+         DC    X'FF'               SIGNAL THIS IS SPECIAL RECORD
+         ORG   OSTABLE+205
+         DC    X'FF'               SIGNAL THIS IS SPECIAL RECORD
+         ORG   OSTABLE+234
+         DC    X'FF'               SIGNAL THIS IS SPECIAL RECORD
+         ORG   OSTABLE+235
+         DC    X'FF'               SIGNAL THIS IS SPECIAL RECORD
+         ORG   ,                   RESET ORIGIN
+ENDLENTH DC    H'4'                SUBTRACTED TO GET BXLE CORRECT
+         PRINT NOGEN
+IN       DCB   DDNAME=SYSUT1,DSORG=PS,MACRF=GM,EODAD=EODAD
+OUT      DCB   DDNAME=SYSUT2,DSORG=PS,MACRF=PM
+         PRINT GEN
+         END

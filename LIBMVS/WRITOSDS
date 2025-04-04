@@ -1,0 +1,165 @@
+         TITLE 'WRITE OUT AN OS DATA SET'
+***********************************************************************
+*                          W R I T O S D S
+*
+*            THIS ROUTINE WILL WRITE OUT FROM THE EDIT DATA STACK ALL
+*        OF AN OS DATA SET.
+*
+*            ON ENTRY TO THIS ROUTINE, REG1 WILL ADDRESS A PARAMETER
+*        LIST OF ONE ENTRY:
+*
+*        1)    ADDRESS OF THE USER PARAMETER AREA
+*
+*            ON EXIT FROM THIS ROUTINE, THE DATA SET WILL HAVE BEEN
+*        LOADED INTO THE REQUIRED DATA SET.
+*
+***********************************************************************
+         EJECT
+***********************************************************************
+*        WRITE AN OS DATA SET
+***********************************************************************
+         SPACE 2
+WRITOSDS ZCSECT GETMAIN=1
+         L     REG9,0(REG1)        LOAD ADDRESS OF USER PARM AREA
+         USING USERPARM,REG9       ADDRESSABILITY
+         L     REG10,UPEDITWK      LOAD ADDRESS OF EDIT WORK AREA
+         USING WDSECT,REG10        ADDRESSABILITY
+         EJECT
+***********************************************************************
+*        FIRST ALLOCATE THE DATA SET TO BE READ
+***********************************************************************
+         SPACE 2
+         LINK  MF=(E,UT501D),SF=(E,UT501S),                            X
+               PARAM=(JCLDATA,FUNCTION,RETCODE,A,B)
+         CLI   RETCODE,0            ALLOCATION SATISFACTORY
+         BNE   SFERROR              HELP. NOTHING THERE TO SAVE ON
+         EJECT
+***********************************************************************
+*        OPEN THE DCB FOR THE OUTPUT FILE
+***********************************************************************
+         SPACE 2
+         MVC   SYSUT1(96),DCBMASK  INITIALISE THE DCB TO BE SURE
+         OPEN  (SYSUT1,OUTPUT),MF=(E,OPENLIST) OPEN OUTPUT FILE
+         LA    REG4,DUMMY          ADDRESS OF FIRST RECORD AREA
+         EJECT
+***********************************************************************
+*        OUTPUT THE DATA STACK TO THE FILE
+***********************************************************************
+         SPACE 2
+OUTLOOP  EQU   *
+         L     REG4,4(REG4)       ADDRESS OF FIRST/NEXT STACK ENTRY
+         CLI   0(REG4),X'EE'       IS THAT END OF FILE
+         BE    ENDITALL            YES. FINISH THE OUTPUT
+         L     REG2,0(REG4)        ADDRESS OF THE RECORD
+         PUT   SYSUT1              OBTAIN AN OUTPUT BUFFER
+         LR    REG6,REG1           ADDRESS OF THE BUFFER
+         LH    REG3,LRECL          LENGTH OF THE DATA
+         LR    REG7,REG3           SECOND LENGTH REGISTER
+         CLC   HEX,=C'YES'         ARE WE WORKING HEX ?
+         BNE   NOHEX3              NO. CARRY ON
+         LH    REG1,LRECL          LOAD LENGTH OF DATA
+         LA    REG0,0(REG1,REG2)   END OF UNPACKED DATA
+         LR    REG14,REG6          START OF RESULT DATA
+         LR    REG15,REG2          START OF SOURCE DATA
+PACKLOOP EQU   *
+         MVC   DBLWORD+4(2),0(REG15) MOVE OUT A COUPLE OF CHARACTERS
+         TR    DBLWORD+4(2),HEXTABL2 MAKE ALL FIELDS VALID FOR PACK
+         PACK  DBLWORD(2),DBLWORD+4(3) PACK TO GIVE VALID HEX
+         MVC   0(1,REG14),DBLWORD  AND MOVE TO OUT AREA
+         LA    REG14,1(REG14)      ADDRESS NEXT RESULT BYTE
+         LA    REG15,2(REG15)      ADDRESS NEXT SOURCE FIELD
+         CR    REG15,REG0          END OF INPUT DATA ?
+         BL    PACKLOOP            NO. PROCESS ENTIRE RECORD
+         B     OUTLOOP             RETURN FOR NEXT RECORD
+NOHEX3   EQU   *
+         MVCL  REG6,REG2           MOVE RECORD TO OUTPUT BUFFER
+         B     OUTLOOP             PROCESS ALL THE DATA
+         EJECT
+***********************************************************************
+*        CLOSE THE FILE AND FREE THE BUFFER POOL
+***********************************************************************
+         SPACE 2
+ENDITALL EQU   *
+         CLOSE (SYSUT1),MF=(E,CLOSLIST)  CLOSE THE OUTPUT FILE
+         FREEPOOL SYSUT1           FREE UP THE BUFFER POOL
+         EJECT
+***********************************************************************
+*        DEALLOCATE THE FILE
+***********************************************************************
+         SPACE 2
+         LINK  MF=(E,UT501D),SF=(E,UT501S),PARAM=(,FUNCTIO2,,,,)
+         EJECT
+***********************************************************************
+*        RETURN TO CALLER
+***********************************************************************
+         SPACE 2
+EXITPGM  ZRETURN
+         EJECT
+***********************************************************************
+*        ERROR ROUTINES
+***********************************************************************
+         SPACE 2
+SFERROR  DS    0H
+         ZRETURN RC=4              ALLOCATION FAILURE RETURN CODE
+         EJECT
+***********************************************************************
+*        DATA CONTROL BLOCK EXIT ROUTINES                             *
+***********************************************************************
+         SPACE 2
+EXLST    DS    0F
+         DC    X'11'               DCB ABEND EXIT
+         DC    AL3(DCBABEND)       ADDRESS OF THE ABEND EXIT
+         DC    X'85'
+         DC    AL3(*+3)
+         PUSH  USING
+         USING *,REG15
+         USING IHADCB,REG1         ADDRESSABILITY FOR DCB
+         NC    DCBLRECL,DCBLRECL   IS THERE AN LRECL CODED ?
+         BNZ   LRECLOK             YES. ACCEPT IT THEN
+         LA    REG2,80             OTHERWISE LOAD A SUITABLE DEFAULT
+         STH   REG2,DCBLRECL       AND STORE IT IT THE DCB
+LRECLOK  EQU   *
+         NC    DCBBLKSI,DCBBLKSI   ANY BLOCKSIZE AVAILABLE
+         BNZ   NOMOVELR            YES. ACCEPT IT THEN
+         MVC   DCBBLKSI,DCBLRECL   NO. THEN TAKE LRECL AS BLOCKSIZE
+NOMOVELR BR    REG14               AND RETURN TO CALLER
+         POP   USING               RESTORE ORIGINAL ADDRESSABILITY
+         EJECT
+***********************************************************************
+*        DCB ABEND EXIT ROUTINE
+***********************************************************************
+         SPACE 2
+         PUSH  USING               SAVE OLD ADDRESSABILITY
+         USING *,REG12             ADDRESSABILITY FOR THIS ROUTINE
+DCBABEND DS    0H
+         LR    REG12,REG15         LOAD BASE ADDRESS REGISTER
+         CLC   0(2,REG1),=X'0130'  OPEN TYPE EXIT
+         BNE   *+8                 NO. THEN TAKE ABEND
+         MVI   3(REG1),X'04'       TURN ON REQUEST TO IGNORE
+         BR    REG14               RETURN TO SYSTEM
+         POP   USING               RESTORE OLD ADDRESSABILITY
+         EJECT
+***********************************************************************
+*        CONSTANTS NOT CHANGED BY THE PROGRAM
+***********************************************************************
+         SPACE 2
+UT501S   LINK  EP=UT501,SF=L
+FUNCTION DC    C'A'                FUNCTIUON CODE FOR UT501
+FUNCTIO2 DC    C'D'                FUNCTION CODE FOR UT501
+DCBMASK  DCB   DDNAME=SYSUT1,DSORG=PS,MACRF=PL,EXLST=EXLST
+HEXTABL2 DC    256AL1(*-HEXTABL2)  AND HEX BACK TO GOOD DATA
+         ORG   HEXTABL2+C'A'
+         DC    X'FAFBFCFDFEFF'     MAKE HEX LETTERS LOOK GOOD
+         ORG
+         EJECT
+***********************************************************************
+*        DSECTS
+***********************************************************************
+         SPACE 2
+         USERPARM
+         SPACE 2
+         EDITWK2
+         SPACE 2
+         PRINT NOGEN
+         DCBD DSORG=QS,DEVD=DA
+         END

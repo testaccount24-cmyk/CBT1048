@@ -1,0 +1,1500 @@
+T375P80  START 0
+         PRINT ON,GEN
+         SPACE 2
+*******************************************************************
+*                                                                 *
+*        PROGRAM ID. :             T375P80                        *
+*                                                                 *
+*        DATE WRITTEN :            JANUARY 1976                   *
+*                                                                 *
+*        AUTHOR :                  J. NOLS                        *
+*                                                                 *
+*        LOCATION :                EUROPEAN COMPUTER CENTER       *
+*                                                                 *
+*******************************************************************
+         SPACE 3
+*******************************************************************
+*                                                                 *
+*        PURPOSE                                                  *
+*       ---------                                                 *
+*        MAINTENANCE PROGRAM FOR THE DIRECT ACCESS FILE USED      *
+*         FOR THE DATA TRANSFER FROM THE IBM 3750 SWITCHING SYSTEM*
+*         TO THE IBM 370 DP SYSTEM.                               *
+*                                                                 *
+*         1. INITIALIZE THE DA FILE.                              *
+*         2. SCRATCH THE CONTAIN OF FILE.                         *
+*         3. PRINT INFORMATIONS FROM THE CONTROL BLOCK OF DA FILE.*
+*         4. UNLOAD THE DA FILE ON PS OUTPUT FILE                 *
+*             AND COPY DA FILE ON BACK-UP FILE                    *
+*         5. RESTORE THE DA FILE 'DATA COLLECTION' OR 'ACR' WITH  *
+*             DATA FROM BACK-UP FILE                              *
+*                                                                 *
+*******************************************************************
+         EJECT
+*******************************************************************
+*                                                                 *
+*        LIMITATION                                               *
+*       ------------                                              *
+*        THE NUMBER OF BLOCKS ALLOCATED TO THE DA FILES TO BE     *
+*         PROCESSED MUST BE ALWAYS SPECIFIED IN PARM OF EXEC CARD *
+*         ('NOBLKS=').                                            *
+*                                                                 *
+*          'NOBLKS'  FOR 3330 = NUMBER OF TRACKS ALLOCATED X 33   *
+*                                                                 *
+*******************************************************************
+         SPACE 1
+*******************************************************************
+*                                                                 *
+*    INPUT DATA :                                                 *
+*                                                                 *
+*        PARM OF EXEC CARD                                        *
+*       ==================                                        *
+*                                                                 *
+*        NOBLKS=NNNN :                                            *
+*                                                                 *
+*              NNNN : IS ONE TO FOUR NUMERIC DIGITS DEFINING      *
+*                     THE NUMBER OF BLOCKS IN THE DA FILE TO BE   *
+*                      PROCESSED.                                 *
+*                                                                 *
+*        MODE=INIT                                                *
+*        MODE=SCRATCH                                             *
+*        MODE=PRINT                                               *
+*        MODE=UNLOAD                                              *
+*        MODE=RESTORE1 'DATA COLLECTION'                          *
+*        MODE=RESTORE2 'ACR'                                      *
+*                                                                 *
+*        COMETDA  STATEMENT                                       *
+*       ===================                                       *
+*                                                                 *
+*        THIS MANDATORY DD STATEMENT DEFINES THE DIRECT ACCESS D/S*
+*         TO BE PROCESSED.                                        *
+*                                                                 *
+*        SYSPRINT STATEMENT                                       *
+*       ===================                                       *
+*                                                                 *
+*        THIS OPTIONAL DD STATEMENT DEFINES THE MESSAGE           *
+*         DATA SET FOR THIS PROGRAM.                              *
+*                                                                 *
+*        SYSUT2 STATEMENT                                         *
+*       ==================                                        *
+*                                                                 *
+*        THIS DD STATEMENT DEFINES THE OUTPUT DATA SET FOR        *
+*         UNLOAD OPERATION, AND MUST BE SUPPLIED IF THIS          *
+*         OPERATION IS REQUESTED.                                 *
+*                                                                 *
+*******************************************************************
+***********************************************************************
+*    INPUT DATA : (CONT'D)                                            *
+*                                                                     *
+*        SYSUT1 STATEMENT                                             *
+*       ==================                                            *
+*                                                                     *
+*        THIS DD STATEMENT DEFINES THE INPUT DATA SET FOR RESTORE     *
+*         OPERATION CONTAINING A SECURITY COPY OF THE TWO DA FILES.   *
+*         THIS SECURITY COPY MUST HAVE BEEN TAKEN AT THE LAST         *
+*         UNLOAD OPERATION.                                           *
+*                                                                     *
+*                                                                     *
+*        SYSUT3 STATEMENT                                             *
+*       ==================                                            *
+*                                                                     *
+*        THIS DD STATEMENT DEFINES THE OUTPUT DATA SET FOR UNLOAD     *
+*         OPERATION, ON WHICH T375P80 WRITES THE ACR RECORDS          *
+*         TRANSFERRED AND CONVERTED IN 'COMET' FORMAT.                *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+*         IMPORTANT : 'UNLOAD' OPERATION, COPY THE DA FILE ON         *
+*                     SECURITY D/S (SYSUT2). TO USE THE OPTION        *
+*                     'RESTORE1,2' IT IS NECESSARY TO COPY BOTH       *
+*                     'DATA COLLECTION' AND 'ACR' IN THE SAME         *
+*                     DATA SET.                                       *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         EJECT
+*******************************************************************
+*        REGISTER EQUATES AND USAGES.                             *
+*******************************************************************
+         SPACE 1
+R0       EQU   0    SVC COMMUNICATIONS AND WORK REGISTER
+R1       EQU   1    SVC COMMUNICATIONS AND WORK REGISTER
+R2       EQU   2    SUB-ROUTINE CONTROL INFORMATION AND WORK REG.
+R3       EQU   3    WORK REGISTER
+R4       EQU   4    BAL RETURN ADDRESS
+R5       EQU   5    SYSPRINT BUFFER ADDRESS
+R6       EQU   6    COMETDA  BUFFER ADDRESS
+R7       EQU   7
+R8       EQU   8
+R9       EQU   9    RELATIVE BLOCK NUMBER OF LAST BLOCK READ/WRITTEN
+R10      EQU   10
+R11      EQU   11   WORK REGISTER
+R12      EQU   12   BASE REGISTER 2
+R13      EQU   13   SAVE AREA POINTER / BASE REGISTER 1
+R14      EQU   14   BALR RETURN ADDRESS
+R15      EQU   15   BALR ROUTINE ADDRESS AND WORK REGISTER
+         SPACE 3
+*******************************************************************
+*        HOUSEKEEPING                                             *
+*******************************************************************
+         SPACE 1
+         PGMIN EQUATES=NO,USING=(R13,R12)   ESTABLISH ADDRESSABILITY
+         PRINT NOGEN               SUPPRESS MACRO EXPANSION
+         SPACE 3
+*******************************************************************
+*        SAVE ADDRESS AND LENGTH OF PARM OF EXEC CARD             *
+*******************************************************************
+         SPACE 1
+         L     R1,0(R1)            LOAD ADDRESS OF PARM INTO R1
+         MVC   PARMLGTH+2(2),0(R1) STORE LENGTH OF PARM INFO'S
+         LA    R1,2(R1)            GET ADDRESS OF PARM INFO'S
+         ST    R1,PARMADDR         STORE ADDRESS OF PARM INFO'S
+         EJECT
+*******************************************************************
+*        TEST WHICH ARE THE DD'S SUPPLIED, AND OPEN SYSPRINT D/S IF   *
+*         PRESENT.                                                    *
+*******************************************************************
+         SPACE 1
+         OI    PRINTSW,DDINT       INDICATE DD SYSPRINT INTEREST
+         OI    UT3SW,DDINT         INDICATE DD SYSUT3 INTEREST
+         OI    R80SW,DDINT         INDICATE DD T375R80 INTEREST
+         LA    R3,MAXDS            ESTABLISH LOOP
+         LA    R2,DCBTABLE         POINT R2 AT DCB TABLE
+         BAL   R4,TESTIOT          GO TEST IF DD STATEMENT PRESENT
+         BAL   R4,OPEN             GO OPEN DATA SET
+         LA    R2,DCBNTRY(R2)      POINT AT NEXT TABLE ENTRY
+         BCT   R3,*-12             PROCESS NEXT DATA SET
+         SPACE 3
+*******************************************************************
+*        TFST IF 'COMETDA' DD STATEMENT IS PRESENT (MANDATORY)   *
+*         AND WRITE HEADING ON SYSPRINT IF PRESENT                *
+*******************************************************************
+         SPACE 1
+         LA    R5,BLOCK            LOAD PSEUDO BUFFER ADDRESS
+         BAL   R4,PRINT            ACQUIRE FIRST SYSPRINT BUFFER ADDR
+         UT458 METHOD=LADE         EXTRACT IPL DATE AND TIME
+         MVC   IPLMTH,UTMM         SAVE IPL MONTH NUMBER
+         MVC   IPLYEAR,UTYY        SAVE IPL YEAR NUMBER
+         PACK  PACKEDEC,IPLYEAR    PACK IPL YEAR
+         SP    PACKEDEC,ONE        SUB ONE FROM IPL YEAR NUMBER
+         UNPK  IPLYYM1,PACKEDEC+6(2) UNPACK YEAR - 1
+         OI    IPLYYM1+2,SIGN      FORCE SIGN TO 'F'
+         MVC   DATER80(9),UTREPORT MOVE DATE TO HEAD LINE 1 OF T375R80
+         MVC   TIMER80(2),UTHHMMSS MOVE TIME (HH) TO HEAD LINE 1
+         MVC   TIMER80+3(2),UTHHMMSS+2 MOVE TIME (MM) TO HEAD LINE 1
+         MVC   DATE(9),UTREPORT         MOVE DATE (DD MMM YY),
+         MVC   TIME(2),UTHHMMSS         MOVE TIME (HH) AND
+         MVC   TIME+3(2),UTHHMMSS+2     MOVE TIME (SS) TO HEAD LINE
+         MVC   1(L'LINE01,R5),LINE01    MOVE HEAD LINE 1 TO SYSPRINT,
+         MVI   0(R5),SPCE2AFT           ESTABLISH SPACE 2 AFTER AND
+         BAL   R4,PRINT                 WRITE.
+         TM    COMETSW,DDPRES     TEST IF 'COMETDA' (DD) PRESENT
+         BO    GC1                 BRANCH IF YES
+         WTO   'T375P80 ** COMETDA  DD STATEMENT MISSING ***'
+         MVC   10(L'LINE03,R5),LINE03   MOVE SAME MESSAGE TO SYSPRINT,
+         MVI   0(R5),SPCE1AFT           ESTABLISH SPACE 1 AFTER W. AND
+         BAL   R4,PRINT                 WRITE.
+         B     PROCBYP             GO BYPASS PROC.
+GC1      EQU   *
+         B     PARMFLD
+         EJECT
+***********************************************************************
+*        TEST IF 'SYSUT1' DD STATEMENT IS PRESENT AND IF YES OPEN     *
+***********************************************************************
+         SPACE 1
+TESTUT1  SUBIN SAVE=(R4)
+         TM    UT1SW,DDPRES        TEST IF 'SYSUT1' DD PRESENT
+         BO    OPENUT1             BRANCH IF YES
+         WTO   'T375P80 ** SYSUT1 DD STATEMENT MISSING   ***'
+         MVC   10(L'LINE19,R5),LINE19   MOVE SAME MESSAGE TO SYSPRINT
+         MVI   0(R5),SPCE1AFT      ESTABLISH SPACE 1 AFTER
+         BAL   R4,PRINT            WRITE
+         B     PROCBYP             GO BYPASS PROC.
+OPENUT1  OI    UT1SW,DDINT         INDICATE DD INTEREST
+         LA    R2,UT1SW            GET ADDRESS OF DCB ADDRESS
+         BAL   R4,OPEN             GO OPEN FILE
+         SUBOUT RESTORE=(R4)       RETURN TO CALLER
+         SPACE 2
+***********************************************************************
+*        TEST IF 'SYSUT2' DD STATEMENT IS PRESENT AND IF YES OPEN.    *
+***********************************************************************
+         SPACE 1
+TESTUT2  SUBIN SAVE=(R4)
+         TM    UT2SW,DDPRES   TEST IF 'SYSUT2' DD PRESENT
+         BO    OPENUT2        BRANCH IF YES
+         WTO   'T375P80 ** SYSUT2 DD STATEMENT MISSING   ***'
+         MVC   10(L'LINE13,R5),LINE13   MOVE SAME MESSAGE TO SYSPRINT
+         MVI   0(R5),SPCE1AFT           ESTABLISH SPACE 1 AFTER W. AND
+         BAL   R4,PRINT                 WRITE
+         B     PROCBYP                  GO BYPASS PROC.
+OPENUT2  OI    UT2SW,DDINT         INDICATE DD INTEREST
+         LA    R2,UT2SW            GET ADDRESS OF DCB ADDRESS
+         BAL   R4,OPEN             GO OPEN D/S
+         SUBOUT RESTORE=(R4)       RETURN TO CALLER
+         SPACE 2
+         EJECT
+***********************************************************************
+*        PROCESS PARM FIELD                                           *
+***********************************************************************
+         SPACE 1
+PARMFLD  L     R11,PARMADDR        LOAD PARM FIELD ADDRESS
+         L     R7,PARMLGTH        LOAD PARM FIELD LENGTH
+         LTR   R7,R7             TEST IF PARM PRESENT
+         BZ    PARMISS             ERROR IF NO
+         MVC   5(L'LINE02,R5),LINE02    MOVE SUB-HEADING TO SYSPRINT
+         BCTR  R7,0                    DECREMENT PARM LENGTH FOR 'EX'
+         EX    R7,MPARM                EXECUTE MOVE INSTR.
+         B     *+10                     SKIP NEXT INSTR.
+MPARM    MVC   5+L'LINE02(0,R5),0(R11)  MOVE PARM FIELD TO SYSPRINT
+         LA    R7,1(R7)               ADJ. LENGTH OF PARM
+         MVI   0(R5),SPCE3AFT           ESTABLISH SPACE 3AFTER W.
+         BAL   R4,PRINT                 AND WRITE
+PARMLOOP CLC   0(7,R11),=C'NOBLKS='  TEST FOR 'NOBLKS='
+         BE    NOBLKS                BRANCH IF YES
+         CLC   0(5,R11),=C'MODE='    TEST FOR 'MODE='
+         BE    MODE                  BRANCH IF YES
+         B     PARMER                ERROR IN PARM IF BRANCH
+         EJECT
+***********************************************************************
+*        PROCESS PARM FIELD, KEYWORD 'NOBLKS='                        *
+***********************************************************************
+         SPACE 1
+NOBLKS   NOP   PARMER              SWITCH FIRST
+         MVI   *-3,X'F0'                     TIME
+         LA    R11,7(R11)          INCR. POINTER PAST 'NOBLKS='
+         S     R7,=F'7'           DECR. LENGTH OF PARM
+         BZ    PARMER              ERROR IF ZERO
+         LA    R1,4                ESTABLISH LOOP
+         XR    R2,R2               ZEROISE R2
+         CR    R7,R1              TEST IF L'PARM > 4
+         BH    GC2                 BRANCH IF YES
+         LR    R2,R7              LOAD L'PARM INTO R2
+         B     CO1
+GC2      LR    R2,R11              LOAD ADDRESS OF PARM INTO R2
+LOOP1    LA    R2,1(R2)            INCR. ONE FOR TEST COMMA
+         CLI   0(R2),COMMA         TEST FOR COMMA
+         BE    CF1                 BRANCH IF YES
+         BCT   R1,LOOP1            NO - GO TEST NEXT POS.
+         B     PARMER              ERROR IN PARM
+CF1      SR    R2,R11              GET LENGTH OF NOBLKS
+CO1      A     R2,=F'112'          LENGTH OF 1ST OPERAND FOR 'EX' INST.
+         BCTR  R2,0                DECR. LENGTH 2ND OPERAND FOR 'EX' I.
+         EX    R2,PNOBLKS          EXECUTE PACK INSTRUCTION
+         B     *+10                SKIP NEXT INSTRUCTION
+PNOBLKS  PACK  DECIMAL(0),0(0,R11) PACK NUMBER OF BLOCKS,
+         CVB   R10,DECIMAL         CONVERT TO BINARY AND
+         ST    R10,NOBLKSBY        STORE VALUE IN WA NOBLKSBY
+         LA    R2,1(R2)            RESTORE ORIGINAL
+         S     R2,=F'112'                       LENGTH
+         SR    R7,R2              SUB. L'NOBLKS FROM REST PARM LENGTH
+         BZ    PARMEND             IF ZERO GO TO END
+         LA    R2,1(R2)            NO ZERO INCR. L'NOBLKS OF ONE ','
+         AR    R11,R2              INCREMENT POINTER OF PARM FIELD
+         BCTR  R7,0               DECREMENT REST OF LENGTH
+         B     PARMLOOP            GO PROCESS NEXT KEYWORD
+         EJECT
+***********************************************************************
+*        PROCESS PARM FIELD, KEYWORD 'MODE='                          *
+***********************************************************************
+         SPACE 1
+MODE     NOP   PARMER              SWITCH FIRST
+         MVI   *-3,X'F0'                    TIME
+         LA    R11,5(R11)          INCR. POINTER PAST 'MODE='
+         S     R7,=F'5'           DECR. LENGTH
+         CLC   0(4,R11),=C'INIT'   TEST IF REQUEST FOR INIT. MODE
+         BNE   SCR                 BRANCH IF NO
+         MVI   PROC,C'I'           YES -
+         LA    R2,4                LOAD LENGTH OF 'INIT'
+         B     CO2
+SCR      CLC   0(7,R11),=C'SCRATCH' TEST IF REQUEST FOR SCRATCH MODE
+         BNE   PRT                 BRANCH IF NO
+         MVI   PROC,C'S'           YES -
+         LA    R2,7                LOAD LENGTH OF 'SCRATCH'
+         B     CO2
+PRT      CLC   0(5,R11),=C'PRINT'  TEST IF REQUEST FOR PRINT MODE
+         BNE   UNL                 BRANCH IF NO
+         MVI   PROC,C'P'           YES -
+         LA    R2,5                LOAD LENGTH OF 'PRINT'
+         B     CO2
+UNL      CLC   0(6,R11),=C'UNLOAD' TEST IF REQUEST FOR UNLOAD MODE
+         BNE   RST1                BRANCH IF NO
+         MVI   PROC,C'U'           YES -
+         LA    R2,6                LOAD LENGTH OF 'UNLOAD'
+         B     CO2
+RST1     CLC   0(8,R11),=C'RESTORE1' TEST IF REQUEST FOR RESTORE 1 MODE
+         BNE   RST2                  BRANCH IF NO
+         MVI   PROC,C'1'             YES - MOVE 1 TO PROCEDURE INDICATR
+         LA    R2,8                  LOAD LENTGH OF 'RESTORE1'
+         B     CO2
+RST2     CLC   0(8,R11),=C'RESTORE2' TEST IF REQUEST FOR RESTORE 2 MODE
+         BNE   PARMER                BRANCH IF NO
+         MVI   PROC,C'2'             YES - MOVE 2 TO PROCEDURE INDICATR
+         LA    R2,8                  LOAD LENGTH
+         B     CO2
+CO2      SR    R7,R2              SUB LENGTH OF MODE OPERAND
+         BZ    PARMEND             IF ZERO GO TO END
+         LA    R11,0(R2,R11)       INCR. POINTER FOR TEST COMMA
+         CLI   0(R11),COMMA        TEST FOR COMMA
+         BNE   PARMER              ERROR IF NO COMMA
+         BCTR  R7,0               DECR. LENGTH ','
+         LA    R11,1(R11)          INCR. POINTER PAST ','
+         B     PARMLOOP            GO PROCESS NEXT KEYWORD
+         EJECT
+***********************************************************************
+*        PROCESS PARM FIELD (END)                                     *
+***********************************************************************
+         SPACE 1
+PARMISS  WTO   'T375P80 ** PARM OF EXEC CARD MISSING     ***'
+         MVC   10(L'LINE08,R5),LINE08   MOVE SAME MESSAGE TO SYSPRINT,
+         MVI   0(R5),SPCE1AFT           ESTABLISH SPACE 1 AFTER W. AND
+         BAL   R4,PRINT                 WRITE
+         B     PROCBYP             GO BYPASS PROC
+PARMER   WTO   'T375P80 ** ERROR IN PARM OF EXEC CARD    ***'
+         MVC   10(L'LINE04,R5),LINE04   MOVE SAME MESSAGE TO SYSPRINT,
+         MVI   0(R5),SPCE1AFT           ESTABLISH SPACE 1 AFTER W. AND
+         BAL   R4,PRINT                 WRITE
+PROCBYP  MVC   COMPCODE,COND16     SET CONDITION CODE TO 16
+         WTO   'T375P80 ** PROCESSING BYPASSED           ***'
+         MVC   10(L'LINE05,R5),LINE05   MOVE SAME MESSAGE TO SYSPRINT
+         MVI   0(R5),SPCE3AFT           ESTABLISH SPACE 3 AFTER W. AND
+         BAL   R4,PRINT                 WRITE.
+         B     JOBEND                   FORCE TERMINATION OF THIS PGM
+PARMEND  EQU   *
+         CLC   NOBLKSBY,ZEROWORD        TEST IF NUMBER OF BLOCKS SUPPL.
+         BNE   TMODE                    BRANCH IF YES
+         WTO   'T375P80 ** KEYWORD ''NOBLKS'' MISSING      ***'
+         MVC   10(L'LINE06,R5),LINE06   MOVE SAME MESSAGE TO SYSPRINT,
+         MVI   0(R5),SPCE1AFT           ESTABLISH SPACE 1 AFTER W. AND
+         BAL   R4,PRINT                 WRITE.
+         B     PROCBYP                  GO BYPASS PROC.
+TMODE    CLI   PROC,C'I'    TEST IF REQUEST FOR MODE :
+         BE    INIT                     INITIALIZE DA FILE
+         OI    COMETSW,DDINT      INDICATE DD INTEREST
+         LA    R2,COMETSW         GET ADDRESS OF DCB ADDRESS
+         BAL   R4,OPEN             GO OPEN D/S
+         CLI   PROC,C'S'
+         BE    SCRATCH                  SCRATCH DA FILE
+         CLI   PROC,C'P'
+         BE    PRINTR                   PRINT STATUS DA FILE
+         CLI   PROC,C'U'           UNLOAD DA FILE
+         BNE   *+12                NO - SKIP NEXT TWO INSTRUCTIONS
+         BAL   R4,TESTUT2          GO TEST IF SYSUT2 DD PRESENT
+         B     UNLOAD
+         CLI   PROC,C'1'           RESTORE DA FILE 'DATA COLLECTION'
+         BNE   *+12                NO - SKIP NEXT TWO INSTRUCTIONS
+         BAL   R4,TESTUT1          YES - GO T. IF 'SYSUT1' DD PRESENT
+         B     RESTORE
+         CLI   PROC,C'2'           RESTORE DA FILE 'ACR'
+         BE    *-12                YES -
+         WTO   'T375P80 ** KEYWORD ''MODE'' MISSING        ***'
+         MVC   10(L'LINE07,R5),LINE07   MOVE SAME MESSAGE TO SYSPRINT,
+         MVI   0(R5),SPCE1AFT           ESTABLISH SPACE 1 AFTER W. AND
+         BAL   R4,PRINT                 WRITE
+         B     PROCBYP                  GO BYPASS PROC.
+         TITLE 'INITIALIZE DIRECT ACCESS FILE'
+***********************************************************************
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+INIT     MVC   COMETSW+12(8),=C'OUTPUT  '   INDICATE IS OUTPUT
+         MVC   COMETSW+1(3),LDCB+1     EXCHANGE DCB ADDRESS
+         OI    COMETSW,DDINT      INDICATE DD INTEREST
+         LA    R2,COMETSW         GET ADDRESS OF DCB ADDRESS
+         BAL   R4,OPEN             GO OPEN D/S
+         XC    BLOCK,BLOCK         ZEROISE BLOCK WORK AREA
+         MVI   BLOCK+3,X'01'       INDICATE IN THE CONTROL BLOCK, THE
+*                                   NEXT FIRST BLOCK AVAILABLE FOR
+*                                   THE DATA TRANSFER PROGRAM.
+         MVC   BLOCK+235(4),=C'INIT' INDICATE ALSO IN THE CONTROL BLOCK
+         MVC   BLOCK+240(9),UTREPORT  THE MODE, DATE AND TIME OF THE
+         MVC   BLOCK+250(6),UTHHMMSS  LAST OPERATION EXECUTED BY THIS
+*                                     PROGRAM
+LINIT    WRITE DECB0,SF,COMETLD,BLOCK,256
+         CHECK DECB0
+         AP    CTCOMET,ONE        ADD ONE TO RECORD COUNTER
+         XC    BLOCK,BLOCK         ZEROISE BLOCK WA
+         BCT   R10,LINIT           GO WRITE NEXT BLOCK
+         B     JOBEND              GO TO END
+         TITLE 'CLEAN DIRECT ACCESS FILE'
+***********************************************************************
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+SCRATCH  XR    R9,R9               = 1ST RELATIVE BLOCK NUMBER (0)
+         BAL   R4,READ             GO READ CONTROL BLOCK
+         XC    BLOCK(4),BLOCK      ZEROISE POINTER
+         MVI   BLOCK+3,X'01'       INDICATE IN THE CONTROL BLOCK, THE
+*                                   NEXT FIRST BLOCK AVAILABLE FOR
+*                                   THE DATA TRANSFER PROGRAM.
+         MVC   BLOCK+232(7),=C'SCRATCH' INDICATE ALSO IN THE CONTROL
+         MVC   BLOCK+240(9),UTREPORT    BLOCK,THE MODE, DATE AND TIME
+         MVC   BLOCK+250(6),UTHHMMSS    OF THE LAST OPERATION EXECUTED
+*                                       BY THIS PROGRAM.
+LSCRATCH ST    R9,RBA              STORE REL. BLOCK NO TO BE WRITTEN
+         BAL   R4,WRITE            GO WRITE
+         XC    BLOCK,BLOCK         ZEROISE BLOCK WA
+         B     PRINTR              GO TO PRINT ROUTINE
+*        NEXT FOUR INSTRUCTIONS ARE NOT USED (WRITE LOW VALUES IN
+*                                  ALL BLOCKS OF THE FILE).
+         LA    R9,1(R9)            INCREMENT RELATIVE BLOCK NUMBER
+         BCT   R10,LSCRATCH        GO WRITE NEXT BLOCK
+         B     PRINTR              GO TO PRINT ROUTINE
+         EJECT
+***********************************************************************
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+UNLOAD   XR    R9,R9               = 1ST RELATIVE BLOCK NUMBER (0)
+         BAL   R4,READ             GO READ CONTROL BLOCK
+         LA    R3,BLOCK            LOAD ADDRESS OF BLOCK WA
+         BAL   R4,WRTUT2           GO WRITE TO SYSUT3 D/S
+         L     R8,BLOCK            LOAD NEXT FREE RELATIVE BLOCK NO
+         BCTR  R8,0                ESTABLISH LOOP
+         LTR   R8,R8               TEST IF NOTHING IN THE FILE
+         BZ    PRINTR              BRANCH IF YES
+LOOPUNL  LA    R9,1(R9)            INCREMENT RELATIVE BLKNO OF ONE
+         ST    R9,RBA              STORE REL. BLKNO TO BE READ
+         BAL   R4,READ             GO READ THIS BLOCK
+         LA    R3,BLOCK            LOAD ADDRESS OF BLOCK WA
+         BAL   R4,DECODE           GO TO DECODE ROUTINE
+         BAL   R4,WRTUT2           GO WRITE TO SYSUT2 D/S
+         BCT   R8,LOOPUNL          GO PROCESS NEXT BLOCK
+         B     PRINTR              GO TO PRINT ROUTINE
+         TITLE 'RESTORE DIRECT ACCESS FILE'
+***********************************************************************
+*                                                                     *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+RESTORE  GET   SYSUT1,BLOCK   READ 1ST RECORD FROM BACK-UP FILE
+         L     R8,BLOCK       LOAD NUMBER OF BLOCKS
+         CLI   PROC,C'1'      TEST IF IS THE 1ST DA FILE TO BE RESTORED
+         BE    RESTORE1       BRANCH IF YES
+SKIPRECS GET   SYSUT1,BLOCK   NO - SKIP ALL THE BLOCKS FROM THE
+         BCT   R8,SKIPRECS     BACK-UP FILE (BLOCKS OF DA FILE 'DATA
+         B     RESTORE2        COLLECTION') AND GO RESTORE 'ACR' FILE
+RESTORE1 EQU   *              RESTORE 'DATA COLLECTION' DA FILE
+RESTORE2 EQU   *              RESTORE 'ACR' DA FILE
+         L     R8,BLOCK       LOAD NUMBER OF BLOCKS
+         XR    R9,R9          ZEROISE R9
+         B     RFT            SKIP NEXT INSTRUCTION
+RESTLOOP LA    R9,1(R9)       INCREMENT RELATIVE BLOCK NO BY 1
+         GET   SYSUT1,BLOCK        READ NEXT BLOCK
+RFT      ST    R9,RBA         STORE RELATIVE BLK.NO TO BE WRITTEN
+         BAL   R4,WRITE       GO WRITE TO DA FILE
+         BCT   R8,RESTLOOP    GO PROCESS NEXT BLOCK
+         B     PRINTR         GO TO PRINT ROUTINE
+         TITLE 'PRINT STATUS DIRECT ACCESS FILE'
+***********************************************************************
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+PRINTR   XR    R9,R9               = 1ST RELATIVE BLOCK NUMBER (0)
+         ST    R9,RBA              STORE REL. BLOCK NO TO BE WRITTEN
+         BAL   R4,READ             GO READ CONTROL BLOCK
+         L     R10,NOBLKSBY        LOAD NUMBER OF BLOCKS FOR THIS FILE
+         MVC   5(L'LINE11,R5),LINE11         MOVE MESSAGE AND
+         MVI   0(R5),SPCE1AFT                ESTABLISH SINGLE SPACE
+         BAL   R4,PRINT                      AND WRITE
+         MVC   5(L'LINE12,R5),LINE12         MOVE MESSAGE AND
+         MVI   0(R5),SPCE2AFT                ESTABLISH DOUBLE SPACES
+         BAL   R4,PRINT                      AND WRITE
+         LR    R1,R10              LOAD NUMBER OF BLOCKS FOR THIS FILE
+         S     R1,BLOCK            SUB NEXT BLOCK NO AVAILABLE FROM
+*                                   NUMBER OF BLOCKS FOR THIS FILE =
+*                                   NUMBER OF BLOCKS AVAILABLE
+         BAL   R4,CONVPRT          GO CONVERT TO PRINTABLE CHAR.
+         MVC   8(7,R5),WORKAREA+8
+         XC    DECIMAL,DECIMAL         ZEROISE
+         MVC   DECIMAL+2(2),BLOCK+4    MOVE POINTER 1
+         L     R1,DECIMAL              LOAD POINTER 1 FOR CONVERSION
+         BAL   R4,CONVPRT          GO CONVERT TO PRINTABLE CHAR.
+         MVC   21(7,R5),WORKAREA+8 MOVE RESULT TO PRINT LINE
+         XC    DECIMAL,DECIMAL         ZEROISE
+         MVC  DECIMAL+2(2),BLOCK+6     MOVE POINTER 2
+         L     R1,DECIMAL             LOAD POINTER 2 FOR CONVERSION
+         BAL   R4,CONVPRT          GO CONVERT TO PRINTABLE CHAR.
+         MVC   31(7,R5),WORKAREA+8 MOVE RESULT TO PRINT LINE
+         XC    DECIMAL,DECIMAL            ZEROISE
+         MVC   DECIMAL+2(2),BLOCK+8       MOVE POINTER 3
+         L     R1,DECIMAL              LOAD POINTER 3 FOR CONVERSION
+         BAL   R4,CONVPRT          GO CONVERT TO PRINTABLE CHAR.
+         MVC   41(7,R5),WORKAREA+8 MOVE RESULT TO PRINT LINE
+         XC    DECIMAL,DECIMAL           ZEROISE
+         MVC   DECIMAL+2(2),BLOCK+10     MOVE POINTER 4
+         L     R1,DECIMAL                LOAD POINTER 4 FOR CONVERSION
+         BAL   R4,CONVPRT          GO CONVERT TO PRINTABLE CHAR.
+         MVC   51(7,R5),WORKAREA+8 MOVE RESULT TO PRINT LINE
+         MVI   0(R5),SPCE3AFT                ESTABLISH TRIPLE SPACE
+         BAL   R4,PRINT                      AND WRITE
+         CLI   PROC,C'S' TEST IF OPERATION REQUESTED IS 'SCRATCH'
+         BNE   JOBEND BRANCH IF NO
+         CLC   BLOCK+4(2),BLOCK+6 TEST IF POINTER 1 = POINTER 2
+         BNE   *+14 NO, SKIP NEXT TWO INSTRUCTIONS
+         CLC   BLOCK+8(2),BLOCK+10 TEST IF POINTER 3 = POINTER 4
+         BE    JOBEND BRANCH IF YES
+WTOPER   WTO   'T375P80 - IS IT A RESTART OF ''DATATRF'' JOB ?'
+         XC    ECBREPLY,ECBREPLY ZEROISE ECB
+         WTOR  'T375P80 - REPLY ''OUI'' OR ''NON''',REPLY,3,ECBREPLY
+         WAIT  ECB=ECBREPLY
+         CLC   REPLY,=C'OUI' TEST IF REPLY IS 'YES'
+         BE    WTOPER2 BRANCH IF YES
+         CLC   REPLY,=C'NON' TEST IF REPLY IS 'NO'
+         BE    ABENDDIF BRANCH IF NO
+         B     WTOPER IS NOT 'YES'/'NO' GO REPEAT MESSAGES
+WTOPER2  WTO   'T375P80 - RESTART INSTRUCTIONS HAVE BEEN APPLIED?'
+         XC    ECBREPLY,ECBREPLY ZEROISE ECB
+         WTOR  'T375P80 - REPLY ''OUI'' OR ''NON''',REPLY,3,ECBREPLY
+         WAIT  ECB=ECBREPLY
+         CLC   REPLY,=C'OUI' TEST IF REPLY IS YES
+         BE    JOBEND BRANCH IF YES
+         CLC   REPLY,=C'NON' TEST IF REPLY IS NO
+         BNE   WTOPER2 IS NOT 'OUI' OR 'NON' GO REPEAT MESSAGES
+ABENDDIF WTO   'T375P80 - POINTERS ARE DIFF., SEE J. NOLS'
+         ABEND 100,DUMP POINTERS NOT =
+         B     JOBEND
+         SPACE 1
+         EJECT
+*******************************************************************
+*        JOB TERMINATION ROUTINE -                                *
+*         CLOSE ANY OPEN DATA SETS,                               *
+*         SET A COMPLETION CODE IN REGISTER 15, AND RETURN.       *
+*******************************************************************
+         SPACE 1
+JOBEND   EQU   *
+         MVC   5(L'LINE09,R5),LINE09         MOVE MESSAGE AND NUMBER OF
+         UNPK  5+L'LINE09(5,R5),CTCOMET+1(3) BLOCKS WRITTEN TO
+         OI    5+L'LINE09+4(R5),SIGN          SYSPRINT D/S,
+         CLI   PROC,C'U'           TEST IF UNLOAD MODE
+         BNE   S2A                 BRANCH IF NO
+         MVI   0(R5),SPCE1AFT      ESTABLISH SINGLE SPACE
+         BAL   R4,PRINT             AND WRITE
+         MVC   5(L'LINE14,R5),LINE14 MOVE MESSAGE AND NUMBER OF
+         UNPK  5+L'LINE14(5,R5),CTSYSUT2+1(3)  RECORDS WRITTEN TO
+         OI    5+L'LINE14+4(R5),SIGN       SYSUT2 D/S
+         MVI   0(R5),SPCE1AFT     ESTABLISH SINGLE SPACE
+         BAL   R4,PRINT            GO WRITE
+         MVC   5(L'LINE15,R5),LINE15 MOVE MESSAGE AND NUMBER OF
+         UNPK  5+L'LINE15(5,R5),CTSYSUT3+1(3) RECORDS WRITTEN TO
+         OI    5+L'LINE15+4(R5),SIGN          SYSUT3 D/S
+S2A      EQU   *
+         MVI   0(R5),SPCE2AFT                ESTABLISH DOUBLE SPACES
+         BAL   R4,PRINT                      AND WRITE
+         MVC   5(L'LINE10,R5),LINE10         MOVE MESSAGE AND
+         LH    R1,COMPCODE                    AND CONDITION CODE
+         BAL   R4,CONVPRT                     TO SYSPRINT D/S
+         MVC   5+L'LINE10(3,R5),WORKAREA+12  MOVE RESULT TO PRINT LINE
+         MVI   0(R5),SPCE2AFT                ESTABLISH DOUBLE SPACES
+         BAL   R4,PRINT                      AND WRITE
+         LA    R3,MAXDS            ESTABLISH LOOP
+         LA    R2,DCBTABLE         POINT AT START OF DCB TABLE
+         BAL   R4,CLOSE            CLOSE DATA SET IF OPEN
+         LA    R2,DCBNTRY(R2)      POINT AT NEXT TABLE ENTRY
+         BCT   R3,*-8              CLOSE NEXT DATA SET
+         PGMOUT RC=COMPCODE        SET COND CODE AND RETURN
+         EJECT
+***********************************************************************
+*        THIS SUBROUTINE CONVERTS BINARY VALUE TO PRINTABLE           *
+*         CHARACTERS. ON ENTRY R1 CONTAINS BINARY VALUE. ON EXIT      *
+*         FIELD 'WORKAREA' CONTAINS PRINTABLE CHARACTERS WITHOUT ZERO *
+*         BEFORE THE FIRST SIGNIFICANT DIGIT.                         *
+***********************************************************************
+         SPACE 1
+CONVPRT  SUBIN
+         CVD   R1,DECIMAL          CONVERT VALUE TO DECIMAL
+         UNPK  WORKAREA(15),DECIMAL UNPACK
+         OI    WORKAREA+14,SIGN    FORCE SIGN TO 'F'
+         LA    R2,14               ESTABLISH LOOP
+         LA    R3,WORKAREA         LOAD ADDRESS OF 'WORKAREA'
+LOOPCPR  CLI   0(R3),C'0'          TEST IF THIS POSITION = ZERO
+         BNE   ENDCPR              NO - GO TO END OF THIS S-ROUTINE
+         MVI   0(R3),BLANK         YES - REPLACE 0 BY BLANK
+         LA    R3,1(R3)            INCREMENT POINTER
+         BCT   R2,LOOPCPR          GO TEST NEXT POSITION
+ENDCPR   SUBOUT ,                  RETURN TO CALLER
+         TITLE 'DECODIFICATION OF DATA TRANSFERRED'
+***********************************************************************
+*                                                                     *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+DECODE   SUBIN SAVE=(R3,R4,R8,R9,R10)
+         TM    UT3SW,DDPRES        TEST IF SYSUT3 DD STATEMENT PRESENT
+         BNO   DECODEND            BRANCH IF NO
+         CLC   0(2,R3),=C'D1'      TEST FOR DATA TRANSFER MESSAGE
+         BNE   NOD1                BRANCH IF NO
+         XR    R8,R8               ZEROISE R8
+         IC    R8,4(R3)            LOAD LENGTH OF DATA
+         MVC   FILECTRL,5(R3)      SAVE FILE  AND CONTROLLER NO
+         LA    R3,6(R3)            INCREMENT POINTER PAST SECTOR HEADER
+         CLC   0(2,R3),=C'C0'      TEST FOR CALL RECORDING MESSAGE
+         BNE   NOC0                BRANCH IF NO
+         MVI   ACR+3,BLANK         CLEAR ACR
+         MVC   ACR+4(L'ACR-4),ACR+3        RECORD
+         MVO   PACKEDEC,2(2,R3)    SIGN DAY NUMBER
+         UNPK  WORKAREA+2(3),PACKEDEC+6(2)   UNPACK DAY NUMBER
+         OI    WORKAREA+4,SIGN     FORCE SIGN TO 'F'
+         CP    PACKEDEC,=P'0'      TEST IF DAY NUMBER = ZERO
+         BE    DAY0                BRANCH IF YES
+         CP    PACKEDEC,=P'366'    TEST IF DAY NUMBER > 366
+         BH    DAY0                BRANCH IF YES
+         CLC   IPLMTH,=C'01'       TEST IF IPL MONTH = JANUARY
+         BNE   CONT0A              BRANCH IF NO
+         CP    PACKEDEC,=P'300'    TEST IF DAY NUMBER > 300
+         BL    CONT0A              BRANCH IF NO
+         MVC   WORKAREA(2),IPLYYL1 MOVE IPL YEAR - 1 BEFORE DDD
+         B     CONT0B
+DAY0     MVC   DATEACR(2),IPLYEAR  MOVE IPL YEAR IN ACR RECORD
+         B     *+10                SKIP NEXT INSTRUCTION
+YYM1     MVC   DATEACR(2),IPLYYL1    MOVE IPL YEAR - 1 IN ACR RECORD
+         MVC   DATEACR+2(4),=C'0000' = '00' FOR MONTH & '00' FOR DAY
+         B     CONT1
+CONT0A   MVC   WORKAREA(2),IPLYEAR MOVE IPL YEAR NUMBER BEFORE DDD
+CONT0B   CLC   UTYYDDD,WORKAREA    TEST IF DAY NUMBER = LAST DAY NUMBER
+         BNE   UT458               NO - GO TO EXECUTE UT458
+MVCDATE  MVC   DATEACR,UTYYMMDD    MOVE DATE FORMAT YYMMDD TO ACR RECD
+         B     CONT1
+UT458    UT458 METHOD=EXEC,OPCODE=6,DATE=WORKAREA
+         CLI   UTRTCODE,C'0'       SUCCESSFUL ?
+         BE    MVCDATE             BRANCH IF YES
+         B     ABEND1              NO GO TO ABEND ROUTINE
+CONT1    LA    R3,4(R3)            INCREMENT POINTER PAST MSG HEADER
+         SH    R8,=H'4'            SUB LENGTH OF MSG HEADER
+         EJECT
+***********************************************************************
+***********************************************************************
+         SPACE 1
+MSGCO    LTR   R8,R8               TEST IF END OF BLOCK
+         BZ    DECODEND            BRANCH IF YES
+         MVI   LOC,C'B'       TELL IS BRUSSELS 3750
+         MVI   SWBLK,OFF           SET SWITCH BLK TO OFF
+         MVI   SWPSN2,OFF          SET SWITCH PSN2 TO OFF
+         XC    FLAGS,FLAGS         ZEROISE FLAGS
+         MVC   FLAGS(1),0(R3)      MOVE FLAG 1 TO ACR RECORD
+         MVC   FLAGS+3(1),FILECTRL MOVE FILE AND CTRL NO TO ACR RECORD
+         TM    0(R3),X'80'         TEST IF PSN2 PRESENT  (BIT 0)
+         BNO   *+8                 BRANCH IF NO
+         MVI   SWPSN2,ON           SET ON SWITCH PSN2
+         TM    0(R3),X'40'         TEST IF BLK PRESENT (BIT 1)
+         BNO   *+8                 BRANCH IF NO
+         MVI   SWBLK,ON            SET ON SWITCH PSN2
+         LA    R3,1(R3)            INCREMENT POINTER PAST 'FLAG 1'
+         BCTR  R8,0                DECREMENT LENGTH
+         MVO   PACKEDEC,0(1,R3)    SIGN OPERATOR NO
+         UNPK  WORKAREA(3),PACKEDEC+6(2) UNPACK OPERATOR NO
+         OI    WORKAREA+2,SIGN     FORCE SIGN TO 'F'
+         MVC   OPN,WORKAREA+1      MOVE OPERATOR NO TO ACR RECORD
+         CLC   OPN,=C'00'          TEST IF OPERATOR NO = 0
+         BNE   *+10                NO - SKIP NEXT INSTRUCTION
+         MVC   OPN,=C'  '          YES - REPLACE BY BLANK
+         LA    R3,1(R3)            INCREMENT POINTER PAST 'OPN'
+         BCTR  R8,0                DECREMENT LENGTH
+         MVC   FLAGS+1(2),0(R3)    MOVE FLAG 2 TO ACR RECORD
+*        TM    1(R3),X'80'         IS ACR ON TIE LINE ?
+*        BNO   FLAGSEND            BRANCH IF NO
+         TM    FLAGS,X'04'         IS PERSONAL METERING FLAG ON?
+         BO    FLAGSEND            BRANCH IF YES
+         TM    1(R3),X'40'         IS TIE LINE INCOMING CALL ?
+         BO    FLAGSEND            BRANCH IF NO
+         MVC   DEST,=C'INCOMING'   TELL IS INCOMING CALL
+FLAGSEND EQU   *
+         LA    R3,2(R3)            INCREMENT POINTER PAST 'FLAG 2'
+         SH    R8,=H'2'            DECREMENT LENGTH
+         LA    R4,FEXT             ASSUME GOOD CONTINUATION
+FCOMMON  MVO   PACKEDEC,0(2,R3)         SIGN
+         UNPK  WORKAREA(5),PACKEDEC+5(3) UNPACK
+         OI    WORKAREA+4,SIGN          FORCE SIGN TO 'F'
+         LA    R3,2(R3)                 INCREMENT POINTER
+         SH    R8,=H'2'                 DECREMENT LENGTH
+         BR    R4                       RETURN TO CALLER
+FEXT     MVC   EXT,WORKAREA+1      MOVE EXTENSION NUMBER TO ACR RECORD
+         CLC   EXT,=C'0000'        TEST IF EXTENSION NO = 0
+         BNE   *+10                NO - SKIP NEXT INSTRUCTION
+         MVC   EXT,=C'    '        YES - REPLACE BY BLANK
+FTRK     BAL   R4,FCOMMON          GO PROCESS TRK FIELD
+         MVC   CXTU,WORKAREA+1     MOVE TRUNK LINE NO TO ACR RECORD
+TFIME    BAL   R4,FCOMMON          GO PROCESS TIME FIELD
+         MVC   TIMEACR,WORKAREA+1  MOVE TIME TO ACR RECORD
+         EJECT
+***********************************************************************
+***********************************************************************
+         SPACE 1
+         LA    R4,FDUR             ASSUME GOOD CONTINUATION
+FCOMMON1 XC    DECIMAL,DECIMAL     ZEROISE
+         MVC   DECIMAL+2(2),0(R3)  FORCE ALIGNMENT TO FW
+         L     R9,DECIMAL          LOAD VALUE INTO R9
+         CVD   R9,DECIMAL          CONVERT BINARY TO PACKED
+         LA    R3,2(R3)            INCREMENT POINTER PAST CURRENT FIELD
+         SH    R8,=H'2'            DECREMENT LENGTH
+         BR    R4                  RETURN TO CALLER
+FDUR     AP    DECIMAL,DECIMAL     MULT DURATION BY 2
+         MVC   DURATION,DECIMAL+5  MOVE DURATION TO ACR RECORD
+FPUL     BAL   R4,FCOMMON1         GO PROCESS 'PULSES' FILED
+         MVC   PULSES,DECIMAL+5    MOVE PULSES TO ACR RECORD
+FBLK     CLI   SWBLK,ON            TEST IF BLK FIELD PRESENT
+         BNE   FPSN1               BRANCH IF NO
+         MVC   WORKAREA(6),0(R3)   MOVE BLK FIELD TO WORKAREA
+         LA    R9,12               ESTABLISH LOOP
+         LA    R10,WORKAREA        LOAD ADDRESS OF WORKAREA INTO R10
+         MVO   0(7,R10),0(6,R10)   PREPARE
+         LA    R10,1(R10)               WORKAREA FOR
+         BCT   R9,*-10                       TRANSLATE OPERATION
+         TR    WORKAREA(12),BLKTABLE    TRANSLATE BLK FIELD
+         LA    R3,6(R3)            INCREMENT POINTER PAST 'BLK'
+         SH    R8,=H'6'            DECREMENT LENGTH
+         MVC   BLOCKID,WORKAREA    MOVE BLOCK ID. TO ACR RECORD
+         B     FPSN1               SKIP NEXT DC
+BLKTABLE DC    C'0123456789ABCD  '
+FPSN1    MVC   WORKAREA(4),0(R3)   MOVE PSN1 FIELD TO WORKAREA
+         LA    R9,8                ESTABLISH LOOP
+         LA    R10,WORKAREA        LOAD ADDRESS OF WORKAREA INTO R10
+         MVO   0(5,R10),0(4,R10)   PREPARE
+         LA    R10,1(R10)                WORKAREA FOR
+         BCT   R9,*-10                       TRANSLATE OPERATION
+         TR    WORKAREA(8),PSNTAB  TRANSLATE
+         LA    R3,4(R3)            INCREMENT POINTER PAST 'PSN 1'
+         SH    R8,=H'4'            DECREMENT LENGTH
+         MVC   PSN(8),WORKAREA     MOVE PSN (8 DIGITS) TO ACR RECORD
+         B     FPSN2               SKIP NEXT DC
+PSNTAB   DC    C'0123456789 B    '
+         EJECT
+***********************************************************************
+***********************************************************************
+         SPACE 1
+FPSN2    CLI   SWPSN2,ON           TEST IF PSN2 PRESENT
+         BNE   WRTACR              NO - GO WRITE THIS ACR RECORD
+         MVC   WORKAREA(8),0(R3)   MOVE PSN2 FIELD TO WORKAREA
+         LA    R9,16               ESTABLISH LOOP
+         LA    R10,WORKAREA        LOAD ADDRESS OF WORKAREA INTO R10
+         MVO   0(9,R10),0(8,R10)   PREPARE
+         LA    R10,1(R10)               WORKAREA FOR
+         BCT   R9,*-10                       TRANSLATE OPERATION
+         TR    WORKAREA(16),PSNTAB TRANSLATE
+         LA    R3,8(R3)            INCREMENT POINTER PAST 'PSN 2'
+         SH    R8,=H'8'            DECREMENT LENGTH
+         MVC   PSN+8(12),WORKAREA  MOVE PSN2 (12 DIGITS) TO ACR RECORD
+         B     WRTACR              GO WRITE THIS ACR RECORD
+NOC0     EQU   *
+         CLC   0(2,R3),=C'D0'      TEST FOR DATA COLLECTION MESSAGE
+         BNE   NOD0                BRANCH IF NO
+         NOP   MSGD0               SWITCH FIRST
+         MVI   *-3,X'F0'                TIME.
+         MVC   5(L'LINE20,R5),LINE20   PREPARE DC SUB-HEADING IN PRINT
+         MVI   0(R5),SPCE2AFT           WA,ESTABLISH SPACE 2 AFTER W.
+         BAL   R4,PRINT                 AND GO WRITE
+MSGD0    LTR   R8,R8               TEST IF END OF BLOCK
+         BZ    DECODEND            BRANCH IF YES
+         LA    R3,2(R3)            INCREMENT POINTER PAST 'D0'
+         LA    R11,D0FLAG1         LOAD ADDRESS OF RECEIVING FIELD
+         BAL   R4,EXPFLAGS         GO EXPAND A BYTE OF FLAGS
+         LA    R3,1(R3)            INCREMENT POINTER PAST 'FLAG1'
+         LA    R11,D0FLAG2         LOAD ADDRESS OF RECEIVING FIELD
+         BAL   R4,EXPFLAGS         GO EXPAND A BYTE OF FLAGS
+         XR    R2,R2               ZEROISE R2
+         IC    R2,1(R3)            LOAD LENGTH OF THIS D0 MSG
+         SR    R8,R2               SUB L' FROM L'BLOCK
+         XR    R11,R11             ZEROISE R11
+         IC    R11,2(R3)           LOAD LENGTH OF HEADER IN THIS D0 MSG
+         SR    R2,R11              VALUE IN R2 = LENGTH OF DATA
+         LA    R3,3(R3)            INCR. POINTER PAST 'FLAG2,LM,LH'
+         MVI   VARA,BLANK            CLEAR
+         MVC   VARA+1(L'VARA-1),VARA   VARA FIELD
+         LA    R1,VARA             LOAD ADDRESS OF VARE INTO R1
+         EJECT
+***********************************************************************
+***********************************************************************
+         SPACE 1
+         CLI   D0FLAG1,C'1'        IS DC PREFIX PRESENT?
+         BNE   D0N1                BRANCH IF NO
+         MVC   0(8,R1),=C',PREFIX=' YES -
+         LA    R1,8(R1)            INCR. POINTER PAST ',PREFIX='
+         LA    R4,D0N1             ASSUME GOOD CONTINUATION
+D0COMMON MVO   PACKEDEC,0(2,R3)    SIGN
+         UNPK  WORKAREA(5),PACKEDEC+5(3) UNPACK
+         OI    WORKAREA+4,SIGN     FORCE SIGN TO 'F'
+         MVC   0(4,R1),WORKAREA+1  MOVE UNPACK-VAL TO VARA
+         LA    R1,4(R1)            INCR. POINTER PAST 'UNPACK-VAL'
+         LA    R3,2(R3)            INCR. POINTER
+         SH    R11,=H'2'           DECR. L'HEADER
+         BR    R4 RETURN TO CALLER
+D0N1     CLI   D0FLAG1+1,C'1'      IS ORIGINATING EXT. NO PRESENT?
+         BNE   D0N2                BRANCH IF NO
+         MVC   0(7,R1),=C',OREXT=' YES
+         LA    R1,7(R1)            INCR. POINTER PAST ',OREXT='
+         BAL   R4,D0COMMON         GO CONVERT EXTENSION NUMBER
+D0N2     CLI   D0FLAG1+2,C'1'        IS DATE AND TIME PRESENT?
+         BNE   D0N3                BRANCH IF NO
+         MVC   0(5,R1),=C',DAY='   YES -
+         LA    R1,5(R1)            INCR.
+         BAL   R4,D0COMMON         GO CONVERT DAY NUMBER
+         MVC   0(6,R1),=C',TIME='
+         LA    R1,6(R1)            INCR.
+         BAL   R4,D0COMMON         GO CONVERT TIME
+         MVI   0(R1),C','
+D0N3     C     R11,=F'8'           TEST IF REST OF L'HEADER = 8
+         BE    D0N4                BRANCH IF YES
+         DC    X'0000'
+         DC    C'PROGRAM LOGIC ERROR'   =  NO
+D0N4     LA    R11,D0FLAG3         LOAD ADDRESS OF RECEIVING FIELD
+         BAL   R4,EXPFLAGS         GO EXPAND A BYTE OF FLAGS
+         LA    R3,1(R3)            INCR. POINTER PAST 'FLAG3-BYTE1'
+         LA    R11,D0FLAG3+8       LOAD ADDRESS OF RECEIVING FIELD
+         BAL   R4,EXPFLAGS         GO EXPAND A BYTE OF FLAGS
+         LA    R3,1(R3)            INCR. POINTER PAST 'FLAG3-BYTE2'
+         MVC   0(L'DCLINE1,R5),DCLINE1  MOVE D0 INF0'S TO BUFFER PRINT,
+         MVI   0(R5),SPCE1AFT            ESTABLISH SINGLE SPACE AND
+         BAL   R4,PRINT                  GO WRITE
+         MVC   9(5,R5),=C'DATA='   PREPARE DATA LINE
+         EJECT
+***********************************************************************
+***********************************************************************
+         SPACE 1
+         LR    R11,R3              SAVE VAL. OF R3 INTO R11
+         LA    R3,0(R2,R3)         GET ADDRESS OF NEXT D0 MESSAGE
+         XR    R0,R0               ***  TEST IF VALUE IN R2 IS
+         LR    R1,R2               *       A MULTIPLE OF '2'.
+         D     R0,=F'2'            *
+         LTR   R0,R0               *    IF YES SKIP 'SR' AND 'AR' INSTR
+         BZ    *+8                 *    IF NO :
+         SR    R8,R0               *      SUB 1 FROM L'OF-THIS-D1-MSG
+         AR    R3,R0               ***    INCREMENT POINTER
+D0LOOP   C     R2,=H'100'          TEST IF L'DATA > 100
+         BH    LGT100              BRANCH IF YES
+         BCTR  R2,0                NO - DECR L'DATA OF ONE
+         EX    R2,*+8              EXECUTE NEXT MVC INSTRUCTION
+         B     *+10                SKIP NEXT INSTRUCTION
+         MVC   14(0,R5),0(R11)     MOVE DATA IN PRINT BUFFER
+         BAL   R4,PRINT             AND GO WRITE
+         B     MSGD0               GO PROCESS NEXT 'D0' MESSAGE
+LGT100   MVC   14(100,R5),0(R11)   MOVE DATA IN PRINT BUFFER (100POS.)
+         LA    R11,100(R11)        INCR. POINTER PAST 100POS.
+         SH    R2,=H'100'          SUB 100 FROM REST OF L'DATA
+         BAL   R4,PRINT            GO WRITE
+         B     D0LOOP              GO PROCESS NEXT PART OF DATA
+NOD0     EQU   *
+NOD1     EQU   *
+ABEND1   EQU   *
+         ABEND 80,DUMP
+WRTACR   CLI   SWPSN2,ON           TEST IF PSN2 PRESEMT              T.
+         BE    *+12                YES - SKIP NEXT TWO INSTRUCTIONS  T.
+         CLI   PSN+7,C'B'          TEST IF POSITION 8 = B            T.
+         BE    ABENDB              YES - ABEND                       T.
+         CLI   PSN+19,C'B'         TEST IF POSITION 20 = B           T.
+         BNE   WACR                NO - SKIP 'ABEND'                 T.
+ABENDB   WTO   'T375P80 *** PSN CONTAINS ''B'' *****'                T.
+         ABEND 90,DUMP                                               T.
+WACR     BAL   R4,WRTUT3           GO WRITE THIS ACR RECORD          T.
+         BAL   R4,PRT80            GO WRITE TO 'T375R80'
+         MVI   ACR+9,BLANK         CLEAR ACR
+         MVC   ACR+10(L'ACR-10),ACR+9          RECORD
+         B     MSGCO               GO PROCESS NEXT MESSAGE
+DECODEND SUBOUT RESTORE=(R3,R4,R8,R9,R10)
+         TITLE 'REPORT T375R80'
+***********************************************************************
+*        PREPARE FOR PRINT REPORT T375R80                             *
+***********************************************************************
+         SPACE 1
+PRT80    SUBIN SAVE=(R2,R3,R4)
+         TM    R80SW,DDPRES        TEST IF DD 'T375R80' IS PRESENT
+         BNO   PRT80END            BRANCH IF NO
+         NOP   DETAIL
+         MVI   *-3,X'F0'
+HEADING  AP    PAGECR80,ONE        ADD ONE TO PAGE COUNT
+         UNPK  PAGER80(3),PAGECR80 UNPACK
+         OI    PAGER80+2,SIGN      FORCE SIGN TO 'F'
+         MVC   PRTLINE(L'LINE16),LINE16      MOVE HEAD LINE 1
+         MVI   CTLCHAR,SPCE3AFT              ESTABLISH SPACE 3 AFTER W.
+         BAL   R4,WRTR80                     GO WRITE
+         MVC   PRTLINE(L'LINE17),LINE17      MOVE HEAD LINE 2
+         MVI   CTLCHAR,SPCE1AFT              ESTABLISH SPACE 1 AFTER W.
+         BAL   R4,WRTR80                      AND WRITE
+         MVC   PRTLINE(L'LINE18),LINE18      MOVE HEAD LINE 3
+         MVI   CTLCHAR,SPCE2AFT              ESTABLISH SPACE 2 AFTER W.
+         BAL   R4,WRTR80                      AND WRITE
+         ZAP   LINECR80,=P'6'      SET PAGE COUNTER TO 6
+         MVI   CTLCHAR,SPCE1AFT    SET CONTROL CHAR TO SPACE 1 AFTER W.
+DETAIL   CP    LINECR80,MAXLINE    TEST IF LINE NO > 55
+         BH    HEADING             BRANCH IF YES
+         BL    *+8                 < SKIP NEXT INSTRUCTION
+         MVI   CTLCHAR,PAGESKIP    SKIP PAGE AFTER W.
+         AP    LINECR80,ONE        ADD ONE TO LINE COUNTER
+         MVC   PYY,YY              MOVE
+         MVI   PYY+2,C'/'             DATE
+         MVC   PMM,MM                    TO
+         MVI   PMM+2,C'/'                  PRINT
+         MVC   PDD,DD                          DETAIL LINE
+         MVC   PTHH,HH             MOVE
+         CLI   PTHH,C'0'              TIME
+         BNE   *+8                       TO
+         MVI   PTHH,BLANK                 PRINT
+         MVI   PTHH+2,C'.'                    DETAIL
+         MVC   PTMM,TMM                            LINE
+         EJECT
+***********************************************************************
+*        PREPARE FOR PRINT REPORT T375R80      (CONT'D)               *
+***********************************************************************
+         SPACE 1
+         ZAP   PACKEDEC,DURATION   ZERO ADD DURATION TO PACKEDEC WA
+         DP    PACKEDEC+3(5),=P'60' REMAIN = SECONDS - RES.= NO OF MINS
+         DP    PACKEDEC+1(5),=P'60' REMAIN = MINUTES - RES.= HOURS
+         UNPK  WORKAREA(3),PACKEDEC+2(2)     UNPACK HOURS
+         UNPK  WORKAREA+3(3),PACKEDEC+4(2)   UNPACK MINUTES
+         UNPK  WORKAREA+6(3),PACKEDEC+6(2)   UNPACK SECONDS
+         OI    WORKAREA+2,SIGN     FORCE SIGN TO 'F'
+         OI    WORKAREA+5,SIGN     FORCE SIGN TO 'F'
+         OI    WORKAREA+8,SIGN     FORCE SIGN TO 'F'
+         MVC   PDHH,WORKAREA+1     MOVE DURATION                 HH
+         MVC   PDMM,WORKAREA+4                 TO PRINT          MM
+         MVI   PDMM+2,C'.'                            DETAIL     '.'
+         MVC   PDSS,WORKAREA+7                             LINE  SS
+         CLI   PDHH,C'0'           TEST IF 1ST POS OF HH = 0
+         BNE   PPDHH               BRANCH IF NO
+         MVI   PDHH,BLANK          YES CLEAR THIS POS.
+         CLI   PDHH+1,C'0'         2ND POS = 0
+         BNE   PPDHH               NO - BRANCH
+         MVI   PDHH+1,BLANK        YES - CLEAR
+         CLI   PDMM,C'0'           1ST POS OF HH = 0
+         BNE   PEXT                NO - BRANCH
+         MVI   PDMM,BLANK          YES - CLEAR
+         B     PEXT                SKIP NEXT INSTRUCTION
+PPDHH    MVI   PDHH+2,C'.'         '.' BETWEEN MM AND SS
+PEXT     MVC   PTHTU,THTU          MOVE THTU
+         MVC   POPN,OPN            MOVE OPERATOR NO
+         CLI   POPN,C'0'           TEST IF 1ST POS. OF OPERATOR NO = 0
+         BNE   *+8                 NO - SKIP NEXT INST.
+         MVI   POPN,BLANK          YES - REPLACE BY BLANK
+         MVC   PCXTU,CXTU          MOVE CXTU
+         MVC   PPSN(20),PSN        MOVE PSN TO
+         CLC   DEST,=C'INCOMING'   IS IT AN INCOMING CALL ?
+         BNE   *+10                NO, SKIP NEXT MOVE
+         MVC   PPSN(13),=C'INCOMING CALL' YES, TELL THIS
+         LA    R2,7                ESTABLISH LOOP FOR THE FLAGS
+         LA    R3,PFLAGS            AND POINT TO 1ST PRINT FLAG AREA
+         TM    FLAGS,X'10'         CALL INITIATED BY A TRANSFER?
+         BZ    *+14                BRANCH IF NO
+         MVC   0(8,R3),=C'TRANSFER' YES, TELL THIS
+         BAL   R4,PTNEXTF            AND POINT TO NEXT PRT FLAG AREA
+         TM    FLAGS,X'08'         ACR CREATED DUE TO SWITCHOVER?
+         BZ    *+14                BRANCH IF NO
+         MVC   0(8,R3),=C'SWITCHOV' YES, TELL THIS
+         BAL   R4,PTNEXTF            AND POINT TO NEXT PRT FLAG AREA
+         TM    FLAGS,X'04'         NON-AUTOMATIC LONG DISTANCE CALL?
+         BZ    *+14                BRANCH IF NO
+         MVC   0(8,R3),=C'N.A.C.  ' YES, TELL THIS
+         BAL   R4,PTNEXTF            AND POINT TO NEXT PRT FLAG AREA
+         TM    FLAGS,X'02'         ALTERNATE PARTY IS A TIE LINE?
+         BZ    *+14                BRANCH IF NO
+         MVC   0(8,R3),=C'INTIELNE' YES, TELL THIS
+         BAL   R4,PTNEXTF            AND POINT TO NEXT PRT FLAG AREA
+         TM    FLAGS+1,X'40'       ANSWER FLAG ON?
+         BZ    *+14                BRANCH IF NO
+         MVC   0(8,R3),=C'ANSWERED' YES, TELL THIS
+         BAL   R4,PTNEXTF            AND POINT TO NEXT PRT FLAG AREA
+         TM    FLAGS+2,X'40'       INCOMING CALL ?
+         BO    *+14                BRANCH IF NO
+         MVC   0(8,R3),=C'INCOMING' YES, TELL THIS
+         BAL   R4,PTNEXTF            AND POINT TO NEXT PRT FLAG AREA
+         B     ENDP80
+PTNEXTF  LA    R3,9(,R3)           POINT TO NEXT PRINT FLAG AREA
+         BCTR  R2,R4                AND TEST NEXT ONE (IF STILL SPACE).
+ENDP80   BAL   R4,WRTR80           GO WRITE
+PRT80END SUBOUT RESTORE=(R2,R3,R4) RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        EXPAND A BYTE (CONTAINING 8 BITS FLAGS) IN A RECEIVING       *
+*         FIELD OF 8 CHARACTERS. EACH OF THE BITS IN THE BYTE IS      *
+*         EXAMINED, AND IF IT IS ON, THE CORRESPONDING CH. IN THE     *
+*         RECEIVING FIELD IS SET TO '1'. OTHERWISE IS SET TO '0'.     *
+*         AT ENTRY R3 CONTAINS ADDRESS OF BYTE TO BE EXAMINED         *
+*                  R11 CONTAINS ADDRESS OF RECEIVING FIELD            *
+***********************************************************************
+EXPFLAGS SUBIN
+         MVC   0(8,R11),=C'00000000'    AT BEGIN. ALL FLAGS = 0
+         TM    0(R3),X'80'               TEST
+         BNO   *+8                        BIT
+         MVI   0(R11),C'1'                 '0'
+         TM    0(R3),X'40'               TEST
+         BNO   *+8                        BIT
+         MVI   1(R11),C'1'                 '1'
+         TM    0(R3),X'20'               TEST
+         BNO   *+8                        BIT
+         MVI   2(R11),C'1'                 '2'
+         TM    0(R3),X'10'               TEST
+         BNO   *+8                        BIT
+         MVI   3(R11),C'1'                 '3'
+         TM    0(R3),X'08'               TEST
+         BNO   *+8                        BIT
+         MVI   4(R11),C'1'                 '4'
+         TM    0(R3),X'04'               TEST
+         BNO   *+8                        BIT
+         MVI   5(R11),C'1'                 '5'
+         TM    0(R3),X'02'               TEST
+         BNO   *+8                        BIT
+         MVI   6(R11),C'1'                 '6'
+         TM    0(R3),X'01'               TEST
+         BNO   *+8                        BIT
+         MVI   7(R11),C'1'                 '7'
+         SUBOUT
+         TITLE 'I/O SUB-ROUTINES'
+*******************************************************************
+*        WRITE SUBROUTINE FOR SYSPRINT                            *
+*******************************************************************
+         SPACE 1
+PRINT    SUBIN ,
+         TM    PRINTSW,DDINT+DDPRES+DDOPEN   TEST IF NEED TO WRITE
+         BNO   PRINTX              BRANCH IF NO
+         PUT   SYSPRINT            WRITE RECORD TO SYSPRINT D/S
+         LR    R5,R1               SAVE BUFFER ADDRESS
+         MVI   1(R5),BLANK         MOVE BLANK TO START OF LINE
+         MVC   2(131,R5),1(R5)      AND PROPAGANTE THROUGH
+PRINTX   SUBOUT ,                  RETURN TO CALLER
+         SPACE 2
+***********************************************************************
+*        READ SUBROUTINE FOR COMETDA                                  *
+***********************************************************************
+         SPACE 1
+READ     SUBIN ,
+         TM    COMETSW,DDINT+DDPRES+DDOPEN  TEST IF NEED TO READ
+         BNO   READEND                       BRANCH IF NO
+         READ  DECB1,DI,COMETDA,BLOCK,256,0,RELABLAD
+         CHECK DECB1
+READEND  SUBOUT ,        RETURN TO CALLER
+         SPACE 2
+*******************************************************************
+*        WRITE SUBROUTINE FOR COMETDA                             *
+*******************************************************************
+         SPACE 1
+WRITE    SUBIN ,
+         TM    COMETSW,DDINT+DDPRES+DDOPEN  TEST IF NEED TO WRITE
+         BNO   WRITEND                       BRANCH IF NO
+         WRITE DECB2,DI,COMETDA,BLOCK,256,0,RELABLAD
+         CHECK DECB2
+         AP    CTCOMET,ONE        RECORD COUNTER
+WRITEND  SUBOUT ,        RETURN TO CALLER
+         SPACE 2
+***********************************************************************
+*        WRITE SUBROUTINE FOR SYSUT2                                  *
+***********************************************************************
+         SPACE 1
+WRTUT2   SUBIN
+         TM    UT2SW,DDINT+DDPRES+DDOPEN     TEST IF NEED TO WRITE
+         BNO   WUT2END                       BRANCH IF NO
+         PUT   SYSUT2,(R3)              WRITE
+         AP    CTSYSUT2,ONE             ADD ONE TO RECORD COUNTER
+WUT2END  SUBOUT ,                       RETURN TO CALLER
+         EJECT
+*******************************************************************
+*        WRITE SUBROUTINE FOR SYSUT3                              *
+*******************************************************************
+         SPACE 1
+WRTUT3   SUBIN
+         TM    UT3SW,DDINT+DDPRES+DDOPEN     TEST IF NEED TO WRITE
+         BNO   WUT3END                       BRANCH IF NO
+         PUT   SYSUT3,ACR                    WRITE
+         AP    CTSYSUT3,ONE        ADD ONE TO RECORD COUNTER
+WUT3END  SUBOUT ,                  RETURN TO CALLER
+         SPACE 2
+*******************************************************************
+*        WRITE SUBROUTINE FOR T375R80                                 *
+*******************************************************************
+         SPACE 1
+WRTR80   SUBIN
+         TM    R80SW,DDINT+DDPRES+DDOPEN     TEST IF NEED TO WRITE
+         BNO   WR80END                       BRANCH IF NO
+         PUT   T375R80,DETLINE               WRITE
+         MVI   PRTLINE,BLANK       CLEAR
+         MVC   PRTLINE+1(L'PRTLINE-1),PRTLINE      PRINT LINE
+WR80END  SUBOUT ,                  RETURN TO CALLER
+         EJECT
+*******************************************************************
+*        SUPPLY DEFAULT RECORD LENGTH AND/OR BLOCK SIZE           *
+*         IF NOT CODED.                                           *
+*******************************************************************
+         SPACE 1
+BLKSZRTN SUBIN ,                   SUPPLY DEFAULT LRECL AND/OR BLKS
+         USING IHADCB,R1           ESTABLISH DCB ADDRESSABILITY
+         CLC   DCBLRECL,ZEROWORD   TEST IF LRECL SUPPLIED
+         BNE   *+8                 BYPASS DEFAULT IF YES
+         MVI   DCBLRECL+1,80       FORCE LRECL TO 80
+         CLC   DCBBLKSI,ZEROWORD   TEST IF BLKSIZE SUPPLIED
+         BNE   0(R14)              RETURN TO OPEN IF YES
+         MVC   DCBBLKSI,DCBLRECL   FORCE SINGLE BLOCKING
+         DROP  R1                  DROP DCB ADDRESSABILITY
+         SUBOUT RETURN=(R14)       RETURN TO OPEN ROUTINES
+         SPACE 2
+*******************************************************************
+*        I/O ERROR ROUTINE                                        *
+*******************************************************************
+         SPACE 1
+IOERDA   MVI   SWBDAM+1,X'00'      INDICATE BDAM I/0 ERROR
+IOERROR  SUBIN ,                   ANALYSE I/O ERROR
+         MVC   COMPCODE,COND16     SET COMPLETION CODE
+SWBDAM   B     QSAM                SWITCH  BDAM/QSAM
+         SYNADAF ACSMETH=BDAM      CALL ANALYSIS ROUTINE
+         B     COMWTO
+QSAM     EQU   *
+         SYNADAF ACSMETH=QSAM      CALL ANALYSIS ROUTINE
+COMWTO   EQU   *
+         MVC   WTOIOE+27(86),50(R1) ADD RESULT OF ANALYSIS TO LINE
+         SYNADRLS ,                RELEASE OS BUFFER
+         WTO   MF=(E,WTOIOE)       TELL OPERATOR OF ERROR
+         SUBOUT RETURN=JOBEND      TERMINATE JOB
+         EJECT
+*******************************************************************
+*        TEST IF A DD STATEMENT IS PRESENT BEFORE OPEN            *
+*******************************************************************
+         SPACE 1
+TESTIOT  SUBIN ,                   TEST TASK INPUT/OUTPUT TABLE
+         TESTIOT DDNAME=4(R2)      TEST IF DDNAME FOUND IN TIOT
+         B     *+4(R15)            TEST CONDITION CODE
+         OI    0(R2),DDPRES        TELL THAT DD STATEMENT SUPPLIED
+         SUBOUT ,                  RETURN TO CALLER
+         SPACE 3
+*******************************************************************
+*        OPEN ROUTINE                                             *
+*******************************************************************
+         SPACE 1
+OPEN     SUBIN SAVE=(R3)           OPEN DATA SET
+         TM    0(R2),DDINT+DDPRES  TEST IF DD INTERESTING AND
+         BNO   OPENX               BRANCH IF NO    / PRESENT.
+         L     R3,0(R2)            GET DCB ADDRESS
+         CLC   12(8,R2),=C'UPDAT   ' TEST FOR UPDATE D/S
+         BNE   OPENI               BRANCH IF NO
+         OPEN  ((R3),(UPDAT))      OPEN UPDATE D/S
+         B     OPENY               GO SET SWITCH
+OPENI    EQU   *
+         CLC   12(8,R2),=C'INPUT   ' TEST FOR INPUT D/S
+         BE    OPENZ               BRANCH IF INPUT D/S
+         OPEN  ((R3),(OUTPUT))     OPEN OUTPUT DATA SET
+         B     OPENY               GO SET SWITCH
+OPENZ    OPEN  ((R3),(INPUT))      OPEN INPUT DATA SET
+OPENY    OI    0(R2),DDOPEN        INDICATE DATA SET OPEN
+OPENX    SUBOUT RESTORE=(R3)       RETURN TO CALLER
+         SPACE 3
+*******************************************************************
+*        CLOSE ROUTINE                                            *
+*******************************************************************
+         SPACE 1
+CLOSE    SUBIN SAVE=(R3)           CLOSE DATA SET
+         TM    0(R2),DDOPEN        TEST IF DATA SET OPEN
+         BZ    CLOSEX              EXIT IF NOT
+         L     R3,0(R2)            GET DCB ADDRESS
+         CLOSE ((R3))              CLOSE DATA SET
+         NI    0(R2),FF-DDOPEN     SET OFF 'OPEN' SWITCH
+CLOSEX   SUBOUT RESTORE=(R3)       RETURN TO CALLER
+         TITLE 'DCB''S AND I/O CONTROL TABLES'
+*******************************************************************
+*        DCB'S TABLE                                              *
+*******************************************************************
+         SPACE 1
+DCBTABLE DS    0F
+PRINTSW  DC    X'00',AL3(SYSPRINT),CL8'SYSPRINT',CL8'OUTPUT'
+COMETSW  DC    X'00',AL3(COMETDA),CL8'COMETDA',CL8'UPDAT'
+UT1SW    DC    X'00',AL3(SYSUT1),CL8'SYSUT1',CL8'INPUT'
+UT2SW    DC    X'00',AL3(SYSUT2),CL8'SYSUT2',CL8'OUTPUT'
+UT3SW    DC    X'00',AL3(SYSUT3),CL8'SYSUT3',CL8'OUTPUT'
+R80SW    DC    X'00',AL3(T375R80),CL8'T375R80',CL8'OUTPUT'
+         SPACE 1
+TABSIZE  EQU   *-DCBTABLE          DCB'S TABLE SIZE
+DCBNTRY  EQU   20                  LENGTH OF ONE TABLE ELEMENT
+MAXDS    EQU   TABSIZE/DCBNTRY     MAXIMUN NUMBER OF DCB'S
+LDCB     DC    A(COMETLD)
+         SPACE 1
+DDINT    EQU   16                  DD INTEREST
+DDPRES   EQU   8                   DD PRESENT
+DDOPEN   EQU   1                   DATA SET IS OPEN
+         SPACE 2
+EXITLIST DC    X'85',AL3(BLKSZRTN) ENTRY FOR DCB MODIFICATION
+         SPACE 2
+WTOIOE   DS    0F
+         DC    AL2(WTOEND-*),H'0',CL109'******** - I/O ERROR -'
+WTOEND   EQU   *
+         EJECT
+*******************************************************************
+*        DEFINITION OF 'ACR' RECORD                               *
+*******************************************************************
+         SPACE 1
+ACR      DS    CL160
+         ORG   *-160
+         DC    C'ACR'              RECORD IDENTIFIER
+DATEACR  DS    CL6                 DATE FORMAT 'YYMMDD'
+         ORG   *-6
+YY       DS    CL2                 YEAR NUMBER (LAST 2 DIGITS)
+MM       DS    CL2                 MONTH NUMBER
+DD       DS    CL2                 DAY NUMBER
+TIMEACR  DS    CL4                 TIME FORMAT 'HHMM'
+         ORG   *-4
+HH       DS    CL2                 HOURS
+TMM      DS    CL2                 MINUTES
+EXT      DS    CL4                 EXTENSION NUMBER
+         ORG   *-4
+THTU     DS    CL4                 THTU
+PSN      DS    CL20                PUBLIC SWITCHED NUMBER
+DURATION DS    PL3                 CALL DURATION (IN SECONDS)  PD 5.0
+PULSES   DS    PL3                                             PD 5.0
+UNITS    DS    PL3                                             PD 5.0
+TARIFF   DS    PL3                 TARIFF IN B.F.              PD 3.2
+COST     DS    CL4                 COST OF CALL (IN B.F.)      PD 7.0
+DOLLARAT DS    CL4                 $ CONVERSION RATE           PD 4.5
+CXTU     DS    CL4                 (OF TRUNK)
+SRQPTR   DS    CL4                 NETWORK ADDRESS (OF TRUNK'S CXTU)
+DEST     DS    CL8                 DESTINATION CODE (DIALING CODE OR
+*                                                      L||CXTU)
+NAME     DS    CL30                NAME OF OWNER
+COSTCENT DS    CL5                 COST CENTRE OF OWNER
+COS      DS    CL2                 CLASS OF SERVICE
+SRQP     DS    CL4                 NETWORK ADDRESS (OF EXTENSION)
+OPN      DS    CL2                 OPERATOR NUMBER
+BLOCKID  DS    CL12                BLOCK IDENTIFIER
+THTUQW   DS    CL4                 THTU OF OWNER OF BLOCK ID. CODE (IF-
+*                                                           DIFFERENT)
+FLAGS    DS    CL10
+         DS    CL17
+LOC      DS    C                   LOCATION B = BRUSSELS / L = LONDON
+ENDACR   EQU   *
+         EJECT
+***********************************************************************
+*        PRINT DETAIL LINE FOR T375R80                                *
+***********************************************************************
+         SPACE 1
+DETLINE  DS    0CL133
+CTLCHAR  DC    C' '
+PRTLINE  DC    CL132' '
+         ORG   *-132
+PYY      DS    CL2
+         DS    C
+PMM      DS    CL2
+         DS    C
+PDD      DS    CL2
+         DS    CL2
+PTHH     DS    CL2
+         DS    C
+PTMM     DS    CL2
+         DS    CL2
+PDHH     DS    CL2
+         DS    C
+PDMM     DS    CL2
+         DS    C
+PDSS     DS    CL2
+         DS    CL2
+PTHTU    DS    CL4
+         DS    CL2
+POPN     DS    CL2
+         DS    CL2
+PCXTU    DS    CL4
+         DS    CL2
+PPSN     DS    CL20
+         DS    CL2
+PFLAGS   DS    7CL9
+         DS    CL4
+         EJECT
+*******************************************************************
+*        DATA CONTROL BLOCKS                                      *
+*******************************************************************
+         SPACE 1
+SYSPRINT DCB   DDNAME=SYSPRINT,                                        C
+               DSORG=PS,                                               C
+               SYNAD=IOERROR,                                          C
+               EXLST=EXITLIST,                                         C
+               RECFM=FBM,                                              C
+               MACRF=PL,                                               C
+               LRECL=133
+         SPACE 3
+COMETDA  DCB   DDNAME=COMETDA,                                         C
+               DSORG=DA,                                               C
+               MACRF=(RIC,WIC),                                        C
+               RECFM=F,                                                C
+               BLKSIZE=256,                                            C
+               SYNAD=IOERDA,                                           C
+               OPTCD=R
+         SPACE 3
+COMETLD  DCB   DDNAME=COMETDA,                                         C
+               DSORG=PS,                                               C
+               DEVD=DA,                                                C
+               MACRF=(WL),                                             C
+               SYNAD=IOERROR
+         SPACE 3
+SYSUT2   DCB   DDNAME=SYSUT2,                                          *
+               DSORG=PS,                                               *
+               SYNAD=IOERROR,                                          *
+               EXLST=EXITLIST,                                         *
+               RECFM=FB,                                               *
+               MACRF=PM,                                               *
+               LRECL=256
+         SPACE 3
+SYSUT3   DCB   DDNAME=SYSUT3,                                          *
+               DSORG=PS,                                               *
+               SYNAD=IOERROR,                                          *
+               EXLST=EXITLIST,                                         *
+               RECFM=FB,                                               *
+               MACRF=PM,                                               *
+               LRECL=160
+         EJECT
+***********************************************************************
+*        DATA CONTROL BLOCKS  (CONT'D)                                *
+***********************************************************************
+         SPACE 1
+T375R80  DCB   DDNAME=T375R80,                                         *
+               DSORG=PS,                                               *
+               SYNAD=IOERROR,                                          *
+               EXLST=EXITLIST,                                         *
+               MACRF=PM,                                               *
+               RECFM=FBM,                                              *
+               LRECL=133
+         SPACE 3
+SYSUT1   DCB   DDNAME=SYSUT1,                                          C
+               DSORG=PS,                                               C
+               SYNAD=IOERROR,                                          C
+               EXLST=EXITLIST,                                         C
+               RECFM=FB,                                               C
+               MACRF=GM,                                               C
+               LRECL=256
+         TITLE 'MISCELLANIOUS EQUATES, CONSTANTS AND WORK AREAS'
+*******************************************************************
+*        EQUATES                                                  *
+*******************************************************************
+         SPACE 1
+FF       EQU   255                 FOR 'NI' INSTRUCTION
+BLANK    EQU   X'40'               BLANK
+ON       EQU   X'FF'               ON
+OFF      EQU   X'00'               OFF
+HIGHVAL  EQU   X'FF'               HIGH VALUE
+LOWVAL   EQU   X'00'               LOW VALUE
+SIGN     EQU   X'F0'               FOR FORCE SIGN TO 'F'
+COMMA    EQU   C','
+         SPACE 1
+SPCE1AFT EQU   X'09'               SPACE 1 AFTER PRINTING
+SPCE2AFT EQU   X'11'               SPACE 2 AFTER PRINTING
+SPCE3AFT EQU   X'19'               SPACE 3 AFTER PRINTING
+PAGESKIP EQU   X'89'               SKIP TO NEW PAGE
+         EJECT
+*******************************************************************
+*        CONSTANTS                                                *
+*******************************************************************
+         SPACE 1
+ZEROWORD DC    F'0'                BINARY ZERO FULLWORD FOR TESTS
+         SPACE 1
+COND4    DC    H'4'                COMPLETION CODE OF 4
+COND8    DC    H'8'                COMPLETION CODE OF 8
+COND12   DC    H'12'               COMPLETION CODE OF 12
+COND16   DC    H'16'               COMPLETION CODE OF 16
+         SPACE 1
+ZERO     DC    PL1'0'              PACKED CONSTANT OF ZERO
+ONE      DC    PL2'1'              PACKED CONSTANT OF ONE
+         EJECT
+***********************************************************************
+*        SYSPRINT MESSAGES                                            *
+***********************************************************************
+         SPACE 1
+LINE01   DC    C'T375P80 - IBM 3750 SWITCHING SYSTEM              DATE C
+               LE FOR DATA TRANSFER'
+DATE     EQU   LINE01+54
+TIME     EQU   LINE01+71
+LINE02   DC    C'PARM OF EXEC CARD = '
+LINE03   DC    C'COMETDA  DD STATEMENT MISSING'
+LINE04   DC    C'ERROR(S) IN PARM'
+LINE05   DC    C'PROCESSING BYPASSED'
+LINE06   DC    C'KEYWORD ''NOBLKS'' MISSING'
+LINE07   DC    C'KEYWORD ''MODE'' MISSING'
+LINE08   DC    C'PARM OF EXEC CARD MISSING'
+LINE09   DC    C'NUMBER OF BLOCKS WRITTEN = '
+LINE10   DC    C'CONDITION CODE = '
+LINE11   DC    C'DA FILE NO OF  3750 CONTROLLER A   3750 CONTROLLER B '
+LINE12   DC    C'FREE BLOCKS    # CLEARED  # TRANSF. # CLEARED  # TRANSC
+               F.        ''# = POINTER TO NEXT BLOCK TO BE ...'''
+LINE13   DC    C'SYSUT2 DD STATEMENT MISSING'
+LINE14   DC    C'NUMBER OF RECORDS WRITTEN TO SYSUT2 = '
+LINE15   DC    C'NUMBER OF RECORDS WRITTEN TO SYSUT3 = '
+LINE16   DC    C'T375R80 - COMET SYSTEM                                *
+                                                       DATE            *
+               TIME   .     PAGE       '
+DATER80  EQU   LINE16+99
+TIMER80  EQU   LINE16+115
+PAGER80  EQU   LINE16+128
+LINE17   DC    C'  DATE    TIME   DURATION  EXT.  OP. LINE  *----------*
+               --------*                                              '
+LINE18   DC    C'YY MM DD  HH MM  HH MM SS  THTU  NO  CXTU     PSN DIAL*
+               ED           FLAGS  ---------------------------------->'
+LINE19   DC    C'SYSUT1 DD STATEMENT MISSING'
+LINE20   DC    C'THE DATA COLLECTION MESSAGES RECEIVED ARE :'
+DCLINE1  DS    CL133
+         ORG   *-133
+         DC    C'        FLAG1='
+D0FLAG1  DS    CL8
+         DC    C',FLAG2='
+D0FLAG2  DS    CL8
+         DC    C',FLAG3='
+D0FLAG3  DS    CL16
+VARA     DS    CL73
+         EJECT
+*******************************************************************
+*        WORK AREAS                                               *
+*******************************************************************
+         SPACE 1
+IPLMTH   DS    CL2                 IPL MONTH NUMBER
+IPLYEAR  DS    CL2                 IPL YEAR NUMBER
+IPLYYM1  DS    CL3                 IPL YEAR
+         ORG   *-2                        NUMBER
+IPLYYL1  DS    CL2                           - 1
+         SPACE 1
+SWBLK    DS    C                   SWITCH FOR BLK FIELD
+SWPSN2   DS    C                   SWITCH FOR PSN2 FIELD
+FILECTRL DS    C                   BIT 0-3 = FILE / BIT 4-7 = CONTROLER
+         SPACE 1
+WORKAREA DS    CL32                WORK AREA
+PACKEDEC DC    PL8'0'              WA FOR PACKED DECIMAL OPERATIONS
+DECIMAL  DS    D                   WA FOR DECIMAL OPERATIONS
+COMPCODE DC    H'0'                CONDITION CODE
+         SPACE 1
+PARMLGTH DC    F'0'                LENGTH OF PARM OF EXEC CARD
+PARMADDR DS    F                   ADDRESS OF PARM INFO'S
+         SPACE 1
+PAGECOUN DC    PL2'0'              COUNT OF PAGES
+LINECOUN DC    PL2'0'              COUNT OF LINES
+MAXLINE  DC    PL2'55'             MAXIMUM NUMBER OF LINES PER PAGE
+         SPACE 1
+CTCOMET  DC    PL4'0'
+CTSYSUT2 DC    PL4'0'              RECORD COUNTER
+CTSYSUT3 DC    PL4'0'              RECORD COUNTER
+         SPACE 1
+NOBLKSBY DC    F'0'                NUMBER OF BLOCKS
+PROC     DC    C' '                PROCEDURE TO FOLLOW  'I' = INIT
+*                                                       'S' = SCRATCH
+*                                                       'P' = PRINT
+*                                                       'U' UNLOAD
+*                                                       '1' RESTORE 1
+*                                                       '2' RESTORE 2
+         SPACE 1
+REPLY    DS    CL3
+ECBREPLY DS    D
+*
+RBA      DC    F'0'                RELATIVE
+RELABLAD EQU   *-3                       BLOCK ADDRESS
+         SPACE 1
+PAGECR80 DC    PL2'0'              PAGE COUNTER
+LINECR80 DC    PL2'0'              LINE COUNTER
+         DS    0D
+BLOCK    DS    CL256
+         EJECT
+*******************************************************************
+*        LITERAL POOL                                             *
+*******************************************************************
+         SPACE 1
+         LTORG
+         TITLE 'DCB DSECT'
+*******************************************************************
+*        DCB DSECT                                                *
+*******************************************************************
+         SPACE 1
+         PRINT GEN
+         DCBD  DSORG=PS            GENERATE DCB DSECT
+         PRINT NOGEN
+         END

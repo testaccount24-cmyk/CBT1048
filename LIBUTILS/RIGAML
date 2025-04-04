@@ -1,0 +1,1944 @@
+         TITLE 'LOAD PARAMETER DISK AREA AND UTILITY RIGAM'
+         ISEQ  73,80
+         PRINT ON,NODATA,NOGEN
+RIGAML   CSECT                                                     BXL
+         USING RIGAML,15                                           BXL
+         SAVE  (0,12),T
+         B     *+76
+SAVEAREA DS   18F
+         LA    9,SAVEAREA
+         ST    9,8(13)
+         ST    13,SAVEAREA+4
+         LR    13,9
+         LM    10,12,BASEADDR
+         USING SAVEAREA,13,10,11,12
+         DROP  15
+         B     FIRST
+BASEADDR DC    A(SAVEAREA+4096,SAVEAREA+8192,SAVEAREA+12288)
+FIRST    BAL   4,TSTYPDEV          GO TEST DEVICE TYPE
+         OPEN (DISKDCB,(INOUT))
+*  THIS  ROUTINE WILL READ CONTROL CARDS AND FORMAT A DISK PARAMETER
+*        ENTRY                        000001
+*RIGAM   FORMAT DATA SET BLOCKS START=XXXXXX END=XXXXXX PARAMETER AREA
+*RIGAM   FORMAT DATA SET BLOCKS START=XXXXXX END=XXXXXX INDEX     AREA
+*RIGAM   FORMAT DATA SET BLOCKS START=XXXXXX END=XXXXXX DATA      AREA
+*RIGAM   LOAD   FILE=XXX TYPE=X
+*RIGAM   PAREA  FILE=XXX TYPE=X
+*        ID  LOWBLK HIGBLK DATL KYL ISTBLK IEDBLK AF
+*RIGAMF  XXX XXXXXX XXXXXX XXXX XXX XXXXXX XXXXXX XX
+*RIGAM   DUMP   FILE=XXX TYPE=X
+         OPEN  (CARDDCB,(INPUT),PRINTDCB,(OUTPUT))  OPEN CARD AND PRIN
+GETCARD  READ  DECB1,SF,CARDDCB,CARD,80          READ CONTROL CARD
+         CHECK DECB1                             CHECK READ
+         CLC   CARD+9(6),=CL6'FORMAT'            FORMAT CTL CARD ?
+         BE    FORMAT                            YES
+         CLC   CARD+9(6),=CL6'LOAD  '            LOAD CTL CARD ?
+         BE    LOAD                              YES
+         CLC   CARD+9(6),=CL6'PAREA '            PARAMETER AREA CARD ?
+         BE    PAREA                             YES
+         CLC   CARD+9(6),=CL6'DUMP  '            DUMP CTL CARD ?
+         BE    DUMP                              YES
+         CLC   CARD+9(6),=CL6'PRINT '            PRINT CTL CARD ?
+         BE    PRINTRTN                          YES
+*
+*        NOTE
+*             THERE
+*                   IS
+*                      LIMITED
+*                             CHECKINC
+*                                  FOR
+*                                       VALID
+*                                             INFORMATION
+*        BE   SURE  CARDS  ARE                       OF
+*                              CORRECT                  CTL
+*                                                         CARDS
+PAREA    CLC   CARD+16(5),=CL5'FILE='        PARAMETER AREA LOAD
+         BNE   CTLCDERR                      CHECK  FOR FILE=
+         MVC   FILE,CARD+21                  YES  MOVE  FILE  CL3
+         MVC   TYPE,CARD+30                  MOVE TYPE CL1
+         READ  DECB2,SF,CARDDCB,CARD,80      READ RIGAMF CTL CARD
+         CHECK DECB2                         CHECK READ
+         CLC   CARD+1(6),=C'RIGAMF'          RIGAMF CTL CARD?
+         BNE   CTLCDERR                      NO
+         MVC   ID,CARD+9                     YES MOVE ID  CL3
+         MVC   LOWBLK,CARD+13                MOVE LOW BLK CL6
+         MVC   HIGBLK,CARD+20                MOVE HIGH BLK CL6
+         MVC   DATL,CARD+27            CL4   MOVE DATA LENGTH  ID+KL+DL
+         MVC   KYL,CARD+32                   MOVE KEY LENGTH CL3
+         MVC   ISTBLK,CARD+36          CL6   MOVE INDEX START BLOCK
+         MVC   IEDBLK,CARD+43          CL6   MOVE INDEX END  BLOCK
+         MVC   AF,CARD+50                    MOVE  ADDITION FACTOR
+*  MOVE  INFORMATION TO PARAMETER AREA
+         XC    PARMDISK,PARMDISK             CLEAR PARAMETER BUILD
+         MVC   PFILENO,FILE             XXX  FILE TO PARM AREA
+         MVC   PFILEID,ID               XXX  ID   TO PARM AREA
+         MVC   PTYPE,TYPE               X    TYPE TO PARM AREA
+         LA    2,LOWBLK                      POINT TO LOW BLOCK
+         BAL   4,CONVERTS                    CONVERT XXXXXX TO TTR
+         MVC   PLOWBLK,0(3)             TTR   LOW BLOCK
+         LA    2,HIGBLK                      POINT TO HIGH BLOCK
+         BAL   4,CONVERTS                    GO TO CONVERT XXXXXX TOTTR
+         MVC   PHGHBLK,0(3)                  MOVE TTR HIGH BLOCK TO PA
+         PACK  CONVERT,DATL             PACK DATA LENGTH
+         CVB   3,CONVERT                CONVERT DATA LENGTH TO BINARY
+         STC   3,PDATAL+1               STORE LOW ORDER BYTE OF DL
+         SRA   3,8(0)                   SHIFT RIGHT
+         STC   3,PDATAL                 STORE LOW ORDER BYTE OF DL
+         CLI   TYPE,X'F2'               TYPE  2 FILE YES
+         BE    WRITPAR2            GO TO WRITE TYPE 2 PARM BLOCK
+         PACK  CONVERT,KYL              PACK KEY LENGTH
+         CVB   3,CONVERT                CONVERT TO BINARY
+         STC   3,PARGL                  STORE KEY LENGTH
+         LA    2,ISTBLK                 POINT TO INDEX START
+         BAL   4,CONVERTS               CONVERT XXXXXX TO TTR
+         MVC   PLIBLK,0(3)              MOVE INDEX START TO PA  TTR
+         LA    2,IEDBLK                 POINT TO INDEX END
+         BAL   4,CONVERTS               CONVERT XXXXXX TO TTR
+         MVC   PHIBLK,0(3)              MOVE INDEX END TO PA TTR
+         PACK  CONVERT,AF               CONVERT AF ADDITION FACTOR
+         ZAP   PADDF,CONVERT+6(2)       MOVE ADDITION FACTOR
+WRITPAR2 MVC   STORE(3),=C'000'    CLEAR FRONT OF STORE.
+         MVC   STORE+3(3),FILE     MOVE FILE NO. TO STORE.
+         LA    2,STORE                  POINT TO FILE
+         BAL   4,CONVERTS               CONVERT TO TTR
+         OPEN  (DISKDCB,(OUTPUT))       OPEN DISK
+         MVC   BLOCK(232),PARMDISK           MOVE PARM TO DISK
+         WRITE DECB3,DI,DISKDCB,BLOCK,1693,0,TTR
+         CHECK DECB3                         CHECK
+         B     GETCARD                       GO TO GET NEXT CARD
+*   LOAD  A DATA SET FROM TAPE ON TO A FILE
+*   READ TAPE INTO DATA AREA COUNT RECORDS AND
+*   CALCULATE INDICIES REQUIRED AND THEN BUILD INDEX STRUCTURES
+LOAD     EQU   *                                                   BXL
+         MVC   FILE,CARD+21             MOVE FILE
+         MVC   TYPE,CARD+30             MOVE TYPE
+         MVC   STORE(3),=C'000'    CLEAR FRONT OF STORE.
+         MVC   STORE+3(3),FILE
+         LA    2,STORE
+         BAL   4,CONVERTS               CONVERT FILE
+         READ  DECB4,DI,DISKDCB,BLOCK,1693,0,TTR
+         CHECK DECB4                         CHECK READ
+         MVC   PARMDISK,BLOCK                MOVE PARAMETERS TO WORK
+         CLC   PTYPE,TYPE                    CHEK TYPE
+         BNE   ERROR                         NE  ERROR
+         OPEN  (FILEDCB,(INPUT))        OPENLOADFILE               BXL
+         CLC   PTYPE,=C'1'                   CHECK FOR TYPE 1
+         BNE   LOAD2                         NOT EQUAL LOAD TYPE 2
+*     READ TAPE AND FORMAT THE DATA RECORD
+LOADCONT MVC   TTR(3),PLOWBLK      MOVE LOW DATA BLOCK TO TTR.
+         MVC   PNSR(3),PLOWBLK     MOVE TTRN TO PARAMETER TABLE OF
+         MVI   PNSR+3,X'01'         NEXT SEQUENTIAL RECORD.
+*
+*  SET UP  TTRN  FOR NSR  TTR  THIS BLOCK
+         B     AROUND                        AROUND CONSTANTS
+WTTR     DC    F'0'                TTR FOR BLOCK TO BE WRITTEN
+WTTRNNSR DC    F'0'                NSR POINTER   NEXT SEQUENTIAL RECORD
+COUNT    DC    F'0'                RECORD COUNTER
+AROUND   MVC   WTTR,TTR            CURRENT BLOCK
+*    CALCULATE  THE NUMBER OF DATA RECORDS PER BLOCK
+*     DATA LENGTH =  ID+KL+DATA
+         XR    2,2                      CLEAR REGISTER 2
+         IC    2,PDATAL                 INSERT
+         SLA   2,8(0)                        DATA
+         IC    2,PDATAL+1                      LENGTH
+         LA    2,5(2)             INCREMENT TO RECORD   L + 5
+         XR    4,4                      CLEAR  4
+         L     5,=F'1690'               DIVIDEND
+         DR    4,2                      1690 DIVIDED BY RECORD LENGTH
+         STH   5,RECBLK                 STORE  RECORDS PER BLOCK
+         STC   5,PRECPB            STORE IN PARM.TBL.THE NO.REC.'S/BLK.
+         B     RESTART            BRANCH AROUND
+RECBLK   DC    H'0'
+CCR      DC    CL1'0'              COMPARE R AREA STORAGE.
+FW       DC    F'0'                FULL TTRN STORAGE AREA.
+RESTART  LA    5,BLOCK+3                POINT 5 TO FIRST RECORD
+         XR    3,3                      DATA
+         IC    3,PDATAL                     LENGTH    FILE ID=3
+         SLA   3,8(0)                         TO      KEY    =XX
+         IC    3,PDATAL+1                        R 3  DATA   =XXX
+         LH    7,RECBLK           FOR   BCT  7,     LOOP
+         S     3,=F'3'        DECREMENT D/L FOR FILE ID
+         L     8,WTTR                   POINT TO
+         IC    8,=X'02'           FIRST NEXT SEQUENTIAL REC POINTER
+         ST    8,WTTRNNSR
+         MVC   BLOCK(3),WTTR      BLOCK NO TO DATA BLOCK
+GETTAPE  GET   FILEDCB,TAPE             READ NEXT LOAD FILE REC.   BXL
+*   FIRST TAPE RECORD IN CORE
+         BAL   4,SEQCHECK               TEST FILE SEQUENCE
+         MVI   0(5),X'00'               SET DELETE CODE = OFF 00
+         LR    9,5                 SAVE INITIAL DATA AREA ADDRESS.
+         MVC   1(4,5),WTTRNNSR          MOVE TTRN FOR NSR
+         L     8,WTTRNNSR                      INCREMENT NEXT
+         A     8,=F'1'                             SEQUENTIAL  TTRN
+         ST    8,WTTRNNSR                            RECORD POINTER
+         MVC   5(3,5),PFILEID           MOVE FILE ID
+         BAL   4,DATAMOVE     GO MOVE TAPE DATA TO DISK
+         L     6,COUNT                  GET COUNT
+         A     6,=F'1'                  INCREMENT COUNT BY 1
+         ST    6,COUNT                  STORE COUNT
+         LA    5,5(5)                   POINT PAST 5 POS IDBLK
+         AR    5,3                      POINT PAST DATA L - 3
+         A     5,=F'3'            POINT TO NEXT DATA INSERT
+         BCT   7,GETTAPE                COUNT NO OF BLOCKS
+         L     8,WTTRNNSR          LOAD TTRN OF NEXT SEQUENTIAL RECORD.
+         SRA   8,8(0)              SHIFT N OF TTRN OUT.
+         A     8,=F'1'             ADD 1 TO R OF TTR.
+         STC   8,CCR               STORE R FOR COMPARE.
+         CLC   CCR(1),BLKNOF+3     COMPARE R TO MAX-BLK-TRK
+         BNH   GETZ                IF R = OR <, SAME TT,DIF.REC.BLOCK
+         SRA   8,8(0)              R=>5.SO TT MUST BE INCREMENTED.
+         A     8,=F'1'             INCREMENT TT.
+         SLA   8,8(0)              MOVE TT OVER FOR R.
+         A     8,=F'1'             GENERATE FIRST R OF TTR.
+GETZ     SLA   8,8(0)              MOVE TTR OVER FOR N.
+         A     8,=F'1'             GENERATE FIRST N OF TTRN.
+         ST    8,FW                ALIGN TTRN AND
+         MVC   1(4,9),FW            PLACE IT IN NEXT SEQUENTIAL RECORD.
+*   WRITE  DATA  RECORD.
+         WRITE DECB5,DI,DISKDCB,BLOCK,1693,0,WTTR
+         CHECK DECB5                           CHECK WRITE
+*    /TTRTTRNCCCKKK-KDDD-D
+*    SET UP FOR NEXT BLOCK  CHECK EXTENT
+         CLC   WTTR+2(1),BLKNOF+3  TEST IF R = OR > MAX-BLK-TRK TSG-BXL
+         BNL   CARRY               BRANCH IF YES                TSG-BXL
+         XR    4,4                 ZEROISE REG.4                TSG-BXL
+         IC    4,WTTR+2            LOAD R TO REG.4              TSG-BXL
+         LA    4,1(4)              ADD ONE TO R                 TSG-BXL
+         STC   4,WTTR+2            STORE NEW R                  TSG-BXL
+         B     EXTENT              GO TO EXTENT CHECK           TSG-BXL
+CARRY    LH    4,WTTR              LOAD PRECEDING TT INTO REG.4
+         LA    4,1(4)              ADD ONE TO TT                TSG-BXL
+         STH   4,WTTR              STORE NEW TT                 TSG-BXL
+         MVI   WTTR+2,X'01'        FORCE R TO 1                 TSG-BXL
+EXTENT   CLC   WTTR(3),PHGHBLK          CHECK FOR HIGH BLOCK REACHED
+         BC    12,RESTART         NOT OVER END OF EXTENT
+         ABEND 112,DUMP                 ABEND IF HIGH BLOCK REACHED
+FILEEND  CLOSE FILEDCB                  CLOSE LOAD FILE            BXL
+         MVI   0(5),X'00'               SET DELETE CODE = 00
+         MVC   1(4,5),=X'FFFFFFFF'      PUT FFFFFFFF IN  NSTTRN
+         MVC   5(3,5),PFILEID           FILE ID
+         MVC   8(35,5),FS               KEY = F'S
+*        READY  TO BUILD INDICIES
+         L     6,COUNT                  INCREMENT  COUNT
+         A     6,=F'1'                         FOR LAST
+         ST    6,COUNT                            RECORD
+         L     8,WTTRNNSR               DECREMENT
+         S     8,=F'1'                        NSR  POINTER
+         ST    8,WTTRNNSR               STORE
+         MVC   PEOFTYP1,WTTRNNSR        MOVE EOF FOR TYPE 1
+         MVC   PLRUSED,WTTRNNSR         MOVE LAST RECORD USED
+*      WRITE  LAST DATA BLOCK
+         WRITE DECB6,DI,DISKDCB,BLOCK,1693,0,WTTR
+         CHECK DECB6                            CHECK WRITE
+*   CALCULATE NO OF INDICIES PER HICH LEVEL BLOCK
+TYPE2SW1 BC    0,ENDSTRUC    ON FOR BUILDING TYPE 2 FILES ONLY.
+         XR    2,2                CLEAR R2
+         IC    2,PARGL            ARG LENGTH  INDEX BLK= 1693-12
+         LA    2,5(2)             INDEX ENTRY LENGTH
+         XR    4,4                CLEAR R4
+         L     5,=F'1681'         LOAD DIVIDEND
+         DR    4,2                DIVIDE  1681 BY INDEX LENGTH
+         ST    5,INDHL            STORE QUOTIENT IN INDEXES PER H L
+         STC   5,PINDBLK           STORE INDEX LEVEL/BLK.IN PARM.TABLE
+         ZAP   DWD,PADDF          ADD FACTOR         ENT
+         CVB   5,DWD              CVB  ADD FACT
+         LR    4,5                      SUBTRACT
+         L     5,=F'100'                     ADD  FACTOR  FROM
+         SR    5,4                                   100
+         XR    4,4                CLEAR 4
+         M     4,INDHL            MULTIPLY FILL FACTOR BY NO INDX HL
+         D     4,=F'100'          NORMALIZE
+         ST    5,INDLL            STORE  INDEXES PER BLOCK PER LL
+         XC    L6(24),L6          CLEAR LEVEL INDICATORS TO ZERO
+         L     4,COUNT            LOAD COUNT
+         SRDA  4,32(0)            SHIFT FOR DIVIDE
+         D     4,INDLL            COUNT DIVIDED BY INDEXES BLOCK LL
+         A     5,=F'1'            ADD 1 TO ROUND
+         B     AL                       BRANCH  AROUND CONSTANTS
+DWD      DC    D'0'               CONVERT TO BINARY AREA
+INDHL    DC    F'0'               NO INDICIES PER BLOCK HIGH LEVEL
+INDLL    DC    F'0'               NO INDICIES PER BLOCK LOW  LEVEL
+*
+L6       DC    F'0'                NO BLOCKS FOR LEVEL 6
+L5       DC    F'0'                     NO BLOCKS FOR LEVEL 5
+L4       DC    F'0'                NO BLOCKS FOR LEVEL 4
+L3       DC    F'0'                NO BLOCKS FOR LEVEL 3
+L2       DC    F'0'                NO BLOCKS FOR LEVEL 2
+L1       DC    F'0'                NO BLOCKS FOR LEVEL 1
+AL       ST    5,L1                STORE BLOCKS REQUIRED FOR LEVEL 1
+         XR    4,4                 CLEAR 4
+         D     4,INDHL             DIVIDE LEVEL 1  BLOCKS BY INDX/HL
+         C     5,=F'0'             COMPARE TO ZERO
+         BE    END                 BRANCH TO END STRUCTURE
+         A     5,=F'1'             ADD 1 TO L2 BLOCKS
+         ST    5,L2                STORE NO OF LEVEL 2 BLOCKS
+         XR    4,4                 CLEAR 4
+         D     4,INDHL             L 2  BLOCKS DIVIDED BY INDX/HL
+         C     5,=F'0'             COMPARE TO ZERO
+         BE    END                 EQUAL END STRUCTURE
+         A     5,=F'1'             ADD 1 TO LEVEL 3 BLOCKS
+         ST    5,L3                STORE LEVEL 3 BLOCKS REQUIRED
+         XR    4,4                 CLEAD 4
+         D     4,INDHL             DIVIDE L3 BLOCKS BY INDX/HL
+         C     5,=F'0'             COMPARE TO ZERO
+         BE    END                 BE END STRUCTURE
+         A     5,=F'1'        ADD 1 TO NO OF LEVEL 4 BLOCKS
+         ST    5,L4           STORE NO OF LEVEL 4 BLOCKS REQUIRED
+         XR    4,4            CLEAR 4
+         D     4,INDHL        DIVIDE  L4 BLOCKS BY INDX/HL
+         C     5,=F'0'        COMPARE TO ZERO
+         BE    END            END STRUCTURE ?
+         A     5,=F'1'        ADD 1 TO NO OF
+         ST    5,L5           STORE NO OF LEVEL 5 INDEX BLOCKS REQ
+         XR    4,4            CLEAR 4
+         D     4,INDHL        CALCULATE NO OF L6 INDEX BLOCKS
+         C     5,=F'0'        COMPARE TO ZERO
+         BNE   ABEND          ABEND ERROR
+END      SR    2,2            LOOP
+         XC    LVLCT,LVLCT         RESET LEVEL COUNT
+         B     CONAR                    BRANCH AROUND CONSTANT
+LVLCT    DC    F'0'                     COUNTER FOR NO OF LEVELS
+CONAR    NOP   *
+         LA    3,L1                TO
+CO       CLC   0(4,3),=F'0'           SET
+         BNE   END2                       LAST
+         L     6,LVLCT                  COUNT
+         A     6,=F'1'                       NUMBER OF
+         ST    6,LVLCT                           LEVELS
+         MVC   0(4,3),=F'1'                    LEVEL
+         B     STRUCT                                TO
+END2     A     3,=F'-4'                                 1
+         L     6,LVLCT                  COUNT
+         A     6,=F'1'                       NUMBER  OF
+         ST    6,LVLCT                           LEVELS
+         B     CO
+STRUCT   STC   6,PNOLVLIX          STORE NO.OF INDEX LVLS.IN PARM.TABLE
+*  TOTAL  NO OF INDEX BLOCKS  CALCULATE D
+*  START  BUILD IND  LEVEL 1 INDEX BLOCKS
+*  CALCULATE  LEVEL 1 START
+*   READY TO LOAD INDICIES FOR LEVEL 1
+*   GET  BLOCK NO  ARGUMENT  AND LOAD ONTO FIRST LEVEL INDEX
+*        GET  NUMBER OF TYPE 1 LEVEL START
+         L     2,L6           ADD
+         A     2,L5               HIGHER
+         A     2,L4                     LEVELS
+         A     2,L3                       TO
+         A     2,L2                          GET  STARTING POINT
+         ST    2,L1LOC        STORE STARTING LOCATION OF LEVEL 1
+         SRDA  2,32(0)        CONVERT
+         D     2,BLKNOF            DIVIDE BY MAX-BLK-TRK
+         STH   3,L1TTR             STORE TTR  OF LEVEL 1
+         STC   2,L1TTR+2           "
+         L     2,L1TTR             "
+         MVC   INDXSTAR,PLIBLK     MOVE DISK START OF INDEX TTR
+         L     3,INDXSTAR          LOAD STARTING POINT OF INDEX ON DISK
+         AR    2,3                 POINTER TO LAST LEVEL 2
+         ST    2,L1START           STORE LAST BLOCK 2  POINTER
+         B     P13                 BRANCH AROUND CONSTANTS
+INDXSTAR DC    F'0'                STARTING POINT OF INDEX BLOCKS
+L1START  DC    F'0'                STARTING POINT OF LEVEL 1
+L1LOC    DC    F'0'                NO OF BLOCKS TO LEVEL 1
+L1TTR    DC    F'0'                TTR OF NO BLOCKS TO LEVEL 1
+P13      XR    2,2                 CLEAR R 2
+         IC    2,L1START+2         INSERT R OF LEVEL 1   0 TO 8
+         LH    3,L1START           LOAD TT  OF LEVEL 1 START
+P13LOOP  C     2,BLKNOF            COMPARE R TO MAX-BLK-TRK
+         BC    12,OK           BRANCH ON EQUAL OR LOW
+         AH    3,=H'1'             ADD ONE
+         S     2,BLKNOF            DECREMENT ONE TRACK
+         B     P13LOOP             BRANCH BACK TO COMPARE
+OK       STH   3,L1START           STORE  TT
+         STC   2,L1START+2         STORE   R
+         B     A13                 BRANCH AROUND
+DATASTAR DC    F'0'                DATA START TTR
+A13      MVC   DATASTAR(3),PLOWBLK      MOVE DATA START TTR.
+*  BUILD FIRST INDEX BLOCK IN INDEX
+*  READ  DATA  WITH  BLOCK
+*    POINTER TO KEY AND KEY LENGTH  NSR-1 POINTER TO THIS DATA
+*    SET POINTER TO LAST RECORD OF BLOCK
+         XR    2,2              GET
+         IC    2,PDATAL            DATA
+         SLA   2,8(0)                 LENGTH
+         IC    2,PDATAL+1               FOR INCREMENTING
+         XR    3,3                 CLEAR R 3
+         IC    3,PARGL        INSERT ARGUMENT LENGTH
+         LH    4,RECBLK       NO RECORDS BLOCK
+         STH   2,DATG                   STORE DATA LENGTH
+         STH   3,KEYL                      STORE  KEY LENGTH
+         STH   4,RECBK                  STORE DATA RECORDS PER BLOCK
+         MVI   SWX1+1,X'00'            RESET SWITCH
+         B     LVCTA                    CONVERT
+HIGHLEVL DC    XL1'00'                     HIGHEST
+LVCTA    L     6,LVLCT                       LEVEL
+         SLA   6,4(0)                          TO
+         STC   6,HIGHLEVL                       HALF BYTE
+         MVC   DATST(3),PLOWBLK         DATA  TTR  START
+         XC    TTRPREV,TTRPREV         RESET PREVIOUS TTR
+*  SET UP LEVEL 1 BUILD INDEX LOOP
+         B     YY1                     BRANCH AROUND CONSTANTS
+TTRPREV  DC    F'0'                    TTR PREVIOUS INDEX BLOCK
+TTRNIB   DC    F'0'                    TTR NEXT INDEX BLOCK
+TTRTHISI DC    F'0'                    TTR THIS INDEX BLOCK
+RS4      DC    F'0'           REGISTAR 4 SAVE AREA
+YY1      MVC   TTRTHISI,L1START        START DATA TTR TO THIS INDEX TTR
+*GO TO A ROUTINE TO INCREMENT  TTR
+         L     1,TTRTHISI              INCREMENT
+         BAL   4,INCRTTRZ                   THIS TTR
+         ST    1,TTRNIB                        TO NEXT TTR
+L1LOOP2  MVC   INDEX(3),TTRTHISI        FORMAT  FIRST 12 BYTES OF INDEX
+         MVC   INDEX+3(1),INDLL+3       BLOCK
+         MVC   INDEX+4(3),TTRPREV       BACK CHAIN
+         MVC   INDEX+7(3),TTRNIB        FORWARD CHAIN
+         MVI   INDEX+10,X'00'           CHAIN CODE
+         MVZ   INDEX+11(1),HIGHLEVL     HIGHEST LEVEL  HALF BYTE
+         MVN   INDEX+11(1),=X'01'       THIS LEVEL HALF BYTE
+*
+         LH    3,KEYL                   KEY LENGTH
+         LA    3,5(3)                   INDEX LENGTH
+         LH    4,KEYL                   KEY LENGTH
+         SH    4,=H'1'             COMPARE LENGTH
+         LR    7,3                      INDEX LENGTH
+         SH    7,=H'1'             INDEX MOVE
+         XR    6,6                      CLEAR 6
+         IC    6,INDLL+3               NO OF IND IN LL INDEX BLOCK
+         LA    5,INDEX+12               POINT TO FIRST INDEX ENTRY
+L1LOOP   ST    4,RS4                 SAVE REG.4
+         BAL   4,GD1                GET A DATA BLOCK
+         L     4,RS4                 RESTORE REG.4
+         EX    7,INDXMOVE               MOVE INDEX JUST GOTTEN
+         AR    5,3                      INCREMENT TO NEXT INDEX
+         EX    4,INDXCOMP               COMPARE FOR ARC=F'S
+         BE    ENDUPL1                  EQUAL WRITE LAST BLOCK
+*  WRITE  PARAMETER STATUS
+         BCT   6,L1LOOP                 BRANCH ON COUNT OF INDX LL BLOK
+         WRITE DECB7,DI,DISKDCB,INDEX,1693,0,TTRTHISI
+         CHECK DECB7                        CHECK
+         MVC   TTRPREV,TTRTHISI         PREV=THIS TTR
+         L     1,TTRNIB                  INCREMENT TTR NEXT BLOCK
+         B     P16                      BRANCH AROUND CONSTANTS
+GOTCOMP  CLC   GOTINDX(0),FS       LOOK FOR LAST INDEX IN BLOCK
+INDXCOMP CLC   MODELIND(0),FS    COMPUTED COMPARE FOR ARG=F'S
+INDXMOVE MVC   0(0,5),MODELIND          MOVE TO INDEX BLOCK COMPUTED
+P16      BAL   4,INCRTTRZ               INCREMENT TTR
+         ST    1,TTRNIB                 NEXT BLOCK
+         L     1,TTRTHISI               INCREMENT
+         BAL   4,INCRTTRZ                   TTR
+         ST    1,TTRTHISI                      OF THIS BLOCK
+         BAL   4,TESTINH                TEST FOR UPPER INDEX LIMIT
+         B     L1LOOP2                  GO BACK TO BUILD INDEX BLOCK
+ENDUPL1  MVC   PBLKLIU,TTRTHISI            MOVE END OF INDEX BLOCKS
+         L     4,INDLL
+         SR    4,6
+         A     4,=F'1'
+         STC   4,INDEX+3
+         WRITE DECB8,DI,DISKDCB,INDEX,1693,0,TTRTHISI
+         CHECK DECB8                                  BLOCK
+*   READY  TO  START ON  LEVEL 2 OF INDEX STRUCTURE
+*   GO  TO A  SUBROUBROUTINE TO GET INDICIES
+*   CALCULATE  EXISTANCE OF A SECOND LEVEL INDEX
+         MVC    GOTTR,L1START   POINT  GIS TO LEVEL  1  BLOCKS STARD
+         L     2,L2                     CHECK
+         C     2,=F'0'                   FOR
+         BE    ENDSTRUC                     EXISTANCE OF A LEVEL 2 INDX
+         XR    2,2                       CLEAR R 2
+         A     2,L6                      NO BLOCKS TO LEVEL 5
+         ST    2,L5LOC                   STORE
+         A     2,L5                      NO BLOCKS TO LEVEL 4
+         ST    2,L4LOC                   STORE
+         A     2,L4                      NO BLOCKS TO LEVEL 3
+         B     BB17                      BRANCH AROUND CONSTANTS
+L2START  DC    F'0'           TTR OF STARTING POINT  L2
+L3START  DC    F'0'           TTR OF STARTING POINT  L3
+L4START  DC    F'0'           TTR OF STARTING POINT  L4
+L5START  DC    F'0'           TTR OF STARTING POINT  L5
+L6START  DC    F'0'           TTR OF STARTING POINT  L6
+L2LOC    DC    F'0'           NO OF BLOCKS TO LEVEL  2
+L3LOC    DC    F'0'           NO OF BLOCKS TO LEVEL  3
+L4LOC    DC    F'0'           NO OF BLOCKS TO LEVEL  4
+L5LOC    DC    F'0'           NO OF BLOCKS TO LEVEL  5
+L6LOC    DC    F'0'           NO OF BLOCKS TO LEVEL  6
+L2TTR    DC    F'0'           TTR OF NO BLOCKS TO  LEVEL 2
+L3TTR    DC    F'0'           TTR OF NO BLOCKS TO  LEVEL 3
+L4TTR    DC    F'0'           TTR OF NO BLOCKS TO  LEVEL 4
+L5TTR    DC    F'0'           TTR OF NO BLOCKS TO  LEVEL 5
+L6TTR    DC    F'0'           TTR OF NO BLOCKS TO  LEVEL 6
+RS4A     DC    F'0'           SAVE AREA FOR REGISTAR 4.
+BB17     ST    2,L3LOC          STORE
+         A     2,L3             NO BLOCKS TO LEVEL 2
+         ST    2,L2LOC
+         LA    2,L2LOC         THE FOLLOWING ROUTINE HAS BEEN
+         BAL   4,BLOCKTTR         INSERTED IN ORDER TO CONVERT
+         MVC   L2TTR,TTR           L2LOC TO L6LOC INCLUSIVE INTO
+         LA    2,L3LOC               TTR FORMAT.
+         BAL   4,BLOCKTTR              .         .         .
+         MVC   L3TTR,TTR               .         .         .
+         LA    2,L4LOC                 .         .         .
+         BAL   4,BLOCKTTR              .         .         .
+         MVC   L4TTR,TTR               .         .         .
+         LA    2,L5LOC                 .         .         .
+         BAL   4,BLOCKTTR              .         .         .
+         MVC   L5TTR,TTR               .         .         .
+         LA    2,L6LOC                 .         .         .
+         BAL   4,BLOCKTTR              .         .         .
+         MVC   L6TTR,TTR               .         .         .
+         B     ROUNDIT                 .         .         .
+BLOCKTTR STM   2,5,REGSAVE             .         .         .
+         L     4,0(0,2)            LOAD DIVIDEND
+         S     4,=F'1'             SUBTRACT ONE
+         SRDA  4,32(0)             SHIFT FOR DIVIDE
+         D     4,BLKNOF            DIVIDE BY MAX-BLK-TRK
+         A     4,=F'1'                 .         .         .
+         STH   5,TTR                   .         .         .
+         STC   4,TTR+2                 .         .         .
+         LM    2,5,REGSAVE             .         .         .
+         BR    4                       .         .         .
+ROUNDIT  L     2,INDXSTAR      START TTR OF INDEX BLOCKS.
+         L     1,L2TTR          L2 TTR TO START
+         BAL   4,SITTR             ADD TO INDEX START TTR
+         ST    1,L2START        STORE L2 TTR
+         L     1,L3TTR          L3 TTR TO START
+         BAL   4,SITTR             ADD TO INDEX START TTR
+         ST    1,L3START           STORE L3 TTR START
+         L     1,L4TTR             L4 TTR TO START
+         BAL   4,SITTR             ADD TO INDEX START TTR
+         ST    1,L4START           STORE L4 TTR START
+         L     1,L5TTR             L5 TTR TO START
+         BAL   4,SITTR
+         ST    1,L5START           STORE L5 START
+         L     1,L6TTR             L6 TTR TO START
+         BAL   4,SITTR
+         ST    1,L6START           STORE L6 TTR START
+*    READY  TO  LOAD L 2  INDICIES
+         MVC   GOTTR,L1START       INITIALIZE SUBROUTINE
+         XC    TTRPREV,TTRPREV     CLEAR BACK POINTER
+         MVC   TTRTHISI,L2START    THIS BLOCK
+GENERAL  L     1,TTRTHISI          INCREMENT
+         BAL   4,INCRTTRZ               THIS TTR TO NEXT
+         ST    1,TTRNIB                      TTR
+L2LOOP2  MVC   INDEX(3),TTRTHISI   FORMAT FIRST 12 BYTES OF INDEX
+         MVC   INDEX+3(1),INDHL+3  NO OF INDICIES PER BLOCK
+         MVC   INDEX+4(3),TTRPREV  BACK CHAIN POINTER
+         MVC   INDEX+7(3),TTRNIB   FORWARD CHAIN POINTER
+         MVI   INDEX+10,X'00'      CHAIN INDICATOR OFF
+         MVZ   INDEX+11(1),HIGHLEVL   HIGHEST LEVEL HALF BYTF
+HBL      MVN   INDEX+11(1),=X'02'     THIS LEVEL HALF BYTE
+         LH    3,KEYL                   LOAD KEY LENGTH
+         LA    3,5(3)                   INCREMENT KEY TO ARG L
+         LH    4,KEYL                   LOAD KEY LENGTH
+         SH    4,=H'1'             KEY LENGTH FOR MOVE
+         LR    7,3                      SAVE ARG LENGTH
+         SH    7,=H'1'             ARG L FOR  MOVE
+         XR    6,6                      CLEAR 6
+         IC    6,INDHL+3                NO INDEXES HL BLOCK
+         LA    5,INDEX+12               POINTER TO FIRST INDEX
+L2LOOP   ST    4,RS4A             SAVE REGISTAR 4.
+         BAL   4,GISUB                    GET INDEX
+         L     4,RS4A             RESTORE REGISTAR 4.
+         EX    7,IXXMOVE                MOVE INDEX
+         AR    5,3                      INCREMENT TONEXT INDEX
+         EX    4,GOTCOMP           COMPARE FOR F'S
+         BE    LASTLVL                  LAST LEVEL
+*   WRITE PARAMETER STATUS
+         BCT   6,L2LOOP                 BRANCH IF BLOCK WILL HOLD INDEX
+         WRITE DECB9,DI,DISKDCB,INDEX,1693,0,TTRTHISI
+         CHECK DECB9                                HL INDEX BLOCK
+         MVC   TTRPREV,TTRTHISI         THIS BLOCK TO PREVIOUS
+         L     1,TTRNIB                 INCREMENT
+         BAL   4,INCRTTRZ                      NEXT
+         ST    1,TTRNIB                           BLOCK
+         L     1,TTRTHISI               INCREMENT
+         BAL   4,INCRTTRZ          THIS
+         ST    1,TTRTHISI             BLOCK
+         B     L2LOOP2                 GO TO BUILD ANOTHER AL BLOCK
+LASTLVL  L     4,INDHL
+         SR    4,6
+         A     4,=F'1'
+         STC   4,INDEX+3
+         WRITE DECBA,DI,DISKDCB,INDEX,1693,0,TTRTHISI
+         CHECK DECBA
+*     FINISH LEVEL 2
+DX3      B     DOL3                LOOP FOR LEVEL  3
+DX4      B     DOL4                LOOP FOR LEVEL  4
+DX5      B     DOL5                LOOP FOR LEVEL  5
+DX6      B     DOL6                LOOP FOR LEVEL  6
+         B     WRITEPAR            GO TO WRITE PARAMETER
+DOL3     MVI   DX3+1,X'00'         RESET  SWITCH
+         MVC   GOTTR,L2START
+         MVC   TTRTHISI,L3START
+         MVI   HBL+1,X'03'            U
+         XC    TTRPREV,TTRPREV         S
+         CLC   L3,=X'00000000'          E
+         BE    ENDSTRUC                     P
+         B     GENERAL                       R
+DOL4     MVI   DX4+1,X'00'                    E
+         MVC   GOTTR,L3START                   V
+         B     CC21                              I
+IXXMOVE  MVC   0(0,5),GOTINDX                INDEX MOVE
+CC21     MVC   TTRTHISI,L4START                  O
+         MVI   HBL+1,X'04'                        U
+         XC    TTRPREV,TTRPREV                     S
+         CLC   L4,=X'00000000'
+         BE    ENDSTRUC                   L
+         B     GENERAL                     O
+DOL5     MVI   DX5+1,X'00'                  O
+         MVC   GOTTR,L4START
+         MVC   TTRTHISI,L5START              P
+         MVI   HBL+1,X'05'
+         XC    TTRPREV,TTRPREV
+         CLC   L5,=X'00000000'
+         BE    ENDSTRUC                 U
+         B     GENERAL                    S
+DOL6     MVI   DX6+1,X'00'                  E
+         MVC   GOTTR,L5START
+         MVC   TTRTHISI,L6START
+         MVI   HBL+1,X'05'                     P
+         XC    TTRPREV,TTRPREV                   R
+         CLC   L6,=X'00000000'                    E
+         BE    ENDSTRUC                            V
+         B     GENERAL                              I
+WRITEPAR NOP   *                                     O
+ENDSTRUC MVC   STORE(3),=C'000'    CLEAR FRONT OF STORE.
+         MVC   STORE+3(3),PFILENO  MOVE FILE N/. TO STORE.
+         LA    2,STORE                            S
+         BAL   4,CONVERTS
+         READ  DECBB,DI,DISKDCB,BLOCK,1693,0,TTR
+         CHECK DECBB                                 O
+         MVC   BLOCK(232),PARMDISK                    O
+         WRITE DECBC,DI,DISKDCB,BLOCK,1693,0,TTR
+         CHECK DECBC
+         MVI   TYPE2SW1,X'00'      TURN OFF TYPE 2 FILE BUILD SWITCH.
+         B     GETCARD
+FORMAT   NOP   *
+         MVC   STORE(6),CARD+38
+         LA    2,STORE
+         BAL   4,CONVERTS
+         PACK  CONVERT,CARD+49(6)
+         CVB   5,CONVERT
+         PACK  CONVERT,CARD+38(6)
+         CVB   4,CONVERT
+         SR    5,4
+         A     5,=F'1'            ADJUST COUNT
+         XC    BLOCK(256),BLOCK
+         XC    BLOCK+256(256),BLOCK+256
+         XC    BLOCK+512(256),BLOCK+512
+         XC    BLOCK+768(256),BLOCK+768
+         XC    BLOCK+1024(256),BLOCK+1024
+         XC    BLOCK+1280(256),BLOCK+1280
+         XC    BLOCK+1536(157),BLOCK+1536
+         MVC   BLOCK(3),TTR        MOVE TTR TO FORMATTED BLOCK
+WRITE    WRITE DECBZ,DI,DISKDCB,BLOCK,1693,0,TTR
+         CHECK DECBZ
+         L     1,TTR                             LOAD PREV BLOCK TTR
+         BAL   4,INCRTTRZ                        GO TO INCREMENT TTR
+         ST    1,TTR                             STORE INCREMENTED TTR
+         MVC   BLOCK(3),TTR        MOVE TTR TO FORMATTED BLOCK
+         BCT   5,WRITE
+         B     GETCARD
+* SUBROUTINE TO CONVERT  XXXXXX  TO  TTR
+*   ENTRY  R2 POINTER TO XXXXXX  R3 POINTER TO FINAL TTR  DESTINATION
+CONVERTS STM   2,5,REGSAVE              SAVE REGISTERS
+         PACK  CONVERT,0(6,2)           PACK XXXXXX
+         CVB   5,CONVERT                XXXXXX TO BINARY
+         XR    4,4                      ZERO 4
+         S     5,=F'1'            ADJUST DIVIDEND
+         D     4,BLKNOF            DIVIDE BY MAX-BLK-TRK
+         A     4,=F'1'                  R = R+1
+         STH   5,TTR                    STORE TT
+         STC   4,TTR+2                  STORE R
+         LM    2,5,REGSAVE              RESTORE REGISTERS
+         LA    3,TTR                    LOAD POINTER
+         BR    4                        RETURN
+STORE    DC    CL6'000000'
+CONVERT  DC    D'0'
+TTR      DC    F'0'
+*    SUBROUTINE TO CONVERT TTR BY ONE
+*    R1  ON ENTRY CONTAINS TTRZ  RETURN CONTAINS TTR+1Z IN R1
+INCRTTRZ STM   2,9,REGSAVE
+         ST    1,IN1               STORE CURRENT  TTRZ          TSG-BXL
+         CLC   IN1+2(1),BLKNOF+3   TEST IF R = OR > MAX-BLK-TRK TSG-BXL
+         BNL   PLUS                BRANCH IF YES                TSG-BXL
+         XR    1,1                 ZEROISE REG.1                TSG-BXL
+         IC    1,IN1+2             INSERT R TO REG.1            TSG-BXL
+         LA    1,1(1)              ADD ONE TO R                 TSG-BXL
+         STC   1,IN1+2             STORE NEW R                  TSG-BXL
+INCRTN   L     1,IN1               LOAD NEWTTRZ INTO REG.1      TSG-BXL
+         LM    2,9,REGSAVE         RESTORE REGS                 TSG-BXL
+         BR    4                   RETURN TO CALLER             TSG-BXL
+PLUS     LH    1,IN1               LOAD TT INTO REG.1           TSG-BXL
+         LA    1,1(1)              ADD ONE TO TT                TSG-BXL
+         STH   1,IN1               STORE NEW TT                 TSG-BXL
+         MVI   IN1+2,X'01'         FORCE R TO 1                 TSG-BXL
+         B     INCRTN                                           TSG-BXL
+*                                                               TSG-BXL
+IN1      DS    F                   TTRZ WORK AREA               TSG-BXL
+         SPACE 1                                                TSG-BXL
+*  SUBROUTINE TO CONVERT NOLOC TO TO TTR
+*  ENTRY  R1 CONTAINS NO LOC   RETURN R1 CONTAINS TTRZ  START
+LOCTTR   STM   2,9,REGSAVE
+         LR    2,1                 R2 CONTAINS LOCATIONS
+         SRDA  2,32(0)             SHIFT FOR DIVIDE
+         D     2,BLKNOF            DIVIDE BY MAX-BLK-TRK
+         A     2,=F'1'             INCREMENT R
+         LR    1,2                 TT TO 1
+         SLA   1,16(0)             TT00 IN 1
+         SLA   3,8(0)              00RD IN 3
+         AR    1,3                 TTR0
+         LM    2,9,REGSAVE         RESTORE REGISTERS
+         BR    4                   RETURN
+*  SUBROUTINE  TO ADD TWO TTR'S
+*  ON ENTRY R1  CONTAINS ONE TTR AND R2 CONTAINS THE OTHER
+*  ON RETURN R1 CONTAINS THE RESULT  R2 IS UNDISTURBED
+SITTR    STM   2,9,REGSAVE
+         LR    3,2                 MOVE TTRZ TO REG.3
+         XR    2,2                 CLEAR REG.2
+         STH   1,HWC               MOVE RZ OF TTRZ INTO
+         LH    2,HWC                 REGISTAR 2.
+         STH   3,HWC               MOVE RZ OF TTRZ INTO
+         LH    4,HWC                 REGISTAR 4.
+         SRA   1,16(0)             ALIGN TT IN REGISTARA 1
+         SRA   3,16(0)               AND TWO FOR ADDING.
+         AR    1,3                 ADD TT'S
+         SLA   1,16(0)             SHIFT NEW TT
+         SRA   2,8(0)              SHIFT Z'S OUT OF
+         SRA   4,8(0)               REG'S 2 & 4.
+         AR    2,4                 ADD R'S.
+COM1     C     2,BLKNOF            IS R > THAN MAX-BLK-TRK
+         BH    DECRMNT               YES.
+         SLA   2,8(0)              NO. SHIFT R TO
+         AR    1,2                  ADD TO TT FOR FINAL TTRZ.
+         LM    2,9,REGSAVE         RESTORE REGISTARS AND
+         BR    4                    RETURN
+DECRMNT  S     2,BLKNOF            SUBTRACT MAX-BLK-TRK
+         A     1,CON1              ADD 1 TO TT
+         B     COM1                RE-COMPARE FOR LIMIT.
+*  MOVE TAPE DATA TO DISK AREA
+DATAMOVE STM   2,9,REGSAVE
+         LA    6,TAPE         R6 POINTS TO TAPE AREA
+         A     5,=F'8'        R5 POINTS TO DISK AREA
+         LH    2,=X'00FF'     255 BYTES
+*
+COMPARE  CH    3,=X'0100'     OVERSIZE MOVE..     R3=DATA LENGTH
+         BH    HIGHMOVE       YES.  GO MOVE 256 BYTES
+         SH    3,=X'0001'     DECREMENT R3 BY 1  (DATA LENGTH-1)
+         EX    3,TAPEMOVE     EXECUTE THE MOVE
+*
+LOADREGS LM    2,9,REGSAVE
+         BR    4     ...NOW LETS GET BACK TO BUSINESS.....
+*
+HIGHMOVE EX    2,TAPEMOVE     MOVE ALL 256 BYTES  R2=255
+         AH    5,=X'0100'     INCREMENT DISK BASE REG BY 256
+         AH    6,=X'0100'     INCREMENT TAPE BASE REG BY 256
+         SH    3,=X'0100'     DECREMENT RCD LENGTH BY 256
+         BP    COMPARE        POSITIVE REMAINDER--GO BACK
+         WTO   'ERROR ON DATA MOVE***POSSIBLY SCREWED UP LOAD....'
+         B     LOADREGS
+*
+TAPEMOVE MVC   0(0,5),0(6)    SUBJECT OF EXECUTE INSTRUCTIONS
+*
+         DS    0F
+CON1     DC    XL4'00010000'       CONSTANT 1 TT TO ADD.
+HWC      DC    H'0'                HALFWORD CONSTANT STORAGE AREA.
+FILE     DS    CL3       FROM CTL       FILE
+TYPE     DS    CL1       CARDS  :       TYPE
+LOWBLK   DS    CL6                 DATA: LOW BLOCK    000001 FIRST REC
+HIGBLK   DS    CL6                       HGH BLOCK    OF OS DATA SET
+DATL     DS    CL4                       DATA LENGTH
+KYL      DS    CL3                       KEY  LENGTH
+ISTBLK   DS    CL6                 INDEX: LOW BLOCK
+IEDBLK   DS    CL6                        HGH BLOCK
+AF       DS    CL2                      ADDITION FACTOR 00 TO 99
+ID       DS    CL3                 HAZ CONCEPT FILE IDENTIFICATION
+REGSAVE  DS    10F                 REGISTER SAVE AREA
+TTRZ     DC    F'0'                BLOCK POINTER
+PRINTDCB DCB   BLKSIZE=100,                  PRINTER DCB  BSAM         X
+               DDNAME=PRINT,                                           X
+               DSORG=PS,                                               X
+               LRECL=100,MACRF=(W),NCP=1,                              X
+               RECFM=F
+*
+CARDDCB  DCB   BLKSIZE=80,                   CARD  DCB   BSAM          X
+               DDNAME=CARD,                                            X
+               DSORG=PS,                                               X
+               EODAD=EOJ,                                              X
+               LRECL=80,MACRF=(R),NCP=1,                               X
+               RECFM=F
+DISKDCB  DCB   BLKSIZE=1693,                 DISK  DCB   BSAM          X
+               BUFNO=1,                                                X
+               DDNAME=RIGAM,                                           X
+               DSORG=DA,                                               X
+               MACRF=(RIXC,WIC),                                       X
+               RECFM=F
+FILEDCB  DCB   DDNAME=FILE,                                        BXL C
+               DSORG=PS,                                           BXL C
+               MACRF=(GM,PM),                                      BXL C
+               EODAD=FILEEND,                                      BXL C
+               EXLST=DCBLIST,                                      BXL C
+               SYNAD=ERR,RECFM=FB                                  BXL
+CARD     DS    CL80                          CARD INPUT AREA
+PRINT    DC    CL100' '                      PRINT OUTPUT AREA
+BLOCK    DC    16CL100' '                    DISK I/O AREA USED FOR REA
+         DC    CL93' '              READ INDX OF DATA WRITE OF DATA
+TAPE     DC    17CL100' '                    VARIABLE TAPE INPUT
+FS       DC    XL35'FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFX
+               FFFFFFFFFFFFFFFFFFFF'
+INDEX    DC    16CL100' '
+         DC    CL93' '
+* SUBROUTINE TO GET AN INDEX AND PRESENT IT TO CALLING PROGRAM
+*   BAL  4,GISUB      GIVE SUBROUTINE THE STARTING TTR OF  INDEX BLOCK
+*   SUBROUTINE  WILL PRESENT THE LAST INDEX ON THAT BLOCK
+GOTINDX  DS    CL40                GOTTEN INDEX HIGH ON BLOCK
+GOTTR    DC    F'0'                START TTR OF INDEX
+GISUB    STM   2,9,REGSAVEA        SAVE ALL USEABLE REGISTARS
+         READ  DECBD,DI,DISKDCB,BLOCK,1693,0,GOTTR
+         CHECK DECBD
+         XR    2,2
+         IC    2,BLOCK+3           NO INDICIES USED
+         STH   2,NOINV             SAVE
+         XR    3,3                 CLEAR REGISTAR 3.
+         IC    3,PARGL             GET ARGUMENT LENGTH
+         LA    3,5(3)              INCREMENT TO INDEX LENGTH
+         STH   3,INDXL             SAVE INDEX LENGTH
+         LR    6,3                 INDEX LENGTH
+         SRDA  2,32(0)             SHIFT FOR MULTIPLY
+         S     3,=F'1'             DECREASE NO. OF INDICES USED.
+         MR    2,6                 POINT TO  LENGTH
+         LA    5,BLOCK+12          FIRST INDEX
+         AR    5,3                 POINT TO LAST INDEX
+         S     6,=F'1'             MOVE LENGTH
+         EX    6,MOVEGIS           MOVE INDEX TO GOTINDX
+         LA    7,GOTINDX           MOVE
+         XR    8,8                     INDEX
+         IC    8,PARGL                      BLOCK
+         LA    8,1(8)                            NUMBER
+         AR    7,8                                     FOR
+         MVC   0(4,7),GOTTR                              NEXT LEVEL.
+         B     AA1
+NOINV    DC    H'0'                     NUMBER OF INDICIES USED
+INDXL    DC    H'0'                     INDEX LENGTH
+RS4B     DC    F'0'             STORAGE FOR REGISTAR 4.
+MOVEGIS  MVC   GOTINDX(0),0(5)    MOVE TO EXTRACT HIGH INDEX
+AA1      L     1,GOTTR                  POINT TO INDEX TTR
+         ST    4,RS4B              STORE REGISTAR 4.
+         BAL   4,INCRTTRZ               INCREMENT INDEX TTR
+         L     4,RS4B              RESTORE REGISTAR 4.
+         ST    1,GOTTR                  STORE INCREMENTED TTR
+         LM    2,9,REGSAVEA        RESTORE REGISTARS
+         BR    4                        RETURN
+REGSAVEA DS    10F                 SAVE AREA FOR REGISTARS
+*   GET  DATA  SUBROUTINE
+GETDATA  B     GD1
+DATG     DC    H'0'                DATA LENGTH
+KEYL     DC    H'0'                KEY LENGTH
+RECBK    DC    H'0'                NO RECORDS PER BLOCK
+DATST    DC    F'0'                STARTING POINT OF DATA
+GD1      STM   2,9,REGSAVE                   SAVE REGISTERS
+SWX1     BC    0,NFT                         FIRST TIME SWITCH
+         MVI   SWX1+1,X'F0'                  RESET SWITCH
+FIGET    READ  DECBE,DI,DISKDCB,BLOCK,1693,0,DATST
+         CHECK DECBE                         BLOCK
+         LA    2,BLOCK+3                POINT TO  FIRST DATA BLOCK
+         LH    3,KEYL                   LOAD 3 WITH KEY LENGTH
+         SH    3,=H'1'                  LENGTH FOR MOVE
+LOOPFI   EX    3,MOVEARG                MOVE ARG
+         LA    4,MODELIND               POINT TO MODEL INDEX
+         AR    4,3                      POINT
+         LA    4,1(4)                        TO DELETE CODE
+         MVI   0(4),X'00'               DELETE CODE SET TO 00
+         MVC   WORKF(4),DATST          THIS DATA BLOCK
+         XR    8,8                     CLEAR REGISTER
+         IC    8,COUNTER+1             REC NO - 1
+         A     8,=F'1'                 REC NO
+         STC   8,WORKF+3               STORE REC NO
+         B     XYZ
+MODELIND DC    CL40' '             INDEX TO BE BUILT
+COUNTER  DC    H'0'                COUNTER FOR RECORD IN BLOCK
+MOVEARG  MVC   MODELIND(0),8(2)         MOVE ARGUMENT
+WORKF    DC    F'0'           THESE
+R2       DC    F'0'               5
+R3       DC    F'0'                WORDS
+R4       DC    F'0'                  MUST
+R5       DC    F'0'                   BE  TOGETHER
+XYZ      MVC   1(4,4),WORKF
+         ST    2,R2
+         ST    3,R3
+         ST    4,R4
+         ST    5,R5
+         LH    5,COUNTER
+         A     5,=F'1'
+         STH   5,COUNTER
+         LM    2,9,REGSAVE
+         BR    4
+*   ENTRY  FOR  NOT FIRST TIME
+NFT      LM    2,5,R2
+         LH    6,COUNTER
+         LH    7,RECBK
+         AH    2,DATG              ADD DATA
+         LA    2,5(2)              S BYTES
+         CR    6,7
+         BNE   LOOPFI
+         CLC   DATST+2(1),BLKNOF+3 TEST IF R = OR > MAX-BLK-TRK TSG-BXL
+         BNL   DECR                BRANCH IF YES                TSG-BXL
+         XR    7,7                 ZEROISE REG.7                TSG-BXL
+         IC    7,DATST+2           LOAD R TO REG.7              TSG-BXL
+         LA    7,1(7)              ADD ONE TO R                 TSG-BXL
+         STC   7,DATST+2           STORE NEW R                  TSG-BXL
+         XC    COUNTER,COUNTER
+         B     FIGET
+DECR     LH    7,DATST             LOAD PRECEDING TT INTO REG.7 TSG-BXL
+         LA    7,1(7)              ADD ONE TO TT                TSG-BXL
+         STH   7,DATST             STORE NEW TT                 TSG-BXL
+         MVI   DATST+2,X'01'       FORCE R TO 1                 TSG-BXL
+         XC    COUNTER,COUNTER
+         B     FIGET
+PARMDISK DS    0CL229
+PARMWK1  DS    0CL229
+PARMWK2  DS    0CL28
+PFILENO  DC    CL3' '         FILE NUMBER XXX
+PFILEID  DC    CL3'000'       ID OF FILE ASSUMED 000
+PTYPE    DC    XL1'F1'        FILE TYPE
+PRESCD   DC    XL1'00'        RESERVATION CODE
+PFTSWITC DC    XL1'01'        FT SWITCH
+PCODE    DC    XL2'0000'      BINARY CODE
+*   DATA  FILE  EXTENTS
+PLOWBLK  DC    XL3'000000'    TTR LOW DATA BLOCK
+PHGHBLK  DC    XL3'000000'    TTR HIGH DATA BLOCK
+*   DATA  CHARACTERISTICS
+PDATAL   DC    XL2'0000'      LENGTH OF DATA
+PLRUSED  DC    XL4'00000000'  EOD FOR TYPE 2 LAST DATA RECORD USED TTRN
+PRECPB   DC    XL1'00'        NO OF DATA RECORDS PER BLOCK
+PNSR     DC    XL4'00000000'  NEXT SEQUENTIAL RECORD TTRN
+*  TOTAL OF 28 BYTES REQUIRED FOR TYPE 2 AND 1 FILES
+*  ADDITIONAL 201 BYTES REQUIRED FOR TYPE 1 FILES
+PEOFTYP1 DC    XL4'00000000'  END OF FILE TYPE 1
+PNOLVLIX DC    XL1'00'        NO OF LEVELS OF INDEXING
+*  INDEX FILE EXTENTS
+PLIBLK   DC    XL3'000000'    LOW INDEX BLOCK
+PHIBLK   DC    XL3'000000'    HIGH INDEX BLOCK
+PBLKLIU  DC    XL3'000000'    BLOCK NO OF LAST INDEX BLOCK USED
+*
+PARGL    DC    XL1'00'                  ARGUMENT LENGTH
+PINDBLK  DC    XL1'00'                  NO INDICIES / BLOCK HIGH LEVEL
+*   LAST LEVEL 2 INDEX BLOCK FOUND
+PLAZ     DC    CL35'2'                  LOW ARG
+PHAZ     DC    CL35'2'                  HIGH ARG
+PBNZ     DC    XL3'000000'              TTR OF BLOCK
+*   LAST LEVEL 1 INDEX BLOCK FOUND
+PLA1     DC    CL35'1'                  LOW ARG
+PHA1     DC    CL35'1'                  HIGH ARG
+PNB1     DC    XL3'000000'              TTR OF BLOCK
+*   LAST DATA RECORD FOUND
+*  USED WITH INITIAL FORMATTING AND CLOSE    KEEP 2 CONSTANTS TOGETHER
+PLARG    DC    CL35'0'                  LAST ARGUMENT FOUND
+PLBR     DC    XL4'00000000'            LAST RECORD TTRN
+*   TOTAL BYTES  229
+PINDBLL  DC    XL1'00'                  NO INDICIES / BLOCK LL
+PADDF    DC    XL2'000C'                ADDITION FACTOR
+ERROR    WTO   'ERROR'
+CTLCDERR WTO   'CONTROL CARD ERROR'
+ERR      WTO   'SYNAD ERROR'
+ABEND    ABEND 113
+EOJ      CLOSE DISKDCB
+         L     13,SAVEAREA+4
+         L     14,12(13)
+         LM    0,12,20(13)
+         SR    15,15       SET CONDITION CODE      PSG 25/MAR/71
+         BR    14
+LOAD2    CLC   PTYPE,=C'2'
+         BNE   TYP2ERR
+         MVI   TYPE2SW1+1,X'F0'    TURN ON TYPE 2 FILE BUILD SWITCH.
+         B     LOADCONT
+TYP2ERR  WTO   'FILE TYPE INCORRECT.'
+         B     ABEND
+PREVKEY  DS    CL35                HOLD FOR PREVIOUS KEY.
+SEQSAVE  DS    8F                  HOLD FOR REGISTERS.
+TAPECOMP CLC   TAPE(0),PREVKEY     UNDEFINED LENGTH COMPARE KEYS.
+TAPEMVC  MVC   PREVKEY(0),TAPE     UNDEFINED LENGTH KEY HOLD MOVE.
+DUPMV    MVC   DUPMSG+14(0),TAPE   UNDEFINED LENGTH DUPLICATE KEY MOVE.
+*
+*   SEQUENCE CHECK INPUT TO BUILD *RIGAM FILE.
+*
+SEQCHECK STM   2,9,SEQSAVE         SAVE THE REGISTERS.
+SEQSW1   B     TOFSW1              FIRST TIME GO TURN OFF SWITCH 1.
+         XR    2,2
+         IC    2,PARGL             GET KEY LENGTH
+         S     2,=F'1'
+         EX    2,TAPECOMP          COMPARE NEW TO PREVIOUS KEY.
+         BE    DUPKEY              DUPLICATE KEY EXIT.
+         BL    SEQOUT              OUT OF SEQUENCE EXIT.
+COMPLETE EX    2,TAPEMVC           SAVE NEW KEY FOR NEXT COMPARE.
+FT2RET   LM    2,9,SEQSAVE         RESTORE REGISTERS
+         BR    4                   EXIT RETURN.
+*
+* FIRST TIME ROUTINE.
+*
+TOFSW1   CLI   PTYPE,X'F1'         IS FILE TYPE A 1 ?
+         BNE   FT2RET              NO. GO BACK.
+         MVI   SEQSW1+1,X'00'      TURN FIRST TIME SWITCH OFF.
+         XR    2,2
+         IC    2,PARGL             GET ARGUEMENT LENGTH.
+         S     2,=F'1'
+         B     COMPLETE            GO COMPLETE MOVE AND RETURN.
+*
+*  OUT OF SEQUENCE ROUTINE.
+*
+SEQOUT   WTO   'DATA OUT OF SEQUENCE. JOB TERMINATED WITH DUMP.'
+         ABEND 141,DUMP
+*
+* DUPLICATE KEY ROUTINE.
+*
+DUPKEY   LA    4,DUPMSG+14         POINT TO KEY MESSAGE
+         XR    3,3
+         LA    3,35(3)
+MVBLNK   MVI   0(4),X'40'          BLANK IT
+         LA    4,1(4)
+         BCT   3,MVBLNK
+         EX    2,DUPMV             MOVE IN DUPLICATE KEY.
+DUPMSG   WTO   'DUP = XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX'
+         LM    2,9,SEQSAVE
+         B     GETTAPE             RETURN TO GET NEXT INPUT RECORD.
+*
+* TEST FOR UPPER INDEX LIMIT OVERFLOW.
+*
+TESTRSV  DS    8F
+TESTM    DC    F'0'
+*
+TESTINH  STM   2,9,TESTRSV
+         XC    TESTM,TESTM
+         MVC   TESTM(3),PHIBLK
+         L     2,TESTM
+         XC    TESTM,TESTM
+         MVC   TESTM(3),TTRTHISI
+         L     3,TESTM
+         CR    3,2
+         BH    INDEXCD
+         LM    2,9,TESTRSV
+         BR    4
+*
+INDEXCD  WTO   'UPPER LIMIT OF INDEX EXCEEDED.'
+         ABEND 419,DUMP
+DCBLIST  DC    X'85',AL3(DCBMOD)                                   BXL
+DCBSAVE  DS    F                        REGISTER SAVE AREA         BXL
+DCBHOLD  DC    H'0'                     ALIGNED HOLD AREA FOR LRECLBXL
+DCBMOD   EQU   *                                                   BXL
+         USING IHADCB,1                                            BXL
+         ST    2,DCBSAVE                SAVE REGISTERS             BXL
+         XR    2,2                      CLEAR REG2                 BXL
+         MVC   DCBHOLD,PDATAL           MOVE DATALENGTH TO HOLD    BXL
+         LH    2,DCBHOLD                LOAD DATA LENGTH TO REG2   BXL
+         S     2,=F'3'                  SUBTRACT FILEID LENGTH     BXL
+         STH   2,DCBLRECL               FORCE LRECL IN FILEDCB     BXL
+         CLC   DCBBLKSI,X'0000'         BLOCKSIZE SPECFIED?        BXL
+         BNE   ENDMOD                   YES. END OF DCBMOD         BXL
+         MVC   DCBBLKSI,DCBLRECL        NO. FORCE UNBLOCKED        BXL
+ENDMOD   EQU   *                                                   BXL
+         L     2,DCBSAVE                RESTORE REG2               BXL
+         BR    14                       RETURN TO COMPLETE OPEN    BXL
+         DCBD  DSORG=PS,DEVD=DA                                    BXL
+RIGAML   CSECT                                                     BXL
+         ISEQ
+         TITLE 'RE-ORGANIZE FILE ON *RIGAM DATA SET ROUTINE.RLG'
+         ISEQ  73,80
+*
+* ROUTINE FOR *RIGAM DATA SET RE-ORGANIZATION OF TYPE 1 FILE.
+*
+DUMP     MVC   FILE,CARD+21        SAVE FILE NUMBER.
+         MVC   TYPE,CARD+30        SAVE FILE TYPE.
+         XR    2,2
+         ST    2,DUMPTOT
+*
+* GET THE FILE PARAMETERS. (CONVERT FILE NUMBER TO TTR FOR READ.)
+*
+         XC    DWD,DWD             CLEAR CVB AREA.
+         PACK  DWD+6(2),FILE       PACK FILE NUMBER.
+         CVB   3,DWD               FILE NUMBER TO BINARY.
+         XR    2,2                 CLEAR REG.2.
+         D     2,BLKNOF            DIVIDE BY MAX-BLK-TRK
+         LTR   2,2                 IS REG.2 = ZERO?
+         BC    6,FPOK              NO. BRANCH TO STORE TTR DEVELOPED.
+         S     3,=F'1'             YES. DECREMENT TT OF TTR AND
+         L     2,BLKNOF            SET THE R OF TTR
+FPOK     ST    3,DWD               STORE TT.
+         MVC   TTR(2),DWD+2        MOVE TT TO TTR.
+         STC   2,TTR+2             MOVE R TO TTR.
+*
+* TEST FOR FILE TYPE.
+*
+         CLI   TYPE,X'F1'          IS IT A TYPE 1 FILE?
+         BE    DUMPTYP1            YES. GO TO PROCESS.
+DUMPERR1 WTO   'INCORRECT FILE TYPE.'
+         ABEND 564,DUMP
+*
+* PROCESS DUMP OF TYPE 1 FILE ROUTINE.
+*
+DUMPTYP1 READ  DUMP1,DI,DISKDCB,BLOCK,1693,0,TTR
+         CHECK DUMP1
+         XC    PARMDISK,PARMDISK        CLEAR PARAMETER AREA.
+         MVC   PARMDISK(229),BLOCK      MOVE PARAMETERS IN FROM BLOCK.
+         CLI   PTYPE,X'F1'              IS FILE TYPE = 1?
+         BE    TYP1OK                   YES. CONTINUE.
+         B     DUMPERR1                 NO. PRINT MESSAGE AND DUMP
+TYP1OK   CLC   PFILENO,FILE             IS FILE NO. AS SPECIFIED.
+         BE    FIL1OK                   YES. CONTINUE.
+DUMPERR2 WTO   'FILE SPECIFIED NOT SAME AS PARAM.FILE.'
+         ABEND 565,DUMP
+FIL1OK   EQU   *                                                   BXL
+         OPEN  (FILEDCB,(OUTPUT))       OPEN DUMP FILE             BXL
+         CLC   CARD+51(8),=C'PHYSICAL'  PHYSICAL 1ST REC REQD      BXL
+         BNE   FIL1OK2                                              DAM
+         MVC   PNSR(3),PLOWBLK                                      DAM
+         MVI   PNSR+3,X'01'                                         DAM
+         B     RWLOOP                                               DAM
+FIL1OK2  MVC   FILENO(229),PARMWK1                                  DAM
+         BAL   4,TYP1SRCH                                           DAM
+         MVC   PNSR,READTTR                                         DAM
+         MVC   PNSR+3(1),DEBLOKER+3     ADD N TO TTR                DAM
+*                                                                   DAM
+*                                                                   DAM
+RWLOOP   MVC   TTR(3),PNSR         MOVE NEXT SEQUENTIAL RECORD TO TTR.
+         CLC   TTR(3),BLOCK        IS BLOCK ALREADY IN CORE?
+         BE    RECIN               YES. GO CALCULATE WHERE.
+         READ  DUMP2,DI,DISKDCB,BLOCK,1693,0,TTR
+         CHECK DUMP2
+*
+* CALCULATE WHICH RECORD IN THE BLOCK.
+*
+RECIN    STM   2,9,SVREGS          STORE REGISTARS.
+         XR    7,7                 CLEAR REG.7.
+         IC    7,PDATAL            * LOAD     *
+         SLA   7,8(0)              *  DATA    *
+         IC    7,PDATAL+1          *   LENGTH *
+         LR    8,7                 SAVE DATA LENGTH.
+         A     7,=F'5'
+         XR    4,4                 CLEAR REG.4.
+         IC    4,PNSR+3            LOAD THE RECORD NUMBER.
+         LR    5,4                 SAVE RECORD NUMBER
+         XR    6,6                 CLEAR REG.6.
+         S     4,=F'1'             * * * RECORD ADD. ALGORITHM * * * *
+         MR    6,4                 *                                 *
+         LA    6,BLOCK+3
+         AR    7,6
+*                             BLOCK+3 + (N-1)(LEN + 5)
+         LR    9,7
+         LA    9,1(9)
+         LR    6,9
+         CLI   0(7),X'FF'         IS IT DELETED ?
+         BE    GETNSR
+         S     8,=F'3'      REDUCE DATA LENGTH BY 3  (IE. FILE ID SIZE)
+         LA    6,7(6)
+*
+*  REGISTAR 6 CONTAINS THE ADDRESS OF THE NEXT SEQUENTIAL RECORD.
+*  REGISTAR 8 CONTAINS THE DATA LENGTH.
+*
+*  DETERMINE MOVE TO BE EITHER >256 OR <256 CHARACTERS.
+*
+TYP2GO   LA    2,TAPE              POINT TO TAPE OUTPUT AREA WITH REG.2
+         L     4,=F'255'           LOAD REG.6 WITH MAXIMUM MOVE LENGTH.
+MOVECOMP CR    8,4                 COMPARE DATA LENGTH TO MAG,MOVE.
+         BC    12,MVCL256          GO TO MOVE <= 256 CHARACTERS.
+         B     MVCG256             GO TO MOVE > 256 CHARACTERS.
+MVCL256  S     8,=F'1'             DECREMENT MOVE LENGTH.
+         ST    3,TOTHOLD
+         L     3,DUMPTOT
+         A     3,=F'1'
+         ST    3,DUMPTOT
+         L     3,TOTHOLD
+         EX    8,MOVEDATA          MOVE DATA FROM DISC TO TAPE.
+         B     RYTAPE              GO WRITE RECORD.
+MOVEDATA MVC   0(0,2),0(6)         MOVE INSTRUCTION FOR VARIABLE LENGTH
+MVCG256  S     8,=F'256'           SUBTRACT LENGTH OF DATA TO BE MOVED.
+         EX    4,MOVEDATA          MOVE DATA FROM DISC TO TAPE
+         A     2,=F'256'           ADD TO ADDRESS OF TAPE AND ADDRESS
+         A     6,=F'256'             OF DISC THE MOVE LENGTH.
+         B     MOVECOMP            GO COMPARE LENGTHS NOW.
+*
+*  WRITE THE RECORD OUT ON TAPE.
+*
+RYTAPE   PUT   FILEDCB,TAPE             WRITE DUMP FILE RECORD     BXL
+*
+*  GET NEXT SEQUENTIAL RECORD TTRN FOR NEXT READ.
+*
+*
+GETNSR   MVC   PNSR,0(9)       MOVE IN TTRN OF NSR.
+         CLC   PNSR,PEOFTYP1       IS IT END-OF-FILE?
+         BE    ENDUMP              YES. CLOSE.
+         LM    2,9,SVREGS          RESTORE REGISTARS
+         B     RWLOOP              NO. CONTINUE
+ENDUMP   LM    2,9,SVREGS          RESTORE REG.S
+         CLOSE FILEDCB                  CLOSE DUMP FILE            BXL
+         L     3,DUMPTOT
+         CVD   3,TWOWORDS
+         MVC   TOTMSG+24(10),EDITTOT
+         ED    TOTMSG+24(10),TWOWORDS+4
+TOTMSG   WTO   'TOTAL RECORDS = XXXXXXXXXX'
+         B     GETCARD             REBUILD FILE?
+SVREGS   DS    8F                  REGISTAR SAVE AREA
+DUMPTOT  DC    F'0'
+TOTHOLD  DC    F'0'
+TWOWORDS DS    D
+EDITTOT  DC    XL10'40206B2020206B202021'
+BLNKS35  DC    35X'00'                                             BXL
+         ISEQ
+         EJECT                                                      DAM
+*
+* READ DISC ROUTINE. --*RIGAM INPUT.
+*
+READRTN  CLC   BLOCK(3),READTTR         IS BLOCK IN CORE ?
+         BE    READIN                     YES=RETURN. NO=READ.
+         READ  RIGREC,DI,DISKDCB,BLOCK,1693,0,READTTR
+         CHECK RIGREC
+         CLC   BLOCK(3),=X'FFFFFF'      END OF DATA SET ?
+         BNE   READIN
+         WTO   'RIG409I ERROR - EOF WHILE READING INDICES'
+         B     ENDUMP
+READIN   BR    4                        NO.RETURN.
+*
+* TYPE 1 FILE SEARCH FOR FIRST RECORD.
+*
+TYP1SRCH STM   2,9,SRCHSAVE        STORE THE REGISTERS.
+         MVC   READTTR(3),INDXLO   GET FIRST INDEX BLOCK ADDRESS.
+READINDX BAL   4,READRTN           GO READ AN INDEX BLOCK.
+         LA    2,BLOCK+12          POINT TO FIRST INDEX.
+         XR    3,3                    *  RESOLVE  *
+         IC    3,KEYLNGTH             *    DATA   *
+         S     3,=F'1'                *   LENGTH  *
+COMPINDX EX    3,INDXCAMP          COMPARE FOR FIRST RECORD.
+         BC    12,NEXTINDX         IF SO,TEST FOR NEXT BLOCK OR DATA.
+         EX    3,INDXGOOF          OVERESTIMATED INDEX BLOCKS
+         BE    INDXCORT            GO CORRECT INDEX TTR.
+         AR    2,3                 ADJUST TO
+         LA    2,6(2)                NEXT KEY AND
+         B     COMPINDX                GO COMPARE AGAIN.
+*
+NEXTINDX AR    2,3                 SAVE BLOCK
+         MVC   READTTR(3),2(2)        TTR
+         XC    DEBLOKER,DEBLOKER
+         MVC   DEBLOKER+3(1),5(2)    AND N.
+         XR    3,3
+         IC    3,BLOCK+11          GET INDEX LEVELS.
+         N     3,MASKF             MASK OUT HIGH LEVEL.
+         SRA   3,1(0)              SHIFT LO LEVEL.
+         LTR   3,3                 LOWEST LEVEL = ZERO.
+         BZ    INDXRTN             IT IS. READ DATA.
+         B     READINDX            MORE INDICES TO READ.
+INDXRTN  LM    2,9,SRCHSAVE        RESTORE REGISTERS.
+         BR    4                   RETURN.
+*
+*
+INDXCORT XC    FULLWORD,FULLWORD   CLEAR ALIGNEMENT AREA
+         MVC   FULLWORD(3),BLOCK   MOVE FOR ALIGNEMENT
+         LH    2,FULLWORD          GET TT
+         XR    3,3                 CLEAR R3
+         IC    3,FULLWORD+2        GET R
+         LA    3,1(3)              R = R + 1
+         L     4,=F'2'             GET R MAXIMUM
+         CR    3,4                 IS R GREATER THAN R MAXIMUM
+         BC    12,INDXINC          NO. RESTORE TTR.
+         XR    3,3                 YES. SET
+         LA    3,1(3)                R = 1,
+         LA    2,1(2)                TT = TT +1.
+INDXINC  STH   2,READTTR           RESTORE TT
+         STC   3,READTTR+2             AND R.
+         B     READINDX            GO READ NEXT BLOCK.
+*
+*
+INDXGOOF CLC   HEXZEROS(0),0(2)      IS IT ALL ZERO
+HEXZEROS DC    XL25'00000000000000000000000000000000000000000000000000'
+         DC    XL10'00000000000000000000'
+*
+*
+*
+*                        COMMON PARAMETER WORK AREA.
+*
+FILENO   DS    CL3
+FILEID   DS    CL3
+FILETYPE DS    CL1
+         DS    CL4
+DATALO   DS    CL3
+DATAHI   DS    CL3
+RECLNGTH DS    CL2
+LDRU     DS    CL4
+DRPBIN   DS    CL1
+NSR      DS    CL4
+EOF      DS    CL4
+INDXLVL  DS    CL1
+INDXLO   DS    CL3
+INDXHI   DS    CL3
+LIBU     DS    CL3
+KEYLNGTH DS    CL1
+INDXBLK  DS    CL1
+         DS    CL185
+*
+*   CONSTANTS AND VARIABLE STORAGE, L-MACRO'S, AND EXECUTE INSTRUCTIONS
+*
+DBLWORD  DC    D'0'                CONVERSION AREA.
+READTTR  DC    F'0'                INPUT ADDRESS ON DISC.
+DEBLOKER DC    F'0'                RECORD IN INPUT BLOCK.
+REBLOKER DC    F'0'                RECORD IN OUTPUT BLOCK.
+FULLWORD DC    F'0'                LINE UP FOR REGISTERS.
+CON2000  DC    F'1997'             CONSTANT USEABLE BLOCK LENGTH.
+SRCHSAVE DS    8F                  SAVE REG.AREA FOR SEARCH ROUTINE.
+INDXCAMP CLC   BLANKS(0),0(2)      COMPARE FOR SEARCH ROUTINE,EXECUTE.
+BLANKS   DC    CL35' '             BLANKS FOR COMPARE.
+CURLENTH DC    F'0'                LENGTH OF OUTPUT RECORD TO BE WROTE.
+MASKF    DC    XL4'0000000F'       MASK FOR INDEX LEVEL.
+         EJECT
+         ISEQ
+         TITLE '*RIGAM UTILITY PRINT FILE FUNCTION.'
+         ISEQ  73,80
+*
+* ROUTINE TO PRINT A TYPE 1 OR 2 *RIGAM FILE.
+*
+PRINTRTN XC    CONVERT,CONVERT     CLEAR DOUBLE WORD PACKING AREA.
+         XC    PARMWK1,PARMWK1     CLEAR PARAMETER WORK AREA
+         PACK  CONVERT,CARD+21(3)  PACK FILE NUMBER.
+         CVB   4,CONVERT           CONVERT FILE NUMBER TO BINARY.
+         SRDA  4,32(0)             CLEAR R4,STORE BLOCK NUMBER IN R5.
+PR1      C     5,BLKNOF            IS BLOCK > THAN MAX-BLK-TRK
+         BC    12,PR2              NO. GO TO STORE TTR.
+         S     5,BLKNOF            YES. SUBTRACT MAX-BLK-TRK FROM R
+         A     4,=F'1'                  ADD 1 TO TT.
+         B     PR1                 GO COMPARE AGAIN.
+PR2      XC    TTR,TTR             CLEAR TTR AREA.
+         STH   4,TTR               STORE DEVELOPED TT INTO TTR.
+         STC   5,TTR+2             STORE DEVELOPED R INTO TTR.
+         READ  PARM,DI,DISKDCB,BLOCK,1693,0,TTR
+         CHECK PARM
+         OPEN  (PRTDCB,OUTPUT)
+         MVC   PARMWK1,BLOCK       PLACE PARAMETERS IN WORK AREA.
+         MVC   P1ENT2,PFILENO      MOVE FILE NO. TO PRINT LINE HEADER
+         MVC   P1ENT1,PFILEID      MOVE FILE ID. TO PRINT LINE HEADER
+         MVC   PRTFORM+37(63),PLN2      MOVE HEAD 2 TO FORM AREA.
+         MVI   PRTFORM,X'09'       SKIP 1 AFTER PRINT.
+         BAL   4,WRITEIT           GO PRINT.
+         BAL   4,CLRFORM           CLEAR FORM AREA.
+         MVC   PRTFORM+37(63),PLN3      MOVE HEAD 3 TO FORM AREA.
+         MVI   PRTFORM,X'11'       SKIP 2 AFTER PRINT.
+         BAL   4,WRITEIT           GO PRINT.
+         BAL   4,CLRFORM           CLEAR FORM AREA.
+*
+*  FORMAT PARAMETER LINE.
+*
+         MVC   MOVEDC,PHGHBLK      CONVERT HIGH DATA BLOCK ADDRESS
+         BAL   4,CVRTDEC
+         MVC   PRTFORM+57(8),EDIT6
+         ED    PRTFORM+57(8),CONVERT+4
+*
+         MVC   MOVEDC,PLOWBLK      CONVERT LOW DATA BLOCK ADDRESS.
+         BAL   4,CVRTDEC
+         MVC   PRTFORM+50(8),EDIT6
+         ED    PRTFORM+50(8),CONVERT+4
+*
+         CLI   PTYPE,X'F2'         IS FILE TYPE A 2 ?
+         BE    PR3                 YES. NO NEED TO CONVERT INDEX BLOCKS
+*
+         MVC   MOVEDC,PHIBLK       CONVERT HIGH INDEX BLOCK ADDRESS.
+         BAL   4,CVRTDEC
+         MVC   PRTFORM+42(8),EDIT6
+         ED    PRTFORM+42(8),CONVERT+4
+*
+         MVC   MOVEDC,PLIBLK       CONVERT LOW INDEX BLOCK ADDRESS.
+         BAL   4,CVRTDEC
+         MVC   PRTFORM+35(8),EDIT6
+         ED    PRTFORM+35(8),CONVERT+4
+*
+         XR    2,2                 CONVERT KEY LENGTH.
+         IC    2,PARGL
+         CVD   2,CONVERT
+         MVC   PRTFORM+94(4),EDIT3
+         ED    PRTFORM+94(4),CONVERT+6
+*
+PR3      XR    2,2                 CONVERT RECORDS PER BLOCK.
+         IC    2,PRECPB
+         CVD   2,CONVERT
+         MVC   PRTFORM+84(4),EDIT3
+         ED    PRTFORM+84(4),CONVERT+6
+*
+         XR    2,2                 CONVERT DATA LENGTH.
+         MVC   MOVEDC+2(2),PDATAL
+         LH    2,MOVEDC+2
+         CVD   2,CONVERT
+         MVC   PRTFORM+73(6),P1EDIT
+         ED    PRTFORM+73(6),CONVERT+5
+*
+         MVC   PRTFORM+68(1),PTYPE      MOVE FILE TYPE TO PRINT.
+         MVI   PRTFORM,X'11'       SKIP 2 AFTER PRINT.
+         BAL   4,WRITEIT           GO PRINT.
+         BAL   4,CLRFORM           CLEAR FORM AREA.
+*
+*     IS ALL PUNCHED IN THE CARD?
+*
+         CLC   CARD+71(3),=CL3'ALL'
+         BE    ALLIN
+*
+*     IS FILE TYPE A 1 OR 2 ?
+*
+         CLI   CARD+30,X'F2'
+         BE    RESOLVE2            A 2. GO RESOLVE START AND STOP TTR.
+         CLI   CARD+30,X'F1'
+         BNE   DUMPERR1            NEITHER. AN ERROR
+*
+*  FILE 1 ROUTINE TO RESOLVE START TTR.
+*
+         MVC   TTR(3),PLIBLK       GET START INDEX TTR FNOM PARAMETERS.
+FT       BAL   4,RD
+         LA    2,BLOCK+12          POINT TO FIRST INDEX
+         XR    3,3                  *   RESOLVE  *
+         IC    3,PARGL              *    DATA    *
+         SH    3,=H'1'              *   LENGTH   *
+CA       EX    3,KEYCOMP
+         BC    12,NB               GO TO NEXT BLOCK READ IF LOW OR EQUL
+*
+         AR    2,3                 ADJUST TO
+         LA    2,6(2)                NEXT KEY
+         B     CA                  GO COMPARE
+*
+NB       AR    2,3                 *   SAVE      *
+         MVC   TTR(3),2(2)         *  BLOCK      *
+         MVC   NHOLD(1),5(2)       *  TTR AND N  *
+         XR    3,3
+         IC    3,BLOCK+11                               * IS IT FIRST *
+         N     3,MASK5             MASK5 = XL4'0000000F'* LEVEL INDEX *
+         SRA   3,1(0)                                   * BLOCK ? YES *
+         LTR   3,3                                      * GET DATA.NO *
+         BZ    STLEV1                                   * GO BACK AND *
+         B     FT                                       * READ AGAIN. *
+*
+*
+STLEV1   MVC   STARTTTR(3),TTR          STORE
+         MVC   STARTTTR+3(1),NHOLD       TTRN.
+         B     ISITEND
+*
+*  FILE 2 ROUTINE TO RESOLVE START TTR.
+*
+RESOLVE2 XC    CONVERT,CONVERT          CHANGE
+         PACK  CONVERT+4(4),CARD+61(6)   DECIMAL TO
+         CVB   3,CONVERT                   BINARY.
+         XR    2,2                      * RESOLVE *
+         SH    3,=H'1'
+         XR    5,5
+         IC    5,PRECPB
+         DR    2,5
+         XR    4,4
+         AH    4,=H'1'
+         AR    4,2
+         XR    2,2
+         IC    2,PLOWBLK+2
+         AR    3,2
+         MVC   MOVEDC(3),PLOWBLK
+         LH    2,MOVEDC
+COMPN2   CR    4,5
+         BC    12,ADR2
+         SR    4,5
+         AH    3,=H'1'
+         B     COMPN2
+ADR2     CH    3,BLKNOH            IS R = MAX-BLK-TRK ?
+         BC    12,RESTT
+         SH    3,BLKNOH            SUBTRACT MAX-BLK-TRK
+         AH    2,=H'1'
+         B     ADR2
+RESTT    STH   2,TTR
+         STC   3,TTR+2
+         STC   4,NHOLD
+         B     STLEV1
+*
+*  DETERMINE PRINT TO COMPLETION OF FILE OR X NUMBER OF RECORDS.
+*
+ISITEND  CLC   CARD+71,=CL3'END'
+         BE    ENDIN               YES. GO STORE UPPER EXTENT TTR.
+*
+* CALCULATE UPPER FILE EXTENT AS DEFINED BY USER.
+*
+         XC    CONVERT,CONVERT          CHANGE
+         PACK  CONVERT+4(4),CARD+68(6)     DECIMAL
+         CVB   3,CONVERT                  TO BINARY.
+         XR    2,2
+         SH    3,=H'1'
+         XR    5,5                 1.  (USER LIMIT-1)/RECPB
+         IC    5,PRECPB
+         DR    2,5                       ABOVE QUOTIENT = R
+         XR    4,4                       ABOVE REMAINDER = N
+         IC    4,STARTTTR+3
+         AR    4,2                 2. N=REMAINDER + START N
+         XR    2,2
+         IC    2,STARTTTR+2        3. A) N=N-RECPB TILL N=< RECPB
+         AR    3,2
+         LH    2,STARTTTR             B) R=R+1 TILL N=< RECPB
+COMPN    CR    4,5
+         BC    12,ADR              4. A) R=R-4 TILL R=<4
+         SR    4,5
+         AH    3,=H'1'                B) TT=TT+1 TILL R =< 4
+         B     COMPN
+ADR      CH    3,BLKNOH            IS R = MAX-BLK-TRK ?
+         BC    12,RESTR
+         SH    3,BLKNOH            SUBTRACT MAX-BLK-TRK
+         AH    2,=H'1'
+         B     ADR
+RESTR    STH   2,STOPTTR
+         STC   3,STOPTTR+2
+         STC   4,STOPTTR+3
+         B     PRTRQU
+*
+*  STORE UPPER AND LOWER DATA EXTENTS.
+*
+ALLIN    MVC   STARTTTR(3),PLOWBLK
+         MVI   STARTTTR+3,X'01'
+ENDIN    MVC   STOPTTR,PLRUSED
+*
+*  DEVELOP SPACING REQUIREMENTS.
+*
+PRTRQU   XR    2,2
+         XR    3,3
+         MVC   MOVEDC(2),PDATAL
+         LH    3,MOVEDC
+         D     2,=F'56'
+         LTR   2,2
+         BC    8,NORND             TEST IF R2 = 0. NO.DONT ROUND.
+         AH    3,=H'1'             YES.ADD 1 TO ROUND HIGH
+NORND    ST    3,LINESTOP
+*
+* SET UP PRINT LINES IN BCD AND HEX.
+*
+         MVC   TTRNEXT,STARTTTR         ORIGINAL START.
+GETREAD  MVC   TTR(3),TTRNEXT
+         BAL   4,RD                     READ BOCK
+COMPNXTN CLC   TTRNEXT+3(1),PRECPB      IS N WITHIN THIS BLOCK?
+         BH    INCTTR                   NO. GO INCREASE TRR.
+NEXTREC  XC    BYTESREC,BYTESREC
+         MVC   BYTESREC+2(2),PDATAL         GET DATA LENGTH
+         L     3,BYTESREC                *                  *
+         XR    2,2                       *                  *
+         XR    4,4                       *     CALCULATE    *
+         IC    4,TTRNEXT+3               *                  *
+         SH    4,=H'1'                   *     POINTER      *
+         MR    2,4                       *                  *
+         LR    4,3                       *       TO         *
+         XR    2,2                       *                  *
+         XR    3,3                       *     RECORD N.    *
+         IC    3,TTRNEXT+3               *                  *
+         M     2,=F'5'                   *                  *
+         AR    4,3                       *                  *
+         LA    3,BLOCK+3                 *                  *
+         AR    4,3                       *                  *
+         S     4,=F'5'                   *                  *
+         ST    4,POINTREC          STORE POINTER TO N.
+CHECKBYT L     2,BYTESREC
+         C     2,=F'56'            IS RECORD LENGTH GREATER THAN 56 ?
+         BL    LESS56              NO. GO MOVE LESS THAN 56 BYTES.
+         S     2,=F'56'
+         ST    2,BYTESREC
+         L     2,=F'55'
+         L     3,POINTREC
+         EX    2,MREC              MOVE X56 TO FORM
+         L     5,=F'15'            56/4=14 +1 = 15 LOOPS FOR R5 IN.
+         BAL   4,EXPAND                 EXPAND PRINT SUBROUTINE
+         B     PTA
+*
+*  LESS THAN 56 OR END OF RECORD MOVE.
+*
+LESS56   L     5,BYTESREC          DETERMINE NUMBER OF
+         XR    6,6
+         CR    5,6
+         BH    CLR4
+         AH    5,=H'3'
+         B     NOADD
+CLR4     XR    4,4                 DETERMINE NO. OF LOOPS FOR R5 IN
+         D     4,=F'4'               EXPAND SUBROUTINE.
+         AH    5,=H'1'             INITIATION LOOP.
+         LTR   4,4                 REMAINDER MUST ROUND UP.
+         BZ    NOADD                NO REMAINDER.
+         AH    5,=H'1'             REMAINDER. ROUND UP.
+NOADD    MVI   NOMORESW+1,X'F0'    TURN NO MORE SWITCH ON.
+         L     3,POINTREC          POINT TO AND
+         L     2,BYTESREC                  GET AND
+         AH    2,=H'4'             ADJUST THE LENGTH ATTRIBUTE.
+         EX    2,MREC               MOVE REMAINING BYTES
+         BAL   4,EXPAND            GO EXPAND PRINT LINE.
+*
+*
+*
+PTA      MVI   PRTFORM,X'09'       SKIP 1 AFTER PRINT
+         BAL   4,WRITEIT           GO PRINT.
+         BAL   4,CLRFORM           CLEAR FORMAT AREA.
+NOMORESW BC    0,ENDOFREC
+         L     2,POINTREC          POINT TO X56 BYTES.
+         L     8,=F'57'
+         BAL   4,HEXENT            GO FORM PRINT WORD.
+         MVI   PRTFORM,X'11'       SKIP 2 AFTER PRINT.
+         BAL   4,WRITEIT           GO PRINT.
+         BAL   4,CLRFORM           CLEAR FORMAT AREA.
+         L     2,POINTREC          GET RECORD POINTER
+         A     2,=F'56'            ADD 56 MORE BYTES.
+         ST    2,POINTREC          RESTOR POINTER.
+         XR    2,2                 CLEAR R2.
+         B     CHECKBYT            GO CHECK FOR PRINT FORMAT.
+*
+*
+*
+ENDOFREC L     8,BYTESREC          GET NUMBER OF REMAINING BYTES.
+         AH    8,=H'5'             ADJUST THE LENGTH ATTRIBUTE.
+         L     2,POINTREC          POINT TO NEXT SERIES OF BYTES.
+         BAL   4,HEXENT            GO FORM PRINT WORDS.
+         MVI   PRTFORM,X'09'       SKIP 1 AFTER PRINT.
+         BAL   4,WRITEIT           GO WRITE IT.
+         BAL   4,CLRFORM           GO CLEAR FORMAT AREA.
+         MVC   PRTFORM+20(13),EORLBL    GET END OF RECORD LABEL.
+         MVI   PRTFORM,X'11'       SKIP 2 AFTER PRINT.
+         BAL   4,WRITEIT           GO WRITE IT.
+         BAL   4,CLRFORM           CLEAR FORMAT AREA.
+         MVI   NOMORESW+1,X'00'    TURN NO MORE SWITCH OFF.
+*
+*
+         XR    2,2                 CLEAR R2,
+         IC    2,TTRNEXT+3         INSERT N OF TTRN.
+         AH    2,=H'1'             ADD 1 TO N.
+         STC   2,TTRNEXT+3         STORE N.
+         CLC   TTRNEXT+3(1),PRECPB
+         BH    INCTTR
+         CLC   TTRNEXT,STOPTTR
+         BH    EOFRQE
+         B     NEXTREC
+*
+* INCREMENT TO NEXT TTRN FOR READ.
+*
+INCTTR   LH    2,TTRNEXT           GET TT OF TTRN IN R2.
+         LH    3,TTRNEXT+2         GET RN OF TTRN IN R3.
+         SRA   3,8(0)              SHIFT N OF RN OUT.
+         AH    3,=H'1'             ADD 1 TO R.
+         CH    3,BLKNOH            IS R = MAX-BLK-TRK ?
+         BC    12,INCNBY1          LESS THAN OR EQUAL IS OK.
+         AH    2,=H'1'             > RESOLVE NEW TTRN. ADD 1 TO TT.
+         STH   2,TTRNEXT           STORE NEW TT.
+         XR    3,3                 CLEAR R3.
+         LH    3,=H'1'             GO ADD 1.
+INCNBY1  STC   3,TTRNEXT+2         STORE R.
+         XR    3,3                 CLEAR R3
+         LH    3,=H'1'             INSERT 1 FOR N
+         STC   3,TTRNEXT+3         STORE N.
+*
+*  CHECK USER LIMIT FOR PRINTING.
+*
+         CLC   TTRNEXT,STOPTTR     HAS THE LIMIT BEEN REACHED?
+         BC    12,GETREAD          < OR = GO READ NEXT BLOCK.
+*
+* END OF FILE FOR THIS USER REQUEST.
+*
+EOFRQE   MVC   PRTFORM+20(30),EOFLBL    MOVE EOF LABEL TO PRINT.
+         MVI   PRTFORM,X'09'       SKIP 1 LINE.
+         BAL   4,WRITEIT           GO WRITE IT.
+         BAL   4,CLRFORM           GO CLEAR FORMAT AREA.
+*
+* CHECK FOR MORE FILES TO BE PRINTED.
+*
+         CLI   CARD+78,X'40'       IF BLANK,NO MORE FILES.
+         BE    CLOZSHOP            BLANK GO END.
+         MVI   LINECNT+3,X'38'     PREPARE FOR NEXT OVERFLOW.
+         XR    3,3                 CLEAR PAGE COUNT FOR
+         ST    3,PAGECNT            NEXT FILE PRINT.
+         B     GETCARD             GO READ ANOTHER CARD.
+*
+CLOZSHOP WTO   'END OF PRINT JOB'
+         CLOSE CARDDCB
+         CLOSE PRTDCB
+         B     EOJ
+*
+* PRINT HEADER AND LINE ROUTINE.
+*
+PRTREGH1 DS    8F                  REGISTAR SAVE AREA.
+*
+WRITEIT  STM   2,9,PRTREGH1        SAVE REGISTARS.
+         CLI   LINECNT+3,X'38'     IS LINE COUNT EXCEEDED ?
+         BL    PT1                 NO. GO PRINT FORMATTED LINE.
+NOFLOWSW BC    0,PT1              (IF ON,NO OVERFLOW OCCURS.)
+         LA    2,PRTAREA           YES. PRINT HEADER. *           *
+         L     3,=F'132'                              *   CLEAR   *
+CLR1     MVI   0(2),X'40'                             *   PRINT   *
+         LA    2,1(2)                                 *   AREA    *
+         BCT   3,CLR1                                 *           *
+         MVI   PRTAREA,X'8B'
+         WRITE CHANOVL,SF,PRTDCB,PRTAREA
+         CHECK CHANOVL
+         L     3,PAGECNT           LOAD AND
+         AH    3,=H'1'              ADD 1 TO PAGE COUNT.
+         ST    3,PAGECNT
+         CVD   3,CONVERT           CONVERT -
+         MVC   P1PGENT,P1EDIT             PAGE COUNT -
+         ED    P1PGENT(6),CONVERT+5                 TO DECIMAL.
+         MVI   PRTAREA,X'11'              *  MOVE                *
+         MVC   PRTAREA+44(43),PLN1      * HEADER TO PRINT.  *
+         MVC   PRTAREA+115(16),P1PGNO     *            TO PRINT  *
+         WRITE HEADLINE,SF,PRTDCB,PRTAREA
+         CHECK HEADLINE
+         L     3,LINECNT           *   CLEAR   *
+         XR    3,3                 *   LINE    *
+         ST    3,LINECNT           *   COUNT   *
+*
+*
+*
+PT1      LA    2,PRTAREA           *    CLEAR  *
+         L     3,=F'132'           *
+CLR2     MVI   0(2),X'40'          *    PRINT  *
+         LA    2,1(2)              *
+         BCT   3,CLR2              *    AREA   *
+*
+         MVI   NOFLOWSW+1,X'00'    NOP THE NO OVERFLOW SWITCH
+         MVC   PRTAREA,PRTFORM
+         WRITE PRTLINE,SF,PRTDCB,PRTAREA
+         CHECK PRTLINE
+*
+*                INCREMENT LINE COUNT.
+*
+         L     3,LINECNT           GET LINE COUNTER.
+         CLI   PRTFORM,X'09'       TEST TO ADD 1 OR 2.
+         BNE   PT2                 NOT 1.
+         AH    3,=H'1'             ADD 1 TO LINE COUNT.
+         B     PT3
+PT2      AH    3,=H'2'             ADD 2 TO LINE COUNT.
+PT3      ST    3,LINECNT           STORE LINE COUNT.
+         LM    2,9,PRTREGH1        RESTORE REGISTERS.
+         BR    4                   RETURN.
+*
+*
+*
+CLRFORM  STM   2,3,CLFMSV          *                  *
+         LA    2,PRTFORM           *                  *
+         L     3,=F'132'           *     CLEAR        *
+CLFM     MVI   0(2),X'40'          *                  *
+         LA    2,1(2)              *     FORMAT       *
+         BCT   3,CLFM              *                  *
+         LM    2,3,CLFMSV          *     AREA         *
+         BR    4                   *                  *
+CLFMSV   DC    F'0'                *                  *
+         DC    F'0'                *                  *
+*
+*
+*
+CVRTDEC  L     2,MOVEDC            *                  *
+         SRDA  2,16(0)             *    CONVERTS      *
+         MH    2,BLKNOH
+         SRA   3,24(0)             *    6 DIGIT       *
+         AR    2,3                 *                  *
+         XC    CONVERT,CONVERT     *    TTR  TO       *
+         CVD   2,CONVERT           *                  *
+         BR    4                   *    DECIMAL       *
+*
+*
+*
+RD       READ  DATAR,DI,DISKDCB,BLOCK,1693,0,TTR
+         CHECK DATAR
+         BR    4
+*
+*
+*                                        THIS ROUTINE
+EXPAND   STM   2,5,EXPANDSV
+         LA    2,PRTFORM+2           EXPANDS 'X' NUMBER OF BYTES
+         LA    3,PRTFORM+70
+M1MW     BCT   5,L4W4                FOR THE BCD PRINT LINE.
+         B     SPDN
+L4W4     L     4,=F'4'               R2 POINTS TO THE MOVE TO FIELD.
+M1MB     MVC   0(1,2),0(3)
+         LA    2,1(2)                R3 POINTS TO THE MOVE FROM FIELD.
+         MVI   0(2),X'40'
+         LA    2,1(2)                R4 IS THE INTERNAL LOOP COUNT.
+         LA    3,1(3)
+         BCT   4,M1MB                R5 IS THE EXTERNAL LOOP COUNT
+         MVI   0(2),X'40'
+         LA    2,1(2)                  SUPPLIED IN CALLING ROUTINE.
+         B     M1MW
+SPDN     LA    3,PRTFORM+131       CLEAR
+CPRT     CR    2,3                 THE REST
+         BH    ENDBNK              OF THE
+         MVI   0(2),X'40'          BCD
+         LA    2,1(2)              PRINT
+         B     CPRT                LINE
+ENDBNK   LM    2,5,EXPANDSV
+         BR    4
+EXPANDSV DS    4F
+*
+* CONVERT HEX TO PRINTABLE CHARACTERS ROUTINE.
+*
+HEXSAV   DS    8F
+COUNTSW  DC    X'00'
+*
+*
+HEXENT   STM   2,9,HEXSAV          SAVE THE REGISTERS.
+         MVI   SHIFTSW+1,X'00'     TURN SHIFT SWITCH OFF.
+         LA    5,PRTFORM+1         POINT TO FORMAT LINE.
+         XR    6,6                   CLEAR R6,
+         XR    7,7                     AND R7.
+         STC   7,COUNTSW           TURN COUNT SWITCH OFF.
+*
+LOADNEXT IC    6,0(0,2)            GET A CHARACTER.
+         BCT   8,SHFT67            FINISHED? NO CONTINUE CONVERT.
+         B     RETHEX                        YES. GO TO EXIT.
+*
+SHFT67   SRDA  6,4(0)              PLACE LOW ORDER 4 BITS IN R7.
+*
+R3POINT  LA    3,CONVTABL          POINT TO BEGINNING OF CONVERT TABLE.
+*
+LOADAG   XR    4,4                 CLEAR R4.
+         IC    4,0(0,3)            LOAD A PRINTABLE CHARACTER IDENTIFYR
+         XR    4,6                 EXCLUSIVE OR CHARACTERS FOR ID.
+         LTR   4,4                 TEST R4 FOR ZEROS.
+         BZ    FHEX                IF ZERO FOUND COND.GO INSERT.
+         LA    3,2(3)              POINT TO NEXT ENTRY IN ID. TABLE.
+         LA    4,ENDTABL           POINT TO END OF TABLE.
+         CR    3,4                 IS IT END OF TABLE?
+         BL    LOADAG              NO.GO CONTINUE SEARCH.
+         MVI   0(5),X'40'          YES.INSERT A BLANK.
+         B     BADCHAR             GO INCREMENT R5.
+*
+*
+FHEX     MVC   0(1,5),1(3)         MOVE VALID PRINT CHARACTER TO PRTLN.
+*
+BADCHAR  LA    5,1(5)              INCREMENT R5.
+*
+SHIFTSW  BC    0,INCR2P            IF ON,DON'T CHECK FOR HALFBYTE IN R7
+         XR    6,6                 IF OFF,CLEAR R6 FOR HALFBYTE IN R7.
+         MVI   SHIFTSW+1,X'F0'     TURN SHIFT SWITCH ON.
+         SLDA  6,4(0)              GET STORED HALF BYTE FROM R7.
+         B     R3POINT             GO SEARCH PRINTABLE CHARACTER TABLE.
+*
+*
+INCR2P   LA    2,1(2)              POINT TO NEXT HEX BYTE.
+         MVI   SHIFTSW+1,X'00'     TURN SHIFT SWITCH OFF.
+         IC    7,COUNTSW           GET COUNTER.
+         AH    7,=H'1'             ADD 1 TO COUNTER.
+         STC   7,COUNTSW           STORE COUNTER.
+         CH    7,=H'4'             IS COUNTER A 4?
+         BL    LOADNEXT            NO. GO GET NEXT BYTE.
+         XR    7,7                 YES. CLEAR R7.
+         STC   7,COUNTSW           CLEAR COUNTER.
+         MVI   0(5),X'40'          INSERT A BLANK FOR SPACING.
+         LA    5,1(5)              INCREMENT R5 TO NEXT PRINT INSERT.
+         B     LOADNEXT            GO GET NEXT BYTE.
+*
+*
+RETHEX   LM    2,9,HEXSAV          RESTORE REGISTERS.
+         MVI   NOFLOWSW+1,X'F0'    TURN THE NO OVERLOW SWITCH ON.
+         BR    4                   RETURN.
+*
+*
+PAGECNT  DC    F'0'
+LINECNT  DC    XL4'00000038'       38 BASE 16 = 56 BASE 10 FOR START.
+PRTAREA  DC    CL132' '
+PLN1     DS    0CL43
+         DC    CL7'*RIGAM '
+         DC    CL8'UTILITY '
+         DC    CL8'LISTING '
+         DC    CL4'FOR '
+         DC    CL5'FILE '
+P1ENT1   DC    CL3'   '            ENTER FILE IDENTIFICATION
+         DC    CL5' NO. '
+P1ENT2   DC    CL3'   '            ENTER FILE NUMBER
+P1PGNO   DC    CL10' PAGE NO. '
+P1PGENT  DC    CL6'      '
+P1EDIT   DC    XL6'402020202021'   EDIT WORD FOR PAGR COUNT.
+*
+*
+*
+PLN2     DS    0CL63
+         DC    CL15'/---INDEX----/ '
+         DC    CL14'/----DATA---/ '
+         DC    CL7'/FILE/ '
+         DC    CL9'/RECORD/ '
+         DC    CL10'/RECORDS/ '
+         DC    CL8'/--KEY-/'
+*
+*
+*
+PLN3     DS    0CL63
+         DC    CL15'/START  END--/ '
+         DC    CL14'/START   END/ '
+         DC    CL7'/TYPE/ '
+         DC    CL9'/LENGTH/ '
+         DC    CL10'/IN BLK./ '
+         DC    CL8'/LENGTH/'
+*
+*
+*
+PRTFORM  DC    CL132' '            PRINT FORMAT AREA.
+*
+         DC    CL20' '   DISPLACEMENT FOR GOOFY DCB ALLOTMENTS.
+*
+PRTDCB   DCB   BLKSIZE=132,                                            X
+               DDNAME=PRINT,                                           X
+               DSORG=PS,                                               X
+               LRECL=132,                                              X
+               MACRF=W,                                                X
+               NCP=1,                                                  X
+               RECFM=FM
+*
+*
+*
+EDIT6    DC    XL8'4020202020202021'
+EDIT3    DC    XL4'40202021'
+NHOLD    DC    CL1' '
+KEYCOMP  CLC   CARD+32(0),0(2)
+MOVEDC   DC    F'0'
+MASK5    DC    XL4'0000000F'
+STARTTTR DC    F'0'
+STOPTTR  DC    F'0'
+LINESTOP DC    F'0'
+BYTESREC DC    F'0'
+TTRNEXT  DC    F'0'
+POINTREC DC    F'0'
+MREC     MVC   PRTFORM+70(0),0(3)
+CONVTABL DC    XL2'00F0'
+         DC    XL2'01F1'
+         DC    XL2'02F2'
+         DC    XL2'03F3'
+         DC    XL2'04F4'
+         DC    XL2'05F5'
+         DC    XL2'06F6'
+         DC    XL2'07F7'
+         DC    XL2'08F8'
+         DC    XL2'09F9'
+         DC    XL2'0AC1'
+         DC    XL2'0BC2'
+         DC    XL2'0CC3'
+         DC    XL2'0DC4'
+         DC    XL2'0EC5'
+         DC    XL2'0FC6'
+ENDTABL  DC    XL2'0000'
+EORLBL   DC    CL13'END OF RECORD'
+EOFLBL   DC    CL30'END OF USER FILE PRINT REQUEST'
+         TITLE 'TEST DEVICE TYPE'
+***********************************************************************
+*        THIS SUBROUTINE TEST THE DEVICE TYPE OF RIGAM D/S,           *
+*         AND GIVE THE MAXIMUN NUMBER OF BLOCKS ON ONE TRACK.         *
+*            2311=2, 2314=4, 3330=7,                                  *
+*                    WRITTEN BY TSG MONSANTO BRUSSELS                 *
+***********************************************************************
+         SPACE 1
+TSTYPDEV STM   2,4,TYPDEVSA        SAVE REGISTERS
+         DEVTYPE DISKDCB+40,TYPDEVWA,DEVTAB,RPS
+         LTR   4,15                RETURN CODE IS IT ZERO ?
+         BNZ   DNOK                BRANCH IF NO
+         LA    2,NETAD             ESTABLISH LOOP
+         LA    3,TABDEV            POINT R2 AT FIRST TABLE ELEMENT
+LTSTAD   CLC   TYPDEVWA(4),0(3)    TEST IF DEVICE T. IS IN RIGAM TABLE
+         BE    DOK                 BRANCH IF YES
+         LA    3,6(3)              INCREMENT POINTER
+         BCT   2,LTSTAD            PROCESS NEXT TABLE ELEMENT
+DNOK     ABEND 999,DUMP,STEP       ABEND IF DEVICE T. UNKNOWN FOR RIGAM
+DOK      MVC   BLKNOH,4(3)         MOVE MAX. NO OF BLOCKS PER TRACK
+         LM    2,4,TYPDEVSA        RESTORE REGISTERS
+         BR    4                   RETURN TO CALLER
+         SPACE 2
+TYPDEVSA DS    3F                  SAVE AREA
+TYPDEVWA DC    6F'0'               WORK AREA FOR DEVTYPE MACRO
+BLKNOF   DC    H'0'                MAXIMUN NUMBER OF
+BLKNOH   DC    H'0'                   BLOCKS PER TRACK
+TABDEV   DC    X'30002001',H'2'    2 BLOCKS FOR 2311
+         DC    X'30C02008',H'4'    4 BLOCKS FOR 2314
+         DC    X'30502009',H'7'    7 BLOCKS FOR 3330
+         DC    X'3050200D',H'7'    7 BLOCKS FOR 3330-11
+         DC    X'FFFFFFFF',H'0'    FREE
+         DC    X'FFFFFFFF',H'0'    FREE
+         DC    X'FFFFFFFF',H'0'    FREE
+         DC    X'FFFFFFFF',H'0'    FREE
+         DC    X'FFFFFFFF',H'0'    FREE
+         DC    X'FFFFFFFF',H'0'    FREE
+NETAD    EQU   10                  NUMBER OF TABLE ELEMENTS
+         TITLE 'LITERAL POOL'
+         END   RIGAML                                              BXL

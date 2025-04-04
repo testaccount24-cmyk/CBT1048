@@ -1,0 +1,361 @@
+         TITLE 'VALIDITY CHECK ROUTINE FOR OPEN SVC'
+***********************************************************************
+*                           P R O T E C T
+*
+*            THIS ROUTINE IS DESIGNED TO BE LINK-EDITED ONTO THE
+*        FRONT OF THE SVC 19 (OPEN) PROCESSING ROUTINE. IT IS ENTERED
+*        FROM THE SVC INTERRUPT HANDLER WITH REG1 POINTING TO THE
+*        LIST OF DCB ADDRESSES SUPPLIED BY THE USER. THE ROUTINE WILL,
+*        FOR EACH DCB/ACB, BUILD A WORK AREA AND INITIALISE IT WITH
+*        MUCH RELEVANT DATA ABOUT THE OPEN REQUEST. (SEE DEFINITION
+*        OF DCBCHECK WORK AREA). CONTROL IS THEN PASSED DYNAMICALLY TO
+*        A ROUTINE CALLED 'DCBCHECK' WHICH MUST BE IN LINKLIB.
+*            ON RETURN FROM 'DCBCHECK', THE CODE IN REGISTER 15 IS
+*        TESTED. IF IT IS ZERO, THE REQUEST IS ALLOWED TO CONTINUE.
+*        IF NOT, THE PROGRAM ISSUING THE OPEN IS ABENDED WITH A CODE
+*        OF 'SFFF'.
+*
+*        NOTES:
+*
+*        1)    INITIALLY, REGISTERS ARE SAVED IN THE SVRB UNTIL
+*              PROPER SAVE AREA CHAINING IS ESTABLISHED.
+*        2)    THE MODULE HAS A HIGH LEVEL 'DRIVER' WHICH ESTABLISHES
+*              SAVE AREA LINKAGE ETC AND 'CALLS' THE MAIN ROUTINE. THIS
+*              ROUTINE IN TURN INVOKES THE VALIDITY CHECK ROUTINE.
+*        3)    THE VALIDITY CHECK ROUTINE IS INVOKED ONCE FOR EACH
+*              DCB/ACB ADDRESS IN THE OPEN LIST.
+*
+*
+*
+*
+*
+***********************************************************************
+         EJECT
+***********************************************************************
+*        PROGRAM PRE-ENTRY INITIALISATION FOR OPEN 'J'
+***********************************************************************
+         SPACE 2
+IGC0002B CSECT
+         L     REG15,16            LOAD ADDRESS OF THE CVT
+         L     REG15,0(REG15)      LOAD ADDRESS OF THE TCB WORDS
+         L     REG15,4(REG15)      LOAD ADDRESS OF MY TCB
+         L     REG15,0(REG15)      LOAD ADDRESS OF OPEN'S SVRB
+         LA    REG15,96(REG15)     ADDRESS OF SVRB EXTENED S/A
+         STM   REG12,REG2,0(REG15) SAVE THE IMPORTANT REGISTERS
+         BALR  REG12,0             SET UP A BASE REGISTER
+         USING *,REG12             AND USE IT
+         LR    REG2,REG15          LOAD ADDRESS OF SAVE AREA
+         MVI   28(REG2),C'J'       SIGNAL OPENJ
+         L     REG15,OPENJ         LOAD ENTRY POINT OF OPENJ
+         ST    REG15,12(REG2)      AND STORE THAT IN SAVE AREA
+         L     REG15,INIT1         ADDRESS OF INITIAL ENTRY POINT
+         BR    REG15               GO THERE
+         SPACE 2
+OPENJ    DC    V(OPENJ)            NORMAL ENTRY POINT OF OPEN J
+INIT1    DC    A(INIT1ENT)         ADDRESS OF OPN/OPENJ COMMON ENTRY
+         DROP  REG12               RELEASE ADDRESSABILITY
+         EJECT
+***********************************************************************
+*        PROGRAM PRE-ENTRY INITIALISATION FOR OPEN 'NORMAL'
+***********************************************************************
+         SPACE 2
+IGC0001I CSECT
+         L     REG15,16            LOAD ADDRESS OF THE CVT
+         L     REG15,0(REG15)      LOAD ADDRESS OF THE TCB WORDS
+         L     REG15,4(REG15)      LOAD ADDRESS OF MY TCB
+         L     REG15,0(REG15)      LOAD ADDRESS OF OPEN'S SVRB
+         LA    REG15,96(REG15)     ADDRESS OF SVRB EXTENED S/A
+         STM   REG12,REG2,0(REG15) SAVE THE IMPORTANT REGISTERS
+         BALR  REG12,0             SET UP A BASE REGISTER
+         USING *,REG12             AND USE IT
+         LR    REG2,REG15          SAVE ADDRESS OF THE SAVE AREA
+         MVI   28(REG2),C'O'       SIGNAL NORMAL OPEN
+         L     REG15,OPENOPEN      ADDRESS OF NORMAL ENTRY POINT
+         ST    REG15,12(REG2)      STORE IN THE SAVE AREA
+         L     REG15,INIT2         ADDRESS OF INITIAL ENTRY POINT
+         BR    REG15               GO THERE
+         SPACE 2
+OPENOPEN DC    V(OPENOPEN)         NORMAL ENTRY POINT OF OPEN
+INIT2    DC    A(INIT1ENT)         ADDRESS OF OPN/OPENJ COMMON ENTRY
+         DROP  REG12               RELEASE ADDRESSABILITY
+         EJECT
+***********************************************************************
+*        COMMON ENTRY FOR OPEN/OPENJ AFTER REGS SAVED AND THE
+*        CONTINUATION ADDRESS INTO OPEN IS DETERMINED.
+***********************************************************************
+         SPACE 2
+INIT1ENT DS    0H
+         BALR  REG12,0             GET FRESH ADDRESSABILITY
+         USING *,REG12             AND USE IT
+         GETMAIN R,LV=72,SP=245    GETMAIN A TOP LEVEL SAVE AREA
+         LR    REG13,REG1          LOAD UP THE NORMAL SAVE AREA REG
+         LM    REG0,REG1,16(REG2)  RELOAD PARAMETER REGISTERS
+         CALL  PROTECT2            AND ENTERT THE REAL ROUTINE
+         EJECT
+***********************************************************************
+*        FREE THE GOTTEN SAVE AREA AND CARRY ON WITH OPEN
+***********************************************************************
+         SPACE 2
+         FREEMAIN R,A=(13),LV=72,SP=245
+         LM    REG12,REG2,0(REG2)  RELOAD SAVED REGISTERS
+         BR    REG15               AND ENTER OPEN AT NORMAL ENTRY POINT
+         EJECT
+***********************************************************************
+*
+*        PROTECT2:
+*
+*        THIS IS THE MAINLINE ROUTINE FOR OPEN DCB VALIDITY CHECKING
+*        IT IS ENTERED FROM THE PRECEEDING ROUTINE WITH NORMAL
+*        LINKAGE REGISTERS INITIALISED AND REGISTER ONE POINTING
+*        TO THE ORIGINAL LIST OF DCB/ACB ADDRESSES TO BE PROCESSED.
+*            THE ROUTINE WILL SCAN DOWN THE LIST OF DCB/ACB ADDRESSES
+*        AND, IF THE CALLER IS NOT AN AUTHORISED SYSTEM COMPONENT OR
+*        PROGRAM, WILL PERFORM THE FOLLOWINFG PROCESSING:
+*
+*        1)    LOCATE THE MATCHING TIOT ENTRY FOR THIS DCB. IF NONE
+*              EXISTS, IGNORE THE DCB SINCE OPEN IS GOING TO FAIL
+*              ANYWAY. IF THE DCB IS OPEN, THEN THIS IS ALSO
+*              AN OPEN REQUEST DOOMED TO FAILURE AND THE DCB IS
+*              AGAIN IGNORED.
+*        2)    TEST FOR AND IGNORE- SPOOL DATA SETS, DUMMY DATA SETS
+*              AND TIOT ENTRIES WITH NO JFCB.
+*        3)    INITIALISE A PARAMETER AREA WITH ALL THE DETAILS OF
+*              THIS OPEN REQUESTAND INVOKE DYNAMICALLY THE CHECK
+*              ROUTINE - 'DCBCHECK'.
+*        4)    REPEAT THE ABOVE STEPS FOR ALL DCB/ACB'S IN THE LIST.
+*        5)    IF A TIOT ENTRY IS DETECTED TO BE PART OF A
+*              CONCATENATION, THEN THE CHECK ROPUTINE IS ENTERED ONCE
+*              FOR EACH FILE IN THE CONCATENATED SET OF FILES.
+*
+*
+*
+***********************************************************************
+         EJECT
+***********************************************************************
+*        PROGRAM ENTRY HOUSEKEEPING
+***********************************************************************
+         SPACE 2
+PROTECT2 ZCSECT GETMAIN=1          ENTER UNDER NORMAL LINKAGE
+         LR    REG2,REG1           SAVE ADDRESS OF THE DCB LIST
+         L     REG10,4(REG13)      ADDRESS OF CALLERS SAVE AREA
+         L     REG10,28(REG10)     ADDRESS OF SVRB EXTENDED S/A
+         LA    REG10,28(REG10)     ADDRESS OF OPEN/OPENJ FLAG
+         EJECT
+***********************************************************************
+*        GETMAIN SOME CORE FOR THE DCBCHECK PARAMETER AREA
+***********************************************************************
+         SPACE 2
+         GETMAIN R,LV=DCWALEN,SP=245
+         LR    REG3,REG1           SAVE ADDRESS OF IT
+         USING DCWKAREA,REG3       AND ESTABLISH ADDRESSABILITY
+         EJECT
+***********************************************************************
+*        TEST FIRST TO SEE IF THIS IS AN AUTHORISED CALLER
+***********************************************************************
+         SPACE 2
+         TESTAUTH STATE=YES,KEY=YES
+         LTR   REG15,REG15         IS ISSUER OF OPEN AUTHORISED ?
+         BZ    AUTHEXIT            YES. BYPASS THE OPEN CHECK
+         EJECT
+***********************************************************************
+*        INITIALISE ADDRESSES OF TCB, TIOT, AND JES JCT
+***********************************************************************
+         SPACE 2
+         L     REG1,16             LOAD ADDRESS OF CVT
+         L     REG1,0(REG1)        LOAD ADDRESS OF TCB WORDS
+         L     REG6,4(REG1)        LOAD ADDRESS OF TCB
+         USING TCB,REG6            ADDRESSABILITY FOR IT
+         L     REG7,TCBTIO         LOAD ADDRTESS OF TCB
+         L     REG8,TCBJSCB        LOAD ADDRESS OF THE JSCB
+         USING IEZJSCB,REG8        ADDRESSABILITY FOR IT
+         L     REG9,JSCBSSIB       ADDRESS OF THE SSIB
+         USING SSIB,REG9           ADDRESSABILITY FOR IT
+         L     REG9,SSIBSUSE       LOAD ADDRESS OF SUBSYSTEM JOB BLOCK
+         LTR   REG9,REG9           DOES AN SJB EXIST ?
+         BZ    SSIBEXIT            NO. MUST BE TSO ETC.
+         DROP  REG9                RELEASE SSIB
+         USING SJBDSECT,REG9       ADDRESS THE SJB
+         L     REG9,SJBJCT         GET ADDRESS OF THE JCT
+         DROP  REG9                RELEASE SJB
+         USING JCTDSECT,REG9       ADDRESS THE JCT FOR THIS JOB
+         EJECT
+***********************************************************************
+*        PROCESS EACH DCB IN THE OPEN LIST
+***********************************************************************
+         SPACE 2
+DCBLOOP1 DS    0H
+         L     REG5,0(REG2)        LOAD ADDRESS OF FIRST/NEXT DCB
+         USING IHADCB,REG5         ADDRESSABILITY FOR IT
+         BAL   REG11,FINDTIOT      GO LOCATE THE TIOT ENTRY
+         NC    JFCBADDR,JFCBADDR   WAS A MATCHING TIOT/JFCB FOUND
+         BZ    NEXTDCB             NO. BAD DDNAME, SPOOL OR CONCAT'N
+CONCLOOP EQU   *
+         BAL   REG11,BLDPARMS      GO INITIALISE HIS PARAMETER AREA
+         BAL   REG11,GOCHECK       GO VERIFY THE VALIDITY
+         LTR   REG15,REG15         TEST RETURN CODE FROM VALIDITY ROUTI
+         BNZ   ABENDIM             ENTRY IS NOT VALID
+INNRLOOP EQU   *
+         L     REG15,TIOTADDR      LOAD ADDRESS OF TIOT ENTRY
+         XR    REG0,REG0           CLEAR WORK REGISTER
+         IC    REG0,0(REG15)       GET LENGTH THIS ENTRY
+         AR    REG15,REG0          ADDRESS OF NEXT TIOT ENTRY
+         CLI   0(REG15),0          IS THAT THE END OF THE TIOT ?
+         BE    NEXTDCB             YES. NO CONCATEENATION. GET NEXT DCB
+         CLC   4(8,REG15),=8C' '   NEXT DD IS CONCATENATED WITH THIS
+         BNE   NEXTDCB             NO. CARRY ON WITH NEXT DCB
+         ST    REG15,TIOTADDR      YES. SAVE NEW TIOT ADDRESS
+         TM    3(REG15),X'A6'      IS IT TERMINAL OR SPOOL ?
+         BNZ   INNRLOOP            YES. STEP OVER IT THEN
+         ICM   REG14,7,12(REG15)   GET JFCB ADDRESS
+         LA    REG14,16(REG14)     STEP OVER THE JFCB PREFIX
+         ST    REG14,JFCBADDR      AND UPDATE PARM AREA
+         B     CONCLOOP            AND START A NEW CALL WITH THIS ONE
+NEXTDCB  EQU   *
+         TM    0(REG2),X'80'       IS THIS THE END OF THE LIST
+         BO    ALLDONE             YES. ALL DCB'S ARE TESTTED
+         LA    REG2,4(REG2)        OTHERWISE ADDRESS NEXT DCB ADDRESS
+         B     DCBLOOP1            AND CONTINUE PROCESSING
+         EJECT
+***********************************************************************
+*        LOCATE THE CORRECT TIOT ENTRY FOR THIS DCB
+***********************************************************************
+         SPACE 2
+FINDTIOT DS    0H
+         XC    JFCBADDR,JFCBADDR   CLEAR JFCB ADDRESS
+         TM    DCBOFLGS,DCBOFOPN   IS DCB ALREADY OPEN ?
+         BO    DCBOPEN             YES. MUST BE ERROR
+         LA    REG15,24(REG7)      STEP OVER JOBNAME ETC IN TIOT
+TIOTLOOP EQU   *
+         CLI   0(REG15),0          END OF THE TIOT ?
+         BE    TIOTEND             YES. RETURN TO CALLER
+         CLC   DCBDDNAM,4(REG15)   IS THIS THE MATCHING DD NAME
+         BE    GOTATIOT            YES. GO PROCESS TIOT ENTRY
+         XR    REG0,REG0           CLEAR WORK REGISTER
+         IC    REG0,0(REG15)       GET LENGTH OF THIS ENTRY
+         AR    REG15,REG0          ADDRESS OF NEXT TIOT ENTRY
+         B     TIOTLOOP            AND GO CHECK AGAIN
+GOTATIOT EQU   *
+         ST    REG15,TIOTADDR      SAVE ADDRESS OF THE TIOT ENTRY
+         TM    3(REG15),X'A6'      SPOOL OR TERMINAL DATA SET ?
+         BNZ   TIOTEND             YES. NO CHECKING ON THAT
+         ICM   REG14,7,12(REG15)   LOAD ADDRESS OF THE JFCB PREFIX
+         LA    REG14,16(REG14)     GET ADDRESS OF JFCB PROPER
+         ST    REG14,JFCBADDR      STORE ADDRESS OF JFCB IN PARM AREA
+         CLI   0(REG10),C'J'       NOT OPENJ IS IT ?
+         BNE   TIOTEND             NO. THOUGHT NOT.
+         L     REG14,DCBEXLST      LOAD EXIT LIST ADDRESS
+OPENJLP  EQU   *
+         TM    0(REG14),X'07'      JFCB EXIT ADDRESS ?
+         BNO   TRYNEXT             NO. TRY NEXT ENTRY
+         L     REG14,0(REG14)      OTHERWISE PICK UP ADDRESS OF JFCB
+         LA    REG14,0(REG14)      STRIP TOP BYTE
+         ST    REG14,JFCBADDR      AND SAVE THE ADDRESS
+         B     TIOTEND             EXIT.
+TRYNEXT  EQU   *
+         TM    0(REG14),X'80'      WAS THAT END OF LIST ?
+         BO    TIOTEND             YES. STRANGE SETUP THERE
+         LA    REG14,4(REG14)      GET ADDRESS OF NEXT ENTRY
+         B     OPENJLP             AND TRY AGAIN
+DCBOPEN  EQU   *                   DCB IS ALREADY OPEN
+TIOTEND  EQU   *
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        INITIALISE THE PARAMETER AREA FOR DCB CHECK ROUTINE
+***********************************************************************
+         SPACE 2
+BLDPARMS DS    0H
+         MVC   JOBNAME,0(REG7)     GET JOBNAME FROM TIOT
+         MVC   STEPNAME,8(REG7)    AND THE STEP NAME
+         MVC   PROCNAME,16(REG7)   AND THE PROCSTEP NAME
+         MVC   DDNAME,DCBDDNAM     MOVE DD NAME FROM THE DCB
+         L     REG14,JFCBADDR      LOAD ADDRESS OF THE JFCB
+         MVC   DSNAME,0(REG14)     GET DSNAME FROM THE JFCB
+         L     REG15,TIOTADDR      LOAD ADDRESS OF THE TIOT ENTRY
+         L     REG15,16(REG15)     LOAD ADDRESS OF THE UCB
+         MVC   UNIT,12(REG15)      MOVE IN THE DEVICE ADDRESS
+         MVC   VOLUME,118(REG14)   MOVE IN THE VOLSER
+         MVC   JOBID,JCTJOBID      MOVE IN THE JOB ID (JES2)
+         MVC   SOURCE,JCTROUTE+1   MOVE INPUT ROUTE CODE
+         MVC   DRAIN,JCTPROUT+1    MOVE OUTPOUT PRINT ROUTE CODE
+         ST    REG5,DCBADDR        SAVE ALSO THE ADDRESS OF THE DCB
+         BR    REG11               RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        INVOKE THE OPEN DCB VALIDITY CHECK ROUTINE
+***********************************************************************
+         SPACE 2
+GOCHECK  DS    0H
+         LR    REG1,REG3           LOAD PARAMETER REGISTER
+         CALL  DCBCHECK            AND INVOKE THE USER ROUTINE
+         BR    REG11               AND RETURN TO CALLER
+         EJECT
+***********************************************************************
+*        THIS OPEN REQUEST IS INVALID. BOMB OFF THE USER
+***********************************************************************
+         SPACE 2
+ABENDIM  DS    0H
+         GETMAIN R,LV=WTOLEN,SP=245 GET CORE FOR WTO WITH VARIABLE TXT
+         LR    REG8,REG1           SAVE ITS ADDRESS FOR FREEMAIN
+         MVC   0(WTOLEN,REG1),WTO  MOVE IN THE RAW WTO TEXT
+         MVC   WTOJOBN(L'JOBNAME,REG1),JOBNAME SET UP JOBNAME ...
+         MVC   WTOSTPN(L'STEPNAME,REG1),STEPNAME AND STEP NAME.....
+         MVC   WTOPRCN(L'PROCNAME,REG1),PROCNAME AND PROC NAME.....
+         MVC   WTODDNM(L'DDNAME,REG1),DDNAME   AND DD NAME.......
+         MVC   WTODSN(L'DSNAME,REG1),DSNAME   AND DATA SET NAME.
+         WTO   '========> FILE ACCESS SECURITY VIOLATION <========'
+         WTO   MF=(E,(8))          AND EXECUTE THE WTO
+         FREEMAIN R,LV=WTOLEN,A=(8),SP=245 FREE UP THE CORE AGAIN
+         ABEND 4095,DUMP,STEP,SYSTEM  COME DOWN AS PER TON 'O BRICKS
+         SPACE 2
+WTO      WTO   'JOBNAMES,STEPNAME,PROCNAME,DDNAMEDD,DATASETNAME23456789X
+               0123456789012345678901234',MF=L
+         DS    0D                  GET DBLWORD ALIGNMENT
+WTOLEN   EQU   *-WTO               LENGTH OF WTO TEXT
+WTOJOBN  EQU   4                   OFFSET INTO WTO TEXT
+WTOSTPN  EQU   4+9                 OFFSET INTO WTO TEXT
+WTOPRCN  EQU   4+9+9               OFFSET INTO WTO TEXT
+WTODDNM  EQU   4+9+9+9             OFFSET INTO WTO TEXT
+WTODSN   EQU   4+9+9+9+9           OFFSET INTO WTO TEXT
+         EJECT
+***********************************************************************
+*        RETURN TO CALLER OF THIS ROUTINE
+***********************************************************************
+         SPACE 2
+AUTHEXIT DS    0H                  CALLER IS IN SYSTEM STATE
+SSIBEXIT DS    0H                  CALLER HAS NO JES SJB.
+ALLDONE  DS    0H                  VALIDATION IS COMPLETED
+         FREEMAIN R,LV=DCWALEN,A=(3),SP=245 FREE THE DCB CHK WORK AREA
+         ZRETURN
+         EJECT
+***********************************************************************
+*        CONSTANTS AND WORK AREAS
+***********************************************************************
+         SPACE 2
+         LTORG
+JCT      EQU   9                   $JCT MACRO ISSUES A USING FOR THIS
+         EJECT
+***********************************************************************
+*        DSECTS
+***********************************************************************
+         SPACE 2
+         PRINT NOGEN
+         DCBD  DSORG=QS,DEVD=DA
+         SPACE 2
+         DCWKAREA
+         SPACE 2
+         IKJTCB
+         SPACE 2
+         IEZJSCB
+         SPACE 2
+         IEFJSSIB
+         SPACE 2
+         CSECT
+         $BUFFER
+         SPACE 2
+         $SJB
+         SPACE 2
+         $JCT
+         EJECT
+         PRINT GEN
+         END
